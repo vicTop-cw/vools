@@ -44,6 +44,6 @@ dev = [
 vools = "vools.__main__:main"
 
 [project.urls]
-"Homepage" = "https://github.com/victor/vools"
-"Repository" = "https://github.com/victor/vools"
-"Issues" = "https://github.com/victor/vools/issues"
+"Homepage" = "https://github.com/vicTop-cw/vools"
+"Repository" = "https://github.com/vicTop-cw/vools"
+"Issues" = "https://github.com/vicTop-cw/vools/issues"
