@@ -11,7 +11,7 @@ import pkgutil
 # 版本信息
 # ============================================================================
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
@@ -55,26 +55,26 @@ def _import_from_subpackage(subpackage_name):
     try:
         # 导入子包
         subpackage = importlib.import_module(f'.{subpackage_name}', package='vools')
-        
+
         # 获取子包的 __all__ 列表
         if hasattr(subpackage, '__all__'):
             all_objects = subpackage.__all__
         else:
             # 如果没有 __all__，则导入所有非下划线开头的对象
             all_objects = [name for name in dir(subpackage) if not name.startswith('_')]
-        
+
         # 导入对象
         for obj_name in all_objects:
             if hasattr(subpackage, obj_name):
                 obj = getattr(subpackage, obj_name)
-                
+
                 # 检查是否已有同名对象
                 if obj_name in _imported_objects:
                     # 记录去重操作
                     existing_pkg = _imported_objects[obj_name]['package']
                     current_priority = SUBPACKAGE_PRIORITIES.index(subpackage_name)
                     existing_priority = SUBPACKAGE_PRIORITIES.index(existing_pkg)
-                    
+
                     if current_priority < existing_priority:
                         # 当前包优先级更高，覆盖现有对象
                         _duplicate_logs.append(
@@ -176,11 +176,11 @@ __all__ = [
     '__version__',
     '__author__',
     '__license__',
-    
+
     # 配置管理
     'config',
     'ConfigManager',
-    
+
     # 装饰器
     'memorize',
     'once',
@@ -197,7 +197,7 @@ __all__ = [
     'overload',
     'overcurry',
     'overloads',
-    
+
     # 函数式编程工具
     'Pipe',
     'Ops',
@@ -213,7 +213,7 @@ __all__ = [
     '_1',
     '_2',
     '_3',
-    
+
     # 通用工具
     'stuff',
     'Stuff',
@@ -222,7 +222,7 @@ __all__ = [
     'const',
     'compose',
     'pipe',
-    
+
     # 快捷工具
     'shotcut',
     'shotcutEx',
@@ -245,28 +245,28 @@ __all__ = [
     'hybrid_method',
     'classproperty',
     'enumize',
-    
+
     # 面向对象工具
     'Selector',
     'Mixer',
     'mixer',
-    
+
     # 自定义数据类型
     'vicTools',
     'vicDate',
     'vicText',
     'vicList',
-  
-    
+
+
     # 数据处理工具
     'data',
     'DATA_AVAILABLE',
-    
+
     # OOP 工具
     'oop',
     'OOP_AVAILABLE',
     'curry_overloads',
-    
+
     # 日期时间工具
     'datetime',
     'DATETIME_AVAILABLE',
@@ -292,48 +292,48 @@ for name in __all__:
 if __name__ == '__main__':
     print(f"vools version: {__version__}")
     print(f"Available exports: {__all__}")
-    
+
     # 测试装饰器
     print("\n=== 测试 memorize ===")
-    
+
     @memorize(duration=5)
     def expensive_function(x):
         return x ** 2
-    
+
     print(f"expensive_function(5) = {expensive_function(5)}")
     print(f"expensive_function(5) = {expensive_function(5)} (cached)")
-    
+
     # 测试 once
     print("\n=== 测试 once ===")
-    
+
     @once
     def initialize():
         print("Initializing...")
         return 42
-    
+
     print(f"initialize() = {initialize()}")
     print(f"initialize() = {initialize()} (cached)")
-    
+
     # 测试函数式编程工具
     print("\n=== 测试 Ops ===")
-    
+
     result = range(10) | Ops.filter(lambda x: x % 2 == 0) | Ops.map(lambda x: x * 2) | Ops.sum()
     print(f"range(10) | filter(x % 2 == 0) | map(x * 2) | sum() = {result}")
-    
+
     # 测试 Seq
     print("\n=== 测试 Seq ===")
-    
+
     result = Seq(range(10)).map(lambda x: x * 2).filter(lambda x: x > 5).collect()
     print(f"Seq(range(10)).map(x * 2).filter(x > 5).collect() = {result}")
-    
+
     # 测试 repeat
     print("\n=== 测试 repeat ===")
-    
+
     @repeat(cnt=3, delay=0.1)
     def hello(name):
         return f"Hello, {name}!"
-    
+
     for i, result in enumerate(hello("World")):
         print(f"调用 {i+1}: {result}")
-    
+
     print("\n所有测试通过!")
