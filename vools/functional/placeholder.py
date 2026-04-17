@@ -8,8 +8,34 @@ from typing import Callable
 from inspect import signature, Parameter
 import re
 from vools.functional.arrow_func import g
+from ..decorators import once
 
-__all__ = ['_', 'magic', 'f', 'to_holder', 'F', 'flip', 'apply', 'hd', 'iif'] + [f"_{i}" for i in range(1, 21)]
+__all__ = ['_', 'magic', 'f', 'to_holder', 'F', 'flip', 'apply', 'hd', 'iif','X'] + [f"_{i}" for i in range(1, 21)]
+
+
+@once
+class _X:
+    def __getattr__(self,name):
+        def func(x,*a,**k):
+            f = getattr(x,name)
+            if callable(f):
+                return f(*a,**k)
+            if len(a) + len(k) > 0 :
+                raise ValueError(f" Attr {name} is not callable !!!")
+            return f
+        return func
+    
+    def __getitem__(self,key):
+        def func(x):
+            return x[key]
+        return func
+    
+    def __call__(self,*a,**k):
+        def func(x):
+            return x(*a,**k) if callable(x) else x
+        return func
+
+X = _X()
 
 # 安全的内置函数白名单
 safe_builtins = [
@@ -218,7 +244,8 @@ class _IndexHolder:
         f('arity', arity)
         f('ix', ix)
         f('is_use_getitem', None) # 纪录是否使用了getitem方法 ， 用于 区分 _[_][_] 和 _[_[_]]
-    
+        f('X', X)
+        
     def __setattr__(self, name, value):
         raise AttributeError("Object is immutable")
     

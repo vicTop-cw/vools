@@ -9,7 +9,7 @@ from operator import itemgetter
 from ..functional.placeholder import _
 from ..config import config
 
-__all__ = ['Seq','NONE']
+__all__ = ['Seq','NONE','collect']
 _expr = _.__expr__
 _NONE_is_None = config.other['NONE_is_None']
 
@@ -654,6 +654,35 @@ class Seq(SeqBase):
             return func(self,*args,**kwargs)
         setattr(self,func.__name__,_inner)
         
+
+def collect(xs,f,factory=Seq) :
+    """_summary_
+
+    Args:
+        xs (Iterable[T]): an iterable of type T
+        f (Callable[[T],R]): a function that takes an argument of type T and returns an object of type R or None
+        factory (type, optional): the type of the return value. Defaults to list.
+
+    Raises:
+        TypeError: if f is not a callable or xs is not an iterable
+
+    Returns:
+        Iterable[R]: an iterable of type R
+
+    Yields:
+        R: the result of applying f to each element of xs that is not None and is greater than 3
+    """
+    if not callable(f):
+        raise TypeError("f must be a callable")
+    if not isinstance(xs,Iterable):
+        raise TypeError("xs must be an iterable")
+    def gen():
+        o = None if _NONE_is_None else NONE
+        for x in xs:
+            fx = f(x)
+            if fx is not o:
+                yield fx
+    return factory(gen()) if factory is not None else gen()
 
 
 if __name__ == '__main__':      

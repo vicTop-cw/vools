@@ -17,14 +17,54 @@ import inspect
 # 可选导入 wrapt
 try:
     import wrapt
+    @wrapt.decorator
+    def merge_params(wrapped, instance, args, kwargs):
+        """
+        支持函数和类方法的参数收集装饰器
+        """
+        # 获取原始函数
+        if hasattr(wrapped, '__func__'):
+            original_func = wrapped.__func__
+        else:
+            original_func = wrapped
+        
+        # 获取函数签名
+        sig = ins.signature(original_func)
+        
+        # 绑定参数
+        bound_args = sig.bind(*args, **kwargs)
+        bound_args.apply_defaults()
+        
+        # 构建参数字典
+        params = {}
+        
+        for param_name, param_value in bound_args.arguments.items():
+            param = sig.parameters[param_name]
+            
+            if param.kind == param.VAR_KEYWORD:
+                params.update(param_value)
+            elif param.kind == param.VAR_POSITIONAL:
+                params[param_name] = param_value
+            else:
+                params[param_name] = param_value
+        
+        # 设置到函数属性
+        original_func.params = params
+        
+        return wrapped(*args, **kwargs)
+
+
     WRAPT_AVAILABLE = True
 except ImportError:
     WRAPT_AVAILABLE = False
+    merge_params = None
 
-__all__ = ['repeat', 'retry', 'rerun']
+__all__ = ['repeat', 'retry', 'rerun','merge_params']
 
 # 定义可调用类型变量
 F = TypeVar('F', bound=Callable[..., Any])
+
+
 
 
 # ============================================================================
