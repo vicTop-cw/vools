@@ -4,8 +4,10 @@
 
 ## 项目信息
 
+- **当前版本**：v0.1.3
 - **GitHub 仓库**：[https://github.com/vicTop-cw/vools](https://github.com/vicTop-cw/vools)
 - **联系邮箱**：victortop921129@gmail.com
+- **PyPI 主页**：[https://pypi.org/project/vools/](https://pypi.org/project/vools/)
 
 ## 目录
 
@@ -30,13 +32,13 @@
 1. **安装 vools**
 
    ```bash
-   # 从源码安装
-   git clone <repository-url>
+   # 从 PyPI 安装
+   pip install vools
+
+   # 或从源码安装
+   git clone https://github.com/vicTop-cw/vools.git
    cd vools
    pip install -e .
-   
-   # 或通过 pip 安装（未来支持）
-   # pip install vools
    ```
 
 2. **安装依赖**
