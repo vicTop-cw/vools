@@ -11,7 +11,7 @@ import pkgutil
 # 版本信息
 # ============================================================================
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
@@ -36,8 +36,6 @@ SUBPACKAGE_PRIORITIES = [
 
 # 存储导入的对象
 _imported_objects = {}
-# 存储去重操作日志
-_duplicate_logs = []
 
 # 获取所有子包
 def _get_subpackages():
@@ -70,33 +68,25 @@ def _import_from_subpackage(subpackage_name):
 
                 # 检查是否已有同名对象
                 if obj_name in _imported_objects:
-                    # 记录去重操作
-                    existing_pkg = _imported_objects[obj_name]['package']
+                    # 优先级检查，保持高优先级的对象
+                    existing_priority = SUBPACKAGE_PRIORITIES.index(_imported_objects[obj_name]['package'])
                     current_priority = SUBPACKAGE_PRIORITIES.index(subpackage_name)
-                    existing_priority = SUBPACKAGE_PRIORITIES.index(existing_pkg)
-
+                    
                     if current_priority < existing_priority:
                         # 当前包优先级更高，覆盖现有对象
-                        _duplicate_logs.append(
-                            f"覆盖对象 '{obj_name}': 从 '{existing_pkg}' 到 '{subpackage_name}'"
-                        )
                         _imported_objects[obj_name] = {
                             'object': obj,
                             'package': subpackage_name
                         }
-                    else:
-                        # 现有对象优先级更高，保持不变
-                        _duplicate_logs.append(
-                            f"保留对象 '{obj_name}': 来自 '{existing_pkg}'，优先级高于 '{subpackage_name}'"
-                        )
                 else:
                     # 新对象，直接导入
                     _imported_objects[obj_name] = {
                         'object': obj,
                         'package': subpackage_name
                     }
-    except Exception as e:
-        print(f"导入子包 '{subpackage_name}' 时出错: {e}")
+    except Exception:
+        # 静默处理导入错误，避免干扰用户
+        pass
 
 # 导入所有子包
 subpackages = _get_subpackages()
@@ -159,13 +149,6 @@ try:
     globals()['datetime'] = datetime
 except ImportError:
     DATETIME_AVAILABLE = False
-
-# 打印去重操作日志
-if _duplicate_logs:
-    print("\n=== 导入去重操作日志 ===")
-    for log in _duplicate_logs:
-        print(f"- {log}")
-    print("====================\n")
 
 # ============================================================================
 # 公共 API
