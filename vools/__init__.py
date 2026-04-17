@@ -51,6 +51,10 @@ from .functional import (
     LazyProperty,
     arrow_func,
     g,
+    _,
+    _1,
+    _2,
+    _3,
 )
 
 # 通用工具
