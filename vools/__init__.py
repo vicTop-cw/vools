@@ -1,17 +1,19 @@
 """
 vools - Python 函数式编程工具集
 
-一个强大的 Python 函数式编程工具集，提供装饰器、函数式编程工具、数据处理工具等。
-"""
+一个强大的 Python 函数式编程工具集，提供装饰器、函数式编程工具、数据处理工具等。"""
+
+import importlib
+import os
+import pkgutil
 
 # ============================================================================
 # 版本信息
 # ============================================================================
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
-
 
 # ============================================================================
 # 导入子模块
@@ -20,101 +22,121 @@ __license__ = "Apache 2.0"
 # 配置管理
 from .config import config, ConfigManager
 
-# 装饰器
-from .decorators import (
-    memorize,
-    once,
-    persist,
-    lazy,
-    repeat,
-    retry,
-    rerun,
-    trd,
-    proc,
-    extend,
-    curry,
-    delay_curry,
-    overload,
-    overcurry,
-    overloads,
-)
+# 定义子包优先级（优先级高的会覆盖优先级低的）
+SUBPACKAGE_PRIORITIES = [
+    'shotcut',  # 最高优先级
+    'vools',
+    'functional',
+    'decorators',
+    'utils',
+    'oop',
+    'data',
+    'datetime',  # 最低优先级
+]
 
-# 函数式编程工具
-from .functional import (
-    Pipe,
-    Ops,
-    Seq,
-    P,
-    NONE,
-    iif,
-    ConditionBuilder,
-    LazyProperty,
-    arrow_func,
-    g,
-    _,
-    _1,
-    _2,
-    _3,
-)
+# 存储导入的对象
+_imported_objects = {}
+# 存储去重操作日志
+_duplicate_logs = []
 
-# 通用工具
-from .utils import (
-    stuff,
-    Stuff,
-    IndexedDict,
-    identity,
-    const,
-    compose,
-    pipe,
-)
+# 获取所有子包
+def _get_subpackages():
+    """获取所有子包"""
+    subpackages = []
+    package_path = os.path.dirname(__file__)
+    for _, name, is_pkg in pkgutil.iter_modules([package_path]):
+        if is_pkg and name not in ['__pycache__']:
+            subpackages.append(name)
+    return subpackages
 
-# 快捷工具
-from .shotcut import (
-    shotcut,
-    shotcutEx,
-    hoder,
-    Hoder,
-    timeit,
-    memoize,
-    once,
-    retry,
-    asyncify,
-    compose,
-    pipe,
-    smart_partial,
-    safe,
-    throttle,
-    debounce,
-    singleton,
-    deprecated,
-    conditional,
-    with_context,
-    with_timeout,
-    validate,
-    rate_limit,
-    log_calls,
-    cache_with_ttl,
-    hybrid_method,
-    classproperty,
-    enumize,
-)
+# 从子包导入对象
+def _import_from_subpackage(subpackage_name):
+    """从子包导入对象"""
+    try:
+        # 导入子包
+        subpackage = importlib.import_module(f'.{subpackage_name}', package='vools')
+        
+        # 获取子包的 __all__ 列表
+        if hasattr(subpackage, '__all__'):
+            all_objects = subpackage.__all__
+        else:
+            # 如果没有 __all__，则导入所有非下划线开头的对象
+            all_objects = [name for name in dir(subpackage) if not name.startswith('_')]
+        
+        # 导入对象
+        for obj_name in all_objects:
+            if hasattr(subpackage, obj_name):
+                obj = getattr(subpackage, obj_name)
+                
+                # 检查是否已有同名对象
+                if obj_name in _imported_objects:
+                    # 记录去重操作
+                    existing_pkg = _imported_objects[obj_name]['package']
+                    current_priority = SUBPACKAGE_PRIORITIES.index(subpackage_name)
+                    existing_priority = SUBPACKAGE_PRIORITIES.index(existing_pkg)
+                    
+                    if current_priority < existing_priority:
+                        # 当前包优先级更高，覆盖现有对象
+                        _duplicate_logs.append(
+                            f"覆盖对象 '{obj_name}': 从 '{existing_pkg}' 到 '{subpackage_name}'"
+                        )
+                        _imported_objects[obj_name] = {
+                            'object': obj,
+                            'package': subpackage_name
+                        }
+                    else:
+                        # 现有对象优先级更高，保持不变
+                        _duplicate_logs.append(
+                            f"保留对象 '{obj_name}': 来自 '{existing_pkg}'，优先级高于 '{subpackage_name}'"
+                        )
+                else:
+                    # 新对象，直接导入
+                    _imported_objects[obj_name] = {
+                        'object': obj,
+                        'package': subpackage_name
+                    }
+    except Exception as e:
+        print(f"导入子包 '{subpackage_name}' 时出错: {e}")
 
-# 数据处理工具（可选）
+# 导入所有子包
+subpackages = _get_subpackages()
+for subpackage in SUBPACKAGE_PRIORITIES:
+    if subpackage in subpackages:
+        _import_from_subpackage(subpackage)
+
+# 将导入的对象添加到模块命名空间
+for obj_name, info in _imported_objects.items():
+    globals()[obj_name] = info['object']
+
+# 特殊处理：导入 config 和 ConfigManager
+globals()['config'] = config
+globals()['ConfigManager'] = ConfigManager
+
+# 特殊处理：导入 curry_overloads
+try:
+    from .oop import overloads as curry_overloads
+    globals()['curry_overloads'] = curry_overloads
+except ImportError:
+    pass
+
+# 可选导入
+# 数据处理工具
 try:
     from . import data
     DATA_AVAILABLE = True
+    globals()['data'] = data
 except Exception:
     DATA_AVAILABLE = False
 
-# OOP 工具（可选）
+# OOP 工具
 try:
     from . import oop
-    from .oop import Selector, overloads as curry_overloads
     OOP_AVAILABLE = True
+    globals()['oop'] = oop
 except ImportError:
     OOP_AVAILABLE = False
 
-# 自定义数据类型（可选）
+# 自定义数据类型
 try:
     from .vools import (
         vicTools,
@@ -123,20 +145,27 @@ try:
         vicList,
     )
     VIC_AVAILABLE = True
+    globals()['vicTools'] = vicTools
+    globals()['vicDate'] = vicDate
+    globals()['vicText'] = vicText
+    globals()['vicList'] = vicList
 except Exception:
     VIC_AVAILABLE = False
 
-
-
-# 日期时间工具（可选）
+# 日期时间工具
 try:
     from . import datetime
     DATETIME_AVAILABLE = True
+    globals()['datetime'] = datetime
 except ImportError:
     DATETIME_AVAILABLE = False
 
-
-
+# 打印去重操作日志
+if _duplicate_logs:
+    print("\n=== 导入去重操作日志 ===")
+    for log in _duplicate_logs:
+        print(f"- {log}")
+    print("====================\n")
 
 # ============================================================================
 # 公共 API
@@ -167,6 +196,7 @@ __all__ = [
     'delay_curry',
     'overload',
     'overcurry',
+    'overloads',
     
     # 函数式编程工具
     'Pipe',
@@ -179,6 +209,10 @@ __all__ = [
     'LazyProperty',
     'arrow_func',
     'g',
+    '_',
+    '_1',
+    '_2',
+    '_3',
     
     # 通用工具
     'stuff',
@@ -214,7 +248,6 @@ __all__ = [
     
     # 面向对象工具
     'Selector',
-    'overloads',
     'Mixer',
     'mixer',
     
@@ -237,10 +270,13 @@ __all__ = [
     # 日期时间工具
     'datetime',
     'DATETIME_AVAILABLE',
-    
 
 ]
 
+# 确保 __all__ 中的所有名称都在模块命名空间中
+for name in __all__:
+    if name not in globals() and not name.startswith('__'):
+        globals()[name] = None
 
 # ============================================================================
 # 便捷导入

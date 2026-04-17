@@ -43,7 +43,7 @@ setup(
     ],
     python_requires=">=3.6",
     install_requires=[
-        "wrapt>=1.10.11",
+        "wrapt>=2.1.2",
         "pandas>=0.22.0",
         "numpy>=1.14.0",
     ],
