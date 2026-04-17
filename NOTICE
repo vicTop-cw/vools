@@ -1,0 +1,32 @@
+vools - Python 函数式编程工具集
+
+Copyright 2026 Victor
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+ADDITIONAL TERMS:
+
+This software is provided for non-commercial use only. Any commercial use
+of this software or its derivatives is strictly prohibited without
+explicit written permission from the copyright holder.
+
+Commercial use includes, but is not limited to:
+1. Selling or licensing the software
+2. Using the software in a commercial product or service
+3. Using the software to generate revenue
+4. Using the software in a for-profit organization
+
+For commercial licensing options, please contact the copyright holder.
+
+This product includes software developed by the vools project team.
