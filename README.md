@@ -78,7 +78,7 @@ vools/
 1. 克隆项目
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/vicTop-cw/vools.git
 cd vools
 ```
 
@@ -250,7 +250,8 @@ config.validate()
 ## 联系方式
 
 - 作者: Victor
-- 项目链接: <repository-url>
+- 邮箱: victortop921129@gmail.com
+- 项目链接: https://github.com/vicTop-cw/vools
 
 ## 更新日志
 
