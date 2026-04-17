@@ -20,11 +20,11 @@ setup(
     name="vools",
     version=version,
     author="Victor",
-    author_email="victor@example.com",
+    author_email="victortop921129@gmail.com",
     description="Python 函数式编程工具集",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/victor/vools",
+    url="https://github.com/vicTop-cw/vools",
     packages=find_packages(),
     include_package_data=True,
     package_data={
