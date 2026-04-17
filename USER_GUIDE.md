@@ -2,6 +2,11 @@
 
 本指南将帮助您快速上手 vools 库，了解其核心功能和使用方法。
 
+## 项目信息
+
+- **GitHub 仓库**：[https://github.com/vicTop-cw/vools](https://github.com/vicTop-cw/vools)
+- **联系邮箱**：victortop921129@gmail.com
+
 ## 目录
 
 - [安装](#安装)
@@ -310,11 +315,128 @@ print(all_config)
 config.validate()  # 检查必需的配置项
 ```
 
+### 自定义数据类型
+
+vools 提供了四个核心自定义数据类型，增强了 Python 原生类型的功能：
+
+#### 1. vicTools - 工具类
+
+vicTools 提供了各种实用的工具方法，包括日期处理、字符串处理、正则表达式操作等：
+
+```python
+from vools import vicTools
+
+# 日期处理
+date_seq = vicTools.get_date_seq(nums=7, date_type='day', fmt='yyyyMMdd')
+print(f"最近7天日期: {date_seq}")
+
+# 字符串处理
+trimmed = vicTools.trim("  hello world  ")
+print(f"修剪后: '{trimmed}'")
+
+# 正则表达式操作
+matches = vicTools.regexp_findall(r'\d+', 'abc123def456')
+print(f"匹配的数字: {matches}")
+
+# 生成随机字段名
+field_name = vicTools.generate_random_field_name()
+print(f"随机字段名: {field_name}")
+```
+
+#### 2. vicDate - 日期类
+
+vicDate 继承自 datetime，提供了更多日期处理方法：
+
+```python
+from vools import vicDate
+
+# 创建日期对象
+now = vicDate()
+print(f"当前日期: {now}")
+
+# 解析日期字符串
+date = vicDate('20230101', fmt='yyyyMMdd')
+print(f"解析的日期: {date}")
+
+# 获取指定周的日期
+week_date = date.get_week(num=1, weekday=1)  # 上周周一
+print(f"上周周一: {week_date}")
+
+# 获取指定月的日期
+month_date = date.get_month(num=1, last_day=True)  # 上月末
+print(f"上月末: {month_date}")
+
+# 日期运算
+tomorrow = now + 1
+print(f"明天: {tomorrow}")
+yesterday = now - 1
+print(f"昨天: {yesterday}")
+```
+
+#### 3. vicText - 文本类
+
+vicText 继承自 str，提供了更多文本处理方法：
+
+```python
+from vools import vicText
+
+# 创建文本对象
+txt = vicText("Hello, World!")
+print(f"原始文本: {txt}")
+
+# 文本操作
+upper_txt = txt.upper()
+print(f"大写: {upper_txt}")
+
+# 正则表达式操作
+replaced = txt.regexp_replace(r'World', 'vools')
+print(f"替换后: {replaced}")
+
+# 分割文本
+parts = txt.splitEx(',')
+print(f"分割后: {parts}")
+
+# 写入文件
+txt.write('output.txt')
+
+# 从文件读取
+read_txt = vicText.get_content_fromfile('output.txt')
+print(f"从文件读取: {read_txt}")
+```
+
+#### 4. vicList - 列表类
+
+vicList 继承自 Seq，提供了更多列表处理方法：
+
+```python
+from vools import vicList
+
+# 创建列表对象
+lst = vicList(1, 2, 3, 4, 5)
+print(f"原始列表: {lst}")
+
+# 列表操作
+slice_lst = lst.islice(1, 4)
+print(f"切片后: {slice_lst}")
+
+# 集合操作
+other_lst = vicList(3, 4, 5, 6, 7)
+intersection = lst & other_lst  # 交集
+print(f"交集: {intersection}")
+union = lst | other_lst  # 并集
+print(f"并集: {union}")
+
+# 唯一元素
+unique_lst = vicList(1, 2, 2, 3, 3, 3).unique
+print(f"唯一元素: {unique_lst}")
+```
+
 ## 高级用法
 
 ### 组合使用装饰器
 
 ```python
+import requests
 from vools import memorize, trd, retry
 
 # 组合装饰器
@@ -324,7 +446,6 @@ from vools import memorize, trd, retry
 
 def fetch_external_data(url):
     # 从外部 API 获取数据
-    import requests
     response = requests.get(url)
     response.raise_for_status()
     return response.json()
