@@ -21,7 +21,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries :: Python Modules",
-    "Topic :: Functional Programming",
 ]
 requires-python = ">=3.6"
 dependencies = [

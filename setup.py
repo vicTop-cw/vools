@@ -40,20 +40,19 @@ setup(
         "Operating System :: OS Independent",
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Libraries :: Python Modules",
-        "Topic :: Functional Programming",
     ],
     python_requires=">=3.6",
     install_requires=[
-        "wrapt==1.10.11",
+        "wrapt>=1.10.11",
         "pandas>=0.22.0",
         "numpy>=1.14.0",
     ],
     extras_require={
         "dev": [
-            "pytest==3.3.2",
+            "pytest>=3.3.2",
             "pytest-cov>=4.0.0",
             "black>=23.0.0",
-            "isort==4.2.15",
+            "isort>=4.2.15",
             "flake8>=6.0.0",
             "mypy>=1.0.0",
         ],
