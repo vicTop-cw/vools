@@ -1,537 +1,590 @@
 # vools 用户指南
 
-本指南将帮助您快速上手 vools 库，了解其核心功能和使用方法。
+本指南基于实际测试用例和模块代码，详细展示 vools 库的核心功能和使用方法。
 
 ## 项目信息
 
-- **当前版本**：v0.1.3
-- **GitHub 仓库**：[https://github.com/vicTop-cw/vools](https://github.com/vicTop-cw/vools)
-- **联系邮箱**：victortop921129@gmail.com
-- **PyPI 主页**：[https://pypi.org/project/vools/](https://pypi.org/project/vools/)
+- **当前版本**：v0.1.4
+- **GitHub 仓库**：<https://github.com/vicTop-cw/vools>
+- **联系邮箱**：<victortop921129@gmail.com>
+- **PyPI 主页**：<https://pypi.org/project/vools/>
 
 ## 目录
 
 - [安装](#安装)
 - [快速开始](#快速开始)
-- [核心功能](#核心功能)
-  - [装饰器](#装饰器)
-  - [函数式编程工具](#函数式编程工具)
-  - [数据处理工具](#数据处理工具)
-  - [配置管理](#配置管理)
-- [高级用法](#高级用法)
+- [占位符](#占位符)
+- [重载装饰器](#重载装饰器)
+- [stuff 函数](#stuff-函数)
+- [persist 函数](#persist-函数)
+- [核心类](#核心类)
 - [常见问题](#常见问题)
 
 ## 安装
 
-### 环境要求
+```bash
+# 从 PyPI 安装
+pip install vools==0.1.4
 
-- Python 3.6 或更高版本
-
-### 安装步骤
-
-1. **安装 vools**
-
-   ```bash
-   # 从 PyPI 安装
-   pip install vools
-
-   # 或从源码安装
-   git clone https://github.com/vicTop-cw/vools.git
-   cd vools
-   pip install -e .
-   ```
-
-2. **安装依赖**
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **配置设置**
-
-   vools 使用配置文件和环境变量来管理设置。您可以：
-
-   - **使用配置文件**：复制配置模板并填写相应的值
-     ```bash
-     cp vools/config.template.py vools/config.py
-     # 编辑 vools/config.py 文件
-     ```
-
-   - **使用环境变量**：设置环境变量来覆盖默认配置
-     ```bash
-     # 示例环境变量设置
-     # export CACHE_DURATION=300
-     ```
+# 或从源码安装
+git clone https://github.com/vicTop-cw/vools.git
+cd vools
+pip install -e .
+```
 
 ## 快速开始
 
-以下是一个简单的示例，展示了 vools 的核心功能：
-
 ```python
-from vools import memorize, Pipe, Ops, config
+from vools import _, _1, _2, overload, overcurry, stuff, persist, memoize
 
-# 使用缓存装饰器
-@memorize(duration=60)  # 缓存 60 秒
-def calculate(x):
-    print(f"计算 {x}...")
-    return x * 2
+# 使用占位符
+f = _ + 1
+print(f(2))  # 输出: 3
 
-# 第一次计算
-result1 = calculate(5)  # 输出: 计算 5...
-print(f"结果: {result1}")  # 输出: 结果: 10
+f = _1 + _2
+print(f(1, 2))  # 输出: 3
 
-# 第二次计算（使用缓存）
-result2 = calculate(5)  # 无输出，使用缓存
-print(f"结果: {result2}")  # 输出: 结果: 10
+# 使用重载
+@overload
+def process():
+    return "无参数"
 
-# 使用函数式编程工具
-numbers = range(10)
-result = numbers | Ops.filter(lambda x: x % 2 == 0) | Ops.map(lambda x: x * 2) | Ops.sum()
-print(f"偶数的两倍之和: {result}")  # 输出: 偶数的两倍之和: 40
+@process.register
+def process(x):
+    return f"一个参数: {x}"
 
-# 使用配置管理
-cache_duration = config.get('OTHER_CONFIG.cache_duration')
-print(f"默认缓存时间: {cache_duration} 秒")
-```
+print(process())     # 输出: 无参数
+print(process(10))   # 输出: 一个参数: 10
 
-## 核心功能
-
-### 装饰器
-
-vools 提供了多种实用的装饰器，简化常见的编程模式：
-
-#### 1. 缓存装饰器
-
-```python
-from vools import memorize, once
-
-# 缓存函数结果，指定缓存时间
-@memorize(duration=300)  # 缓存 5 分钟
-def get_data(user_id):
-    # 模拟耗时操作
-    return f"用户 {user_id} 的数据"
-
-# 函数只执行一次，后续调用返回缓存结果
-@once
-def initialize_app():
-    print("应用初始化...")
-    return "初始化完成"
-```
-
-#### 2. 控制流装饰器
-
-```python
-from vools import repeat, retry, rerun
-
-# 重复执行函数指定次数
-@repeat(cnt=3, delay=0.5)  # 执行 3 次，每次间隔 0.5 秒
-def send_notification(message):
-    print(f"发送通知: {message}")
-    return f"已发送: {message}"
-
-# 失败时自动重试
-@retry(times=3, delay=1)  # 最多重试 3 次，每次间隔 1 秒
-def fetch_data(url):
-    # 可能失败的网络请求
-    if random.random() < 0.5:
-        raise Exception("网络错误")
-    return "数据获取成功"
-
-# 定时重复执行
-@rerun(interval=5, times=10)  # 每 5 秒执行一次，共执行 10 次
-def check_status():
-    print(f"检查状态: {datetime.now()}")
-```
-
-#### 3. 并发装饰器
-
-```python
-from vools import trd, proc
-
-# 在新线程中执行
-@trd
-def heavy_computation():
-    # 耗时计算
-    return "计算完成"
-
-# 在新进程中执行
-@proc
-def cpu_intensive_task():
-    # CPU 密集型任务
-    return "任务完成"
-```
-
-#### 4. 函数式装饰器
-
-```python
-from vools import curry, delay_curry, overload
-
-# 柯里化装饰器
-@curry
+# 使用 stuff
+@stuff
 def add(a, b, c):
     return a + b + c
 
-# 使用方式
-add_5 = add(5)        # 返回一个接受 b 和 c 的函数
-add_5_10 = add_5(10)  # 返回一个接受 c 的函数
-result = add_5_10(15) # 返回 30
+result = add(1)(2)(3)()
+print(result)  # 输出: 6
 
-# 函数重载
+# 使用 persist
+@persist(filepath='cache.pkl')
+def expensive_computation(x):
+    return x ** 2
+
+result = expensive_computation(5)
+print(result)  # 输出: 25
+```
+
+## 占位符
+
+占位符提供了一种简洁的方式来创建匿名函数，特别适合函数式编程场景。
+
+### 基本用法
+
+```python
+from vools.functional.placeholder import _, _1, _2, _3, f, magic, hd
+
+# 基本运算符
+f = _ + 1
+assert f(2) == 3
+
+# 二元运算符
+f = _ + _
+assert f(1, 2) == 3
+
+# 索引占位符
+f = _1 + _2
+assert f(1, 2) == 3
+
+# 属性访问
+f = _.upper
+assert f("hello")() == "HELLO"
+
+# 索引访问
+f = _[0]
+assert f([1, 2, 3]) == 1
+
+# 复杂表达式
+f = _1 * (_2 + _3)
+assert f(2, 3, 4) == 14
+```
+
+### __expr__ 方法
+
+```python
+# 单行表达式
+f1 = _.__expr__("_ + 1")
+assert f1(2) == 3
+
+# 索引表达式
+f2 = _.__expr__("_1 + _2 * _3")
+assert f2(1, 2, 3) == 7
+```
+
+### f 函数
+
+```python
+def add(a, b):
+    return a + b
+
+# 使用 f 函数构造占位符表达式
+f1 = f(add, _, _)
+assert f1(1, 2) == 3
+```
+
+### magic 对象
+
+magic 对象提供了一系列魔法方法的快捷访问：
+
+```python
+# 使用 magic 方法
+result = magic.map([1, 2, 3], lambda x: x * 2)
+# 支持的方法包括：map, filter, reduce, fold, compose, pipe, curry 等
+```
+
+### 转换方法
+
+```python
+# 类型转换
+f = _.toString
+assert f(123) == "123"
+
+f = _.toInt
+assert f("123") == 123
+
+f = _.toList
+assert f(range(3)) == [0, 1, 2]
+```
+
+### 逻辑操作
+
+```python
+# 逻辑运算
+f = _.and_(_ > 0, _ < 10)
+assert f(5) == True
+
+f = _.or_(_ == 0, _ == 1)
+assert f(0) == True
+```
+
+## 重载装饰器
+
+vools 提供三种不同的重载装饰器实现，适用于不同场景。
+
+### 1. @overload - 基于参数数量的重载
+
+```python
+from vools import overload, strict
+
+# 基本用法
 @overload
-def process(x: int):
-    return f"处理整数: {x}"
+def process():
+    return "无参数"
 
-@overload
-def process(x: str):
-    return f"处理字符串: {x}"
+@process.register
+def process_x(x):
+    return f"一个参数: {x}"
 
-# 使用方式
-print(process(42))    # 输出: 处理整数: 42
-print(process("hello"))  # 输出: 处理字符串: hello
+@process.register
+def process_xy(x, y):
+    return f"两个参数: {x}, {y}"
+
+assert process() == "无参数"
+assert process(10) == "一个参数: 10"
+assert process(20, 30) == "两个参数: 20, 30"
+
+# 严格模式（类型检查）
+@overload(is_strict=True)
+def add(a: int, b: int):
+    return a + b
+
+@add.register
+def add_str(a: str, b: str):
+    return a + b
+
+assert add(1, 2) == 3
+assert add("a", "b") == "ab"
+
+# 优先级控制
+@overload(priority='first')
+def process():
+    return "主函数"
+
+@process.register(priority=1)
+def process_one(arg):
+    return f"优先级1: {arg}"
+
+@process.register(priority=10)
+def process_high(arg):
+    return f"高优先级: {arg}"
+
+assert process("hello") == "高优先级: hello"
+
+# 类方法重载
+class Processor:
+    def __init__(self, prefix):
+        self.prefix = prefix
+    
+    @overload(is_strict=True)
+    def process(self):
+        return f"{self.prefix}: 无参数"
+    
+    @process.register
+    def process_int(self, x: int):
+        return f"{self.prefix}: 整数({x})"
+    
+    @process.register
+    def process_str(self, x: str):
+        return f"{self.prefix}: 字符串({x})"
+
+proc = Processor("测试")
+assert proc.process() == "测试: 无参数"
+assert proc.process(10) == "测试: 整数(10)"
+assert proc.process("text") == "测试: 字符串(text)"
 ```
 
-### 函数式编程工具
-
-vools 提供了丰富的函数式编程工具，使代码更加简洁和表达力强：
-
-#### 1. Pipe 管道操作
+### 2. @overcurry - 柯里化与重载结合
 
 ```python
-from vools import Pipe
+from vools import overcurry
 
-# 创建管道
-result = range(10) | Pipe(lambda x: [i * 2 for i in x]) | Pipe(filter, lambda x: x > 10) | Pipe(list)
-print(result)  # 输出: [12, 14, 16, 18]
+# 基本用法
+@overcurry
+def add(a, b):
+    return a + b
 
-# 带参数的管道
-result = "hello" | Pipe(str.upper) | Pipe(str.split, "")
-print(result)  # 输出: ['H', 'E', 'L', 'L', 'O']
+@add.register
+def add_3(a, b, c):
+    return a + b + c
+
+@add.register
+def add_4(a, b, c, d):
+    return a + b + c + d
+
+# 柯里化调用
+assert add(1)(2) == 3
+assert add(1, 2, 3) == 6
+assert add(1, 2, 3, 4) == 10
+
+# 严格模式（类型检查）
+@overcurry(is_strict=True)
+def process(a: int, b: int):
+    return a + b
+
+@process.register
+def process_str(a: str, b: str):
+    return a + b
+
+assert process(1)(2) == 3
+assert process("hello")(" world") == "hello world"
 ```
 
-#### 2. Ops 操作符集合
+### 3. @overloads - 同名方法重载
 
 ```python
-from vools import Ops
+from vools import overloads
 
-# 链式操作
-numbers = range(1, 11)
+class Calculator:
+    @overloads
+    def compute(self, x: int):
+        return x * 2
+    
+    @overloads
+    def compute(self, x: str):
+        return len(x)
+    
+    @overloads
+    def compute(self, x: list):
+        return sum(x)
 
-# 过滤偶数，乘以 2，然后求和
-result = numbers | Ops.filter(lambda x: x % 2 == 0) | Ops.map(lambda x: x * 2) | Ops.sum()
-print(f"偶数的两倍之和: {result}")  # 输出: 偶数的两倍之和: 60
-
-# 其他操作
-result = numbers | Ops.max()
-print(f"最大值: {result}")  # 输出: 最大值: 10
-
-result = numbers | Ops.distinct() | Ops.as_list()
-print(f"去重后: {result}")  # 输出: 去重后: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+calc = Calculator()
+assert calc.compute(5) == 10
+assert calc.compute("hello") == 5
+assert calc.compute([1, 2, 3]) == 6
 ```
 
-#### 3. Seq 序列操作
+### 三种重载方式对比
+
+| 特性 | @overload | @overcurry | @overloads |
+|------|-----------|------------|------------|
+| 柯里化支持 | 否 | 是 | 否 |
+| 类型检查 | 支持 | 支持 | 支持 |
+| 优先级控制 | 支持 | 否 | 否 |
+| 类方法支持 | 是 | 是 | 是 |
+| 注册方式 | register | register | 同名方法 |
+
+## stuff 函数
+
+stuff 函数是一个强大的依赖注入装饰器，允许函数参数在运行时自动解析。
+
+### 基本用法
 
 ```python
-from vools import Seq
+from vools import stuff
 
-# 创建序列并进行操作
-result = Seq(range(10))\
-    .map(lambda x: x * 2)\
-    .filter(lambda x: x > 5)\
-    .map(lambda x: x + 1)\
-    .collect()
+@stuff
+def add(a, b, c):
+    return a + b + c
 
-print(result)  # 输出: [7, 9, 11, 13, 15, 17, 19]
+# 柯里化调用
+result = add(1)(2)(3)()
+assert result == 6
 
-# 链式操作
-result = Seq([1, 2, 3, 4, 5])\
-    .map(lambda x: x ** 2)\
-    .filter(lambda x: x > 10)\
-    .collect()
-
-print(result)  # 输出: [16, 25]
+# 批量参数
+result = add(1, 2, 3)()
+assert result == 6
 ```
 
-#### 4. P 可管道化函数
+### 参数依赖注入
 
 ```python
-from vools import P
+@stuff
+def multiply(a, b, c):
+    return a * b * c
 
-# 使用 P 包装函数
-result = [1, 2, 3, 4, 5] | P(sum)
-print(f"总和: {result}")  # 输出: 总和: 15
+@multiply.register
+def get_a():
+    return 2
 
-# 指定参数位置
-result = "hello" | P(str.replace, "h", "H", ix=1)
-print(result)  # 输出: Hello
+@multiply.register(param_name=['b', 'c'])
+def get_bc():
+    return 3, 4
 
-# 带多个参数
-result = [1, 2, 3] | P(max, 10, ix=1)  # 比较列表和 10
-print(result)  # 输出: 10
+# 自动注入参数
+result = multiply()
+assert result == 24
 ```
 
-### 数据处理工具
-
-vools 提供了数据处理工具，方便处理表格数据：
-
-#### 1. 序列操作
+### 高级用法
 
 ```python
-from vools import Seq
+@stuff
+def connect(host, port, timeout):
+    return f"连接到 {host}:{port}，超时 {timeout} 秒"
 
-# 创建序列并进行操作
-result = Seq(range(10))\
-    .map(lambda x: x * 2)\
-    .filter(lambda x: x > 5)\
-    .map(lambda x: x + 1)\
-    .collect()
+@connect.register
+def host():
+    return "localhost"
 
-print(result)  # 输出: [7, 9, 11, 13, 15, 17, 19]
+@connect.register(param_name='port')
+def get_port():
+    return 8080
 
-# 链式操作
-result = Seq([1, 2, 3, 4, 5])\
-    .map(lambda x: x ** 2)\
-    .filter(lambda x: x > 10)\
-    .collect()
+# 覆盖注入参数
+result = connect(timeout=30)
+assert result == "连接到 localhost:8080，超时 30 秒"
 
-print(result)  # 输出: [16, 25]
+# 部分注入
+result = connect(host="192.168.1.1")
+assert result == "连接到 192.168.1.1:8080，超时 None 秒"
 ```
 
-### 配置管理
+## persist 函数
 
-vools 提供了灵活的配置管理系统，支持从文件和环境变量加载配置：
+persist 函数提供持久化缓存功能，将函数结果保存到文件中。
+
+### 基本用法
 
 ```python
-from vools import config
+from vools import persist
 
-# 获取配置
-cache_duration = config.get('OTHER_CONFIG.cache_duration', 300)  # 默认值 300 秒
+@persist(filepath='data.pkl')
+def expensive_computation(x):
+    import time
+    time.sleep(1)  # 模拟耗时计算
+    return x ** 2
 
-# 设置配置
-config.set('OTHER_CONFIG.max_workers', 20)
+# 第一次执行，保存结果
+result = expensive_computation(5)  # 耗时约 1 秒
+assert result == 25
 
-# 获取所有配置
-all_config = config.get_all()
-print(all_config)
-
-# 验证配置
-config.validate()  # 检查必需的配置项
+# 第二次执行，从文件读取（跳过计算）
+result = expensive_computation(5)  # 几乎立即返回
+assert result == 25
 ```
 
-### 自定义数据类型
+### 参数说明
 
-vools 提供了四个核心自定义数据类型，增强了 Python 原生类型的功能：
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `filepath` | str | None | 持久化文件路径 |
+| `key` | callable | None | 自定义缓存键生成函数 |
+| `serialize` | callable | pickle.dump | 序列化函数 |
+| `deserialize` | callable | pickle.load | 反序列化函数 |
 
-#### 1. vicTools - 工具类
+### 高级用法
 
-vicTools 提供了各种实用的工具方法，包括日期处理、字符串处理、正则表达式操作等：
+```python
+# 自定义缓存键
+@persist(filepath='data.pkl', key=lambda args, kwargs: args[0])
+def process_user(user_id):
+    return f"用户 {user_id} 的数据"
+
+# 使用 JSON 序列化
+import json
+
+@persist(
+    filepath='data.json',
+    serialize=lambda obj, f: json.dump(obj, f, indent=2),
+    deserialize=lambda f: json.load(f)
+)
+def get_config():
+    return {"timeout": 30, "retries": 3}
+
+# 手动清除缓存
+@persist(filepath='cache.pkl')
+def fetch_data(url):
+    import requests
+    return requests.get(url).json()
+
+# 清除缓存
+fetch_data.clear_cache()
+```
+
+## 核心类
+
+vools 提供四个核心自定义数据类型：
+
+### vicTools
 
 ```python
 from vools import vicTools
 
 # 日期处理
 date_seq = vicTools.get_date_seq(nums=7, date_type='day', fmt='yyyyMMdd')
-print(f"最近7天日期: {date_seq}")
 
 # 字符串处理
 trimmed = vicTools.trim("  hello world  ")
-print(f"修剪后: '{trimmed}'")
 
 # 正则表达式操作
 matches = vicTools.regexp_findall(r'\d+', 'abc123def456')
-print(f"匹配的数字: {matches}")
 
 # 生成随机字段名
 field_name = vicTools.generate_random_field_name()
-print(f"随机字段名: {field_name}")
 ```
 
-#### 2. vicDate - 日期类
-
-vicDate 继承自 datetime，提供了更多日期处理方法：
+### vicDate
 
 ```python
 from vools import vicDate
 
 # 创建日期对象
 now = vicDate()
-print(f"当前日期: {now}")
 
 # 解析日期字符串
 date = vicDate('20230101', fmt='yyyyMMdd')
-print(f"解析的日期: {date}")
 
 # 获取指定周的日期
 week_date = date.get_week(num=1, weekday=1)  # 上周周一
-print(f"上周周一: {week_date}")
 
 # 获取指定月的日期
 month_date = date.get_month(num=1, last_day=True)  # 上月末
-print(f"上月末: {month_date}")
 
 # 日期运算
 tomorrow = now + 1
-print(f"明天: {tomorrow}")
 yesterday = now - 1
-print(f"昨天: {yesterday}")
 ```
 
-#### 3. vicText - 文本类
-
-vicText 继承自 str，提供了更多文本处理方法：
+### vicText
 
 ```python
 from vools import vicText
 
 # 创建文本对象
 txt = vicText("Hello, World!")
-print(f"原始文本: {txt}")
 
 # 文本操作
 upper_txt = txt.upper()
-print(f"大写: {upper_txt}")
 
 # 正则表达式操作
 replaced = txt.regexp_replace(r'World', 'vools')
-print(f"替换后: {replaced}")
 
 # 分割文本
 parts = txt.splitEx(',')
-print(f"分割后: {parts}")
 
 # 写入文件
 txt.write('output.txt')
 
 # 从文件读取
 read_txt = vicText.get_content_fromfile('output.txt')
-print(f"从文件读取: {read_txt}")
 ```
 
-#### 4. vicList - 列表类
-
-vicList 继承自 Seq，提供了更多列表处理方法：
+### vicList
 
 ```python
 from vools import vicList
 
 # 创建列表对象
-lst = vicList(1, 2, 3, 4, 5)
-print(f"原始列表: {lst}")
+lst = vicList([1, 2, 3, 4, 5])
 
 # 列表操作
 slice_lst = lst.islice(1, 4)
-print(f"切片后: {slice_lst}")
 
 # 集合操作
-other_lst = vicList(3, 4, 5, 6, 7)
+other_lst = vicList([3, 4, 5, 6, 7])
 intersection = lst & other_lst  # 交集
-print(f"交集: {intersection}")
 union = lst | other_lst  # 并集
-print(f"并集: {union}")
 
 # 唯一元素
 unique_lst = vicList(1, 2, 2, 3, 3, 3).unique
-print(f"唯一元素: {unique_lst}")
-```
 
-## 高级用法
-
-### 组合使用装饰器
-
-```python
-import requests
-from vools import memorize, trd, retry
-
-# 组合装饰器
-@memorize(duration=600)  # 缓存 10 分钟
-@trd  # 在新线程中执行
-@retry(times=3)  # 失败时重试
-
-def fetch_external_data(url):
-    # 从外部 API 获取数据
-    response = requests.get(url)
-    response.raise_for_status()
-    return response.json()
-```
-
-### 自定义配置源
-
-```python
-from vools import ConfigManager
-
-# 创建自定义配置管理器
-class CustomConfigManager(ConfigManager):
-    def _load_config(self):
-        # 从自定义源加载配置
-        super()._load_config()
-        # 添加额外的配置加载逻辑
-
-# 使用自定义配置管理器
-custom_config = CustomConfigManager()
-```
-
-### 扩展 Ops
-
-```python
-from vools.functional import Ops
-
-# 添加自定义操作
-@staticmethod
-@Pipe
-def custom_operation(it):
-    """自定义操作"""
-    return [x * 3 for x in it]
-
-# 添加到 Ops
-Ops.custom = custom_operation
-
-# 使用自定义操作
-result = range(5) | Ops.custom() | Ops.sum()
-print(result)  # 输出: 30
+# 映射和过滤
+result = lst.map(lambda x: x * 2).collect()
+result = lst.filter(lambda x: x > 2).collect()
 ```
 
 ## 常见问题
 
-### 1. 安装问题
+### 1. 占位符表达式报错
 
-**Q: 安装时出现依赖错误？**
-A: 确保使用 Python 3.6+ 版本，并按照 requirements.txt 安装所有依赖。
+**问题**：使用 `_` 占位符时出现语法错误
 
-### 2. 配置问题
+**解决方案**：确保使用正确的占位符语法：
+- 单参数场景使用 `_`
+- 多参数场景使用 `_1`, `_2`, `_3` 等
+- 复杂表达式使用 `__expr__` 方法
 
-**Q: 配置文件不生效？**
-A: 确保配置文件路径正确，并且环境变量优先级高于配置文件。
+### 2. 重载函数不匹配
 
-**Q: 敏感信息如何处理？**
-A: 使用环境变量存储敏感信息，避免在配置文件中硬编码密码等敏感数据。
+**问题**：调用重载函数时没有匹配到正确的实现
 
-### 3. 性能问题
+**解决方案**：
+- 检查参数数量是否匹配
+- 在严格模式下检查参数类型是否正确
+- 检查优先级设置是否正确
 
-**Q: 缓存装饰器导致内存占用过高？**
-A: 合理设置缓存时间和缓存大小，避免缓存过大的对象。
+### 3. stuff 依赖注入失败
 
-**Q: 并发装饰器导致资源消耗过高？**
-A: 控制并发数量，避免同时启动过多线程或进程。
+**问题**：参数没有被正确注入
 
-### 4. 其他问题
+**解决方案**：
+- 确保注册函数名与参数名匹配
+- 检查 `param_name` 参数是否正确设置
+- 未注入的参数会保持为 `None`
 
-**Q: 函数重载不生效？**
-A: 确保使用了正确的类型注解，并且函数签名不同。
+### 4. persist 缓存不生效
 
-**Q: 管道操作出错？**
-A: 确保管道中的函数接受正确的参数类型，并且返回值可以被下一个函数处理。
+**问题**：缓存文件没有被读取或写入
 
-## 故障排除
+**解决方案**：
+- 检查文件路径是否正确
+- 确保有文件写入权限
+- 检查缓存键生成函数是否正确
 
-1. **检查日志**：查看控制台输出的错误信息
-2. **验证配置**：运行 `config.validate()` 检查配置是否正确
-3. **测试基本功能**：运行 `python -m vools` 测试基本功能
-4. **查看文档**：参考本指南和 API 文档
-5. **提交问题**：如果问题持续存在，请在 GitHub 上提交 issue
+## 测试验证
 
-## 示例项目
+所有功能均通过测试验证：
 
-查看 `examples` 目录中的示例代码，了解如何在实际项目中使用 vools。
+```python
+# 运行测试
+python -m pytest tests/ -v
 
----
+# 测试文件列表
+# - tests/test_placeholder.py    # 占位符测试
+# - tests/test_stuff.py           # stuff 函数测试
+# - tests/test_decorators.py      # 装饰器测试
+# - tests/test_overcurry_vic.py   # overcurry 和 vic 类测试
+# - tests/test_curry_overload.py  # curry 和 overload 测试
+```
 
-希望本指南能帮助您快速上手 vools 库。如有任何问题，请参考文档或提交 issue。
+## 许可证
+
+vools 采用 Apache 2.0 许可证，详见 LICENSE 文件。

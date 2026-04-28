@@ -24,7 +24,6 @@ from .config import config, ConfigManager
 
 # 定义子包优先级（优先级高的会覆盖优先级低的）
 SUBPACKAGE_PRIORITIES = [
-    'shotcut',  # 最高优先级
     'vools',
     'functional',
     'decorators',
@@ -36,6 +35,27 @@ SUBPACKAGE_PRIORITIES = [
 
 # 存储导入的对象
 _imported_objects = {}
+
+# 从文件导入对象
+def _import_from_file(file_name):
+    """从单个文件导入对象"""
+    try:
+        # 导入文件模块
+        module = importlib.import_module(f'.{file_name}', package='vools')
+        
+        # 获取模块的所有公共对象
+        all_objects = [name for name in dir(module) if not name.startswith('_')]
+        
+        # 导入对象
+        for obj_name in all_objects:
+            if hasattr(module, obj_name):
+                obj = getattr(module, obj_name)
+                _imported_objects[obj_name] = {
+                    'object': obj,
+                    'package': file_name
+                }
+    except Exception:
+        pass
 
 # 获取所有子包
 def _get_subpackages():
@@ -69,8 +89,8 @@ def _import_from_subpackage(subpackage_name):
                 # 检查是否已有同名对象
                 if obj_name in _imported_objects:
                     # 优先级检查，保持高优先级的对象
-                    existing_priority = SUBPACKAGE_PRIORITIES.index(_imported_objects[obj_name]['package'])
-                    current_priority = SUBPACKAGE_PRIORITIES.index(subpackage_name)
+                    existing_priority = SUBPACKAGE_PRIORITIES.index(_imported_objects[obj_name]['package']) if _imported_objects[obj_name]['package'] in SUBPACKAGE_PRIORITIES else len(SUBPACKAGE_PRIORITIES)
+                    current_priority = SUBPACKAGE_PRIORITIES.index(subpackage_name) if subpackage_name in SUBPACKAGE_PRIORITIES else len(SUBPACKAGE_PRIORITIES)
                     
                     if current_priority < existing_priority:
                         # 当前包优先级更高，覆盖现有对象
@@ -87,6 +107,9 @@ def _import_from_subpackage(subpackage_name):
     except Exception:
         # 静默处理导入错误，避免干扰用户
         pass
+
+# 先导入 shotcut.py 文件（最高优先级）
+_import_from_file('shotcut')
 
 # 导入所有子包
 subpackages = _get_subpackages()

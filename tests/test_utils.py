@@ -8,7 +8,22 @@ import os
 # 添加父目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+before_dirs = set(dir())
+from vools import *
+after_dirs = set(dir())
+
+vools_dirs = after_dirs - before_dirs
+
+for d in vools_dirs:
+    t = eval(d)
+    if t is None:
+        print(f"failed: {d}")
+
+
+
 from vools.utils import stuff, identity, const, compose, pipe
+
+
 
 
 def test_basic_functions():

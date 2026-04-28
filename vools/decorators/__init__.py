@@ -28,7 +28,9 @@ from .overload import overload, OverloadManager, strict
 from .overcurry import overcurry, OvercurryManager
 
 # 选择器
-from .selector import Selector, Overloads, overloads
+from .selector import Selector, Overloads
+# 重载装饰器（从 overloads.py 导入，不是 selector.py）
+from .overloads import overloads
 
 # 柯里化函数
 from .curried import (
