@@ -179,3 +179,27 @@ def test_curry_decorator():
 
 
 test_curry_decorator()
+
+
+
+
+from vools import overloads
+
+class Calculator:
+    @overloads
+    def compute(self, x: int):
+        return x * 2
+    
+    @overloads
+    def compute(self, x: str):
+        return len(x)
+    
+    @overloads
+    def compute(self, x: list):
+        return sum(x)
+
+calc = Calculator()
+assert calc.compute(5) == 10
+assert calc.compute("hello") == 5
+assert calc.compute([1, 2, 3]) == 6
+
