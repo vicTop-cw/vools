@@ -42,6 +42,12 @@ class DateProcessor:
         """
         self.set_run_date(run_date)
     
+    def run(self,f=None,f_pre=None) -> Any:
+        f_pre = f_pre or str
+        f = f or print
+        return  f(f_pre(self))
+
+
     def set_run_date(self, run_date: Optional[str] = None):
         """
         设置基准日期
@@ -211,17 +217,20 @@ class DateProcessor:
         """
         # 计算目标年月
         year = base_date.year
-        month = base_date.month + months_offset
-        
-        # 调整年月
-        if month > 12:
-            year += (month - 1) // 12
-            month = (month - 1) % 12 + 1
-        elif month < 1:
-            year += (month - 12) // 12
-            month = (month - 1) % 12 + 1
+        month = base_date.month 
+        while months_offset < 0:
+            month -= 1
             if month == 0:
+                year -= 1
                 month = 12
+            months_offset += 1
+        while months_offset > 0:
+            month += 1
+            if month == 13:
+                year += 1
+                month = 1
+            months_offset -= 1
+
         
         # 获取该月的天数
         _, last_day = calendar.monthrange(year, month)
@@ -329,23 +338,18 @@ class DateProcessor:
         # 用单引号包裹，中文逗号分隔
         return ",".join([f"'{self._date_to_str(d, fmt_type)}'" for d in sorted_dates])
     
-    @lru_cache
+    # @lru_cache
     def get_single_date(self, expr: str) -> str:
         """
         获取单个日期
         
         Args:
             expr: 日期表达式，支持格式：
-                 - run_date: 基准日期（紧凑格式 yyyyMMdd）
-                 - run_date_std: 基准日期（标准格式 yyyy-MM-dd）
-                 - run_date+13: 基准日期往后13天（紧凑格式）
-                 - run_date_std-13: 基准日期往前13天（标准格式）
                  - run_week+3&3: 3周后的周三
                  - run_week-2&5: 2周前的周五
                  - run_month+3&13: 3个月后的13号
                  - run_month-3&1: 3个月前的1号
                  - 带_std后缀表示标准格式
-                 - 偏移量部分 ([+-]\\d+) 对 run_date 和 run_date_std 是可选的
                  
         Returns:
             str: 计算后的日期字符串
@@ -353,58 +357,58 @@ class DateProcessor:
         Raises:
             ValueError: 如果表达式格式不正确
         """
-        # 先尝试匹配 run_date 和 run_date_std 模式（偏移量可选）
-        # 模式: run_date(_std)?([+-]\d+)?
-        run_date_pattern = r'^run_date(_std)?([+-]\d+)?$'
-        run_date_match = re.match(run_date_pattern, expr)
-        
-        if run_date_match:
-            is_std = run_date_match.group(1)  # _std 或 None
-            offset_str = run_date_match.group(2)  # +13, -13 或 None
-            
-            # 确定格式类型
-            fmt_type = "standard" if is_std else "compact"
-            
-            # 解析偏移量（默认为0）
-            offset = int(offset_str) if offset_str else 0
-            
-            # 计算日期
-            date_obj = self.run_date + datetime.timedelta(days=offset)
-            return self._date_to_str(date_obj, fmt_type)
-        
-        # 单个日期变量模式（week/month，偏移量必填）
+        # 单个日期变量模式
         # 1. run_week+3&3
         # 2. run_month-2&15
         # 3. run_week_std+1&5
-        single_date_pattern = r'^run_(week|month)(_std)?([+-]\d+)(&(\d+))?$'
+        rs = self.get_all_date_variables().get(expr,None)
+        if rs :
+            return rs
+        single_date_pattern = r'^run_(date|day|week|month)(_begin|_end)?(_std)?([+-]\d+)(&(\d+))?$'
         
         match = re.match(single_date_pattern, expr)
         if not match:
             raise ValueError(f"无效的日期表达式格式: {expr}")
         
         var_type = match.group(1)  # week 或 month
-        is_std = match.group(2)  # _std 或 None
-        offset_str = match.group(3)  # +3, -2
-        day_str = match.group(5)  # 3, 13, 31 或 None
+        is_begin = match.group(2) # _begine |  _end 或 None
+        is_std = match.group(3)  # _std 或 None
+        offset_str = match.group(4)  # +3, -2
+        day_str = match.group(6)  # 3, 13, 31 或 None
         
         # 确定格式类型
         fmt_type = "standard" if is_std else "compact"
         
         # 解析偏移量
         offset = int(offset_str)
-        
-        if var_type == "week":
+        if var_type in ('date','day'):
+            return self._date_to_str(self.run_date + datetime.timedelta(days=offset),fmt_type)
+        elif var_type == "week":
             # 周计算
+            if is_begin is None:
+                pass
+            elif is_begin == "_begin":
+                day_str = 1
+            else:
+                day_str = 7
+
             target_weekday = int(day_str) if day_str else self.run_date.weekday() + 1
             date_obj = self._get_weekday_date(self.run_date, target_weekday, offset)
             return self._date_to_str(date_obj, fmt_type)
         else:  # month
             # 月计算
+            if is_begin is None:
+                pass
+            elif is_begin == "_begin":
+                day_str = 1
+            else:
+                day_str = 31
+
             target_day = int(day_str) if day_str else self.run_date.day
             date_obj = self._get_month_day_date(self.run_date, target_day, offset)
             return self._date_to_str(date_obj, fmt_type)
-    
-    @lru_cache
+
+    # @lru_cache
     def get_date_list(self, expr: str) -> str:
         """
         获取日期列表
@@ -546,6 +550,20 @@ class EnhancedDateFormatter:
         # 初始化上下文中的日期变量
         self._init_date_variables()
     
+    def __getattr__(self,name):
+        try:
+            return getattr(super(),name)
+        except:
+            if name =="run":
+                return lambda f=None,f_pre=None : DateProcessor.run(self,f,f_pre)
+            return getattr(self.date_processor,name)
+    @property
+    def next(self) -> 'EnhancedDateFormatter':
+        s = self.format()
+        if "{" in s and "}" in s:
+            return self.__class__(s,str(self.date_processor.run_date))
+        raise ValueError("No PalceHolder key in formatted result !!!")
+
     def _parse_placeholders(self) -> List[Dict[str, Any]]:
         """
         解析模板中的所有占位符
@@ -839,10 +857,16 @@ if __name__ == "__main__":
     formatter = EnhancedDateFormatter("""
 run_date: {run_date}
 run_date_std: {run_date_std}
-run_date-13: {run_date-13}
-run_date_std+13: {run_date_std+13}
-run_days_std<6: {run_days_std<6}
-run_days>16: {run_days>16}
+run_date-3: {run_date-3}
+run_date_std+3: {run_date_std+3}
+run_week_begin:{run_week_begin}
+run_week_end:{run_week_end}
+run_week_begin-3:{run_week_begin-3}
+run_week_end+3:{run_week_end+3}
+run_month_begin-3:{run_month_begin-3}
+run_month_end+3:{run_month_end+3}
+run_month_begin:{run_month_begin}
+run_month_end:{run_month_end}
 run_week+3&3: {run_week+3&3}
 run_week-3&5: {run_week-3&5}
 run_month+3&13: {run_month+3&13}
@@ -851,7 +875,13 @@ run_month-3&1: {run_month-3&1}
 run_month-3&31: {run_month-3&31}
 run_week_std+3&3: {run_week_std+3&3}
 run_month_std+2&31: {run_month_std+2&31}
-""", default_run_date='20260227')
+run_days<12:{run_days<12}
+run_weeks<12&7:{run_weeks<12&7}
+run_months<12&31:{run_months<12&31}
+run_days_std<12:{run_days_std<12}
+run_weeks_std<12&7:{run_weeks_std<12&7}
+run_months_std<12&31:{run_months_std<12&31}
+""", default_run_date='20260403')
 
     print(formatter.format())
     
@@ -919,7 +949,7 @@ run_month_std+2&31: {run_month_std+2&31}
     sql_template = """
 -- 近7天数据
 SELECT * FROM sales 
-WHERE ds >= '{run_date_std-6}'
+WHERE ds >= '{run_days_std<6}'
   AND ds <= '{run_date_std}'
   AND channel = '电商'
 
@@ -942,8 +972,15 @@ WHERE ds IN ({run_months_std<3&31})
     print("\n5. 获取剩余占位符:")
     print("-" * 40)
     
-    formatter5 = EnhancedDateFormatter("姓名: {name}, 年龄: {age}, 日期: {run_date_std}")
-    formatter5.set(name="张三", run_date='2024-01-01')
+    formatter5 = EnhancedDateFormatter("姓名: {name}, 年龄: {age}, 日期: {dt}")
+    formatter5.set(name="张三",age=23).set(dt="{run_date_std-33}").set(run_date='2024-01-01')
+    print(f"{formatter5.is_complete():}")
     print("格式化结果:", formatter5.format())
     print("剩余占位符:", formatter5.get_remaining_placeholders())
     print("是否完整:", formatter5.is_complete())
+
+    formatter5.next.run()
+
+
+    dt = DateProcessor().get_single_date("run_month_end")
+    print(dt)
