@@ -208,7 +208,7 @@ class SeqBase:
                         break
                     yield init_value
             return cls(g())
-    
+
 _yib = lambda x:isinstance(x, Iterable) and not isinstance(x, (str,bytes,bytearray))
 _identify = lambda x : x
 _compact = lambda x : x is not None
@@ -395,13 +395,13 @@ class Seq(SeqBase):
     
     def filter(self,*funcs):
         for m in funcs:
-            f = lambda x:NONE if x is NONE or not m(x) else x
+            f = lambda x:NONE if (x is NONE if not _NONE_is_None else x is None or x is NONE) or not m(x) else x
             self._add_op(f,True)
         return self
     
     def filterfalse(self,*funcs):
         for m in funcs:
-            f = lambda x:NONE if x is NONE or m(x) else x
+            f = lambda x:NONE if (x is NONE if not _NONE_is_None else x is None or x is NONE) or m(x) else x
             self._add_op(f,True)
         return self
     
@@ -463,22 +463,9 @@ class Seq(SeqBase):
         else:
             return reduce(func,self._evaluate(),init)
     def take_while(self,func):
-        # def gen():
-        #     for i in self._evaluate():
-        #         if func(i):
-        #             yield i
-        #         else:
-        #             break
-        # return   self.__class__(gen())
         return self.__class__(itertools.takewhile(func,self._evaluate()))
     
     def drop_while(self,func):
-        # def gen():
-        #     for i in self._evaluate():
-        #         if not func(i):
-        #             yield i
-        #             break
-        # return   self.__class__(gen()) 
         return self.__class__(itertools.dropwhile(func,self._evaluate()))
     def take(self,n,action=False):
         if action:
@@ -655,7 +642,7 @@ class Seq(SeqBase):
         setattr(self,func.__name__,_inner)
         
 
-def collect(xs,f,factory=Seq) :
+def collect(xs,f=None,factory=Seq) :
     """_summary_
 
     Args:
@@ -672,15 +659,17 @@ def collect(xs,f,factory=Seq) :
     Yields:
         R: the result of applying f to each element of xs that is not None and is greater than 3
     """
+    if f is None:
+        f = _identify
     if not callable(f):
         raise TypeError("f must be a callable")
     if not isinstance(xs,Iterable):
         raise TypeError("xs must be an iterable")
     def gen():
-        o = None if _NONE_is_None else NONE
+        lmd= lambda x : x is not NONE if not _NONE_is_None else x is not None and x is not NONE
         for x in xs:
             fx = f(x)
-            if fx is not o:
+            if lmd(fx):
                 yield fx
     return factory(gen()) if factory is not None else gen()
 
@@ -763,4 +752,3 @@ if __name__ == '__main__':
 
     # s = Seq(f()).take_while(_>3)
     # print(s.collect())
-

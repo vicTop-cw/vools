@@ -16,7 +16,7 @@ from vools.config import *
 from vools.datetime import *
 from vools.utils import *
 from vools.functional import *
-from vools.shotcut import *
+from vools.decorators import *
 print(vools.__all__)
 print(vools.functional.__all__)
 print(vools.oop.__all__)

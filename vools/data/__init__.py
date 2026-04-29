@@ -1,3 +1,3 @@
-from .seq import Seq, NONE
+from .seq import Seq, NONE,collect
 
-__all__ = ['Seq', 'NONE']
+__all__ = ['Seq', 'NONE','collect']
