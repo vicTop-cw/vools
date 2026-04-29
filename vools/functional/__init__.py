@@ -12,7 +12,7 @@
 # 由于这些文件相互依赖且较大，这里先创建一个简化版本
 # 完整版本需要从源文件迁移
 
-from typing import Callable, Any, Iterable
+from typing import Callable, Iterable
 from functools import reduce, wraps
 import itertools
 

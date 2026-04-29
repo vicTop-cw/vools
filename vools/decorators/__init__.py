@@ -16,6 +16,24 @@ from .lazy import lazy
 from .control import repeat, retry, rerun
 from .trd import trd, proc
 from .extend import extend
+from .shotcut import (
+    timeit,
+    safe,
+    throttle,
+    debounce,
+    singleton,
+    deprecated,
+    conditional,
+    with_context,
+    with_timeout,
+    validate,
+    rate_limit,
+    log_calls,
+    cache_with_ttl,
+    hybrid_method,
+    classproperty,
+    enumize,
+)
 
 # 柯里化装饰器
 from .curry_core import curry, Curried, CurryDescriptor, is_curried, CurryExecutionError
@@ -74,6 +92,24 @@ __all__ = [
     
     # 函数扩展
     'extend',
+    
+    # 快捷工具
+    'timeit',
+    'safe',
+    'throttle',
+    'debounce',
+    'singleton',
+    'deprecated',
+    'conditional',
+    'with_context',
+    'with_timeout',
+    'validate',
+    'rate_limit',
+    'log_calls',
+    'cache_with_ttl',
+    'hybrid_method',
+    'classproperty',
+    'enumize',
     
     # 柯里化
     'curry',

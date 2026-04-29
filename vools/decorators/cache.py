@@ -4,34 +4,163 @@
 包含：
 - memorize: 函数结果缓存装饰器
 - once: 单次执行装饰器（支持函数和类）
+- persist: 持久化缓存装饰器
 """
 
 import time
 import hashlib
 import pickle
-from functools import wraps
-from inspect import signature, isclass,getfile
-from typing import Callable, Any, Optional
-import json
 import os
+import json
+import re
+from functools import wraps
+from inspect import signature, isclass, getfile
+from typing import Callable, Any, Optional, Dict
+from collections import OrderedDict
 from ..config import config
 
-__all__ = ['memorize', 'once','persist']
+__all__ = ['memorize', 'once', 'persist']
 
-# ============================================================================
-# memorize - 函数结果缓存装饰器
-# ============================================================================
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
 
-_cache = {}
+try:
+    import msvcrt
+    HAS_MSVC = True
+except ImportError:
+    HAS_MSVC = False
 
-def _is_obsolete(entry: dict, duration: float) -> bool:
-    """检查缓存是否过期"""
-    return time.time() - entry['time'] > duration
+
+def sanitize_file_key(file_key: str) -> str:
+    """
+    安全清理文件名，防止路径遍历攻击
+    
+    Args:
+        file_key: 原始文件名
+    
+    Returns:
+        清理后的安全文件名
+    
+    Raises:
+        ValueError: 当文件名包含危险字符时
+    """
+    if not file_key:
+        raise ValueError("文件名不能为空")
+    
+    sanitized = re.sub(r'[\\/:\*\?"<>\|]', '_', file_key)
+    sanitized = sanitized.replace('..', '')
+    sanitized = re.sub(r'_+', '_', sanitized)
+    sanitized = sanitized.strip('_')
+    
+    if len(sanitized) > 255:
+        sanitized = sanitized[:255]
+    
+    if not sanitized:
+        raise ValueError("文件名清理后为空")
+    
+    return sanitized
+
+
+class FileLock:
+    """跨平台文件锁"""
+    
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        self.lock_file_path = f"{file_path}.lock"
+        self._lock_fd = None
+    
+    def acquire(self):
+        """获取锁"""
+        self._lock_fd = open(self.lock_file_path, 'w')
+        if HAS_FCNTL:
+            try:
+                fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_EX)
+            except Exception:
+                pass
+        elif HAS_MSVC:
+            try:
+                msvcrt.locking(self._lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+            except Exception:
+                pass
+    
+    def release(self):
+        """释放锁"""
+        if self._lock_fd:
+            if HAS_FCNTL:
+                try:
+                    fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_UN)
+                except Exception:
+                    pass
+            elif HAS_MSVC:
+                try:
+                    msvcrt.locking(self._lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
+            try:
+                self._lock_fd.close()
+            except Exception:
+                pass
+            self._lock_fd = None
+    
+    def __enter__(self):
+        self.acquire()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+
+class TimedCache:
+    """带过期时间和大小限制的缓存"""
+    
+    def __init__(self, max_size: int = 1000):
+        self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._max_size = max_size
+    
+    def _is_obsolete(self, entry: Dict[str, Any], duration: float) -> bool:
+        """检查缓存是否过期"""
+        return time.time() - entry['time'] > duration
+    
+    def get(self, key: str, duration: float) -> Optional[Any]:
+        """获取缓存值"""
+        if key in self._cache:
+            entry = self._cache[key]
+            if not self._is_obsolete(entry, duration):
+                self._cache.move_to_end(key)
+                return entry['result']
+            del self._cache[key]
+        return None
+    
+    def set(self, key: str, result: Any):
+        """设置缓存值"""
+        if len(self._cache) >= self._max_size:
+            self._cache.popitem(last=False)
+        
+        self._cache[key] = {
+            'result': result,
+            'time': time.time()
+        }
+    
+    def clear(self):
+        """清空缓存"""
+        self._cache.clear()
+    
+    def __len__(self):
+        """返回缓存条目数"""
+        return len(self._cache)
+
+
+_CACHE = TimedCache(max_size=1000)
+
 
 def _compute_key(func: Callable, args: tuple, kwargs: dict) -> str:
     """计算缓存键"""
     key = pickle.dumps((func.__name__, args, kwargs))
     return hashlib.sha256(key).hexdigest()
+
 
 def memorize(func: Callable = None, duration: float = 3) -> Callable:
     """
@@ -62,10 +191,14 @@ def memorize(func: Callable = None, duration: float = 3) -> Callable:
     def wrapper(func):
         def _wrapper(*args, **kwargs):
             key = _compute_key(func, args, kwargs)
-            if key in _cache and not _is_obsolete(_cache[key], duration):
-                return _cache[key]['result']
+            
+            cached_result = _CACHE.get(key, duration)
+            if cached_result is not None:
+                return cached_result
+            
             result = func(*args, **kwargs)
-            _cache[key] = {'result': result, 'time': time.time()}
+            _CACHE.set(key, result)
+            
             return result
         return _wrapper
     
@@ -73,10 +206,6 @@ def memorize(func: Callable = None, duration: float = 3) -> Callable:
         return wrapper(func)
     return wrapper
 
-
-# ============================================================================
-# once - 单次执行装饰器，支持强制刷新，引擎重启缓存失效
-# ============================================================================
 
 class _OnceWrapper:
     """单次执行函数包装器"""
@@ -151,7 +280,6 @@ def once(obj: Any) -> Any:
         >>> s2 = Singleton(2)
         >>> assert s1 is s2  # 同一个实例
     """
-    # 处理类装饰
     if isclass(obj):
         class Singleton(obj):
             _instance = None
@@ -167,23 +295,14 @@ def once(obj: Any) -> Any:
                     super().__init__(*args, **kwargs)
                     self._initialized = True
         
-        # 复制原始类的属性
         Singleton.__name__ = obj.__name__
         Singleton.__qualname__ = obj.__qualname__
         Singleton.__doc__ = obj.__doc__
         Singleton.__module__ = obj.__module__
         return Singleton
     
-    # 处理函数装饰
     return _OnceWrapper(obj)
 
-
-
-
-
-# ============================================================================
-# persist - 函数结果缓存到磁盘装饰器，支持强制刷新，引擎重启缓存有效
-# ============================================================================
 
 def _default_force_when_by_day(result: Any, start: float, end: float) -> bool:
     """
@@ -195,10 +314,10 @@ def _default_force_when_by_day(result: Any, start: float, end: float) -> bool:
     p = f(start) == f(end) == datetime.datetime.today().date()
     return not p
 
-_DEFAULT_FORCE_WHEN = config.other['default_force_when'] # 默认不强制刷新
-# _DEFAULT_FORCE_WHEN = _default_force_when_by_day # 默认同一天内只跑一次
-# _DEFAULT_FORCE_WHEN = lambda result,start, end: time.time() - end > 5 and result > 25 # 默认5秒内温度高于25度强制刷新
-_DEFAULT_TARGET_FOLDER = config.other['default_target_folder'] # 默认缓存目录，与被装饰函数所在文件同级的 __persist__ 目录，可以直接修订
+
+_DEFAULT_FORCE_WHEN = config.other['default_force_when']
+_DEFAULT_TARGET_FOLDER = config.other['default_target_folder']
+
 
 def persist(func: Callable) -> Callable:
     """
@@ -219,7 +338,6 @@ def persist(func: Callable) -> Callable:
     """
     @wraps(func)
     def wrapper(*args, **kwargs):
-        # 提取装饰器注入的特殊参数，并从 kwargs 中移除，避免传给原函数
         file_key = kwargs.pop('file_key', None)
         force = kwargs.pop('force', False)
         force_when = kwargs.pop('force_when', _DEFAULT_FORCE_WHEN)
@@ -227,51 +345,44 @@ def persist(func: Callable) -> Callable:
 
         if file_key is None:
             file_key = func.__name__
+        else:
+            file_key = sanitize_file_key(file_key)
 
-        # 确定缓存文件路径
         if target_folder:
-            # 使用指定的缓存目录
             cache_dir = target_folder
         else:
-            # 默认与被装饰函数所在文件同级的 __persist__ 目录
             func_file = getfile(func)
             cache_dir = os.path.join(os.path.dirname(func_file), "__persist__")
         os.makedirs(cache_dir, exist_ok=True)
         cache_path = os.path.join(cache_dir, f"{file_key}.json")
 
-        # 判断是否需要强制刷新（缓存文件存在且未损坏时才检查 force_when）
+        cache_data = None
         need_refresh = force
+        
         if not need_refresh and os.path.exists(cache_path):
-            try:
-                with open(cache_path, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-                result = cache_data.get('result')
-                start_time = cache_data.get('start_time')
-                end_time = cache_data.get('end_time')
-                if force_when is not None and start_time is not None and end_time is not None:
-                    if force_when(result, start_time, end_time):
-                        need_refresh = True
-            except Exception:
-                # 缓存损坏，视为需要刷新
-                need_refresh = True
+            with FileLock(cache_path):
+                try:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                
+                    result = cache_data.get('result')
+                    start_time = cache_data.get('start_time')
+                    end_time = cache_data.get('end_time')
+                    
+                    if force_when is not None and start_time is not None and end_time is not None:
+                        if force_when(result, start_time, end_time):
+                            need_refresh = True
+                except Exception:
+                    need_refresh = True
+                    cache_data = None
 
-        # 如果不需要刷新且缓存文件存在，直接读取并返回
-        if not need_refresh and os.path.exists(cache_path):
-            try:
-                with open(cache_path, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-                result = cache_data['result']
-                return result
-            except Exception:
-                # 读取失败时，继续执行原函数（相当于 force=True）
-                pass
-
-        # 执行原函数，记录起止时间
+        if not need_refresh and cache_data is not None:
+            return cache_data['result']
+        
         start_time = time.time()
         result = func(*args, **kwargs)
         end_time = time.time()
 
-        # 确保结果可 JSON 序列化
         try:
             json.dumps(result)
         except (TypeError, ValueError) as e:
@@ -280,28 +391,21 @@ def persist(func: Callable) -> Callable:
                 f"Please ensure the return value is a basic JSON type. Error: {e}"
             )
 
-        # 写入缓存文件
-        cache_data = {
-            'result': result,
-            'start_time': start_time,
-            'end_time': end_time,
-        }
-        with open(cache_path, 'w', encoding='utf-8') as f:
-            json.dump(cache_data, f, ensure_ascii=False, indent=2)
-
+        with FileLock(cache_path):
+            cache_data = {
+                'result': result,
+                'start_time': start_time,
+                'end_time': end_time,
+            }
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, ensure_ascii=False, indent=2)
 
         return result
 
     return wrapper
 
 
-
-# ============================================================================
-# 测试代码
-# ============================================================================
-
 if __name__ == '__main__':
-    # 测试 memorize
     print("=== 测试 memorize ===")
     
     @memorize
@@ -321,7 +425,6 @@ if __name__ == '__main__':
         print(f"调用 {i}: {test_func2()}")
         time.sleep(0.5)
     
-    # 测试 once
     print("\n=== 测试 once ===")
     
     @once
@@ -344,37 +447,24 @@ if __name__ == '__main__':
     print(f"s1.value: {s1.value}, s2.value: {s2.value}")
     print(f"s1 is s2: {s1 is s2}")
     
-
-
-
-
-
-    # 测试 persist
     print("\n=== 测试 persist ===")
-
 
     @persist
     def fetch_weather(city: str, api_key: str = "default"):
-        """模拟一个耗时的 API 请求，返回温度（基本类型）"""
         import random
         print(f"[执行] 正在获取 {city} 的天气...")
-        # 模拟耗时
         time.sleep(1)
         return random.randint(20, 30)
 
-    # 第一次调用 —— 会实际执行
     temp = fetch_weather("Beijing", file_key="weather_beijing")
     print(temp)
 
-    # 第二次调用 —— 直接返回缓存
     temp = fetch_weather("Beijing", file_key="weather_beijing")
     print(temp)
 
-    # 强制刷新
     temp = fetch_weather("Beijing", file_key="weather_beijing", force=True)
     print(temp)
 
-    # 使用 force_when：如果距离上次执行结束超过 5 秒则刷新 且 温度高于 25 度
     for i in range(20):
         temp = fetch_weather(
             "Beijing",
@@ -384,40 +474,33 @@ if __name__ == '__main__':
         print(temp)
         time.sleep(1)
     
-    # 测试 persist 指定缓存目录
     print("\n=== 测试 persist 指定缓存目录 ===")
     
     import tempfile
     import shutil
     
-    # 创建临时目录作为缓存目录
     temp_dir = tempfile.mkdtemp()
     print(f"临时缓存目录: {temp_dir}")
     
     @persist
     def fetch_data(city: str):
-        """模拟获取数据"""
         import random
         print(f"[执行] 正在获取 {city} 的数据...")
         time.sleep(0.5)
         return random.randint(100, 200)
     
-    # 第一次调用 —— 会实际执行，使用指定的缓存目录
     data = fetch_data("Shanghai", file_key="data_shanghai", target_folder=temp_dir)
     print(data)
     
-    # 验证缓存文件是否存在于指定目录
     expected_cache_path = os.path.join(temp_dir, "data_shanghai.json")
     if os.path.exists(expected_cache_path):
         print(f"✓ 缓存文件已正确保存到指定目录: {expected_cache_path}")
     else:
         print(f"✗ 缓存文件未保存到指定目录")
     
-    # 第二次调用 —— 直接返回缓存
     data = fetch_data("Shanghai", file_key="data_shanghai", target_folder=temp_dir)
     print(data)
     
-    # 清理临时目录
     shutil.rmtree(temp_dir)
     print(f"✓ 临时目录已清理: {temp_dir}")
 

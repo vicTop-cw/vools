@@ -1,193 +1,216 @@
 """
 vools - Python 函数式编程工具集
 
-一个强大的 Python 函数式编程工具集，提供装饰器、函数式编程工具、数据处理工具等。"""
+一个强大的 Python 函数式编程工具集，提供装饰器、函数式编程工具、数据处理工具等。
+"""
 
 import importlib
-import os
-import pkgutil
+from typing import Any
 
-# ============================================================================
-# 版本信息
-# ============================================================================
-
-__version__ = "1.0.5"
+__version__ = "0.1.6"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
 # ============================================================================
-# 导入子模块
+# Core 模块 - 基础类、异常和配置
 # ============================================================================
 
-# 配置管理
-from .config import config, ConfigManager
+from .core import (
+    VoolsBase,
+    VoolsError,
+    SafeEvalError,
+    ConfigurationError,
+    CacheError,
+    ValidationError,
+    ImportError,
+    ConfigManager,
+    DatabaseConfig,
+    CacheConfig,
+    AppConfig,
+)
 
-# 定义子包优先级（优先级高的会覆盖优先级低的）
-SUBPACKAGE_PRIORITIES = [
-    'vools',
-    'functional',
-    'decorators',
-    'utils',
-    'oop',
-    'data',
-    'datetime',  # 最低优先级
-]
+# ============================================================================
+# 装饰器（常用）
+# ============================================================================
 
-# 存储导入的对象
-_imported_objects = {}
+from .decorators import (
+    memorize, once, persist,
+    lazy, repeat, retry, rerun,
+    overload, overcurry, overloads,
+    curry
+)
 
-# 从文件导入对象
-def _import_from_file(file_name):
-    """从单个文件导入对象"""
-    try:
-        # 导入文件模块
-        module = importlib.import_module(f'.{file_name}', package='vools')
-        
-        # 获取模块的所有公共对象
-        all_objects = [name for name in dir(module) if not name.startswith('_')]
-        
-        # 导入对象
-        for obj_name in all_objects:
-            if hasattr(module, obj_name):
-                obj = getattr(module, obj_name)
-                _imported_objects[obj_name] = {
-                    'object': obj,
-                    'package': file_name
-                }
-    except Exception:
-        pass
+# ============================================================================
+# 函数式编程工具（常用）
+# ============================================================================
 
-# 获取所有子包
-def _get_subpackages():
-    """获取所有子包"""
-    subpackages = []
-    package_path = os.path.dirname(__file__)
-    for _, name, is_pkg in pkgutil.iter_modules([package_path]):
-        if is_pkg and name not in ['__pycache__']:
-            subpackages.append(name)
-    return subpackages
+from .functional import (
+    _, _1, _2, _3, g, iif,
+    ConditionBuilder, LazyProperty,
+    Box, box, setattr_box
+)
 
-# 从子包导入对象
-def _import_from_subpackage(subpackage_name):
-    """从子包导入对象"""
-    try:
-        # 导入子包
-        subpackage = importlib.import_module(f'.{subpackage_name}', package='vools')
-
-        # 获取子包的 __all__ 列表
-        if hasattr(subpackage, '__all__'):
-            all_objects = subpackage.__all__
-        else:
-            # 如果没有 __all__，则导入所有非下划线开头的对象
-            all_objects = [name for name in dir(subpackage) if not name.startswith('_')]
-
-        # 导入对象
-        for obj_name in all_objects:
-            if hasattr(subpackage, obj_name):
-                obj = getattr(subpackage, obj_name)
-
-                # 检查是否已有同名对象
-                if obj_name in _imported_objects:
-                    # 优先级检查，保持高优先级的对象
-                    existing_priority = SUBPACKAGE_PRIORITIES.index(_imported_objects[obj_name]['package']) if _imported_objects[obj_name]['package'] in SUBPACKAGE_PRIORITIES else len(SUBPACKAGE_PRIORITIES)
-                    current_priority = SUBPACKAGE_PRIORITIES.index(subpackage_name) if subpackage_name in SUBPACKAGE_PRIORITIES else len(SUBPACKAGE_PRIORITIES)
-                    
-                    if current_priority < existing_priority:
-                        # 当前包优先级更高，覆盖现有对象
-                        _imported_objects[obj_name] = {
-                            'object': obj,
-                            'package': subpackage_name
-                        }
-                else:
-                    # 新对象，直接导入
-                    _imported_objects[obj_name] = {
-                        'object': obj,
-                        'package': subpackage_name
-                    }
-    except Exception:
-        # 静默处理导入错误，避免干扰用户
-        pass
-
-# 先导入 shotcut.py 文件（最高优先级）
-_import_from_file('shotcut')
-
-# 导入所有子包
-subpackages = _get_subpackages()
-for subpackage in SUBPACKAGE_PRIORITIES:
-    if subpackage in subpackages:
-        _import_from_subpackage(subpackage)
-
-# 将导入的对象添加到模块命名空间
-for obj_name, info in _imported_objects.items():
-    globals()[obj_name] = info['object']
-
-# 特殊处理：导入 config 和 ConfigManager
-globals()['config'] = config
-globals()['ConfigManager'] = ConfigManager
-
-# 特殊处理：导入 curry_overloads
-try:
-    from .oop import overloads as curry_overloads
-    globals()['curry_overloads'] = curry_overloads
-except ImportError:
-    pass
-
-# 可选导入
+# ============================================================================
 # 数据处理工具
-try:
-    from . import data
-    DATA_AVAILABLE = True
-    globals()['data'] = data
-except Exception:
-    DATA_AVAILABLE = False
+# ============================================================================
 
-# OOP 工具
-try:
-    from . import oop
-    OOP_AVAILABLE = True
-    globals()['oop'] = oop
-except ImportError:
-    OOP_AVAILABLE = False
-
-# 自定义数据类型
-try:
-    from .vools import (
-        vicTools,
-        vicDate,
-        vicText,
-        vicList,
-    )
-    VIC_AVAILABLE = True
-    globals()['vicTools'] = vicTools
-    globals()['vicDate'] = vicDate
-    globals()['vicText'] = vicText
-    globals()['vicList'] = vicList
-except Exception:
-    VIC_AVAILABLE = False
-
-# 日期时间工具
-try:
-    from . import datetime
-    DATETIME_AVAILABLE = True
-    globals()['datetime'] = datetime
-except ImportError:
-    DATETIME_AVAILABLE = False
+from .data import Seq
 
 # ============================================================================
-# 公共 API
+# 日期时间工具（常用）
 # ============================================================================
+
+from .datetime import (
+    vDate, get_week, get_month,
+    days_gap, weeks_gap, months_gap,
+    get_recently_months, get_recently_days,
+    get_dates, parse_date_string,
+    get_date_range, simplify_date_ranges,
+)
+
+# ============================================================================
+# 通用工具（常用）
+# ============================================================================
+
+from .utils import stuff, Stuff
+
+# ============================================================================
+# 安全模块
+# ============================================================================
+
+from .security import safe_eval
+from .core import SafeEvalError as _SafeEvalError
+
+# ============================================================================
+# Vic 工具类 (延迟导入避免循环依赖)
+# ============================================================================
+
+_vic_loaded = False
+_vic_classes = {}
+
+
+def _load_vic():
+    """延迟加载 vic 类"""
+    global _vic_loaded, _vic_classes
+    if not _vic_loaded:
+        from . import vools as _vools_module
+        _vic_classes = {
+            'vicTools': _vools_module.vicTools,
+            'vicDate': _vools_module.vicDate,
+            'vicText': _vools_module.vicText,
+            'vicList': _vools_module.vicList,
+        }
+        _vic_loaded = True
+
+
+# ============================================================================
+# 延迟加载映射
+# ============================================================================
+
+_lazy_modules = {
+    'trd': '.decorators',
+    'proc': '.decorators',
+    'extend': '.decorators',
+    'smart_partial': '.decorators',
+    'delay_curry': '.decorators',
+
+    'Pipe': '.functional',
+    'Ops': '.functional',
+    'P': '.functional',
+    'NONE': '.functional',
+    'arrow_func': '.functional',
+
+    'stuff': '.utils',
+    'Stuff': '.utils',
+    'IndexedDict': '.utils',
+    'identity': '.utils',
+    'const': '.utils',
+    'compose': '.utils',
+    'pipe': '.utils',
+
+    'shotcut': '.decorators',
+    'shotcutEx': '.decorators',
+    'hoder': '.utils',
+    'Hoder': '.utils',
+    'timeit': '.decorators',
+    'asyncify': '.decorators',
+    'safe': '.decorators',
+    'throttle': '.decorators',
+    'debounce': '.decorators',
+    'singleton': '.decorators',
+    'deprecated': '.decorators',
+    'conditional': '.decorators',
+    'with_context': '.decorators',
+    'with_timeout': '.decorators',
+    'validate': '.decorators',
+    'rate_limit': '.decorators',
+    'log_calls': '.decorators',
+    'cache_with_ttl': '.decorators',
+    'hybrid_method': '.decorators',
+    'classproperty': '.decorators',
+    'enumize': '.decorators',
+
+    'Selector': '.oop',
+    'Mixer': '.oop',
+    'mixer': '.oop',
+    'oop': '.oop',
+
+    'vicTools': '.vic',
+    'vicDate': '.vic',
+    'vicText': '.vic',
+    'vicList': '.vic',
+
+    'datetime': '.datetime',
+}
+
+DATA_AVAILABLE = True
+OOP_AVAILABLE = True
+DATETIME_AVAILABLE = True
+VIC_AVAILABLE = True
+
+
+def __getattr__(name: str) -> Any:
+    """延迟加载模块"""
+    if name in ('vicTools', 'vicDate', 'vicText', 'vicList'):
+        _load_vic()
+        return _vic_classes.get(name)
+
+    if name in _lazy_modules:
+        module_path = _lazy_modules[name]
+        try:
+            module = importlib.import_module(module_path, package='vools')
+            if hasattr(module, name):
+                return getattr(module, name)
+            for submodule_name in dir(module):
+                if not submodule_name.startswith('_'):
+                    try:
+                        submodule = importlib.import_module(f'{module_path}.{submodule_name}', package='vools')
+                        if hasattr(submodule, name):
+                            return getattr(submodule, name)
+                    except ImportError:
+                        continue
+        except ImportError:
+            pass
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
 
 __all__ = [
-    # 版本信息
     '__version__',
     '__author__',
     '__license__',
 
-    # 配置管理
-    'config',
+    'VoolsBase',
+    'VoolsError',
+    'SafeEvalError',
+    'ConfigurationError',
+    'CacheError',
+    'ValidationError',
+    'ImportError',
     'ConfigManager',
+    'DatabaseConfig',
+    'CacheConfig',
+    'AppConfig',
 
-    # 装饰器
     'memorize',
     'once',
     'persist',
@@ -204,7 +227,6 @@ __all__ = [
     'overcurry',
     'overloads',
 
-    # 函数式编程工具
     'Pipe',
     'Ops',
     'Seq',
@@ -219,8 +241,10 @@ __all__ = [
     '_1',
     '_2',
     '_3',
+    'Box',
+    'box',
+    'setattr_box',
 
-    # 通用工具
     'stuff',
     'Stuff',
     'IndexedDict',
@@ -229,7 +253,6 @@ __all__ = [
     'compose',
     'pipe',
 
-    # 快捷工具
     'shotcut',
     'shotcutEx',
     'hoder',
@@ -252,55 +275,60 @@ __all__ = [
     'classproperty',
     'enumize',
 
-    # 面向对象工具
     'Selector',
     'Mixer',
     'mixer',
+    'oop',
+    'OOP_AVAILABLE',
 
-    # 自定义数据类型
     'vicTools',
     'vicDate',
     'vicText',
     'vicList',
 
+    'vDate',
+    'get_week',
+    'get_month',
+    'days_gap',
+    'weeks_gap',
+    'months_gap',
+    'get_recently_months',
+    'get_recently_days',
+    'get_dates',
+    'parse_date_string',
+    'get_date_range',
+    'simplify_date_ranges',
 
-    # 数据处理工具
     'data',
     'DATA_AVAILABLE',
 
-    # OOP 工具
-    'oop',
-    'OOP_AVAILABLE',
-    'curry_overloads',
-
-    # 日期时间工具
     'datetime',
     'DATETIME_AVAILABLE',
 
+    'safe_eval',
 ]
 
-# 确保 __all__ 中的所有名称都在模块命名空间中
+_common_names = [
+    'VoolsBase', 'VoolsError', 'SafeEvalError', 'ConfigurationError',
+    'CacheError', 'ValidationError', 'ImportError',
+    'ConfigManager', 'DatabaseConfig', 'CacheConfig', 'AppConfig',
+    'config', 'ConfigManager',
+    'memorize', 'once', 'persist', 'lazy', 'repeat', 'retry', 'rerun',
+    'overload', 'overcurry', 'overloads',
+    '_', '_1', '_2', '_3', 'g', 'iif', 'ConditionBuilder', 'LazyProperty',
+    'Box', 'box', 'Seq',
+    'safe_eval',
+    'vicTools', 'vicDate', 'vicText', 'vicList',
+]
+
 for name in __all__:
-    if name not in globals() and not name.startswith('__'):
+    if name not in globals() and name not in _common_names and not name.startswith('__'):
         globals()[name] = None
 
-# ============================================================================
-# 便捷导入
-# ============================================================================
-
-# 所有主要功能已通过 __all__ 导出
-
-
-# ============================================================================
-# 测试代码
-# ============================================================================
 
 if __name__ == '__main__':
     print(f"vools version: {__version__}")
-    print(f"Available exports: {__all__}")
-
-    # 测试装饰器
-    print("\n=== 测试 memorize ===")
+    print(f"Available exports: {len(__all__)} items")
 
     @memorize(duration=5)
     def expensive_function(x):
@@ -309,7 +337,6 @@ if __name__ == '__main__':
     print(f"expensive_function(5) = {expensive_function(5)}")
     print(f"expensive_function(5) = {expensive_function(5)} (cached)")
 
-    # 测试 once
     print("\n=== 测试 once ===")
 
     @once
@@ -320,26 +347,14 @@ if __name__ == '__main__':
     print(f"initialize() = {initialize()}")
     print(f"initialize() = {initialize()} (cached)")
 
-    # 测试函数式编程工具
-    print("\n=== 测试 Ops ===")
+    print("\n=== 测试 iif ===")
 
-    result = range(10) | Ops.filter(lambda x: x % 2 == 0) | Ops.map(lambda x: x * 2) | Ops.sum()
-    print(f"range(10) | filter(x % 2 == 0) | map(x * 2) | sum() = {result}")
+    result = iif(True, "yes", "no")
+    print(f"iif(True, 'yes', 'no') = {result}")
 
-    # 测试 Seq
-    print("\n=== 测试 Seq ===")
+    print("\n=== 测试 g ===")
 
-    result = Seq(range(10)).map(lambda x: x * 2).filter(lambda x: x > 5).collect()
-    print(f"Seq(range(10)).map(x * 2).filter(x > 5).collect() = {result}")
-
-    # 测试 repeat
-    print("\n=== 测试 repeat ===")
-
-    @repeat(cnt=3, delay=0.1)
-    def hello(name):
-        return f"Hello, {name}!"
-
-    for i, result in enumerate(hello("World")):
-        print(f"调用 {i+1}: {result}")
+    f = g("x, y => x + y")
+    print(f"g('x, y => x + y')(3, 4) = {f(3, 4)}")
 
     print("\n所有测试通过!")

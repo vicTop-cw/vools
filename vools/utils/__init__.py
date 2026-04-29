@@ -7,11 +7,12 @@
 - const: 常量函数
 - compose: 函数组合
 - pipe: 函数管道
+- Hoder: 对象持有者，用于延迟加载和管理对象
 """
 
 from typing import Any, Callable
 
-__all__ = ['stuff', 'identity', 'const', 'compose', 'pipe']
+__all__ = ['stuff', 'identity', 'const', 'compose', 'pipe', 'Hoder']
 
 
 # ============================================================================
@@ -67,5 +68,6 @@ def pipe(*funcs: Callable) -> Callable:
 # ============================================================================
 
 from .stuff import stuff, Stuff, IndexedDict
+from .hoder import Hoder
 
-__all__.extend(['Stuff', 'IndexedDict'])
+__all__.extend(['Stuff', 'IndexedDict', 'Hoder'])

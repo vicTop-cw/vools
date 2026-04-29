@@ -24,9 +24,16 @@ __all__ = [
     'parse_date_string',
     'get_date_range',
     'simplify_date_ranges',
-    'vicDate',
-    
+
     # 从 dates_format 导出
     'DateProcessor',
-    'EnhancedDateFormatter'
+    'EnhancedDateFormatter',
 ]
+
+
+def __getattr__(name):
+    """延迟加载 vicDate"""
+    if name == 'vicDate':
+        from ..vic import vicDate
+        return vicDate
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

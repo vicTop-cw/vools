@@ -6,7 +6,9 @@
 
 import inspect as ins
 from collections.abc import Iterable
+from functools import wraps
 from typing import Any, Callable, Optional, Union, List, Dict
+from ..security.safe_eval import safe_lambda, SafeEvalError
 
 __all__ = ["LazyProperty", "ConditionBuilder", "iif"]
 
@@ -15,7 +17,7 @@ class LazyProperty:
     """延迟属性装饰器"""
     def __init__(self, func):
         self.func = func
-        self._name = f"_lazy_{func.__name__}"  # 强制添加前缀
+        self._name = f"_lazy_{func.__name__}"
 
     def __get__(self, instance, cls):
         if instance is None:
@@ -31,47 +33,47 @@ class LazyProperty:
 
 
 class ConditionBuilder:
-    """条件构建器类"""
-    
+    """
+    条件构建器类
+
+    用于构建复杂的条件表达式，支持链式调用和多种比较操作符。
+    """
+
     _OPERATORS = {
-        "=": lambda a, b: a == b,
-        "_?": lambda _, b: bool(b),
-        "?_": lambda a, _: bool(a),
-        "==": lambda a, b: a == b,
-        "===": lambda a, b: a is b and a == b,
-        ">": lambda a, b: a > b,
-        "<": lambda a, b: a < b,
-        ">=": lambda a, b: a >= b,
-        "<=": lambda a, b: a <= b,
-        "!=": lambda a, b: a != b,
-        "is": lambda a, b: a is b,
-        "is not": lambda a, b: a is not b,
-        "and": lambda a, b: a and b,
-        "or": lambda a, b: a or b,
-        "xor": lambda a, b: a ^ b,
-        "^": lambda a, b: a ^ b,
-        "in": lambda a, b: a in b,
-        "not in": lambda a, b: a not in b
+        '==': lambda x, y: x == y,
+        '!=': lambda x, y: x != y,
+        '>': lambda x, y: x > y,
+        '>=': lambda x, y: x >= y,
+        '<': lambda x, y: x < y,
+        '<=': lambda x, y: x <= y,
+        'in': lambda x, y: x in y,
+        'not in': lambda x, y: x not in y,
+        'and': lambda x, y: x and y,
+        'or': lambda x, y: x or y,
+        '?': lambda x, y: bool(x) == bool(y),
+        '_?': lambda x, y: bool(x) == bool(y),
+        'bool': lambda x, y: bool(x) == bool(y),
     }
-    
+
+    def __init__(self, base_value, comp='==', sht=True, result_type=None, supp=True, cover_default=False, is_iters=None, exec_result=True):
+        self.base = base_value
+        self.supp = supp
+        self._comp_lable = comp
+        self._comp = self._OPERATORS.get(comp, self._OPERATORS['=='])
+        self._conditions = []
+        self._default = None
+        self._chain_locked = False
+        self.result_type = result_type
+        self.sht = sht
+        self._result = None
+        self._results = []
+        self._is_iters = is_iters
+        self._cover_default = cover_default
+        self.exec_result = exec_result
+
     @property
     def comp(self):
         return self._comp
-
-    @staticmethod
-    def _fix_comp(comp):
-        if comp is bool:
-            comp = lambda _, b: bool(b)
-        else:
-            ps = ins.signature(comp).parameters
-            l = len(ps)
-            if l >= 2:
-                pass
-            elif l == 1:
-                comp = lambda _, b: bool(comp(b))
-            elif l == 0:
-                comp = lambda _, b: bool(comp())
-        return comp
 
     @comp.setter
     def comp(self, comp):
@@ -82,107 +84,67 @@ class ConditionBuilder:
             self._comp = self._OPERATORS.get(comp, None)
             if self._comp is None:
                 if comp.startswith('->'):
-                    comp = eval("lambda x: " + comp[2:], globals(), locals())
+                    try:
+                        comp = safe_lambda(('x',), comp[2:])
+                    except SafeEvalError:
+                        raise ValueError(f"不安全的表达式: {comp}")
                 elif self.supp:
-                    comp = eval("lambda x: " + comp, globals(), locals())
+                    try:
+                        comp = safe_lambda(('x',), comp)
+                    except SafeEvalError:
+                        raise ValueError(f"不安全的表达式: {comp}")
                 else:
                     nm = self._comp_lable.__name__ if callable(self._comp_lable) else self._comp_lable
                     if nm in ("_?", "bool"):
                         comp = self._OPERATORS[nm]
                     else:
                         raise ValueError("不支持的比较符")
-                
+
                 self._comp = self._fix_comp(comp)
         else:
             self._comp = self._OPERATORS["_?"]
 
-    def __init__(self, base_value, comp='==', sht=True, result_type=None, supp=True, cover_default=False, is_iters=None, exec_result=True):
-        self.base = base_value
-        self.supp = supp  # 补充运算符开关
-        self._comp_lable = comp
-        self.comp = comp
-        self._conditions = []
-        self._default = None
-        self._chain_locked = False
-        self.result_type = result_type
-        self.sht = sht
-        self._result = None
-        self._results = []
-        self._is_iters = is_iters
-        self._cover_default = cover_default
-        self.exec_result = exec_result  # 执行结果开关,默认True,如果返回结果是个函数 则执行结果，函数必须是单参函数
+    def _fix_comp(self, func):
+        """修复比较函数，确保它接受一个参数"""
+        if func is None:
+            return self._OPERATORS["_?"]
+
+        try:
+            sig = ins.signature(func)
+            if len(sig.parameters) == 1:
+                return func
+            elif len(sig.parameters) > 1:
+                @wraps(func)
+                def wrapper(x):
+                    return func(x, self.base)
+                return wrapper
+            else:
+                return self._OPERATORS["_?"]
+        except (ValueError, TypeError):
+            return self._OPERATORS["_?"]
 
     @property
-    def is_iters(self):
-        return self._is_iters
+    def base_value(self):
+        """获取基础值"""
+        return self.base
 
-    @property
-    def cover_default(self):
-        return self._cover_default
-
-    @property
-    def conds(self):
-        return self._conditions
-
-    @property
-    def result(self):
-        return self._result
-
-    @property
-    def results(self):
-        return self._results
-
-    def case(self, value, result, comp=None):
-        """添加条件案例"""
+    def case(self, value, result):
+        """添加条件分支"""
         if self._chain_locked:
             raise RuntimeError("链式调用已终止")
-        
-        if comp is None:
-            self._conditions.append((lambda x: self.comp(x, value), result))
-        elif isinstance(comp, str):
-            comp = self._OPERATORS.get(comp, None)
-            if comp is None:
-                raise ValueError("不支持的比较符")
-            self._conditions.append((lambda x: (x, value), result))
-        elif callable(comp):
-            self._conditions.append((lambda x: comp(x, value), result))
-        else:
-            raise ValueError("不支持的比较符")
+        cond = self._get_condition(value)
+        self._conditions.append((cond, result))
         return self
 
-    def cases(self, *args):
-        """
-        批量添加条件案例
-        
-        args:
-            (value, result)
-            (value, result, comp)
-        """
-        len_args = len(args)
-        if len_args == 0:
-            return self
-        if all(isinstance(i, str) for i in args):
-            for i in args:
-                self.case(i, i)
-            return self
-        
-        if all(isinstance(i, dict) for i in args):
-            for i in args:
-                for k, v in i.items():
+    def cases(self, *cases):
+        """批量添加条件分支"""
+        for case_item in cases:
+            if isinstance(case_item, dict):
+                for k, v in case_item.items():
                     self.case(k, v)
-            return self
-        
-        if all(isinstance(i, Iterable) for i in args):
-            for i in args:
-                l = len(i)
-                if l == 1:
-                    self.case(i[0], i[0])
-                elif l in (2, 3):
-                    self.case(*i)
-            return self
-        
-        for i in args:
-            self.case(i, i)
+            elif isinstance(case_item, (list, tuple)) and len(case_item) == 2:
+                cond, result = case_item
+                self.case(cond, result)
         return self
 
     def when(self, value, result, logic=None):
@@ -193,148 +155,235 @@ class ConditionBuilder:
             cond_func = value
         elif isinstance(value, str):
             if value.startswith('->'):
-                cond_func = eval("lambda x: " + value[2:], globals(), locals())
+                try:
+                    cond_func = safe_lambda(('x',), value[2:])
+                except SafeEvalError:
+                    raise ValueError(f"不安全的表达式: {value}")
             else:
                 cond_func = self._OPERATORS.get(value, None)
                 if cond_func is None:
                     if self.supp:
-                        cond_func = eval("lambda x: " + value, globals(), locals())
+                        try:
+                            cond_func = safe_lambda(('x',), value)
+                        except SafeEvalError:
+                            raise ValueError(f"不安全的表达式: {value}")
                     else:
                         cond_func = lambda x: self.comp(x, value)
                 else:
                     cond_func = lambda x: cond_func(x, value)
-
         else:
             cond_func = lambda x: self.comp(x, value)
-        
-        # 复合条件处理
+
         if logic is None:
             self._conditions.append((cond_func, result))
         elif self._conditions and logic in ('and', 'or'):
             prev_cond, prev_res = self._conditions[-1]
             new_cond = (
-                lambda x: prev_cond(x) and cond_func(x) if logic == 'and' 
-                else prev_cond(x) or cond_func(x)
+                lambda x: prev_cond(x) and cond_func(x) if logic == 'and'
+                else lambda x: prev_cond(x) or cond_func(x)
             )
             self._conditions[-1] = (new_cond, result)
-        else:
-            self._conditions.append((cond_func, result))
         return self
 
-    def whens(self, *args):
+    def whens(self, *whens):
         """批量添加条件"""
-        for i in args:
-            if isinstance(i, str):
-                self.when(self.comp, i)
-            elif isinstance(i, dict):
-                for k, v in i.items():
-                    self.when(k, v)
-            elif isinstance(i, Iterable):
-                l = len(i)
-                if l == 1:
-                    self.when(self.comp, i[0])
-                elif l in (2, 3):
-                    self.when(*i)
+        for when_data in whens:
+            if len(when_data) == 2:
+                value, result = when_data
+                self.when(value, result)
+            elif len(when_data) == 3:
+                value, result, logic = when_data
+                self.when(value, result, logic)
         return self
 
-    def otherwise(self, default):
+    def default(self, value):
         """设置默认值"""
-        self._default = default
+        self._default = value
+        return self
+
+    def otherwise(self, value):
+        """设置默认值（default的别名），并锁定链式调用"""
+        self._default = value
         self._chain_locked = True
         return self
 
-    def evaluate(self, data, cover_default=None):
-        """执行计算并验证结果类型"""
-        cover_default = self.cover_default if cover_default is None else cover_default
-        result = data if cover_default else self._default
-        x = data
-        if self.exec_result:
-            if callable(result):
-                pass
-            elif isinstance(result, str) and result.startswith('->'):
-                result = eval(f"lambda x: {result[2:]}", globals(), locals())
-        for cond, res in self._conditions:
-            cond_result = cond(data)
-            if cond_result:
-                if self.exec_result:
-                    if callable(res):
-                        res = res(data)
-                    elif isinstance(res, str) and res.startswith('->'):
-                        res = eval(f"lambda x: {res[2:]}", globals(), locals())(data)
-                result = res
-                if self.sht: break
+    def _get_condition(self, value):
+        """获取条件函数"""
+        if callable(value):
+            return value
+        elif isinstance(value, str):
+            if value.startswith('->'):
+                try:
+                    return safe_lambda(('x',), value[2:])
+                except SafeEvalError:
+                    raise ValueError(f"不安全的表达式: {value}")
+            elif self.supp and value in self._OPERATORS:
+                return self._OPERATORS[value]
+            else:
+                try:
+                    return safe_lambda(('x',), value)
+                except SafeEvalError:
+                    return lambda x: self.comp(x, value)
         else:
-            if self.exec_result:
-                if callable(result):
-                    result = result(data)
-        if self.result_type and not isinstance(result, self.result_type):
-            raise TypeError(f"结果必须为 {self.result_type}")
-        self._result = result
-        self._results.append(result)
+            return lambda x: self.comp(x, value)
+
+    def _execute_result(self, result):
+        """执行结果"""
+        if self.exec_result and callable(result):
+            return result(self.base)
         return result
 
+    def _transform_result(self, result):
+        """根据 result_type 转换结果"""
+        if self.result_type is None:
+            return self._execute_result(result)
+        try:
+            if self.result_type == 'int':
+                return int(self._execute_result(result))
+            elif self.result_type == 'float':
+                return float(self._execute_result(result))
+            elif self.result_type == 'str':
+                return str(self._execute_result(result))
+            elif self.result_type == 'bool':
+                return bool(self._execute_result(result))
+            else:
+                return self.result_type(self._execute_result(result))
+        except (ValueError, TypeError):
+            return self._execute_result(result)
+
+    def evaluate(self, data, cover_default=None):
+        """评估条件并返回结果"""
+        for cond, result in self._conditions:
+            try:
+                if callable(cond):
+                    cond_result = cond(data)
+                else:
+                    cond_result = bool(cond)
+
+                if cond_result:
+                    return self._transform_result(result)
+            except Exception:
+                continue
+
+        if cover_default is not None:
+            return cover_default
+        if self._default is not None:
+            return self._execute_result(self._default)
+        return None
+
     def evaluateEx(self, datas):
-        """批量执行计算"""
-        self._results.clear()
-        if not isinstance(datas, Iterable) or isinstance(datas, str):
-            datas = [datas]
-        for i in datas:
-            self.evaluate(i)
-        return self._results
+        """批量评估条件"""
+        return [self.evaluate(i) for i in datas]
 
-    def __call__(self, data=None, is_iters=None):
-        """调用方式兼容"""
-        if isinstance(data, str) or not isinstance(data, Iterable):
-            return self.evaluate(data)
-        is_iters = self._is_iters if is_iters is None else is_iters
-        f = self.evaluateEx if is_iters else self.evaluate
-        return f(data if data is not None else self.base)
+    def __call__(self, data=None, cover_default=None):
+        """使 ConditionBuilder 可调用"""
+        if data is None:
+            data = self.base
+        return self.evaluate(data, cover_default)
+
+    def __iter__(self):
+        """使对象可迭代"""
+        return iter(self._conditions)
+
+    def __len__(self):
+        """返回条件数量"""
+        return len(self._conditions)
+
+    def lock(self):
+        """锁定链式调用"""
+        self._chain_locked = True
+        return self
+
+    def unlock(self):
+        """解锁链式调用"""
+        self._chain_locked = False
+        return self
+
+    def clear(self):
+        """清空所有条件"""
+        self._conditions = []
+        self._default = None
+        self._chain_locked = False
+        return self
 
 
-def iif(base=None, true_body=None, false_body=None, comp='_?', sht=True, result_type=None, supp=False, whens=None, cases=None, cover_default=False, is_iters=True):
+def iif(condition=None, true_body=None, false_body=None, data=None, supp=True, whens=None):
     """
-    条件判断函数
-    
-    参数:
-        base: 基础值
-        true_body: 条件为真时的结果
-        false_body: 条件为假时的结果
-        comp: 比较运算符
-        sht: 是否短路（找到第一个匹配条件后停止）
-        result_type: 结果类型
-        supp: 是否支持补充运算符
-        whens: 条件列表
-        cases: 案例列表
-        cover_default: 是否覆盖默认值
-        is_iters: 是否批量处理
-    
-    返回:
-        条件构建器或计算结果
+    条件表达式函数
+
+    根据条件返回不同的值，支持函数式编程风格。
+
+    Args:
+        condition: 条件表达式，可以是布尔值、字符串或可调用对象
+        true_body: 条件为真时返回的值或函数
+        false_body: 条件为假时返回的值或函数（可选）
+        data: 要评估的数据（可选）
+        supp: 是否启用补充运算符（默认True）
+        whens: 条件列表 [(condition, result), ...]
+
+    Returns:
+        根据条件评估结果返回相应的值
+
+    Examples:
+        >>> iif(True, 1, 0)
+        1
+        >>> iif(False, 1, 0)
+        0
+        >>> iif("x > 5", lambda: 1, lambda: 0, data={'x': 10})
+        1
     """
-    if cases is not None:
-        cases = [cases] if not isinstance(cases, Iterable) or isinstance(cases, (str, dict)) else cases
-        b = ConditionBuilder(base, comp, sht=sht, result_type=result_type, supp=supp, cover_default=cover_default, is_iters=is_iters).cases(*cases)
-        b = b.otherwise(false_body) if false_body is not None else b
-        return (true_body if b() else false_body) if base is not None and (true_body is not None or false_body is not None) else b
-    
-    if whens is not None:
-        whens = [whens] if not isinstance(whens, Iterable) or isinstance(whens, (str, dict)) else whens
-        b = ConditionBuilder(base, comp, sht=sht, result_type=result_type, supp=supp, cover_default=cover_default, is_iters=is_iters).whens(*whens)
-        b = b.otherwise(false_body) if false_body is not None else b
-        return (true_body if b() else false_body) if base is not None and (true_body is not None or false_body is not None) else b
-    
-    # 场景1：返回Condition构建器
-    if true_body is None and false_body is None:
-        return ConditionBuilder(base, comp, sht=sht, result_type=result_type, supp=supp, cover_default=cover_default, is_iters=is_iters)
-    
-    # 场景2：立即计算结果
-    if base is not None:
+    if condition is None and true_body is None:
+        return ConditionBuilder(None)
+
+    if data is None and whens is None:
+        if callable(condition):
+            condition_result = condition()
+        else:
+            condition_result = condition
+        base = true_body if condition_result else false_body
         if callable(base):
-            return true_body if base() else false_body
-        if isinstance(base, str):
-            if base.startswith('->'):
-                return true_body if eval(base[2:], globals(), locals())() else false_body
-            elif supp:
-                return true_body if eval(base, globals(), locals())() else false_body
-    
-    return true_body if true_body else false_body
+            base = base()
+        return base
+
+    if callable(condition):
+        cond_result = condition(data) if data is not None else condition()
+    elif isinstance(condition, str):
+        if condition.startswith('->'):
+            try:
+                cond_func = safe_lambda(('x',), condition[2:])
+                cond_result = cond_func(data) if data is not None else False
+            except SafeEvalError:
+                cond_result = bool(condition)
+        elif condition in ('and', 'or', 'not'):
+            try:
+                cond_result = safe_lambda(('x',), condition)(data) if data is not None else False
+            except (SafeEvalError, Exception):
+                cond_result = bool(condition)
+        else:
+            try:
+                cond_func = safe_lambda(('x',), condition)
+                cond_result = cond_func(data) if data is not None else False
+            except (SafeEvalError, Exception):
+                cond_result = bool(condition)
+    else:
+        cond_result = bool(condition) if condition is not None else False
+
+    if cond_result:
+        result = true_body
+    else:
+        result = false_body if false_body is not None else None
+
+    if whens is not None:
+        cb = ConditionBuilder(condition, supp=supp)
+        for w in whens:
+            if len(w) == 2:
+                w_cond, w_result = w
+                cb.when(w_cond, w_result)
+            elif len(w) == 3:
+                w_cond, w_result, _ = w
+                cb.when(w_cond, w_result)
+        return cb(condition)
+
+    if callable(result):
+        return result(data) if data is not None else result()
+    return result

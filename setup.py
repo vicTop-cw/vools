@@ -5,11 +5,9 @@ vools 包安装配置
 from setuptools import setup, find_packages
 import os
 
-# 读取 README.md 作为长描述
 with open('README.md', 'r', encoding='utf-8') as f:
     long_description = f.read()
 
-# 读取版本信息
 with open(os.path.join('vools', '__init__.py'), 'r', encoding='utf-8') as f:
     for line in f:
         if line.startswith('__version__'):
@@ -44,6 +42,7 @@ setup(
     python_requires=">=3.6",
     install_requires=[
         "wrapt>=2.1.2",
+        "attrs>=17.4.0",
         "pandas>=0.22.0",
         "numpy>=1.14.0",
     ],

@@ -17,10 +17,22 @@
 - [重载装饰器](#重载装饰器)
 - [stuff 函数](#stuff-函数)
 - [persist 函数](#persist-函数)
+- [box 装饰器](#box-装饰器)
+- [Box 类](#box-类)
+- [g 函数](#g-函数)
+- [iif 函数](#iif-函数)
+- [vicDate 工具类](#vicdate-工具类)
 - [核心类](#核心类)
 - [常见问题](#常见问题)
 
 ## 安装
+
+### 环境要求
+
+- Python 3.6+
+- 核心依赖：`wrapt`, `attrs`（Python 3.6 使用 attrs 替代 dataclass）, `pandas`, `numpy`
+
+### 安装方式
 
 ```bash
 # 从 PyPI 安装
@@ -30,6 +42,9 @@ pip install vools==1.0.5
 git clone https://github.com/vicTop-cw/vools.git
 cd vools
 pip install -e .
+
+# 安装开发依赖
+pip install vools[dev]
 ```
 
 ## 快速开始
@@ -377,16 +392,16 @@ result = connect(host="192.168.1.1")
 assert result == "连接到 192.168.1.1:8080，超时 None 秒"
 ```
 
-## persist 函数
+## persist 装饰器
 
-persist 函数提供持久化缓存功能，将函数结果保存到文件中。
+`persist` 装饰器将函数的执行结果缓存到本地文件，并提供灵活的刷新控制，引擎重启后缓存仍然有效。
 
 ### 基本用法
 
 ```python
 from vools import persist
 
-@persist(filepath='data.pkl')
+@persist
 def expensive_computation(x):
     import time
     time.sleep(1)  # 模拟耗时计算
@@ -396,47 +411,466 @@ def expensive_computation(x):
 result = expensive_computation(5)  # 耗时约 1 秒
 assert result == 25
 
-# 第二次执行，从文件读取（跳过计算）
+# 第二次执行，直接返回缓存（跳过计算）
 result = expensive_computation(5)  # 几乎立即返回
 assert result == 25
 ```
 
-### 参数说明
+### 调用时的关键字参数
+
+被装饰的函数会自动获得以下关键字参数：
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `filepath` | str | None | 持久化文件路径 |
-| `key` | callable | None | 自定义缓存键生成函数 |
-| `serialize` | callable | pickle.dump | 序列化函数 |
-| `deserialize` | callable | pickle.load | 反序列化函数 |
+| `file_key` | str | None | 缓存文件名（不含扩展名），默认使用函数名 |
+| `force` | bool | False | 是否强制重新执行，忽略缓存 |
+| `force_when` | Callable | None | 当 `force=False` 时，若此函数返回 `True` 则强制刷新 |
+| `target_folder` | str | None | 缓存文件所在目录，默认与被装饰函数所在文件同级的 `__persist__` 目录 |
 
 ### 高级用法
 
 ```python
-# 自定义缓存键
-@persist(filepath='data.pkl', key=lambda args, kwargs: args[0])
-def process_user(user_id):
-    return f"用户 {user_id} 的数据"
+# 使用 file_key 指定缓存文件名
+@persist
+def fetch_weather(city):
+    import random
+    print(f"[执行] 正在获取 {city} 的天气...")
+    return random.randint(20, 30)
 
-# 使用 JSON 序列化
-import json
+# 使用 file_key 区分不同参数的缓存
+temp = fetch_weather("Beijing", file_key="weather_beijing")
+temp = fetch_weather("Shanghai", file_key="weather_shanghai")
 
-@persist(
-    filepath='data.json',
-    serialize=lambda obj, f: json.dump(obj, f, indent=2),
-    deserialize=lambda f: json.load(f)
+# 强制刷新缓存
+temp = fetch_weather("Beijing", file_key="weather_beijing", force=True)
+
+# 使用 force_when 条件刷新
+# 示例：距离上次执行超过 5 秒或温度高于 27 度时刷新
+import time
+temp = fetch_weather(
+    "Beijing",
+    file_key="weather_beijing",
+    force_when=lambda result, start, end: time.time() - end > 5 or result > 27
 )
-def get_config():
-    return {"timeout": 30, "retries": 3}
 
-# 手动清除缓存
-@persist(filepath='cache.pkl')
-def fetch_data(url):
-    import requests
-    return requests.get(url).json()
+# 指定缓存目录
+import tempfile
+temp_dir = tempfile.mkdtemp()
+temp = fetch_weather("Beijing", file_key="weather_beijing", target_folder=temp_dir)
+```
 
-# 清除缓存
-fetch_data.clear_cache()
+### force_when 参数说明
+
+`force_when` 函数接收三个参数：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `result` | Any | 缓存的结果值 |
+| `start` | float | 上次执行的开始时间戳 |
+| `end` | float | 上次执行的结束时间戳 |
+
+返回 `True` 时强制重新执行，返回 `False` 时使用缓存。
+
+### 注意事项
+
+- 函数返回值必须可 JSON 序列化（基本类型、列表、字典、None）
+- 缓存文件保存为 JSON 格式，包含 `result`、`start_time`、`end_time`
+- 默认缓存目录为与被装饰函数所在文件同级的 `__persist__` 目录
+
+## box 装饰器
+
+### 基本用法
+
+`box` 装饰器用于将函数的返回值包装成 `Box` 对象，提供链式调用能力。
+
+```python
+from vools.functional.box import box
+
+@box
+def get_user():
+    return {"name": "Alice", "age": 30}
+
+result = get_user().name.upper()
+# 结果: "ALICE"
+```
+
+### 参数说明
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `func` | Callable | 要包装的函数 |
+| `cover` | bool | 是否覆盖已存在的属性，默认 `True` |
+
+### 返回值
+
+返回一个包装后的函数，其返回值会被自动包装成 `Box` 对象。
+
+### 示例代码
+
+```python
+from vools.functional.box import box
+
+@box
+def calculate():
+    return {"value": 42}
+
+result = calculate().value * 2
+print(result)  # 84
+```
+
+## Box 类
+
+### 基本用法
+
+`Box` 类是一个通用包装器，允许以属性访问的方式访问字典的键。
+
+```python
+from vools.functional.box import Box
+
+data = Box({"name": "Bob", "age": 25})
+print(data.name)  # "Bob"
+print(data.age)   # 25
+```
+
+### 核心方法
+
+#### `run(func, *args, **kwargs)`
+
+执行函数并可选地展开包装的值作为参数。
+
+```python
+box = Box([1, 2, 3])
+result = box.run(sum)
+print(result)  # 6
+```
+
+#### `copy()`
+
+创建一个浅拷贝。
+
+```python
+original = Box({"a": 1})
+copied = original.copy()
+```
+
+### 属性访问
+
+`Box` 支持通过 `.` 操作符访问属性：
+
+```python
+data = Box({"user": {"name": "Charlie"}})
+print(data.user.name)  # "Charlie"
+```
+
+### 边界情况
+
+```python
+# 访问不存在的属性返回 None
+data = Box({})
+print(data.nonexistent)  # None
+
+# 包装 None 值
+data = Box(None)
+print(data.value)  # None
+```
+
+## g 函数
+
+### 基本用法
+
+`g` 函数是一个通用函数生成器，支持多种表达式格式。
+
+```python
+from vools.functional.arrow_func import g
+
+# lambda 表达式格式
+f1 = g("x, y => x + y")
+print(f1(3, 4))  # 7
+
+# 下划线占位符格式
+f2 = g("_ + 2 * _")
+print(f2(3, 4))  # 11
+
+# 带索引的下划线格式
+f3 = g("_1 + _2")
+print(f3(3, 4))  # 7
+
+# 标准 lambda 表达式
+f4 = g("lambda x: x + 1")
+print(f4(5))  # 6
+```
+
+### 参数说明
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `expr` | str | 字符串表达式 |
+| `env` | Dict | 执行环境变量字典，可选 |
+
+### 支持的表达式格式
+
+1. **箭头函数格式**: `x, y => x + y`
+2. **下划线占位符**: `_ + 2 * _`
+3. **索引下划线**: `_1 + _2`
+4. **标准 lambda**: `lambda x: x + 1`
+5. **三元表达式**: `_ > 0 ? _ : -_`
+
+### 返回值
+
+返回生成的函数对象。
+
+### 示例代码
+
+```python
+from vools.functional.arrow_func import g
+
+# 复杂表达式
+f = g("_1 ** 2 + _2 ** 2")
+print(f(3, 4))  # 25
+
+# 使用环境变量
+env = {"PI": 3.14}
+f = g("_ * PI", env)
+print(f(2))  # 6.28
+
+# 无参数函数
+f = g("3 + 5")
+print(f())  # 8
+```
+
+## iif 函数
+
+### 基本用法
+
+`iif` 函数提供条件表达式支持，类似 Excel 的 `IF` 函数。
+
+```python
+from vools.functional.iif import iif
+
+# 基本条件判断
+result = iif(True, "yes", "no")
+print(result)  # "yes"
+
+result = iif(False, "yes", "no")
+print(result)  # "no"
+```
+
+### 参数说明
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `base` | Any | 条件值或表达式 |
+| `true_body` | Any | 条件为真时的返回值 |
+| `false_body` | Any | 条件为假时的返回值 |
+| `comp` | str | 比较运算符，默认 `'=='` |
+| `cases` | Iterable | 案例列表 |
+| `whens` | Iterable | 条件列表 |
+| `supp` | bool | 是否支持补充运算符，默认 `True` |
+
+### 返回值
+
+根据条件返回 `true_body` 或 `false_body`，或返回一个 `ConditionBuilder` 对象。
+
+### 使用 ConditionBuilder
+
+```python
+from vools.functional.iif import iif
+
+# 使用链式调用
+result = iif(5).when(lambda x: x > 10, "big").otherwise("small")
+print(result())  # "small"
+
+# 使用 case 方法
+result = iif(3).case(1, "one").case(2, "two").case(3, "three").otherwise("other")
+print(result())  # "three"
+
+# 使用 whens 参数
+result = iif(15, whens=[(lambda x: x > 10, "big"), (lambda x: x <= 10, "small")])
+print(result)  # "big"
+```
+
+### 支持的运算符
+
+| 运算符 | 说明 |
+|--------|------|
+| `==`, `=` | 等于 |
+| `!=` | 不等于 |
+| `>` | 大于 |
+| `<` | 小于 |
+| `>=` | 大于等于 |
+| `<=` | 小于等于 |
+| `in` | 包含 |
+| `not in` | 不包含 |
+| `is` | 身份判断 |
+| `is not` | 非身份判断 |
+
+### 示例代码
+
+```python
+from vools.functional.iif import iif
+
+# 可调用条件
+result = iif(lambda: len([1, 2, 3]) > 2, "long", "short")
+print(result)  # "long"
+
+# 表达式模式
+result = iif("5 > 3", true_body="yes", false_body="no", supp=True)
+print(result)  # "yes"
+
+# None 条件被视为 False
+result = iif(None, "yes", "no")
+print(result)  # "no"
+```
+
+## vicDate 工具类
+
+### 基本用法
+
+`vicDate` 是一个日期处理工具类，提供日期格式化、计算和比较功能。
+
+```python
+from vools.datetime.utils import vicDate
+
+# 使用默认日期（今天）
+date = vicDate()
+print(date.strftime('%Y-%m-%d'))  # 当前日期
+
+# 使用字符串初始化
+date = vicDate("2024-01-15")
+
+# 使用 date 对象初始化
+from datetime import date as dt_date
+date = vicDate(dt_date(2024, 1, 15))
+```
+
+### 参数说明
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `value` | Any | 日期值，可以是字符串、date 对象或 None |
+| `fmt` | str | 输入日期格式，默认 `'%Y-%m-%d'` |
+
+### 核心属性
+
+| 属性 | 说明 |
+|------|------|
+| `year` | 年份 |
+| `month` | 月份 |
+| `day` | 日期 |
+| `weekday` | 星期几（0-6） |
+| `run_date` | 当前的 date 对象 |
+
+### 核心方法
+
+#### `strftime(fmt='%Y-%m-%d')`
+
+格式化日期为字符串。
+
+```python
+date = vicDate("2024-01-15")
+print(date.strftime("%Y/%m/%d"))  # "2024/01/15"
+print(date.strftime("%d-%b-%Y"))  # "15-Jan-2024"
+```
+
+#### `add_days(n)`
+
+添加天数。
+
+```python
+date = vicDate("2024-01-15")
+new_date = date.add_days(5)
+print(new_date.strftime('%Y%m%d'))  # "20240120"
+```
+
+#### `sub_days(n)`
+
+减去天数。
+
+```python
+date = vicDate("2024-01-15")
+new_date = date.sub_days(5)
+print(new_date.strftime('%Y%m%d'))  # "20240110"
+```
+
+#### `add_months(n)`
+
+添加月份。
+
+```python
+date = vicDate("2024-01-15")
+new_date = date.add_months(1)
+print(new_date.strftime('%Y%m%d'))  # "20240215"
+```
+
+#### `week_range()`
+
+获取本周的起始和结束日期。
+
+```python
+date = vicDate("2024-01-15")
+start, end = date._date_processor._get_week_range(date.date_obj.date())
+print(start, end)  # 本周一和本周日
+```
+
+#### `month_range()`
+
+获取本月的起始和结束日期。
+
+```python
+date = vicDate("2024-01-15")
+start, end = date._date_processor._get_month_range(date.date_obj.date())
+print(start, end)  # 本月1日和本月最后一天
+```
+
+### 日期比较
+
+```python
+date1 = vicDate("2024-01-15")
+date2 = vicDate("2024-01-20")
+
+print(date1.date_obj < date2.date_obj)   # True
+print(date1.date_obj > date2.date_obj)   # False
+print(date1.date_obj == date2.date_obj)  # False
+```
+
+### 边界情况处理
+
+```python
+# 闰年处理
+date = vicDate("2024-02-29")
+print(date.strftime('%Y%m%d'))  # "20240229"
+
+# 月末处理
+date = vicDate("2024-01-31")
+new_date = date.add_days(1)
+print(new_date.strftime('%Y%m%d'))  # "20240201"
+
+# 年末处理
+date = vicDate("2024-12-31")
+new_date = date.add_days(1)
+print(new_date.strftime('%Y%m%d'))  # "20250101"
+```
+
+### 示例代码
+
+```python
+from vools.datetime.utils import vicDate
+
+# 创建日期对象
+date = vicDate("2024-06-15")
+
+# 获取属性
+print(f"Year: {date.date_obj.year}")      # 2024
+print(f"Month: {date.date_obj.month}")    # 6
+print(f"Day: {date.date_obj.day}")        # 15
+print(f"Weekday: {date.date_obj.weekday()}") # 5 (星期六)
+
+# 日期计算
+next_week = date.add_days(7)
+last_month = date.add_months(-1)
+
+# 格式化输出
+print(date.strftime("%Y年%m月%d日"))  # "2024年06月15日"
 ```
 
 ## 核心类
@@ -459,28 +893,6 @@ matches = vicTools.regexp_findall(r'\d+', 'abc123def456')
 
 # 生成随机字段名
 field_name = vicTools.generate_random_field_name()
-```
-
-### vicDate
-
-```python
-from vools import vicDate
-
-# 创建日期对象
-now = vicDate()
-
-# 解析日期字符串
-date = vicDate('20230101', fmt='yyyyMMdd')
-
-# 获取指定周的日期
-week_date = date.get_week(num=1, weekday=1)  # 上周周一
-
-# 获取指定月的日期
-month_date = date.get_month(num=1, last_day=True)  # 上月末
-
-# 日期运算
-tomorrow = now + 1
-yesterday = now - 1
 ```
 
 ### vicText
@@ -569,6 +981,14 @@ result = lst.filter(lambda x: x > 2).collect()
 - 确保有文件写入权限
 - 检查缓存键生成函数是否正确
 
+### 5. 测试运行失败
+
+**问题**：运行测试时提示导入错误或测试失败
+
+**解决方案**：
+- 确保在项目目录中运行测试：`cd vools && python -m pytest tests/`
+- 检查是否安装了 site-packages 中的旧版本 vools，如果有，先卸载：`pip uninstall vools -y`
+
 ## 测试验证
 
 所有功能均通过测试验证：
@@ -583,6 +1003,10 @@ python -m pytest tests/ -v
 # - tests/test_decorators.py      # 装饰器测试
 # - tests/test_overcurry_vic.py   # overcurry 和 vic 类测试
 # - tests/test_curry_overload.py  # curry 和 overload 测试
+# - tests/test_box.py             # box 装饰器和 Box 类测试
+# - tests/test_g_function.py      # g 函数测试
+# - tests/test_iif.py             # iif 函数测试
+# - tests/test_vicdate.py         # vicDate 工具类测试
 ```
 
 ## 许可证
