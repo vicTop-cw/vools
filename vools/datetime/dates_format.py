@@ -336,11 +336,16 @@ class DateProcessor:
         
         Args:
             expr: 日期表达式，支持格式：
+                 - run_date: 基准日期（紧凑格式 yyyyMMdd）
+                 - run_date_std: 基准日期（标准格式 yyyy-MM-dd）
+                 - run_date+13: 基准日期往后13天（紧凑格式）
+                 - run_date_std-13: 基准日期往前13天（标准格式）
                  - run_week+3&3: 3周后的周三
                  - run_week-2&5: 2周前的周五
                  - run_month+3&13: 3个月后的13号
                  - run_month-3&1: 3个月前的1号
                  - 带_std后缀表示标准格式
+                 - 偏移量部分 ([+-]\\d+) 对 run_date 和 run_date_std 是可选的
                  
         Returns:
             str: 计算后的日期字符串
@@ -348,7 +353,26 @@ class DateProcessor:
         Raises:
             ValueError: 如果表达式格式不正确
         """
-        # 单个日期变量模式
+        # 先尝试匹配 run_date 和 run_date_std 模式（偏移量可选）
+        # 模式: run_date(_std)?([+-]\d+)?
+        run_date_pattern = r'^run_date(_std)?([+-]\d+)?$'
+        run_date_match = re.match(run_date_pattern, expr)
+        
+        if run_date_match:
+            is_std = run_date_match.group(1)  # _std 或 None
+            offset_str = run_date_match.group(2)  # +13, -13 或 None
+            
+            # 确定格式类型
+            fmt_type = "standard" if is_std else "compact"
+            
+            # 解析偏移量（默认为0）
+            offset = int(offset_str) if offset_str else 0
+            
+            # 计算日期
+            date_obj = self.run_date + datetime.timedelta(days=offset)
+            return self._date_to_str(date_obj, fmt_type)
+        
+        # 单个日期变量模式（week/month，偏移量必填）
         # 1. run_week+3&3
         # 2. run_month-2&15
         # 3. run_week_std+1&5
@@ -815,6 +839,10 @@ if __name__ == "__main__":
     formatter = EnhancedDateFormatter("""
 run_date: {run_date}
 run_date_std: {run_date_std}
+run_date-13: {run_date-13}
+run_date_std+13: {run_date_std+13}
+run_days_std<6: {run_days_std<6}
+run_days>16: {run_days>16}
 run_week+3&3: {run_week+3&3}
 run_week-3&5: {run_week-3&5}
 run_month+3&13: {run_month+3&13}
@@ -891,7 +919,7 @@ run_month_std+2&31: {run_month_std+2&31}
     sql_template = """
 -- 近7天数据
 SELECT * FROM sales 
-WHERE ds >= '{run_days_std<6}'
+WHERE ds >= '{run_date_std-6}'
   AND ds <= '{run_date_std}'
   AND channel = '电商'
 
