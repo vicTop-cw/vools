@@ -5,13 +5,16 @@
 import sys
 import os
 
-# 添加父目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-# 导入所有测试模块
-from .test_decorators import *
-from .test_functional import *
-from .test_utils import *
+try:
+    from .test_decorators import *
+    from .test_functional import *
+    from .test_utils import *
+except ImportError:
+    from test_decorators import *
+    from test_functional import *
+    from test_utils import *
 
 
 def run_all_tests():
@@ -21,16 +24,27 @@ def run_all_tests():
     print("=" * 60)
     
     # 装饰器测试
-    test_memorize()
-    test_once()
-    test_lazy()
+    test_curry_basic()
+    test_curry_with_varargs()
+    test_curry_class_method()
+    test_curry_class()
+    test_curry_strict()
+    test_delay_curry_basic()
+    test_delay_curry_with_varargs()
+    test_delay_curry_class_method()
+    test_overload_basic()
+    test_overload_strict()
     
     # 函数式编程测试
-    test_pipe()
-    test_ops()
-    test_seq()
-    test_p()
-    test_none()
+    test_placeholder_basic()
+    test_placeholder_advanced()
+    test_box_basic()
+    test_box_dict()
+    test_box_string()
+    test_box_datetime()
+    test_pipe_ops_seq()
+    test_g_function()
+    test_iif_function()
     
     # 通用工具测试
     test_basic_functions()
