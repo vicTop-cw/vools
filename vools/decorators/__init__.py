@@ -28,7 +28,6 @@ from .shotcut import (
     with_timeout,
     validate,
     rate_limit,
-    log_calls,
     cache_with_ttl,
     hybrid_method,
     classproperty,
@@ -77,22 +76,22 @@ __all__ = [
     'memorize',
     'once',
     'persist',
-    
+
     # 延迟求值
     'lazy',
-    
+
     # 控制流
     'repeat',
     'retry',
     'rerun',
-    
+
     # 多线程
     'trd',
     'proc',
-    
+
     # 函数扩展
     'extend',
-    
+
     # 快捷工具
     'timeit',
     'safe',
@@ -105,12 +104,11 @@ __all__ = [
     'with_timeout',
     'validate',
     'rate_limit',
-    'log_calls',
     'cache_with_ttl',
     'hybrid_method',
     'classproperty',
     'enumize',
-    
+
     # 柯里化
     'curry',
     'delay_curry',
@@ -120,21 +118,21 @@ __all__ = [
     'is_curried',
     'is_lazy',
     'CurryExecutionError',
-    
+
     # 重载
     'overload',
     'OverloadManager',
     'strict',
-    
+
     # overcurry
     'overcurry',
     'OvercurryManager',
-    
+
     # 选择器
     'Selector',
     'Overloads',
     'overloads',
-    
+
     # 柯里化函数
     'curried_map',
     'curried_filter',
