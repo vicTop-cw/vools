@@ -145,7 +145,8 @@ def test_sql_template():
     {
         gap <- 10;
         tbi <- "user_if_drawdown_tb";
-        dt <- get_week(run_date_std,gap)
+        dt <- get_week(run_date_std,gap);
+        "--" + dt
     }
     select 
         user_id,
@@ -159,7 +160,7 @@ def test_sql_template():
     run_date_std = vicDate().run_date_standard
     gap = 10
     print(get_week(run_date_std,gap))
-    formatter5 = EnhancedDateFormatter(template5,get_week = get_week)
+    formatter5 = EnhancedDateFormatter(template5)
     s = formatter5.format()
     print(s)
     print("All run_date_end tests passed!")
