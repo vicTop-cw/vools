@@ -4,7 +4,7 @@
 
 ## 项目信息
 
-- **当前版本**：v1.0.5
+- **当前版本**：v0.1.7
 - **GitHub 仓库**：<https://github.com/vicTop-cw/vools>
 - **联系邮箱**：<victortop921129@gmail.com>
 - **PyPI 主页**：<https://pypi.org/project/vools/>
@@ -36,7 +36,7 @@
 
 ```bash
 # 从 PyPI 安装
-pip install vools==1.0.5
+pip install vools==0.1.7
 
 # 或从源码安装
 git clone https://github.com/vicTop-cw/vools.git
@@ -1007,7 +1007,158 @@ python -m pytest tests/ -v
 # - tests/test_g_function.py      # g 函数测试
 # - tests/test_iif.py             # iif 函数测试
 # - tests/test_vicdate.py         # vicDate 工具类测试
+# - tests/test_multiline.py        # 多行表达式测试
 ```
+
+## EnhancedDateFormatter 日期格式化器
+
+`EnhancedDateFormatter` 是一个强大的日期格式化工具，支持动态变量更新、表达式计算和多行模板。
+
+### 基本用法
+
+```python
+from vools.datetime import EnhancedDateFormatter
+
+# 创建格式化器
+formatter = EnhancedDateFormatter("今天是 {run_date_std}，本周开始于 {run_week_begin_std}")
+result = formatter.format()
+print(result)  # "今天是 2026-04-29，本周开始于 2026-04-27"
+```
+
+### 上下文变量动态更新
+
+支持在占位符中动态更新变量：
+
+```python
+template = "{name <- \"张三\" ; age <- 30 ; city <- \"北京\" ; name + \"今年\" + str(age) + \"岁，来自\" + city}"
+formatter = EnhancedDateFormatter(template)
+result = formatter.format()
+print(result)  # "张三今年30岁，来自北京"
+```
+
+**重要说明：模板中的变量赋值优先级高于 `set()` 方法设置的值，会覆盖通过 `formatter.set()` 设置的变量：
+
+```python
+template = "{days_ago <- 7 ; days_ago}"
+formatter = EnhancedDateFormatter(template)
+formatter.set(days_ago=31)  # 这个设置会被覆盖
+result = formatter.format()
+print(result)  # 输出 "7"，模板中的赋值优先级高
+```
+
+### 多行表达式支持
+
+支持在花括号内书写多行表达式：
+
+```python
+template = """姓名：{name}
+年龄：{age}
+列表：{
+    age <- 30
+    ; ",".join([
+        str(i)
+        for i in range(age)
+        if i % 5 == 0
+    ])
+}"""
+
+formatter = EnhancedDateFormatter(template)
+formatter.set(name="李四", age=25)
+result = formatter.format()
+```
+
+### SQL 模板应用
+
+这是一个完整的 SQL 模板应用示例：
+
+```python
+from vools.datetime import EnhancedDateFormatter
+
+# 定义 SQL 模板
+sql_template = """
+SELECT 
+    user_id,
+    user_name,
+    register_time,
+    total_amount
+FROM users
+WHERE 
+    register_time >= '{start_date}'
+    AND register_time < '{end_date}'
+    AND status = {status}
+    AND age BETWEEN {min_age} AND {max_age}
+ORDER BY register_time DESC
+LIMIT {limit};
+"""
+
+# 创建格式化器
+formatter = EnhancedDateFormatter(sql_template)
+
+# 设置查询参数
+formatter.set(
+    start_date="2026-01-01",
+    end_date="2026-05-01",
+    status=1,
+    min_age=18,
+    max_age=60,
+    limit=100
+)
+
+# 生成 SQL
+sql = formatter.format()
+print(sql)
+```
+
+### 高级 SQL 模板（带动态计算）
+
+```python
+from vools.datetime import EnhancedDateFormatter
+
+# 复杂 SQL 模板
+sql_template = """
+-- 查询日期：{run_date_std}
+-- 查询范围：{days_ago <- 7 ; days_ago} 天前至 {run_date_std}
+
+SELECT 
+    DATE_FORMAT(order_time, '%Y-%m-%d') AS date,
+    COUNT(*) AS order_count,
+    SUM(amount) AS total_amount,
+    AVG(amount) AS avg_amount
+FROM orders
+WHERE 
+    order_time >= DATE_SUB('{run_date_std}', INTERVAL {days_ago} DAY)
+    AND order_time < '{run_date_std}'
+    AND amount > {min_amount}
+GROUP BY DATE_FORMAT(order_time, '%Y-%m-%d')
+HAVING COUNT(*) >= {min_orders}
+ORDER BY date DESC;
+"""
+
+# 创建格式化器
+formatter = EnhancedDateFormatter(sql_template)
+
+# 设置参数（部分参数动态计算）
+formatter.set(
+    days_ago=7,
+    min_amount=100,
+    min_orders=10
+)
+
+# 生成 SQL
+sql = formatter.format()
+print(sql)
+```
+
+### 日期变量参考
+
+| 变量名 | 说明 | 示例 |
+|--------|------|------|
+| `run_date` | 运行日期（YYYYMMDD） | 20260429 |
+| `run_date_std` | 运行日期（YYYY-MM-DD） | 2026-04-29 |
+| `run_week_begin` | 本周开始日期 | 20260427 |
+| `run_week_end` | 本周结束日期 | 20260503 |
+| `run_month_begin` | 本月开始日期 | 20260401 |
+| `run_month_end` | 本月结束日期 | 20260430 |
 
 ## 许可证
 
