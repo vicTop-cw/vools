@@ -544,7 +544,39 @@ class EnhancedDateFormatter:
         """
         self.template = template
         self.date_processor = DateProcessor(default_run_date)
-        self.context = context  # 存储用户设置的变量
+        
+        # 初始化基础上下文，包含常用函数
+        self.context = {
+            'len': len,
+            'str': str,
+            'int': int,
+            'float': float,
+            'bool': bool,
+            'list': list,
+            'dict': dict,
+            'tuple': tuple,
+            'sum': sum,
+            'min': min,
+            'max': max,
+            'abs': abs,
+            'round': round,
+            'range': range,
+            'enumerate': enumerate,
+            'zip': zip,
+            'map': map,
+            'filter': filter,
+        }
+        
+        # 添加日期相关函数（延迟导入）
+        try:
+            from .utils import get_week, get_month
+            self.context['get_week'] = get_week
+            self.context['get_month'] = get_month
+        except ImportError:
+            pass
+        
+        # 更新用户传入的上下文
+        self.context.update(context)
         self.parsed_placeholders = self._parse_placeholders()
         
         # 初始化上下文中的日期变量
@@ -642,36 +674,9 @@ class EnhancedDateFormatter:
         
         # 尝试作为Python表达式计算
         try:
-            # 创建安全的命名空间
-            namespace = {
-                '__builtins__': {
-                    'len': len,
-                    'str': str,
-                    'int': int,
-                    'float': float,
-                    'bool': bool,
-                    'list': list,
-                    'dict': dict,
-                    'tuple': tuple,
-                    'sum': sum,
-                    'min': min,
-                    'max': max,
-                    'abs': abs,
-                    'round': round,
-                    'range': range,
-                    'enumerate': enumerate,
-                    'zip': zip,
-                    'map': map,
-                    'filter': filter,
-                }
-            }
-            
-            # 添加上下文变量
-            namespace.update(self.context)
-            
-            # 编译并执行表达式
+            # 直接使用实例的context作为命名空间
             code = compile(expr_part, '<string>', 'eval')
-            result = eval(code, namespace)
+            result = eval(code, {'__builtins__': self.context})
             return result
             
         except Exception:
@@ -719,41 +724,18 @@ class EnhancedDateFormatter:
                     # 解析值（支持字符串、数字、列表、字典等）
                     parsed_value = self._parse_value(var_value)
                     self.context[var_name] = parsed_value
+                    # 保存最后一个赋值的值作为结果（当所有部分都是赋值时返回）
+                    result = parsed_value
                 else:
                     # 最后一个表达式或纯表达式
-                    # 创建安全的命名空间
-                    namespace = {
-                        '__builtins__': {
-                            'len': len,
-                            'str': str,
-                            'int': int,
-                            'float': float,
-                            'bool': bool,
-                            'list': list,
-                            'dict': dict,
-                            'tuple': tuple,
-                            'sum': sum,
-                            'min': min,
-                            'max': max,
-                            'abs': abs,
-                            'round': round,
-                            'range': range,
-                            'enumerate': enumerate,
-                            'zip': zip,
-                            'map': map,
-                            'filter': filter,
-                        }
-                    }
-                    namespace.update(self.context)
-                    
                     # 尝试作为日期表达式计算
                     date_result = self.date_processor.parse_date_expression(part)
                     if date_result is not None:
                         result = date_result
                     else:
-                        # 尝试作为Python表达式计算
+                        # 尝试作为Python表达式计算，直接使用实例的context作为命名空间
                         code = compile(part, '<string>', 'eval')
-                        result = eval(code, namespace)
+                        result = eval(code, {'__builtins__': self.context})
             
             return result if result is not None else ""
             
@@ -796,20 +778,11 @@ class EnhancedDateFormatter:
            (value_str.startswith("'") and value_str.endswith("'")):
             return value_str[1:-1]
         
-        # 尝试解析列表或字典
+        # 尝试解析列表或字典或函数调用
         try:
-            namespace = {
-                '__builtins__': {
-                    'list': list,
-                    'dict': dict,
-                    'int': int,
-                    'float': float,
-                    'str': str,
-                    'range': range,
-                }
-            }
+            # 直接使用实例的context作为命名空间
             code = compile(value_str, '<string>', 'eval')
-            return eval(code, namespace)
+            return eval(code, {'__builtins__': self.context})
         except:
             pass
         
