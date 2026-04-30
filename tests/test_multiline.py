@@ -138,6 +138,35 @@ GROUP BY DATE_FORMAT(order_time, '%Y-%m-%d');
     print("All USER_GUIDE.md examples tests passed!")
 
 
+
+def test_sql_template():
+    """测试 run_date_end 变量"""
+    template5 = r"""
+    {
+        gap <- 10;
+        tbi <- "user_if_drawdown_tb";
+        dt <- get_week(run_date_std,gap)
+    }
+    select 
+        user_id,
+        user_name,
+        register_time,
+        total_amount
+    from {tbi}
+    where dt >= '{dt}'
+    """
+    from vools.datetime import get_week,vicDate
+    run_date_std = vicDate().run_date_standard
+    gap = 10
+    print(get_week(run_date_std,gap))
+    formatter5 = EnhancedDateFormatter(template5,get_week = get_week)
+    s = formatter5.format()
+    print(s)
+    print("All run_date_end tests passed!")
+
+
+
 if __name__ == "__main__":
     test_multiline_expression()
     test_guide_examples()
+    test_sql_template()
