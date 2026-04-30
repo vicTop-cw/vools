@@ -147,4 +147,33 @@ try:
 except Exception as e:
     print(f"与Seq的兼容性测试失败: {e}")
 
+
+
+print("\n=== 测试vicText ===")
+today =vicText("{run_date_std+1}").formatEx()
+print(today)
+txt1 = vicText(r"""
+更新上下文变量：{name <- "张三" ; age <- 30 ; city <- "北京; other_var <- ",".join([for str(i) in range(age)]) }
+我是 {name} ，我今年 {age} 岁, 我来自 {city}, 今天是 {date},那天是 {run_date}
+西瓜：{xigua_price}
+香蕉：{banana_price}
+凤梨：{fenli_price}
+牛油果：{niuyou_price}
+总计：{xigua_price+banana_price+fenli_price+niuyou_price}
+
+循环：{','.join([str(i) for i in range(age) if i % 5 == 0])}
+
+
+{other_var}
+""")
+print("raw:", txt1)
+txt2 = txt1.formatEx(name="张三").formatEx(age=30,range=range).formatEx(city="北京").formatEx(date="{run_date_std+33}").formatEx()
+print("formatted:", txt2)
+txt3 = txt2.formatEx(xigua_price=100,banana_price=200,fenli_price=300,niuyou_price=400)
+print("formatted:", txt3)
+
+
+
+
+
 print("\n所有测试完成!")

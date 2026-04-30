@@ -534,7 +534,7 @@ class EnhancedDateFormatter:
     商品：['苹果', '香蕉', '橙子'], 数量：3, 日期：2026-02-26
     """
     
-    def __init__(self, template: str, default_run_date: Optional[str] = None):
+    def __init__(self, template: str, default_run_date: Optional[str] = None,**context):
         """
         初始化格式化器
         
@@ -544,7 +544,7 @@ class EnhancedDateFormatter:
         """
         self.template = template
         self.date_processor = DateProcessor(default_run_date)
-        self.context = {}  # 存储用户设置的变量
+        self.context = context  # 存储用户设置的变量
         self.parsed_placeholders = self._parse_placeholders()
         
         # 初始化上下文中的日期变量
@@ -561,7 +561,10 @@ class EnhancedDateFormatter:
     def next(self) -> 'EnhancedDateFormatter':
         s = self.format()
         if "{" in s and "}" in s:
-            return self.__class__(s,str(self.date_processor.run_date))
+            new_formatter = self.__class__(s, str(self.date_processor.run_date))
+            # 传递所有上下文变量
+            new_formatter.context = self.context.copy()
+            return new_formatter
         raise ValueError("No PalceHolder key in formatted result !!!")
 
     def _parse_placeholders(self) -> List[Dict[str, Any]]:
@@ -633,6 +636,10 @@ class EnhancedDateFormatter:
         if result is not None:
             return result
         
+        # 检查是否是上下文变量更新格式: {var1 <- value1 ; var2 <- value2 ; expr}
+        if '<-' in expr_part and ';' in expr_part:
+            return self._evaluate_context_update(expr_part)
+        
         # 尝试作为Python表达式计算
         try:
             # 创建安全的命名空间
@@ -651,6 +658,11 @@ class EnhancedDateFormatter:
                     'max': max,
                     'abs': abs,
                     'round': round,
+                    'range': range,
+                    'enumerate': enumerate,
+                    'zip': zip,
+                    'map': map,
+                    'filter': filter,
                 }
             }
             
@@ -669,7 +681,141 @@ class EnhancedDateFormatter:
             else:
                 # 返回原始表达式
                 return f"{{{expr_part}}}"
-    
+
+    def _evaluate_context_update(self, expr_part: str) -> Any:
+        """
+        处理上下文变量动态更新格式: {var1 <- value1 ; var2 <- value2 ; expr}
+        
+        Args:
+            expr_part: 包含变量更新和表达式的字符串
+            
+        Returns:
+            Any: 最后表达式的计算结果
+            
+        格式说明:
+            - 使用 '<-' 进行变量赋值
+            - 使用 ';' 分隔多个赋值和最终表达式
+            - 最后一个部分是要计算的表达式（可以省略赋值符号）
+            
+        示例:
+            {name <- "张三" ; age <- 30 ; city <- "北京" ; age + 10}
+            {x <- 10 ; y <- 20 ; x + y}
+        """
+        try:
+            parts = expr_part.split(';')
+            result = None
+            
+            for i, part in enumerate(parts):
+                part = part.strip()
+                if not part:
+                    continue
+                
+                if '<-' in part:
+                    # 变量赋值部分: var <- value
+                    var_name, var_value = part.split('<-', 1)
+                    var_name = var_name.strip()
+                    var_value = var_value.strip()
+                    
+                    # 解析值（支持字符串、数字、列表、字典等）
+                    parsed_value = self._parse_value(var_value)
+                    self.context[var_name] = parsed_value
+                else:
+                    # 最后一个表达式或纯表达式
+                    # 创建安全的命名空间
+                    namespace = {
+                        '__builtins__': {
+                            'len': len,
+                            'str': str,
+                            'int': int,
+                            'float': float,
+                            'bool': bool,
+                            'list': list,
+                            'dict': dict,
+                            'tuple': tuple,
+                            'sum': sum,
+                            'min': min,
+                            'max': max,
+                            'abs': abs,
+                            'round': round,
+                            'range': range,
+                            'enumerate': enumerate,
+                            'zip': zip,
+                            'map': map,
+                            'filter': filter,
+                        }
+                    }
+                    namespace.update(self.context)
+                    
+                    # 尝试作为日期表达式计算
+                    date_result = self.date_processor.parse_date_expression(part)
+                    if date_result is not None:
+                        result = date_result
+                    else:
+                        # 尝试作为Python表达式计算
+                        code = compile(part, '<string>', 'eval')
+                        result = eval(code, namespace)
+            
+            return result if result is not None else ""
+            
+        except Exception as e:
+            # 如果解析失败，返回原始表达式
+            return f"{{{expr_part}}}"
+
+    def _parse_value(self, value_str: str) -> Any:
+        """
+        解析字符串值为Python对象
+        
+        Args:
+            value_str: 值的字符串表示
+            
+        Returns:
+            Any: 解析后的Python对象
+        """
+        value_str = value_str.strip()
+        
+        # 空值
+        if value_str.lower() == 'none':
+            return None
+        
+        # 布尔值
+        if value_str.lower() == 'true':
+            return True
+        if value_str.lower() == 'false':
+            return False
+        
+        # 数字
+        if value_str.isdigit():
+            return int(value_str)
+        try:
+            return float(value_str)
+        except ValueError:
+            pass
+        
+        # 字符串（去除引号）
+        if (value_str.startswith('"') and value_str.endswith('"')) or \
+           (value_str.startswith("'") and value_str.endswith("'")):
+            return value_str[1:-1]
+        
+        # 尝试解析列表或字典
+        try:
+            namespace = {
+                '__builtins__': {
+                    'list': list,
+                    'dict': dict,
+                    'int': int,
+                    'float': float,
+                    'str': str,
+                    'range': range,
+                }
+            }
+            code = compile(value_str, '<string>', 'eval')
+            return eval(code, namespace)
+        except:
+            pass
+        
+        # 默认返回字符串
+        return value_str
+
     def set(self, **kwargs):
         """
         设置变量值

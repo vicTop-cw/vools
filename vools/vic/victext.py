@@ -9,6 +9,7 @@ import itertools
 from datetime import datetime
 
 from ..vic.victools import vicTools
+from ..datetime.dates_format import EnhancedDateFormatter
 
 
 class vicText(str):
@@ -139,3 +140,16 @@ class vicText(str):
             运行结果
         """
         return self._result
+    
+    @vicTools.transfer
+    def formatEx(self,**kwargs):
+        """格式化文本，支持日期格式化
+
+        Args:
+            kwargs: 格式化参数
+
+        Returns:
+            格式化后的文本
+        """
+        formatter = EnhancedDateFormatter(self._text).set(**kwargs)
+        return formatter.format()
