@@ -236,7 +236,7 @@ class Seq(SeqBase):
         rs = []
         d = rs.append
         for i in self._evaluate():
-            if i not in s:
+            if i not in rs:
                 d(i)
                 rs.append(i)
         return rs
