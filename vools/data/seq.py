@@ -234,9 +234,10 @@ class Seq(SeqBase):
     @property
     def unique(self):
         rs = []
-        d = rs.append
+        s = set()
+        d = s.add
         for i in self._evaluate():
-            if i not in rs:
+            if i not in s:
                 d(i)
                 rs.append(i)
         return rs

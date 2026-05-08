@@ -360,6 +360,11 @@ print(config.app.debug)        # 输出: False
 
 ## 更新日志
 
+### v0.1.7
+- 修复 Seq.unique 方法的代码错误（未定义变量和重复添加元素问题）
+- 确保所有单元测试通过（156 passed）
+- 提升代码质量和稳定性
+
 ### v0.1.6
 - 重构项目结构，拆分 vools.py 为独立模块
 - 创建 core 模块（base.py, config.py, exceptions.py）
