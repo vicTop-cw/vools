@@ -23,6 +23,11 @@
 - [iif 函数](#iif-函数)
 - [vicDate 工具类](#vicdate-工具类)
 - [核心类](#核心类)
+- [rself 装饰器](#rself-装饰器)
+- [管道操作](#管道操作)
+- [curry_decorator 装饰器](#curry_decorator-装饰器)
+- [placeholder_impl 占位符实现](#placeholder_impl-占位符实现)
+- [Seq 序列类](#seq-序列类)
 - [常见问题](#常见问题)
 
 ## 安装
@@ -981,13 +986,32 @@ result = lst.filter(lambda x: x > 2).collect()
 - 确保有文件写入权限
 - 检查缓存键生成函数是否正确
 
-### 5. 测试运行失败
+### 5. 管道操作报错
 
-**问题**：运行测试时提示导入错误或测试失败
+**问题**：使用管道操作时提示 `TypeError` 或 `NotImplemented`
 
 **解决方案**：
-- 确保在项目目录中运行测试：`cd vools && python -m pytest tests/`
-- 检查是否安装了 site-packages 中的旧版本 vools，如果有，先卸载：`pip uninstall vools -y`
+- 确保右侧操作数是 `P` 实例：`lst | P(lambda x: x * 2)`
+- 使用 `Ops` 工具类提供的方法：`lst | Ops.filter(lambda x: x > 0)`
+- 字符串表达式需要通过 `g` 函数转换
+
+### 6. rself 装饰器报错
+
+**问题**：使用 `@rself` 装饰器时报错
+
+**解决方案**：
+- 确保类只继承一个基类或不继承
+- 检查是否有重复的方法名
+- 魔法方法不会被拦截，保持原有行为
+
+### 7. 循环导入错误
+
+**问题**：导入模块时出现 `ImportError: cannot import name`
+
+**解决方案**：
+- 这是已知问题，已通过延迟导入修复
+- 确保使用最新版本的 vools
+- 如果问题仍然存在，尝试重新安装
 
 ## 测试验证
 
@@ -998,17 +1022,62 @@ result = lst.filter(lambda x: x > 2).collect()
 python -m pytest tests/ -v
 
 # 测试文件列表
-# - tests/test_placeholder.py    # 占位符测试
-# - tests/test_stuff.py           # stuff 函数测试
-# - tests/test_decorators.py      # 装饰器测试
-# - tests/test_overcurry_vic.py   # overcurry 和 vic 类测试
-# - tests/test_curry_overload.py  # curry 和 overload 测试
-# - tests/test_box.py             # box 装饰器和 Box 类测试
-# - tests/test_g_function.py      # g 函数测试
-# - tests/test_iif.py             # iif 函数测试
-# - tests/test_vicdate.py         # vicDate 工具类测试
-# - tests/test_multiline.py        # 多行表达式测试
+# - tests/test_placeholder.py        # 占位符测试
+# - tests/test_stuff.py               # stuff 函数测试
+# - tests/test_decorators.py          # 装饰器测试
+# - tests/test_overcurry_vic.py       # overcurry 和 vic 类测试
+# - tests/test_curry_overload.py      # curry 和 overload 测试
+# - tests/test_box.py                 # box 装饰器和 Box 类测试
+# - tests/test_g_function.py          # g 函数测试
+# - tests/test_iif.py                 # iif 函数测试
+# - tests/test_vicdate.py             # vicDate 工具类测试
+# - tests/test_multiline.py           # 多行表达式测试
+# - tests/test_rself.py               # rself 装饰器测试
+# - tests/test_pipe_ops.py            # 管道操作测试
+# - tests/test_viclist_pipe.py        # vicList 管道测试
+# - tests/test_curry_decorator.py     # curry_decorator 测试
+# - tests/test_placeholder_impl.py    # placeholder_impl 测试
+# - tests/test_box_vic.py             # box 装饰器与 vic 类集成测试
 ```
+
+## 性能优化建议
+
+### Cython 加速
+
+以下类和函数适合使用 Cython 进行性能优化：
+
+| 模块 | 类/函数 | 优化理由 |
+|------|---------|----------|
+| `vools/data/seq.py` | `Seq` 类 | 序列操作是性能热点 |
+| `vools/vic/viclist.py` | `vicList` 类 | 频繁的列表操作 |
+| `vools/vic/victext.py` | `vicText` 类 | 字符串处理密集 |
+| `vools/functional/arrow_func.py` | `g` 函数 | 表达式解析频繁调用 |
+| `vools/functional/iif.py` | `iif` 函数 | 条件判断核心逻辑 |
+
+### 使用建议
+
+1. **避免过度使用装饰器**：装饰器会带来一定的性能开销
+2. **批量操作优于逐个操作**：使用 `vicList` 的批量方法
+3. **缓存计算结果**：使用 `@persist` 装饰器缓存耗时计算
+4. **延迟执行**：`Seq` 的延迟执行特性可以优化性能
+
+## 贡献指南
+
+欢迎贡献代码！请遵循以下流程：
+
+1. Fork 仓库
+2. 创建特性分支：`git checkout -b feature/your-feature`
+3. 编写代码和测试
+4. 确保测试通过：`pytest tests/`
+5. 提交 PR
+
+### 代码规范
+
+- 使用 Python 3.6+ 语法
+- 遵循 PEP 8 规范
+- 添加类型提示
+- 编写单元测试
+- 更新文档
 
 ## EnhancedDateFormatter 日期格式化器
 

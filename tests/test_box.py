@@ -118,7 +118,8 @@ class TestBoxRunMethod:
         """测试 rerun 模式"""
         b = Box([1, 2, 3])
         result = b.run(lambda x: x * 2, unpack="*", rerun=True)
-        assert result.__wrapped__ == [2, 4, 6]
+        # 现在返回的是 vicList，需要转换为列表进行比较
+        assert list(result.__wrapped__) == [2, 4, 6]
     
     def test_run_nobox(self):
         """测试 nobox 参数"""

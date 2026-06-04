@@ -1,7 +1,6 @@
 import time
 from typing import Callable
 from ..decorators.trd import vic_execute
-from ..vools import vicList,vicText
 
 __all__ = [
     "waiter",
@@ -11,6 +10,7 @@ __all__ = [
     "build",
     "build_text"
 ]
+
 
 def waiter(
     checker: Callable[[], bool],
@@ -34,6 +34,15 @@ def waiter(
 
 
 for_ = lambda func, n = 1,p = False : vic_execute(max_workers=n, use_process=p)(func)
-foreach = lambda lst,func=print,filter_func=None,filter_first=True: vicList(lst).foreach(func,filter_func,filter_first)
+
+def foreach(lst, func=print, filter_func=None, filter_first=True):
+    from ..vic import vicList
+    return vicList(lst).foreach(func, filter_func, filter_first)
+
 for_p = for_(print)
-build = build_text  = lambda x:  vicText(x).build
+
+def build(x):
+    from ..vic import vicText
+    return vicText(x).build
+
+build_text = build
