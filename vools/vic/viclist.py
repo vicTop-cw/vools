@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from ..data import Seq
 from ..decorators import rself
 from ..functional.pipe_ops import P
+from ..security import create_filter_func, create_map_func, ExpressionSecurityError
 
 
 class ListLikeMeta(type):
@@ -113,7 +114,8 @@ class vicList(Seq, metaclass=ListLikeMeta):
         if callable(func):
             return [func(s) for s in self._data]
         elif isinstance(func, str):
-            return [eval(func)(s) for s in self._data]
+            safe_func = create_map_func(func)
+            return [safe_func(s) for s in self._data]
         else:
             return []
 
@@ -123,7 +125,8 @@ class vicList(Seq, metaclass=ListLikeMeta):
         if callable(func):
             return [s for s in self._data if func(s)]
         elif isinstance(func, str):
-            return [s for s in self._data if eval(func)(s)]
+            safe_func = create_filter_func(func)
+            return [s for s in self._data if safe_func(s)]
         else:
             return []
 
@@ -142,7 +145,7 @@ class vicList(Seq, metaclass=ListLikeMeta):
 
     def filterfalse(self, func=bool):
         if isinstance(func, str):
-            func = eval(func)
+            func = create_filter_func(func)
         if not hasattr(self, '_data'):
             self._data = list(self._evaluate())
         return vicList([i for i in self._data if not func(i)])
@@ -164,7 +167,9 @@ class vicList(Seq, metaclass=ListLikeMeta):
         if callable(func):
             return list(itertools.starmap(func, self._data))
         elif isinstance(func, str):
-            return list(itertools.starmap(eval(func), self._data))
+            from ..security import safe_compile_expression
+            safe_func = safe_compile_expression(func, tuple(symbols))
+            return list(itertools.starmap(safe_func, self._data))
         else:
             return []
 
@@ -197,7 +202,8 @@ class vicList(Seq, metaclass=ListLikeMeta):
         if callable(func):
             func(self)
         else:
-            eval(func)(self)
+            safe_func = create_map_func(func)
+            safe_func(self)
 
     def starmap(self, func, symbols=None):
         if self.is_empty:
@@ -216,7 +222,8 @@ class vicList(Seq, metaclass=ListLikeMeta):
         if callable(func):
             return func(self)
         elif isinstance(func, str):
-            return eval(func)(self)
+            safe_func = create_map_func(func)
+            return safe_func(self)
         else:
             return []
 
@@ -253,7 +260,7 @@ class vicList(Seq, metaclass=ListLikeMeta):
             p = pred == 'bool'
             if not pred:
                 raise ValueError("pred must not empty ,is a bool function ")
-            pred = eval(pred)
+            pred = create_filter_func(pred)
         else:
             raise TypeError("pred must is a bool function,or a bool function that express by string")
 
@@ -273,7 +280,7 @@ class vicList(Seq, metaclass=ListLikeMeta):
             p = pred == 'bool'
             if not pred:
                 raise ValueError("pred must not empty ,is a bool function ")
-            pred = eval(pred)
+            pred = create_filter_func(pred)
         else:
             raise TypeError("pred must is a bool function,or a bool function that express by string")
 
@@ -286,7 +293,7 @@ class vicList(Seq, metaclass=ListLikeMeta):
         if not hasattr(self, '_data'):
             self._data = list(self._evaluate())
         if isinstance(pred, str):
-            pred = eval(pred)
+            pred = create_filter_func(pred)
         return quan(1 for item in self._data if pred(item))
 
     @classmethod
