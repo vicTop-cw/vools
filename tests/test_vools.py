@@ -18,10 +18,12 @@ print("=== 测试 vicTools ===")
 try:
     # 测试transfer装饰器
     @vicTools.transfer
-    def test_transfer():
+    def transfer_func():
         return "test"
-    result = test_transfer()
+    result = transfer_func()
     print(f"vicTools.transfer 测试: {result}, 类型: {type(result)}")
+    assert result is not None
+    assert isinstance(result, vicText)
     
     # 测试split函数
     test_str = "a,b;c.d"

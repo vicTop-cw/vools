@@ -42,9 +42,21 @@ def rself(cls: Type) -> Type:
     # 1. 检查继承关系，只允许单继承（排除 object）
     bases = [b for b in cls.__bases__ if b is not object]
     if len(bases) > 1:
-        raise TypeError(
-            f"@rself 仅支持单继承或不继承，当前类 {cls.__name__} 继承了 {len(bases)} 个父类: {bases}"
-        )
+        # 检查是否有自定义元类（使用 metaclass=xxx）
+        if cls.__class__ is not type:
+            # 如果有自定义元类，允许继承自一个类（其他可能是元类相关）
+            # 检查是否只有一个非 object 的实际父类
+            actual_bases = [b for b in bases if not isinstance(b, type)]
+            if len(actual_bases) <= 1:
+                bases = actual_bases
+            else:
+                raise TypeError(
+                    f"@rself 仅支持单继承或不继承，当前类 {cls.__name__} 继承了 {len(bases)} 个父类: {bases}"
+                )
+        else:
+            raise TypeError(
+                f"@rself 仅支持单继承或不继承，当前类 {cls.__name__} 继承了 {len(bases)} 个父类: {bases}"
+            )
     parent_cls = bases[0] if bases else None
 
     # 保存原有的 __getattr__（如果有）

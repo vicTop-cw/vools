@@ -72,10 +72,23 @@ def box(func=None, *, signature_from=None):
             return instance
         if isinstance(rs, Box):
             return rs
-        elif isinstance(rs, (dict, list, tuple, set, str, int, float, bool, datetime, bytes, bytearray, slice, complex, type, object)):
+        
+        # 延迟导入避免循环导入
+        from ..vic import vicList, vicDate, vicText
+        
+        # 使用对应的 vic 类包装返回值
+        if isinstance(rs, str):
+            return Box(vicText(rs))
+        elif isinstance(rs, list):
+            return Box(vicList(rs))
+        elif isinstance(rs, datetime):
+            return Box(vicDate(rs))
+        elif isinstance(rs, (tuple, set)):
+            return Box(vicList(rs))
+        elif isinstance(rs, (int, float, bool, bytes, bytearray, slice, complex, type, object)):
             return Box(rs)
         elif isinstance(rs, Iterable) and not isinstance(rs, (str, bytes)):
-            return Box(list(rs))
+            return Box(vicList(list(rs)))
         else:
             return Box(rs)
 

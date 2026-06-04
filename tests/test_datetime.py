@@ -50,19 +50,13 @@ class TestDatetimeModule(unittest.TestCase):
 
 def test_vicDate():
     """测试 vicDate 类"""
-    try:
-        from vools.datetime.utils import vicDate
-        date = vicDate()
-        result = date.__dir__()
-        assert result is not None, "vicDate __dir__() should not return None"
-        assert isinstance(result, list), "vicDate __dir__() should return a list"
-        assert len(result) > 0, "vicDate __dir__() should return non-empty list"
-        print("vicDate __dir__() 返回了", len(result), "个属性")
-        # print(result)
-    except ImportError as e:
-        print(e)
-        import pytest
-        pytest.skip(f"vicDate not available: {e}")
+    from vools.vic import vicDate
+    date = vicDate()
+    result = date.__dir__()
+    assert result is not None, "vicDate __dir__() should not return None"
+    assert isinstance(result, list), "vicDate __dir__() should return a list"
+    assert len(result) > 0, "vicDate __dir__() should return non-empty list"
+    print("vicDate __dir__() 返回了", len(result), "个属性")
 
 if __name__ == '__main__':
     test_vicDate()
