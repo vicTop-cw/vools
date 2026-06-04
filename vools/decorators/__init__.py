@@ -37,7 +37,7 @@ from .shotcut import (
 # 柯里化装饰器
 from .curry_core import curry, Curried, CurryDescriptor, is_curried, CurryExecutionError
 from .curry_delay import delay_curry, DelayCurried, is_lazy
-
+from .curry_decorator import curry_class
 # 重载装饰器
 from .overload import overload, OverloadManager, strict
 
@@ -48,6 +48,9 @@ from .overcurry import overcurry, OvercurryManager
 from .selector import Selector, Overloads
 # 重载装饰器（从 overloads.py 导入，不是 selector.py）
 from .overloads import overloads
+
+# rself 装饰器
+from .rself import rself
 
 # 柯里化函数
 from .curried import (
@@ -111,6 +114,7 @@ __all__ = [
 
     # 柯里化
     'curry',
+    'curry_class',
     'delay_curry',
     'Curried',
     'CurryDescriptor',
@@ -132,6 +136,9 @@ __all__ = [
     'Selector',
     'Overloads',
     'overloads',
+
+    # rself 装饰器
+    'rself',
 
     # 柯里化函数
     'curried_map',

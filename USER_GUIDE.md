@@ -4,7 +4,7 @@
 
 ## 项目信息
 
-- **当前版本**：v0.1.7
+- **当前版本**：v0.1.8
 - **GitHub 仓库**：<https://github.com/vicTop-cw/vools>
 - **联系邮箱**：<victortop921129@gmail.com>
 - **PyPI 主页**：<https://pypi.org/project/vools/>
@@ -36,7 +36,7 @@
 
 ```bash
 # 从 PyPI 安装
-pip install vools==0.1.7
+pip install vools==0.1.8
 
 # 或从源码安装
 git clone https://github.com/vicTop-cw/vools.git

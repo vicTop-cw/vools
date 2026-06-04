@@ -36,6 +36,114 @@ class _NONE:
     def __repr__(self):
         return "NONE"
 
+    def __lt__(self, other):
+        return False
+    
+    def __gt__(self, other):
+        return False
+    
+    def __ge__(self, other):
+        return self == other 
+    
+    def __le__(self, other):
+        return self == other 
+
+    def __hash__(self):
+        return hash(None)
+    
+    def __str__(self):
+        return "NONE"
+    
+    def __iter__(self):
+        return self
+    
+    def __next__(self):
+        raise StopIteration()
+
+    def __len__(self):
+        return 0
+    
+    def __getitem__(self,_):
+        return self
+    
+    def __getattr__(self,_):
+        return self
+
+    def __call__(self,*_,**__):
+        return self
+
+    def __add__(self, other):
+        return self
+    
+    def __radd__(self, other):
+        return self
+
+    def __mul__(self, other):
+        return self
+        
+    def __rmul__(self, other):
+        return self
+
+
+    def __rshift__(self, other):
+        return self
+
+    def __lshift__(self, other):
+        return self
+    
+    def __sub__(self, other):
+        return self
+    
+    def __rsub__(self, other):
+        return self
+    
+    def __mod__(self, other):
+        return self
+    
+    def __pow__(self, other):
+        return self
+    
+    def __div__(self, other):
+        return self
+        
+    def __rdiv__(self, other):
+        return self
+    
+    def __truediv__(self, other):
+        return self
+
+    def __rtruediv__(self, other):
+        return self
+
+    def __rmod__(self, other):
+        return self
+    
+    def __rpow__(self, other):
+        return self
+    
+    def __neg__(self):
+        return self
+    
+    def __pos__(self):
+        return self
+
+    def __and__(self, other):
+        return self
+    
+    def __or__(self, other):
+        return self
+
+    def __xor__(self, other):
+        return self
+    
+    def __rand__(self, other):
+        return self
+    
+    def __ror__(self, other):
+        return self
+
+    def __matmul__(self, other):
+        return self
 
 NONE = _NONE()
 
