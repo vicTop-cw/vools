@@ -396,14 +396,19 @@ class _IndexHolder:
             # 对于其他可调用的 key，返回一个函数，直接调用 key 并将结果作为索引
             return lambda it, *args: it[key(*args)]
         if isinstance(key, (int, str, slice)):
+            # 处理字符串类型的 key，需要添加引号
+            if isinstance(key, str):
+                key_repr = repr(key)
+            else:
+                key_repr = repr(key)
             if self.ix is None:
                 # 创建新的占位符，并设置 is_use_getitem 为 True
-                result = self.__class__(f"lambda x: x[{key}]", self.env, self.arity, self.ix)
+                result = self.__class__(f"lambda x: x[{key_repr}]", self.env, self.arity, self.ix)
                 # 设置 is_use_getitem 为 True
                 super(type(result), result).__setattr__('is_use_getitem', True)
                 return result
             # 创建新的占位符，并设置 is_use_getitem 为 True
-            result = self.__class__(f"lambda x{self.ix}: x{self.ix}[{key}]", self.env, self.arity, self.ix)
+            result = self.__class__(f"lambda x{self.ix}: x{self.ix}[{key_repr}]", self.env, self.arity, self.ix)
             # 设置 is_use_getitem 为 True
             super(type(result), result).__setattr__('is_use_getitem', True)
             return result
