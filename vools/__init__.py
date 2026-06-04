@@ -7,7 +7,7 @@ vools - Python 函数式编程工具集
 import importlib
 from typing import Any
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
@@ -37,7 +37,7 @@ from .decorators import (
     memorize, once, persist,
     lazy, repeat, retry, rerun,
     overload, overcurry, overloads,
-    curry
+    curry, curry_class, rself
 )
 
 # ============================================================================
@@ -226,6 +226,9 @@ __all__ = [
     'overload',
     'overcurry',
     'overloads',
+    'curry',
+    'curry_class',
+    'rself',
 
     'Pipe',
     'Ops',

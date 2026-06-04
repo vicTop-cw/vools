@@ -23,7 +23,15 @@ class TestDataModule(unittest.TestCase):
         result = collect(Seq(range(10)),lambda x: x if x % 2 == 0 else NONE ,list)
         self.assertEqual(result, list(range(0,10,2)))
 
-    
+    def test_NONE(self):
+        """测试 NONE 常量"""
+        self.assertEqual(NONE, NONE)
+        self.assertIsNot(NONE, None)
+        
+        for i in NONE:
+            print(i)
 
 if __name__ == '__main__':
+    # print(NONE.sdsf().s())
     unittest.main()
+    

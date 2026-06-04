@@ -7,35 +7,36 @@ import operator
 from typing import Callable
 from inspect import signature, Parameter
 import re
-from vools.functional.arrow_func import g
-from ..decorators import once
+from .arrow_func import g
+# from ..decorators import once
+from .placeholder_impl import X
 
-__all__ = ['_', 'magic', 'f', 'to_holder', 'F', 'flip', 'apply', 'hd', 'iif','X'] + [f"_{i}" for i in range(1, 21)]
+__all__ = ['_', 'magic', 'f', 'to_holder', 'F', 'flip', 'apply', 'hd','X'] + [f"_{i}" for i in range(1, 21)]
 
 
-@once
-class _X:
-    def __getattr__(self,name):
-        def func(x,*a,**k):
-            f = getattr(x,name)
-            if callable(f):
-                return f(*a,**k)
-            if len(a) + len(k) > 0 :
-                raise ValueError(f" Attr {name} is not callable !!!")
-            return f
-        return func
+# @once
+# class _X:
+#     def __getattr__(self,name):
+#         def func(x,*a,**k):
+#             f = getattr(x,name)
+#             if callable(f):
+#                 return f(*a,**k)
+#             if len(a) + len(k) > 0 :
+#                 raise ValueError(f" Attr {name} is not callable !!!")
+#             return f
+#         return func
     
-    def __getitem__(self,key):
-        def func(x):
-            return x[key]
-        return func
+#     def __getitem__(self,key):
+#         def func(x):
+#             return x[key]
+#         return func
     
-    def __call__(self,*a,**k):
-        def func(x):
-            return x(*a,**k) if callable(x) else x
-        return func
+#     def __call__(self,*a,**k):
+#         def func(x):
+#             return x(*a,**k) if callable(x) else x
+#         return func
 
-X = _X()
+# X = _X()
 
 # 安全的内置函数白名单
 safe_builtins = [
@@ -669,6 +670,3 @@ def apply(func, *args, **kwargs):
     """应用函数到参数"""
     return func(*args, **kwargs)
 
-def iif(condition, true_expr, false_expr):
-    """三元表达式"""
-    return true_expr if condition else false_expr
