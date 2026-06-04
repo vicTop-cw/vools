@@ -2,6 +2,22 @@
 安全模块
 提供安全相关的工具和功能
 """
-from .safe_eval import safe_eval, SafeEvalError
 
-__all__ = ['safe_eval', 'SafeEvalError']
+from .safe_eval import safe_eval, SafeEvalError
+from .expression_handler import (
+    ExpressionSecurityError,
+    safe_compile_expression,
+    safe_eval_expression,
+    create_filter_func,
+    create_map_func,
+)
+
+__all__ = [
+    'safe_eval',
+    'SafeEvalError',
+    'ExpressionSecurityError',
+    'safe_compile_expression',
+    'safe_eval_expression',
+    'create_filter_func',
+    'create_map_func',
+]

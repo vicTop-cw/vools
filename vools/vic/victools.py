@@ -18,6 +18,7 @@ import pkgutil
 import random
 
 from ..data import Seq, NONE
+from ..security import safe_compile_expression
 from ..functional.placeholder import _
 from ..functional.box import Box, setattr_box
 
@@ -117,10 +118,9 @@ class vicTools:
         Returns:
             生成的lambda函数
         """
-        param_symbols = ",".join(vicTools.transferCols(param_symbols))
+        param_symbols = vicTools.transferCols(param_symbols)
         if isinstance(ex, str):
-            ex = f"lambda {param_symbols} : {ex}"
-            return eval(ex, globals(), locals())
+            return safe_compile_expression(ex, tuple(param_symbols))
         else:
             raise TypeError(" ex must be a string !!!")
 
