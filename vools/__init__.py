@@ -116,7 +116,10 @@ _lazy_modules = {
 
     'Pipe': '.functional',
     'Ops': '.functional',
+    'O': '.functional',
     'P': '.functional',
+    'X': '.functional',
+    'Z': '.functional.adapter_z',
     'NONE': '.functional',
     'arrow_func': '.functional',
 
@@ -154,6 +157,7 @@ _lazy_modules = {
     'Mixer': '.oop',
     'mixer': '.oop',
     'oop': '.oop',
+    'calltype': '.oop',
 
     'vicTools': '.vic',
     'vicDate': '.vic',
@@ -232,8 +236,11 @@ __all__ = [
 
     'Pipe',
     'Ops',
+    'O',
     'Seq',
     'P',
+    'X',
+    'Z',
     'NONE',
     'iif',
     'ConditionBuilder',
@@ -282,6 +289,7 @@ __all__ = [
     'Mixer',
     'mixer',
     'oop',
+    'calltype',
     'OOP_AVAILABLE',
 
     'vicTools',
@@ -320,6 +328,7 @@ _common_names = [
     'overload', 'overcurry', 'overloads',
     '_', '_1', '_2', '_3', 'g', 'iif', 'ConditionBuilder', 'LazyProperty',
     'Box', 'box', 'Seq',
+    'P', 'X', 'Z', 'Ops', 'O', 'calltype',
     'safe_eval',
     'vicTools', 'vicDate', 'vicText', 'vicList',
 ]

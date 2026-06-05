@@ -36,6 +36,14 @@ class vicList(Seq, metaclass=ListLikeMeta):
                 self._data = list(origins)
         super().__init__(self._data)
 
+    def do(self, f=print, pre_f=None, sub_f=None):
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+
     def __getitem__(self, index):
         if isinstance(index, slice):
             return vicList(self._data[index])

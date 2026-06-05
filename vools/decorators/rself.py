@@ -66,10 +66,13 @@ def rself(cls: Type) -> Type:
         """
         应用返回值转换规则：
         - None → 返回 self
+        - 已经是当前类或其子类的实例 → 直接返回原值（无需转换）
         - 父类实例 → 返回子类实例（用子类重新包装）
         """
         if value is None:
             return self
+        if isinstance(value, cls):
+            return value
         if parent_cls is not None and isinstance(value, parent_cls):
             try:
                 return cls(value)
