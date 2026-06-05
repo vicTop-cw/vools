@@ -13,6 +13,7 @@ import pickle
 import os
 import json
 import re
+import threading
 from functools import wraps
 from inspect import signature, isclass, getfile
 from typing import Callable, Any, Optional, Dict
@@ -114,11 +115,12 @@ class FileLock:
 
 
 class TimedCache:
-    """带过期时间和大小限制的缓存"""
+    """带过期时间和大小限制的缓存（线程安全）"""
     
     def __init__(self, max_size: int = 1000):
         self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._max_size = max_size
+        self._lock = threading.Lock()
     
     def _is_obsolete(self, entry: Dict[str, Any], duration: float) -> bool:
         """检查缓存是否过期"""
@@ -126,31 +128,35 @@ class TimedCache:
     
     def get(self, key: str, duration: float) -> Optional[Any]:
         """获取缓存值"""
-        if key in self._cache:
-            entry = self._cache[key]
-            if not self._is_obsolete(entry, duration):
-                self._cache.move_to_end(key)
-                return entry['result']
-            del self._cache[key]
+        with self._lock:
+            if key in self._cache:
+                entry = self._cache[key]
+                if not self._is_obsolete(entry, duration):
+                    self._cache.move_to_end(key)
+                    return entry['result']
+                del self._cache[key]
         return None
     
     def set(self, key: str, result: Any):
         """设置缓存值"""
-        if len(self._cache) >= self._max_size:
-            self._cache.popitem(last=False)
-        
-        self._cache[key] = {
-            'result': result,
-            'time': time.time()
-        }
+        with self._lock:
+            if len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)
+            
+            self._cache[key] = {
+                'result': result,
+                'time': time.time()
+            }
     
     def clear(self):
         """清空缓存"""
-        self._cache.clear()
+        with self._lock:
+            self._cache.clear()
     
     def __len__(self):
         """返回缓存条目数"""
-        return len(self._cache)
+        with self._lock:
+            return len(self._cache)
 
 
 _CACHE = TimedCache(max_size=1000)

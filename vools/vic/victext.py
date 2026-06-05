@@ -23,6 +23,14 @@ class vicText(str):
         self._text = text
         self._result = None
 
+    def do(self, f=print, pre_f=None, sub_f=None):
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+
     @staticmethod
     def _safe_path(file_path, base_dir=None):
         if base_dir is None:

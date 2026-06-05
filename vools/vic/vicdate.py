@@ -38,6 +38,14 @@ class vicDate(datetime):
         self.fmt = fmt
         self._date_processor = DateProcessor(self.strftime('%Y-%m-%d'))
 
+    def do(self, f=print, pre_f=None, sub_f=None):
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+
     @staticmethod
     def get_py_fmt(fmt='yyyyMMdd'):
         if not '%' in fmt:
