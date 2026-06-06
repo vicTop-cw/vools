@@ -10,7 +10,7 @@ import inspect
 import builtins
 from typing import Any, Callable, Optional, Dict
 
-__all__ = ['lazy']
+__all__ = ['lazy', 'is_lazy']
 
 # 安全的内置函数白名单
 SAFE_BUILTINS = [
@@ -96,7 +96,7 @@ def lazy(obj: Any, caller_locals: Optional[Dict] = None,
             exec(obj, safe_globals, safe_locals)
             func = safe_locals.get(func_name, safe_globals.get(func_name))
             wrapper = lambda: func
-            wrapper._is_lazy_wrapper = True
+            wrapper._is_lazy = True
             return wrapper
         
         # 规则2：无参lambda表达式（支持 -> 和 =>）
@@ -104,7 +104,7 @@ def lazy(obj: Any, caller_locals: Optional[Dict] = None,
             expr = obj[2:]
             def _anonymous():
                 return eval(expr, safe_globals, safe_locals)
-            _anonymous._is_lazy_wrapper = True
+            _anonymous._is_lazy = True
             return _anonymous
         
         # 规则3：箭头表达式函数（支持 -> 和 =>）
@@ -115,15 +115,20 @@ def lazy(obj: Any, caller_locals: Optional[Dict] = None,
             func_str = f"def __anonymous({', '.join(params)}):\n    return {right.strip()}"
             exec(func_str, safe_globals, safe_locals)
             wrapper = safe_locals.get('__anonymous')
-            wrapper._is_lazy_wrapper = True
+            wrapper._is_lazy = True
             return wrapper
     
     # 规则4：其他类型封装为无参函数
     def _constant_wrapper():
         return obj
     
-    _constant_wrapper._is_lazy_wrapper = True
+    _constant_wrapper._is_lazy = True
     return _constant_wrapper
+
+
+def is_lazy(value):
+    """检查值是否为lazy包装的延迟值"""
+    return callable(value) and hasattr(value, '_is_lazy') and value._is_lazy
 
 
 # ============================================================================

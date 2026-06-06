@@ -2,6 +2,8 @@
 任务数据模型和状态定义
 """
 
+__all__ = ['TaskStatus', 'Task']
+
 from enum import Enum
 from typing import Optional, Any, Dict
 from datetime import datetime

@@ -2,6 +2,8 @@
 任务队列核心逻辑
 """
 
+__all__ = ['TaskQueue']
+
 import pickle
 import base64
 import time

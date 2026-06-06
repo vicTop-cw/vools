@@ -2,6 +2,9 @@
 安全表达式求值模块
 提供受限的表达式求值能力，防止代码注入攻击
 """
+
+__all__ = ['safe_eval', 'ALLOWED_OPERATORS', 'ALLOWED_BUILTINS']
+
 import ast
 import operator
 from typing import Any, Dict, Optional, Tuple

@@ -121,6 +121,8 @@ class TestPipeOps:
         p = P("x => x * 2")
         result = 5 | p
         assert result == 10
+        result = [1,2,3] >> p
+        assert result == [2,4,6]
     
     def test_chained_pipe_with_string_expressions(self):
         """测试链式管道操作使用字符串表达式"""

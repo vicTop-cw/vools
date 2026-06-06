@@ -2,6 +2,8 @@
 SQLite存储层 - 处理任务持久化和并发控制
 """
 
+__all__ = ['TaskStorage']
+
 import sqlite3
 import uuid
 import json

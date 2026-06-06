@@ -3,6 +3,8 @@ vicText 文本类
 继承自 str，提供更多文本处理方法
 """
 
+__all__ = ['vicText']
+
 import os
 import re
 import itertools

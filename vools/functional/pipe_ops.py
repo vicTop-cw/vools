@@ -19,10 +19,7 @@ from ..data import Seq, NONE
 from ..decorators import curry
 from .arrow_func import g
 
-__all__ = ['P', 'Ops', 'O', 'is_curried']
-
-
-is_curried = lambda x: isinstance(x, (type,))  # Simplified for now
+__all__ = ['P', 'Ops', 'O']
 
 
 def _pipe(*funcs):
