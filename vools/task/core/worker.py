@@ -2,6 +2,8 @@
 Worker进程/线程 - 支持多进程和多线程处理任务
 """
 
+__all__ = ['Worker', 'WorkerPool', 'ThreadPool']
+
 import multiprocessing
 import threading
 import time

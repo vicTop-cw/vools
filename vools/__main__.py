@@ -2,6 +2,8 @@
 vools 命令行工具
 """
 
+__all__ = ['main']
+
 import sys
 import argparse
 from vools import __version__, config

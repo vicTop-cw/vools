@@ -4,6 +4,8 @@ vools 配置文件模板
 请复制此文件为 config.py 并填写相应的配置值
 """
 
+__all__ = ['SPARK_CONFIG', 'DATABASE_CONFIG', 'OTHER_CONFIG', 'PATHS']
+
 # Spark 配置
 SPARK_CONFIG = {
     'gateway_port': None,      # Spark Gateway 端口，需要填写

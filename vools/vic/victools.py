@@ -3,6 +3,8 @@ vicTools 工具类
 提供各种实用的工具方法
 """
 
+__all__ = ['vicTools']
+
 import copy
 import json
 from collections import OrderedDict, namedtuple, deque
@@ -12,7 +14,6 @@ from functools import wraps, reduce, partial, lru_cache, update_wrapper
 import re
 import time
 from datetime import datetime, timedelta
-import pandas as pd
 import string
 import pkgutil
 import random
@@ -173,6 +174,39 @@ class vicTools:
         return fmt
 
     @staticmethod
+    def _generate_date_range(end_date, periods, freq='D'):
+        """生成日期序列（使用标准库）
+
+        Args:
+            end_date: 结束日期
+            periods: 生成的日期数量
+            freq: 频率（D-天, W-周, M-月）
+
+        Returns:
+            日期对象列表
+        """
+        dates = []
+        current = end_date
+
+        for _ in range(periods):
+            dates.append(current)
+            if freq == 'D':
+                current -= timedelta(days=1)
+            elif freq == 'W':
+                current -= timedelta(weeks=1)
+            elif freq == 'M':
+                year = current.year
+                month = current.month - 1
+                if month == 0:
+                    month = 12
+                    year -= 1
+                last_day = (datetime(year, month % 12 + 1, 1) - timedelta(days=1)).day
+                day = min(current.day, last_day)
+                current = datetime(year, month, day)
+
+        return dates[::-1]
+
+    @staticmethod
     def get_date_seq(nums=15, date_type='day', fmt='%m%d', run_ds=None, duo=True, reverse=True):
         """生成日期序列
 
@@ -192,26 +226,44 @@ class vicTools:
             run_ds = datetime.now().strftime('%Y%m%d')
         if reverse:
             return vicTools.get_date_seq(nums=nums, date_type=date_type, fmt=fmt, run_ds=run_ds, duo=duo, reverse=False)[::-1]
+
         freq = date_type[0].upper()
         run_date = datetime.strptime(run_ds, '%Y-%m-%d') if "-" in run_ds else datetime.strptime(run_ds, '%Y%m%d')
 
         if freq == 'D':
-            dss = [d.date() for d in pd.date_range(periods=nums, end=run_date, freq=freq)][::-1]
+            dss = [d.date() for d in vicTools._generate_date_range(run_date, nums, freq='D')]
             return [f"{d.strftime(fmt)}-{d.strftime(fmt)}" for d in dss] if duo else [d.strftime(fmt) for d in dss]
+
         if freq == 'W':
             temp_run_date = run_date
             if run_date.weekday() != 6:
-                temp_run_date += timedelta(days=7)
+                days_to_sunday = 6 - run_date.weekday()
+                temp_run_date += timedelta(days=days_to_sunday)
 
-            dss = [d.date() for d in pd.date_range(periods=nums, end=temp_run_date, freq=freq)][::-1]
+            dss = [d.date() for d in vicTools._generate_date_range(temp_run_date, nums, freq='W')]
 
-            return [(d - timedelta(days=6)).strftime(fmt) + "-" + (d if i > 0 else run_date).strftime(fmt) for i, d in enumerate(dss)] if duo else [(d if i > 0 else run_date).strftime(fmt) for i, d in enumerate(dss)]
+            result = []
+            for i, d in enumerate(dss):
+                start_date = d - timedelta(days=6)
+                end_date = d if i > 0 else run_date
+                if duo:
+                    result.append(f"{start_date.strftime(fmt)}-{end_date.strftime(fmt)}")
+                else:
+                    result.append(f"{end_date.strftime(fmt)}")
+            return result
 
         end_of_month = run_date.replace(month=run_date.month + 1, day=1) - timedelta(days=1)
+        dss = [d.date() for d in vicTools._generate_date_range(end_of_month, nums, freq='M')]
 
-        dss = [d.date() for d in pd.date_range(periods=nums, end=end_of_month, freq=freq)][::-1]
-
-        return [d.replace(day=1).strftime(fmt) + "-" + (d if i > 0 else run_date).strftime(fmt) for i, d in enumerate(dss)] if duo else [(d if i > 0 else run_date).strftime(fmt) for i, d in enumerate(dss)]
+        result = []
+        for i, d in enumerate(dss):
+            start_date = d.replace(day=1)
+            end_date = d if i > 0 else run_date
+            if duo:
+                result.append(f"{start_date.strftime(fmt)}-{end_date.strftime(fmt)}")
+            else:
+                result.append(f"{end_date.strftime(fmt)}")
+        return result
 
     @staticmethod
     def transferCols(cols=None):
@@ -715,50 +767,3 @@ class vicTools:
             return vicTools._split(string=string, sep=list(sep), rep=rep)
         else:
             return None
-
-    @staticmethod
-    def get_insert_sql_for_postgre(df: pd.DataFrame, target_table_in_post: str, if_print=True):
-        """生成PostgreSQL的插入SQL
-
-        Args:
-            df: pandas DataFrame
-            target_table_in_post: 目标表名
-            if_print: 是否打印SQL
-
-        Returns:
-            创建表SQL、截断表SQL、插入SQL
-        """
-        columns = df.columns.tolist()
-
-        def format_value(value):
-            if isinstance(value, (int, float)):
-                return str(value)
-            elif value is None:
-                return 'NULL'
-            else:
-                return f"'{str(value)}'"
-
-        values_list = []
-        for _, row in df.iterrows():
-            values = [format_value(row[col]) for col in columns]
-            values_list.append(f"({', '.join(values)})")
-
-        insert_sql = f"INSERT INTO {target_table_in_post} ({', '.join(columns)}) VALUES\n" + ",\n".join(values_list) + ";"
-
-        create_table_sql = f"""
-        CREATE TABLE IF NOT EXISTS {target_table_in_post} (
-            {', '.join([f"{col} VARCHAR" if col != 'xh' else f"{col} INTEGER" for col in columns])}
-        );
-        """
-
-        truncate_sql = f"TRUNCATE TABLE {target_table_in_post};"
-
-        if if_print:
-            print("--CREATE TABLE SQL:")
-            print(create_table_sql)
-            print("\n--TRUNCATE TABLE SQL:")
-            print(truncate_sql)
-            print("\n--INSERT INTO SQL:")
-            print(insert_sql)
-
-        return create_table_sql, truncate_sql, insert_sql

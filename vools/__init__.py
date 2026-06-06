@@ -7,7 +7,7 @@ vools - Python 函数式编程工具集
 import importlib
 from typing import Any
 
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
@@ -165,6 +165,53 @@ _lazy_modules = {
     'vicList': '.vic',
 
     'datetime': '.datetime',
+
+    # 编码模块
+    'encoding': '.encoding',
+    'Encoder': '.encoding',
+    'Decoder': '.encoding',
+    'CodecRegistry': '.encoding',
+    'encodable': '.encoding',
+    'decodable': '.encoding',
+    'b64encode': '.encoding',
+    'b64decode': '.encoding',
+    'urlencode': '.encoding',
+    'urldecode': '.encoding',
+    'to_bytes': '.encoding',
+    'to_str': '.encoding',
+    'gzip_compress': '.encoding',
+    'gzip_decompress': '.encoding',
+    'zlib_compress': '.encoding',
+    'zlib_decompress': '.encoding',
+    'lzma_compress': '.encoding',
+    'lzma_decompress': '.encoding',
+    'compress': '.encoding',
+    'decompress': '.encoding',
+    'json_dumps': '.encoding',
+    'json_loads': '.encoding',
+    'pickle_dumps': '.encoding',
+    'pickle_loads': '.encoding',
+    'serialize': '.encoding',
+    'deserialize': '.encoding',
+
+    # 加密模块
+    'crypto': '.crypto',
+    'Encryptor': '.crypto',
+    'Decryptor': '.crypto',
+    'CryptoRegistry': '.crypto',
+    'encryptable': '.crypto',
+    'decryptable': '.crypto',
+    'md5': '.crypto',
+    'sha1': '.crypto',
+    'sha224': '.crypto',
+    'sha256': '.crypto',
+    'sha384': '.crypto',
+    'sha512': '.crypto',
+    'hmac_md5': '.crypto',
+    'hmac_sha1': '.crypto',
+    'hmac_sha256': '.crypto',
+    'generate_key': '.crypto',
+    'generate_token': '.crypto',
 }
 
 DATA_AVAILABLE = True
@@ -183,16 +230,25 @@ def __getattr__(name: str) -> Any:
         module_path = _lazy_modules[name]
         try:
             module = importlib.import_module(module_path, package='vools')
+            # 首先检查模块本身是否有该属性
             if hasattr(module, name):
                 return getattr(module, name)
-            for submodule_name in dir(module):
-                if not submodule_name.startswith('_'):
-                    try:
-                        submodule = importlib.import_module(f'{module_path}.{submodule_name}', package='vools')
-                        if hasattr(submodule, name):
-                            return getattr(submodule, name)
-                    except ImportError:
-                        continue
+            # 只尝试导入真正的子包（检查 __path__ 属性）
+            if hasattr(module, '__path__'):
+                import os
+                import sys
+                # 只查找目录中的子模块文件
+                for submodule_name in dir(module):
+                    if not submodule_name.startswith('_'):
+                        # 检查是否是真正的子模块文件
+                        submodule_file = os.path.join(module.__path__[0], f'{submodule_name}.py')
+                        if os.path.exists(submodule_file):
+                            try:
+                                submodule = importlib.import_module(f'{module_path}.{submodule_name}', package='vools')
+                                if hasattr(submodule, name):
+                                    return getattr(submodule, name)
+                            except ImportError:
+                                continue
         except ImportError:
             pass
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
@@ -317,6 +373,53 @@ __all__ = [
     'DATETIME_AVAILABLE',
 
     'safe_eval',
+
+    # 编码模块
+    'encoding',
+    'Encoder',
+    'Decoder',
+    'CodecRegistry',
+    'encodable',
+    'decodable',
+    'b64encode',
+    'b64decode',
+    'urlencode',
+    'urldecode',
+    'to_bytes',
+    'to_str',
+    'gzip_compress',
+    'gzip_decompress',
+    'zlib_compress',
+    'zlib_decompress',
+    'lzma_compress',
+    'lzma_decompress',
+    'compress',
+    'decompress',
+    'json_dumps',
+    'json_loads',
+    'pickle_dumps',
+    'pickle_loads',
+    'serialize',
+    'deserialize',
+
+    # 加密模块
+    'crypto',
+    'Encryptor',
+    'Decryptor',
+    'CryptoRegistry',
+    'encryptable',
+    'decryptable',
+    'md5',
+    'sha1',
+    'sha224',
+    'sha256',
+    'sha384',
+    'sha512',
+    'hmac_md5',
+    'hmac_sha1',
+    'hmac_sha256',
+    'generate_key',
+    'generate_token',
 ]
 
 _common_names = [
@@ -331,6 +434,21 @@ _common_names = [
     'P', 'X', 'Z', 'Ops', 'O', 'calltype',
     'safe_eval',
     'vicTools', 'vicDate', 'vicText', 'vicList',
+    # 编码模块
+    'encoding', 'Encoder', 'Decoder', 'CodecRegistry',
+    'encodable', 'decodable',
+    'b64encode', 'b64decode', 'urlencode', 'urldecode',
+    'to_bytes', 'to_str',
+    'gzip_compress', 'gzip_decompress', 'zlib_compress', 'zlib_decompress',
+    'lzma_compress', 'lzma_decompress', 'compress', 'decompress',
+    'json_dumps', 'json_loads', 'pickle_dumps', 'pickle_loads',
+    'serialize', 'deserialize',
+    # 加密模块
+    'crypto', 'Encryptor', 'Decryptor', 'CryptoRegistry',
+    'encryptable', 'decryptable',
+    'md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512',
+    'hmac_md5', 'hmac_sha1', 'hmac_sha256',
+    'generate_key', 'generate_token',
 ]
 
 for name in __all__:

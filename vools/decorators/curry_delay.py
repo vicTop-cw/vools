@@ -10,34 +10,9 @@
 from inspect import signature, Parameter
 from functools import wraps, update_wrapper
 
+from .lazy import lazy, is_lazy
+
 __all__ = ['delay_curry', 'DelayCurried', 'is_lazy', 'lazy']
-
-
-def lazy(value):
-    """基础lazy函数，将值包装为延迟求值的函数"""
-    if callable(value) and not hasattr(value, '_is_lazy'):
-        def wrapper():
-            return value()
-        wrapper._is_lazy = True
-        return wrapper
-    if not callable(value) and not hasattr(value, '_is_lazy'):
-        if isinstance(value, str):
-            from .lazy import lazy as _lazy
-            temp = _lazy(value)
-            temp._is_lazy = True
-            return temp
-        else:
-            def _constant_wrapper():
-                return value
-            _constant_wrapper._is_lazy = True
-            return _constant_wrapper
-        
-    return value
-
-
-def is_lazy(value):
-    """检查值是否为lazy包装的延迟值"""
-    return callable(value) and hasattr(value, '_is_lazy') and value._is_lazy
 
 
 class DelayCurried:

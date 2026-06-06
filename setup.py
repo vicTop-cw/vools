@@ -43,8 +43,6 @@ setup(
     install_requires=[
         "wrapt>=2.1.2",
         "attrs>=17.4.0",
-        "pandas>=0.22.0",
-        "numpy>=1.14.0",
     ],
     extras_require={
         "dev": [

@@ -1,6 +1,6 @@
 from .curry_core import curry, is_curried
 
-__all__ = ['overloads','Overloads','Selector']
+__all__ = ['select', 'Overloads', 'Selector']
 
 _is_curried = lambda f : isinstance(f,(Selector,Overloads)) or is_curried(f)
 
@@ -218,14 +218,15 @@ class Overloads(Selector):
     
     
 
-def overloads(*funcs,delaied=False):
+def select(*funcs, delayed=False):
+    """函数选择器，接受多个函数并返回 Overloads 实例"""
     if not funcs:
-        return lambda f: overloads(f,delaied=delaied)
-    return Overloads(*funcs,delaied=delaied)
+        return lambda f: select(f, delayed=delayed)
+    return Overloads(*funcs, delaied=delayed)
 
 
 if __name__ == '__main__':
-    @overloads
+    @select
     def add(x,y):
         
         return x+y

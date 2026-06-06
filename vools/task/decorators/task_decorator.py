@@ -2,6 +2,8 @@
 @task装饰器 - 方便地提交任务
 """
 
+__all__ = ['task', 'TaskDecorator']
+
 import functools
 from typing import Callable, Any, Optional
 

@@ -3,6 +3,8 @@ vicList 列表类
 继承自 Seq，提供更多列表处理方法
 """
 
+__all__ = ['ListLikeMeta', 'vicList']
+
 import itertools
 from collections import OrderedDict
 from collections.abc import Iterable

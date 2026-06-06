@@ -1,6 +1,9 @@
 """
 自定义异常类
 """
+
+__all__ = ['VoolsError', 'SafeEvalError', 'ConfigurationError', 'CacheError', 'ValidationError', 'ImportError']
+
 class VoolsError(Exception):
     """vools 基础异常"""
     pass
