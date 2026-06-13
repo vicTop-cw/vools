@@ -7,7 +7,7 @@ vools - Python 函数式编程工具集
 import importlib
 from typing import Any
 
-__version__ = "0.1.11"
+__version__ = "0.1.13"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
@@ -175,6 +175,15 @@ _lazy_modules = {
     'Task': '.task',
     'batch_execute': '.task',
 
+    # 响应式模块
+    'reactive': '.reactive',
+    'Observable': '.reactive',
+    'Subject': '.reactive',
+    'BehaviorSubject': '.reactive',
+    'ReplaySubject': '.reactive',
+    'AsyncSubject': '.reactive',
+    'ops': '.reactive',
+
     # 编码模块
     'encoding': '.encoding',
     'Encoder': '.encoding',
@@ -239,25 +248,9 @@ def __getattr__(name: str) -> Any:
         module_path = _lazy_modules[name]
         try:
             module = importlib.import_module(module_path, package='vools')
-            # 首先检查模块本身是否有该属性
             if hasattr(module, name):
                 return getattr(module, name)
-            # 只尝试导入真正的子包（检查 __path__ 属性）
-            if hasattr(module, '__path__'):
-                import os
-                import sys
-                # 只查找目录中的子模块文件
-                for submodule_name in dir(module):
-                    if not submodule_name.startswith('_'):
-                        # 检查是否是真正的子模块文件
-                        submodule_file = os.path.join(module.__path__[0], f'{submodule_name}.py')
-                        if os.path.exists(submodule_file):
-                            try:
-                                submodule = importlib.import_module(f'{module_path}.{submodule_name}', package='vools')
-                                if hasattr(submodule, name):
-                                    return getattr(submodule, name)
-                            except ImportError:
-                                continue
+            return module
         except ImportError:
             pass
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
@@ -469,6 +462,9 @@ _common_names = [
     'generate_key', 'generate_token',
     # 任务模块
     'task', 'TaskQueue', 'WorkerPool', 'ThreadPool', 'TaskStatus', 'Task', 'batch_execute',
+
+    # 响应式模块
+    'reactive', 'Observable', 'Subject', 'BehaviorSubject', 'ReplaySubject', 'AsyncSubject', 'ops',
 ]
 
 for name in __all__:
