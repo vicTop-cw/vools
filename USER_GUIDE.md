@@ -4,7 +4,7 @@
 
 ## 项目信息
 
-- **当前版本**：v0.1.8
+- **当前版本**：v0.1.13
 - **GitHub 仓库**：<https://github.com/vicTop-cw/vools>
 - **联系邮箱**：<victortop921129@gmail.com>
 - **PyPI 主页**：<https://pypi.org/project/vools/>
@@ -28,6 +28,8 @@
 - [curry_decorator 装饰器](#curry_decorator-装饰器)
 - [placeholder_impl 占位符实现](#placeholder_impl-占位符实现)
 - [Seq 序列类](#seq-序列类)
+- [curried 模块](#curried-模块)
+- [reactive 模块](#reactive-模块)
 - [常见问题](#常见问题)
 
 ## 安装
@@ -946,6 +948,331 @@ unique_lst = vicList(1, 2, 2, 3, 3, 3).unique
 # 映射和过滤
 result = lst.map(lambda x: x * 2).collect()
 result = lst.filter(lambda x: x > 2).collect()
+```
+
+## curried 模块
+
+vools.curried 提供了一组柯里化的函数式编程工具，与 toolz.curried API 兼容。
+
+### 基本用法
+
+```python
+from vools.curried import map, filter, reduce, compose, pipe
+
+# 基本柯里化调用
+double = map(lambda x: x * 2)
+result = double([1, 2, 3])  # [2, 4, 6]
+
+# 管道操作
+result = pipe(
+    [1, 2, 3, 4, 5],
+    filter(lambda x: x > 2),
+    map(lambda x: x * 2),
+    sum
+)  # 24
+
+# 函数组合
+f = compose(lambda x: x + 1, lambda x: x * 2)
+result = f(3)  # 7
+```
+
+### 惰性版本
+
+curried 模块提供惰性版本的操作符，返回迭代器而非列表：
+
+```python
+from vools.curried import imap, ifilter, iunique
+
+# 惰性 map - 返回 map 对象
+result = imap(lambda x: x * 2, [1, 2, 3])
+print(type(result))  # <class 'map'>
+print(list(result))  # [2, 4, 6]
+
+# 惰性 filter - 返回 filter 对象
+result = ifilter(lambda x: x > 1, [1, 2, 3])
+print(type(result))  # <class 'filter'>
+
+# 惰性 unique - 返回 generator
+result = iunique([1, 2, 2, 3])
+print(type(result))  # <class 'generator'>
+```
+
+### 立即求值 vs 惰性求值
+
+| 函数 | 立即求值 | 惰性求值 |
+|------|---------|---------|
+| map | 返回 list | 返回 map 对象 |
+| filter | 返回 list | 返回 filter 对象 |
+| unique | 返回 list | 返回 generator |
+
+### 数学运算
+
+```python
+from vools.curried import add, mul, inc, dec
+
+# 柯里化的数学函数
+add5 = add(5)
+result = add5(3)  # 8
+
+# 增量/减量
+result = inc(5)   # 6
+result = dec(5)   # 4
+
+# 乘法
+double = mul(2)
+result = double(5)  # 10
+```
+
+### 字符串操作
+
+```python
+from vools.curried import join, split, lower, upper
+
+# 字符串连接
+join_comma = join(',')
+result = join_comma(['a', 'b', 'c'])  # "a,b,c"
+
+# 字符串分割
+split_comma = split(',')
+result = split_comma("a,b,c")  # ['a', 'b', 'c']
+
+# 大小写转换
+result = lower("HELLO")  # "hello"
+result = upper("hello")  # "HELLO"
+```
+
+### 谓词函数
+
+```python
+from vools.curried import is_eq, is_lt, is_in
+
+# 相等判断
+is_zero = is_eq(0)
+result = is_zero(0)  # True
+result = is_zero(1)  # False
+
+# 小于判断
+is_small = is_lt(10)
+result = is_small(5)  # True
+
+# 包含判断
+in_list = is_in([1, 2, 3])
+result = in_list(2)  # True
+```
+
+## reactive 模块
+
+vools.reactive 是一个功能完整的响应式编程框架，实现了 Rx 4.0 规范的所有 98 个操作符。
+
+### 基本用法
+
+```python
+from vools.reactive import Observable, ops
+
+# 创建 Observable
+obs = Observable.from_iterable([1, 2, 3])
+
+# 订阅
+obs.subscribe(
+    on_next=lambda x: print(f"Next: {x}"),
+    on_error=lambda e: print(f"Error: {e}"),
+    on_completed=lambda: print("Completed")
+)
+
+# 使用管道操作
+obs.pipe(
+    ops.filter(lambda x: x > 1),
+    ops.map(lambda x: x * 2)
+).subscribe(on_next=print)  # 4, 6
+```
+
+### 创建操作符
+
+```python
+from vools.reactive import Observable
+
+# 从可迭代对象创建
+obs = Observable.from_iterable([1, 2, 3])
+
+# 创建单个值
+obs = Observable.just(42)
+obs = Observable.of(1, 2, 3)
+
+# 创建空序列
+obs = Observable.empty()
+
+# 创建无限序列
+obs = Observable.interval(1.0)  # 每秒发射一个值
+obs = Observable.timer(0.5, 1.0)  # 0.5秒后开始，每秒发射
+
+# 延迟创建
+obs = Observable.defer(lambda: Observable.just(42))
+```
+
+### 转换操作符
+
+```python
+from vools.reactive import Observable, ops
+
+obs = Observable.from_iterable([1, 2, 3])
+
+# map - 映射
+obs.pipe(ops.map(lambda x: x * 2)).subscribe(print)  # 2, 4, 6
+
+# flat_map - 扁平化映射
+obs.pipe(
+    ops.flat_map(lambda x: Observable.from_iterable([x, x*10]))
+).subscribe(print)  # 1, 10, 2, 20, 3, 30
+
+# scan - 累积扫描
+obs.pipe(ops.scan(lambda acc, x: acc + x, 0)).subscribe(print)  # 1, 3, 6
+```
+
+### 过滤操作符
+
+```python
+from vools.reactive import Observable, ops
+
+obs = Observable.from_iterable(range(10))
+
+# filter - 过滤
+obs.pipe(ops.filter(lambda x: x % 2 == 0)).subscribe(print)  # 0, 2, 4, 6, 8
+
+# take - 取前N个
+obs.pipe(ops.take(3)).subscribe(print)  # 0, 1, 2
+
+# skip - 跳过前N个
+obs.pipe(ops.skip(5)).subscribe(print)  # 5, 6, 7, 8, 9
+
+# distinct - 去重
+obs = Observable.from_iterable([1, 2, 2, 3, 3, 3])
+obs.pipe(ops.distinct()).subscribe(print)  # 1, 2, 3
+```
+
+### 组合操作符
+
+```python
+from vools.reactive import Observable, ops
+
+obs1 = Observable.from_iterable([1, 2, 3])
+obs2 = Observable.from_iterable(['a', 'b', 'c'])
+
+# zip - 拉链组合
+Observable.zip(obs1, obs2).subscribe(print)  # (1, 'a'), (2, 'b'), (3, 'c')
+
+# combine_latest - 组合最新值
+obs1.pipe(ops.combine_latest(obs2)).subscribe(print)
+
+# merge - 合并
+Observable.merge(obs1, obs2).subscribe(print)  # 1, 'a', 2, 'b', 3, 'c'
+```
+
+### Subject
+
+```python
+from vools.reactive import Subject, BehaviorSubject, ReplaySubject
+
+# Subject - 基础主题
+subject = Subject()
+subject.subscribe(on_next=print)
+subject.on_next(1)  # 1
+subject.on_next(2)  # 2
+
+# BehaviorSubject - 保留最新值
+subject = BehaviorSubject(0)  # 默认值
+subject.subscribe(on_next=print)  # 立即收到 0
+subject.on_next(1)  # 1
+
+# ReplaySubject - 重放历史值
+subject = ReplaySubject(2)  # 保留最近2个值
+subject.on_next(1)
+subject.on_next(2)
+subject.on_next(3)
+subject.subscribe(on_next=print)  # 2, 3
+```
+
+### 调度器
+
+```python
+from vools.reactive import Observable, schedulers, ops
+
+# 使用调度器
+obs = Observable.interval(0.1)
+
+# 在不同线程执行
+obs.pipe(
+    ops.observe_on(schedulers.ThreadPoolScheduler())
+).subscribe(on_next=print)
+
+# 使用 asyncio 调度器
+obs.pipe(
+    ops.subscribe_on(schedulers.AsyncIOScheduler())
+).subscribe(on_next=print)
+```
+
+### 错误处理
+
+```python
+from vools.reactive import Observable, ops
+
+# catch - 捕获错误
+Observable.throw(Exception("error")).pipe(
+    ops.catch(lambda e: Observable.just("recovered"))
+).subscribe(
+    on_next=print,
+    on_error=lambda e: print(f"Error: {e}")
+)  # "recovered"
+
+# retry - 重试
+Observable.throw(Exception("error")).pipe(
+    ops.retry(3)
+).subscribe(
+    on_next=print,
+    on_error=lambda e: print(f"Failed after 3 retries")
+)
+
+# on_error_return - 错误时返回默认值
+Observable.throw(Exception("error")).pipe(
+    ops.on_error_return("default")
+).subscribe(print)  # "default"
+```
+
+### 创新功能
+
+vools.reactive 提供了一些独特的创新功能：
+
+```python
+from vools.reactive import Observable, ops
+
+# placeholder 表达式支持
+Observable.from_iterable([1, 2, 3]).pipe(
+    ops.filter("_ > 1"),
+    ops.map("x * 2")
+).subscribe(print)  # 4, 6
+
+# >> 管道操作符
+result = Observable.from_iterable([1, 2, 3]) >> ops.filter(lambda x: x > 1) >> ops.map(lambda x: x * 2)
+
+# p() 链式调用
+Observable.from_iterable([1, 2, 3]).p() \
+    .filter(lambda x: x > 1) \
+    .map(lambda x: x * 2) \
+    .subscribe(print)
+
+# Subscription 上下文管理器
+with Observable.from_iterable([1, 2, 3]).subscribe(on_next=print) as sub:
+    # 自动清理
+    pass
+
+# retry_with_backoff - 带退避的重试
+Observable.throw(Exception('err')).pipe(
+    ops.retry_with_backoff(max_retries=5, initial_delay=1.0, multiplier=2.0)
+).subscribe(on_error=lambda e: print(f'Failed: {e}'))
+
+# circuit_breaker - 断路器模式
+Observable.from_iterable(data).pipe(
+    ops.circuit_breaker(threshold=5, reset_timeout=60.0)
+).subscribe(on_next=process)
 ```
 
 ## 常见问题

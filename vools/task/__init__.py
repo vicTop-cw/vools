@@ -31,7 +31,7 @@ result = queue.get_result(task_id)
 
 from .core.queue import TaskQueue
 from .core.worker import WorkerPool, ThreadPool
-from .decorators.task_decorator import task
+from .decorators.task_decorator import task, batch_execute
 from .core.models import TaskStatus, Task
 
-__all__ = ['TaskQueue', 'WorkerPool', 'ThreadPool', 'task', 'TaskStatus', 'Task']
+__all__ = ['TaskQueue', 'WorkerPool', 'ThreadPool', 'task', 'batch_execute', 'TaskStatus', 'Task']

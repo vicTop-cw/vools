@@ -16,7 +16,7 @@ from typing import Callable, Iterable
 from functools import reduce, wraps
 import itertools
 
-__all__ = ['Pipe', 'Ops', 'O', 'Seq', 'P', 'X', 'Z', 'NONE', 'arrow_func', 'g', 'iif', 'ConditionBuilder', 'LazyProperty'
+__all__ = ['Pipe', 'Ops', 'O', 'Seq', 'P', 'X', 'Y', 'NONE', 'arrow_func', 'g', 'iif', 'ConditionBuilder', 'LazyProperty'
     , '_', 'magic', 'f', 'to_holder', 'F', 'flip', 'apply', 'hd', 'box', 'Box', 'setattr_box'
     , 'waiter', 'for_', 'foreach', 'for_p', 'build', 'build_text']  + [f"_{i}" for i in range(1, 21)]
 
@@ -29,6 +29,9 @@ from .iif import iif, ConditionBuilder, LazyProperty
 # 导入 placeholder
 from .placeholder import *
 
+# 导入 Y
+from .placeholder_impl import X,Y
+
 # 导入 box
 from .box import box, Box, setattr_box
 
@@ -36,9 +39,6 @@ from .funcs import waiter, for_, foreach, for_p, build, build_text
 
 # 导入 Seq 和 NONE
 from ..data import Seq, NONE
-
-# 导入 Z 适配器
-from .adapter_z import Z
 
 # 导入 O（Ops 实例）
 from .pipe_ops import O
