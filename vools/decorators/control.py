@@ -59,7 +59,137 @@ except ImportError:
     WRAPT_AVAILABLE = False
     merge_params = None
 
-__all__ = ['repeat', 'retry', 'rerun','merge_params']
+# ============================================================================
+# excepts - 异常处理装饰器
+# ============================================================================
+
+def excepts(exc_type: Type[Exception], handler: Callable) -> Callable:
+    """
+    捕获指定类型的异常并使用处理函数处理
+
+    Args:
+        exc_type: 要捕获的异常类型
+        handler: 异常处理函数，接收异常并返回替代值
+
+    Returns:
+        装饰器
+
+    Example:
+        >>> @excepts(ValueError, lambda e: f"错误: {e}")
+        ... def risky_operation():
+        ...     raise ValueError("测试错误")
+        >>> risky_operation()
+        '错误: 测试错误'
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except exc_type as e:
+                return handler(e)
+        return wrapper
+    return decorator
+
+
+# ============================================================================
+# silent - 静默异常装饰器
+# ============================================================================
+
+def silent(fn: Optional[Callable] = None, *, default: Any = None) -> Callable:
+    """
+    静默异常，返回默认值
+
+    Args:
+        fn: 要装饰的函数
+        default: 发生异常时返回的默认值
+
+    Returns:
+        装饰器或装饰后的函数
+
+    Example:
+        >>> @silent(default="默认值")
+        ... def risky():
+        ...     raise ValueError("错误")
+        >>> risky()
+        '默认值'
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except Exception:
+                return default
+        return wrapper
+    
+    if fn is None:
+        return decorator
+    return decorator(fn)
+
+
+# ============================================================================
+# suppress - 抑制异常装饰器
+# ============================================================================
+
+def suppress(*exc_types: Type[Exception]) -> Callable:
+    """
+    抑制指定类型的异常，不返回任何值
+
+    Args:
+        *exc_types: 要抑制的异常类型
+
+    Returns:
+        装饰器
+
+    Example:
+        >>> @suppress(ValueError, TypeError)
+        ... def risky():
+        ...     raise ValueError("错误")
+        >>> result = risky()
+        >>> print(result)
+        None
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except exc_types:
+                pass
+        return wrapper
+    return decorator
+
+
+# ============================================================================
+# ignore - 忽略返回值装饰器
+# ============================================================================
+
+def ignore(fn: Callable) -> Callable:
+    """
+    忽略函数的返回值
+
+    Args:
+        fn: 要装饰的函数
+
+    Returns:
+        装饰后的函数
+
+    Example:
+        >>> @ignore
+        ... def returns_value():
+        ...     return 42
+        >>> result = returns_value()
+        >>> print(result)
+        None
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        fn(*args, **kwargs)
+    return wrapper
+
+
+__all__ = ['repeat', 'retry', 'rerun', 'merge_params', 'excepts', 'silent', 'suppress', 'ignore']
 
 # 定义可调用类型变量
 F = TypeVar('F', bound=Callable[..., Any])

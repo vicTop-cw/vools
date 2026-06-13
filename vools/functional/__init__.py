@@ -18,7 +18,8 @@ import itertools
 
 __all__ = ['Pipe', 'Ops', 'O', 'Seq', 'P', 'X', 'Y', 'NONE', 'arrow_func', 'g', 'iif', 'ConditionBuilder', 'LazyProperty'
     , '_', 'magic', 'f', 'to_holder', 'F', 'flip', 'apply', 'hd', 'box', 'Box', 'setattr_box'
-    , 'waiter', 'for_', 'foreach', 'for_p', 'build', 'build_text']  + [f"_{i}" for i in range(1, 21)]
+    , 'waiter', 'for_', 'foreach', 'for_p', 'build', 'build_text',
+    'Result', 'Success', 'Failure', 'success', 'failure', 'safe']  + [f"_{i}" for i in range(1, 21)]
 
 # 导入 arrow_func
 from .arrow_func import arrow_func, g
@@ -36,6 +37,9 @@ from .placeholder_impl import X,Y
 from .box import box, Box, setattr_box
 
 from .funcs import waiter, for_, foreach, for_p, build, build_text
+
+# 导入 Result 类型
+from .result import Result, Success, Failure, success, failure, safe
 
 # 导入 Seq 和 NONE
 from ..data import Seq, NONE

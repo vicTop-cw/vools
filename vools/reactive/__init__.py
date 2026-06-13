@@ -169,6 +169,45 @@ from .extended_operators import (
     start,
 )
 
+from .stats_operators import (
+    # 统计聚合算子
+    median,
+    variance,
+    std,
+    quantile,
+    arg_min,
+    arg_max,
+    n_unique,
+    
+    # 滚动窗口算子
+    rolling_sum,
+    rolling_min,
+    rolling_max,
+    rolling_mean,
+    
+    # 累积变换算子
+    cum_sum,
+    cum_min,
+    cum_max,
+    cum_mean,
+    cum_prod,
+    
+    # 排序 Top-N 算子
+    sort,
+    top_k,
+    bottom_k,
+    
+    # None 值处理与数学工具
+    drop_none,
+    fill_none,
+    abs_op as abs,
+    clamp,
+    
+    # 嵌套流展开算子
+    explode,
+    flatten,
+)
+
 from .connectable import (
     # Connectable Observable
     ConnectableObservable,
@@ -184,6 +223,7 @@ from .subject import (
     BehaviorSubject,
     ReplaySubject,
     AsyncSubject,
+    PublishSubject,
     
     # 工厂函数
     subject,
@@ -350,5 +390,42 @@ __all__ = [
     'current_thread_scheduler',
     'create_asyncio_scheduler',
     'thread_pool_scheduler',
-    'new_thread_scheduler'
+    'new_thread_scheduler',
+    
+    # 统计聚合算子
+    'median',
+    'variance',
+    'std',
+    'quantile',
+    'arg_min',
+    'arg_max',
+    'n_unique',
+    
+    # 滚动窗口算子
+    'rolling_sum',
+    'rolling_min',
+    'rolling_max',
+    'rolling_mean',
+    
+    # 累积变换算子
+    'cum_sum',
+    'cum_min',
+    'cum_max',
+    'cum_mean',
+    'cum_prod',
+    
+    # 排序 Top-N 算子
+    'sort',
+    'top_k',
+    'bottom_k',
+    
+    # None 值处理与数学工具
+    'drop_none',
+    'fill_none',
+    'abs',
+    'clamp',
+    
+    # 嵌套流展开算子
+    'explode',
+    'flatten',
 ]

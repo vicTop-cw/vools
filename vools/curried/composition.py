@@ -204,6 +204,30 @@ def apply(func: Callable[..., A], *args, **kwargs) -> A:
     return func(*args, **kwargs)
 
 
+@curry
+def flip(fn: Callable) -> Callable:
+    """
+    翻转函数参数顺序
+
+    Args:
+        fn: 要翻转参数的函数
+
+    Returns:
+        参数顺序翻转后的函数
+
+    Example:
+        >>> from operator import sub
+        >>> flipped_sub = flip(sub)
+        >>> flipped_sub(3, 5)  # 等同于 sub(5, 3)
+        2
+    """
+    def flipped(*args, **kwargs):
+        if args:
+            return fn(*reversed(args), **kwargs)
+        return fn(**kwargs)
+    return flipped
+
+
 __all__ = [
     'juxt',
     'memoize',
@@ -212,4 +236,5 @@ __all__ = [
     'compose_left',
     'pipe',
     'apply',
+    'flip',
 ]

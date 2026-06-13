@@ -73,12 +73,31 @@ from .collection import (
     last,
     nth,
     get,
+    pluck,
+    pluck_attr,
+    walk,
+    mapcat,
+    compact,
+    merge,
+    merge_with,
+    get_in,
+    set_in,
+    update_in,
+    interleave,
+    interpose,
+    split_at,
+    butlast,
+    dissoc,
+    assoc,
+    assoc_in,
+    constantly,
 )
 from .composition import (
     juxt,
     memoize,
     do,
     tap,
+    compose_left,
 )
 from .math import (
     add,
@@ -126,6 +145,12 @@ from .predicate import (
     isinstance_,
     issubclass_,
 )
+from vools.decorators.control import (
+    excepts,
+    silent,
+    suppress,
+    ignore,
+)
 
 # 扩展导出列表
 __all__.extend([
@@ -136,8 +161,12 @@ __all__.extend([
     # collection
     'unique', 'iunique', 'groupby', 'partition', 'partition_all', 'concat', 'cat', 'flatten',
     'first', 'second', 'last', 'nth', 'get',
+    'pluck', 'pluck_attr', 'walk', 'mapcat', 'compact',
+    'merge', 'merge_with', 'get_in', 'set_in', 'update_in',
+    'split_at', 'butlast', 'dissoc', 'assoc', 'assoc_in', 'constantly',
+    'interleave', 'interpose',
     # composition
-    'juxt', 'memoize', 'do', 'tap',
+    'juxt', 'memoize', 'do', 'tap', 'compose_left',
     # math
     'add', 'sub', 'mul', 'div', 'mod', 'pow', 'floordiv', 'truediv', 'inc', 'dec', 'neg', 'abs',
     'min', 'max', 'sum', 'product', 'mean', 'median',
@@ -146,4 +175,6 @@ __all__.extend([
     # predicate
     'is_none', 'is_not_none', 'is_eq', 'is_ne', 'is_lt', 'is_gt', 'is_le', 'is_ge',
     'is_in', 'is_not_in', 'isinstance_', 'issubclass_',
+    # decorators
+    'excepts', 'silent', 'suppress', 'ignore',
 ])

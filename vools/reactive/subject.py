@@ -15,10 +15,13 @@ T = TypeVar('T')
 class Subject(Generic[T]):
     """基础 Subject - 多播数据流"""
     
+    __slots__ = ('_observers', '_is_closed', '_is_completed', '_cached_callbacks')
+    
     def __init__(self):
         self._observers: Set = set()
         self._is_closed = False
         self._is_completed = False
+        self._cached_callbacks = None
     
     def subscribe(
         self,
@@ -35,9 +38,11 @@ class Subject(Generic[T]):
             return Subscription(lambda: None)
         
         self._observers.add(observer)
+        self._cached_callbacks = None
         
         def unsubscribe():
             self._observers.discard(observer)
+            self._cached_callbacks = None
         
         return Subscription(unsubscribe)
     
@@ -53,8 +58,10 @@ class Subject(Generic[T]):
     
     def on_next(self, value: T) -> None:
         if not self._is_closed:
-            for observer in list(self._observers):
-                observer.on_next(value)
+            if self._cached_callbacks is None:
+                self._cached_callbacks = [obs.on_next for obs in self._observers]
+            for callback in self._cached_callbacks:
+                callback(value)
     
     def on_error(self, error: Exception) -> None:
         if not self._is_closed:
@@ -62,6 +69,7 @@ class Subject(Generic[T]):
             for observer in list(self._observers):
                 observer.on_error(error)
             self._observers.clear()
+            self._cached_callbacks = None
     
     def on_completed(self) -> None:
         if not self._is_closed and not self._is_completed:
@@ -70,6 +78,7 @@ class Subject(Generic[T]):
             for observer in list(self._observers):
                 observer.on_completed()
             self._observers.clear()
+            self._cached_callbacks = None
     
     def as_observable(self) -> Observable[T]:
         return Observable(self._subscribe_generator)
@@ -201,6 +210,10 @@ class AsyncSubject(Subject[T], Generic[T]):
             for observer in list(self._observers):
                 observer.on_completed()
             self._observers.clear()
+
+
+PublishSubject = Subject
+"""PublishSubject 别名，与 RxPY/rx-rust 对齐"""
 
 
 # ========== 工厂函数 ==========
