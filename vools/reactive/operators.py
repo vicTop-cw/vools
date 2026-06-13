@@ -34,11 +34,9 @@ def _parse_expr(expr: str, **env):
 def map(fn: Callable[[T], R] = None, **kwargs) -> Callable[[Observable[T]], Observable[R]]:
     """映射操作符 - 支持普通函数、字符串表达式和预绑定参数"""
     
-    # 支持字符串表达式: ops.map("x * 2", y=10)
     if isinstance(fn, str):
         fn = _parse_expr(fn, **kwargs)
     
-    # 支持预绑定参数: ops.map(fn, x=1)
     elif kwargs and fn is not None:
         @curry
         def curried_fn(*args, **kw):
@@ -47,16 +45,20 @@ def map(fn: Callable[[T], R] = None, **kwargs) -> Callable[[Observable[T]], Obse
     
     def operator(source: Observable[T]) -> Observable[R]:
         def subscribe(observer: Observer[R]) -> Subscription:
+            observer_on_next = observer.on_next
+            observer_on_error = observer.on_error
+            
             def on_next(value: T) -> None:
                 try:
                     result = fn(value)
-                    observer.on_next(result)
                 except Exception as e:
-                    observer.on_error(e)
+                    observer_on_error(e)
+                else:
+                    observer_on_next(result)
             
-            return source.subscribe(
+            return source.subscribe_(
                 on_next=on_next,
-                on_error=observer.on_error,
+                on_error=observer_on_error,
                 on_completed=observer.on_completed
             )
         
@@ -68,11 +70,9 @@ def map(fn: Callable[[T], R] = None, **kwargs) -> Callable[[Observable[T]], Obse
 def filter(predicate: Callable[[T], bool] = None, **kwargs) -> Callable[[Observable[T]], Observable[T]]:
     """过滤操作符 - 支持普通函数、字符串表达式和预绑定参数"""
     
-    # 支持字符串表达式
     if isinstance(predicate, str):
         predicate = _parse_expr(predicate, **kwargs)
     
-    # 支持预绑定参数
     elif kwargs and predicate is not None:
         @curry
         def curried_fn(*args, **kw):
@@ -81,16 +81,19 @@ def filter(predicate: Callable[[T], bool] = None, **kwargs) -> Callable[[Observa
     
     def operator(source: Observable[T]) -> Observable[T]:
         def subscribe(observer: Observer[T]) -> Subscription:
+            observer_on_next = observer.on_next
+            observer_on_error = observer.on_error
+            
             def on_next(value: T) -> None:
                 try:
                     if predicate(value):
-                        observer.on_next(value)
+                        observer_on_next(value)
                 except Exception as e:
-                    observer.on_error(e)
+                    observer_on_error(e)
             
-            return source.subscribe(
+            return source.subscribe_(
                 on_next=on_next,
-                on_error=observer.on_error,
+                on_error=observer_on_error,
                 on_completed=observer.on_completed
             )
         
