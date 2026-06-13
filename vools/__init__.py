@@ -119,7 +119,7 @@ _lazy_modules = {
     'O': '.functional',
     'P': '.functional',
     'X': '.functional',
-    'Z': '.functional.adapter_z',
+    'Y': '.functional',
     'NONE': '.functional',
     'arrow_func': '.functional',
 
@@ -165,6 +165,15 @@ _lazy_modules = {
     'vicList': '.vic',
 
     'datetime': '.datetime',
+
+    # 任务模块
+    'task': '.task',
+    'TaskQueue': '.task',
+    'WorkerPool': '.task',
+    'ThreadPool': '.task',
+    'TaskStatus': '.task',
+    'Task': '.task',
+    'batch_execute': '.task',
 
     # 编码模块
     'encoding': '.encoding',
@@ -296,7 +305,7 @@ __all__ = [
     'Seq',
     'P',
     'X',
-    'Z',
+    'Y',
     'NONE',
     'iif',
     'ConditionBuilder',
@@ -420,6 +429,15 @@ __all__ = [
     'hmac_sha256',
     'generate_key',
     'generate_token',
+
+    # 任务模块
+    'task',
+    'TaskQueue',
+    'WorkerPool',
+    'ThreadPool',
+    'TaskStatus',
+    'Task',
+    'batch_execute',
 ]
 
 _common_names = [
@@ -431,7 +449,7 @@ _common_names = [
     'overload', 'overcurry', 'overloads',
     '_', '_1', '_2', '_3', 'g', 'iif', 'ConditionBuilder', 'LazyProperty',
     'Box', 'box', 'Seq',
-    'P', 'X', 'Z', 'Ops', 'O', 'calltype',
+    'P', 'X', 'Y', 'Ops', 'O', 'calltype',
     'safe_eval',
     'vicTools', 'vicDate', 'vicText', 'vicList',
     # 编码模块
@@ -449,6 +467,8 @@ _common_names = [
     'md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512',
     'hmac_md5', 'hmac_sha1', 'hmac_sha256',
     'generate_key', 'generate_token',
+    # 任务模块
+    'task', 'TaskQueue', 'WorkerPool', 'ThreadPool', 'TaskStatus', 'Task', 'batch_execute',
 ]
 
 for name in __all__:
