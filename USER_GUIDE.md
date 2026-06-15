@@ -2,9 +2,16 @@
 
 本指南基于实际测试用例和模块代码，详细展示 vools 库的核心功能和使用方法。
 
+> **📖 分册指南**: 此文档已被拆分为 `guide/` 目录下的多个主题文档，更方便查阅：
+> - [核心功能](guide/core.md) — 占位符、重载、stuff、persist、Box、g、iif
+> - [函数式编程](guide/functional.md) — curried 模块、管道操作
+> - [vic 工具类](guide/vic-classes.md) — vicDate、vicText、vicList
+> - [响应式编程](guide/reactive.md) — Observable、操作符、Subject
+> - [编码加密与 Result](guide/extras.md) — encoding、crypto、Result
+
 ## 项目信息
 
-- **当前版本**：v0.1.13
+- **当前版本**：v0.1.15
 - **GitHub 仓库**：<https://github.com/vicTop-cw/vools>
 - **联系邮箱**：<victortop921129@gmail.com>
 - **PyPI 主页**：<https://pypi.org/project/vools/>
@@ -31,6 +38,7 @@
 - [curried 模块](#curried-模块)
 - [reactive 模块](#reactive-模块)
 - [响应式统计算子](#响应式统计算子)
+- [响应式系统监控模块](#响应式系统监控模块)
 - [编码模块](#编码模块)
 - [加密模块](#加密模块)
 - [Result 类型与 safe 装饰器](#result-类型与-safe-装饰器)
@@ -1410,6 +1418,259 @@ Observable.from_iterable([[1, 2], [3, 4], [5]]).p().explode().subscribe(on_next=
 # flatten 与 explode 同语义
 result = []
 Observable.from_iterable([[1, 2], [3, 4], [5]]).p().flatten().subscribe(on_next=result.append)
+```
+
+## 响应式系统监控模块
+
+vools.reactive 提供了完整的系统监控能力，支持键盘、鼠标、剪贴板、文件和文件夹的实时监控。
+
+### 1. 键鼠监控
+
+```python
+from vools.reactive import (
+    KeyEventType, KeyData, KeyboardDispatcher, KeySubject, KeyObserver,
+    MouseEventType, MouseData, MouseDispatcher, MouseSubject, MouseObserver,
+    from_keyboard, from_mouse, write_to_keyboard, write_to_mouse,
+    ops
+)
+
+# 键盘监控示例
+with KeyboardDispatcher(backend="auto") as kd:
+    kd.subject.pipe(
+        ops.filter(lambda d: d.event_type == KeyEventType.KEY_DOWN),
+        ops.map(lambda d: d.key_name)
+    ).subscribe(on_next=lambda name: print(f"按下: {name}"))
+    time.sleep(10)
+
+# 键盘事件类型
+# - KeyEventType.KEY_DOWN  - 按下
+# - KeyEventType.KEY_UP    - 释放
+# - KeyEventType.KEY_HOLD  - 保持
+
+# 鼠标监控示例
+with MouseDispatcher(backend="auto") as md:
+    md.subject.pipe(
+        ops.filter(lambda d: d.event_type == MouseEventType.MOVE)
+    ).subscribe(on_next=lambda d: print(f"移动: ({d.x}, {d.y})"))
+    time.sleep(10)
+
+# 鼠标事件类型
+# - MouseEventType.MOVE          - 移动
+# - MouseEventType.LEFT_DOWN     - 左键按下
+# - MouseEventType.LEFT_UP       - 左键释放
+# - MouseEventType.RIGHT_DOWN    - 右键按下
+# - MouseEventType.RIGHT_UP      - 右键释放
+# - MouseEventType.MIDDLE_DOWN   - 中键按下
+# - MouseEventType.MIDDLE_UP    - 中键释放
+# - MouseEventType.SCROLL       - 滚轮滚动
+# - MouseEventType.DRAG         - 拖拽
+
+# 模拟键盘输入
+write_to_keyboard("Hello, World!")
+
+# 模拟鼠标移动和点击
+write_to_mouse(move_to=(100, 200))
+write_to_mouse(click="left")
+
+# 使用观察者进行事件路由
+def on_key_press(data):
+    print(f"按键: {data.key_name}")
+
+def on_key_release(data):
+    print(f"释放: {data.key_name}")
+
+observer = KeyObserver(
+    on_key_down=on_key_press,
+    on_key_up=on_key_release,
+    on_any=lambda d: print(f"任意键事件: {d}")
+)
+
+with KeySubject(backend="auto") as ks:
+    observer.attach(ks)
+    time.sleep(10)
+```
+
+### 2. 剪贴板监控
+
+```python
+from vools.reactive import (
+    ClipChangeType, ClipData, ClipboardDispatcher, ClipboardSubject, ClipboardObserver,
+    from_clipboard, write_to_clipboard
+)
+
+# 基本用法
+with ClipboardDispatcher(backend="auto") as cd:
+    cd.subject.subscribe(on_next=lambda d: print(f"剪贴板变化: {d.change_type}"))
+    time.sleep(10)
+
+# 剪贴板内容类型
+# - ClipChangeType.TEXT   - 纯文本
+# - ClipChangeType.FILES - 文件列表
+# - ClipChangeType.IMAGE  - 图片
+# - ClipChangeType.HTML  - HTML片段
+# - ClipChangeType.RTF   - 富文本
+# - ClipChangeType.CLEAR - 清空
+# - ClipChangeType.OTHER  - 其他
+
+# 写入剪贴板
+write_to_clipboard("Hello from vools!")
+
+# 使用观察者
+observer = ClipboardObserver(
+    on_text=lambda d: print(f"文本: {d.content}"),
+    on_files=lambda d: print(f"文件: {d.files}"),
+    on_any=lambda d: print(f"任意变化")
+)
+```
+
+### 3. 文件监控
+
+```python
+from vools.reactive import (
+    FileClipChangeType, FileData, FileDispatcher, FileSubject, FileObserver,
+    from_filesystem, write_to_filesystem
+)
+
+# 监控目录下的文件变更
+with FileDispatcher(paths=["./watch_dir"], backend="auto") as fd:
+    fd.subject.subscribe(on_next=lambda d: print(f"文件变化: {d.path} - {d.change_type}"))
+    time.sleep(10)
+
+# 文件变更类型
+# - FileClipChangeType.CREATED  - 创建
+# - FileClipChangeType.MODIFIED - 修改
+# - FileClipChangeType.DELETED  - 删除
+# - FileClipChangeType.RENAMED   - 重命名
+# - FileClipChangeType.MOVED_IN  - 移入
+# - FileClipChangeType.MOVED_OUT - 移出
+# - FileClipChangeType.ACCESS    - 访问
+# - FileClipChangeType.ATTRIB    - 属性变化
+
+# 写入文件并触发事件
+write_to_filesystem(fd, content="Hello, File!")
+
+# 使用 Subject 和 Observer
+with FileSubject(paths=["./watch_dir"], backend="auto") as fs:
+    observer = FileObserver(
+        on_created=lambda d: print(f"创建: {d.path}"),
+        on_modified=lambda d: print(f"修改: {d.path}"),
+        on_deleted=lambda d: print(f"删除: {d.path}")
+    )
+    observer.attach(fs)
+    time.sleep(10)
+```
+
+### 4. 文件夹监控
+
+```python
+from vools.reactive import (
+    FolderClipChangeType, FolderData, FolderDispatcher, FolderSubject, FolderObserver,
+    from_foldersystem, write_to_foldersystem
+)
+
+# 监控目录下的子目录变更
+with FolderDispatcher(paths=["./watch_dir"], backend="auto") as fd:
+    fd.subject.subscribe(on_next=lambda d: print(f"目录变化: {d.path} - {d.change_type}"))
+    time.sleep(10)
+
+# 目录变更类型
+# - FolderClipChangeType.FOLDER_CREATED  - 目录创建
+# - FolderClipChangeType.FOLDER_DELETED  - 目录删除
+# - FolderClipChangeType.FOLDER_RENAMED  - 目录重命名
+# - FolderClipChangeType.FOLDER_MOVED_IN - 目录移入
+# - FolderClipChangeType.FOLDER_MOVED_OUT - 目录移出
+# - FolderClipChangeType.FOLDER_ATTRIB   - 目录属性变化
+# - FolderClipChangeType.FOLDER_CONTENT  - 目录内容变化
+
+# 创建目录并触发事件
+write_to_foldersystem(fd, mode="create")
+```
+
+### 5. 后端选择
+
+```python
+# 可用的后端
+# - "auto"   - 自动选择最佳后端（默认）
+# - "win32"  - Windows API（Windows平台）
+# - "polling" - 轮询模式（跨平台兼容）
+
+# Windows 使用 win32 后端（事件驱动，低延迟）
+kd = KeyboardDispatcher(backend="win32")
+
+# Linux/macOS 使用 polling 后端
+kd = KeyboardDispatcher(backend="polling")
+```
+
+### 6. 跨平台兼容性
+
+所有监控模块都支持 Windows、macOS 和 Linux：
+
+| 模块 | Windows | macOS | Linux |
+|------|---------|-------|-------|
+| 键盘监控 | 钩子 | 轮询 | 轮询 |
+| 鼠标监控 | 钩子 | 轮询 | 轮询 |
+| 剪贴板监控 | Hook | tkinter | tkinter |
+| 文件监控 | ReadDirectoryChangesW | FSEvents | inotify |
+| 文件夹监控 | ReadDirectoryChangesW | FSEvents | inotify |
+
+## 函数签名缓存模块
+
+vools.sig_cache 为大量使用 `inspect.signature()` 的场景提供高性能缓存。
+
+### 基本用法
+
+```python
+from vools.sig_cache import get_signature, add_custom_sig, cached_getsignature
+
+# 获取函数签名（带 LRU 缓存）
+sig = get_signature(print)
+print(list(sig.parameters.keys()))  # ['values', 'sep', 'end', 'file', 'flush']
+
+# 重复调用走缓存，性能提升 100×~2000×
+for _ in range(1000):
+    sig = get_signature(print)  # O(1) dict 查表
+```
+
+### 手动注册自定义签名
+
+```python
+from inspect import Signature, Parameter
+
+# 为 C 扩展函数注册签名
+add_custom_sig(my_cfunc, Signature([
+    Parameter('x', Parameter.POSITIONAL_OR_KEYWORD),
+    Parameter('y', Parameter.KEYWORD_ONLY, default=0)
+]))
+```
+
+### 装饰器用法
+
+```python
+from vools.sig_cache import cached_getsignature
+
+@cached_getsignature
+def add(a: int, b: int = 0) -> int:
+    return a + b
+
+# 签名在装饰时自动计算并缓存
+print(add.__cached_sig__)  # <Signature (a: int, b: int = 0)>
+```
+
+### 缓存管理
+
+```python
+from vools.sig_cache import clear_cache, cache_info, remove_signature
+
+# 查看缓存统计
+info = cache_info()
+print(f"缓存大小: {info['size']}")
+print(f"命中率: {info['hit_ratio']:.2%}")
+
+# 删除指定函数签名
+remove_signature(print)
+
+# 清空所有缓存
+clear_cache()
 ```
 
 ## 编码模块

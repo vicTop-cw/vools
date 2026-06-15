@@ -5,6 +5,7 @@
 import inspect
 from functools import wraps
 from typing import Callable, Any, Dict, List
+from vools.sig_cache import get_signature
 
 __all__ = ['curry_class']
 
@@ -189,7 +190,7 @@ def curry_class(cls: type):
                 if name.startswith('__') and name.endswith('__'):
                     if name not in allowed_magic_methods:
                         continue
-                sig = inspect.signature(method)
+                sig = get_signature(method)
                 params = list(sig.parameters.values())
                 
                 # 获取需要的参数名列表（排除self、默认值参数、*args、**kwargs）

@@ -25,6 +25,7 @@ import types
 from functools import wraps
 from typing import Any, Callable, Optional, List, Tuple, Union, Dict
 import typing
+from vools.sig_cache import get_signature
 
 from .curry_core import is_curried, Curried
 
@@ -50,7 +51,7 @@ def strict(func):
         >>> add(1, 2)      # 3
         >>> add(1, "2")    # TypeError
     """
-    sig = inspect.signature(func)
+    sig = get_signature(func)
     annotations = func.__annotations__
     
     @wraps(func)
@@ -176,7 +177,7 @@ class OverloadManager:
             if hasattr(func, 'func'):
                 func = func.func
         
-        sig = inspect.signature(func)
+        sig = get_signature(func)
         params = sig.parameters
         
         # 计算必需参数数量
@@ -203,7 +204,7 @@ class OverloadManager:
             if hasattr(func, 'func'):
                 func = func.func
         
-        sig = inspect.signature(func)
+        sig = get_signature(func)
         type_hints = func.__annotations__
         params = sig.parameters
         

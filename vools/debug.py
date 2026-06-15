@@ -8,6 +8,7 @@ import functools
 import time
 import inspect
 from typing import Any, Callable
+from vools.sig_cache import get_signature
 
 
 def trace(func: Callable = None, *, enabled: bool = True, prefix: str = ""):
@@ -41,10 +42,11 @@ def trace(func: Callable = None, *, enabled: bool = True, prefix: str = ""):
             full_prefix = f"[{prefix}] " if prefix else ""
             
             # 格式化参数
+            sig = get_signature(func)
             arg_strs = []
             for i, arg in enumerate(args):
-                if i < len(inspect.signature(func).parameters):
-                    param_name = list(inspect.signature(func).parameters.keys())[i]
+                if i < len(sig.parameters):
+                    param_name = list(sig.parameters.keys())[i]
                     arg_strs.append(f"{param_name}={arg!r}")
                 else:
                     arg_strs.append(repr(arg))
@@ -92,10 +94,12 @@ def trace_async(func: Callable = None, *, enabled: bool = True, prefix: str = ""
             func_name = func.__name__
             full_prefix = f"[{prefix}] " if prefix else ""
             
+            # 格式化参数
+            sig = get_signature(func)
             arg_strs = []
             for i, arg in enumerate(args):
-                if i < len(inspect.signature(func).parameters):
-                    param_name = list(inspect.signature(func).parameters.keys())[i]
+                if i < len(sig.parameters):
+                    param_name = list(sig.parameters.keys())[i]
                     arg_strs.append(f"{param_name}={arg!r}")
                 else:
                     arg_strs.append(repr(arg))

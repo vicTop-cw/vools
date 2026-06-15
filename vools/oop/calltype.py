@@ -2,6 +2,7 @@ import enum
 import inspect
 import types
 import functools
+from vools.sig_cache import get_signature
 
 __all__ = ['CallableType','get_callable_type','create_fake']
 
@@ -145,7 +146,7 @@ def create_fake(func):
     
     # 获取目标函数的签名
     try:
-        sig = inspect.signature(target)
+        sig = get_signature(target)
     except (ValueError, TypeError):
         # 处理无法获取签名的内置函数
         sig = inspect.Signature()
@@ -284,4 +285,3 @@ if __name__ == '__main__':
     fake_call = create_fake(callable_instance)
     print(inspect.signature(fake_call))  # 输出: (a, b=10) -> None
     print(get_callable_type(map))
-

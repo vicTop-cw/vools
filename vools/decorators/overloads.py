@@ -1,6 +1,7 @@
 import inspect
 from typing import Any, Callable, Optional, List, Tuple, Union, Dict
 import wrapt
+from vools.sig_cache import get_signature
 
 
 """参数个数相同的情况，*args, **kws 不要指望只靠数据类型 来选择执行的函数"""
@@ -169,7 +170,7 @@ def overloads(func):
         call_args = (instance,) + args if instance is not None else args
 
         for impl in current_impls:
-            sig = inspect.signature(impl)
+            sig = get_signature(impl)
             try:
                 bound = sig.bind(*call_args, **kwargs)
                 bound.apply_defaults()
