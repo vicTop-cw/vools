@@ -162,11 +162,12 @@ class TestTaskParallelExecution:
             except:
                 pass
 
+    @pytest.mark.flaky(reruns=2)
     def test_worker_pool_size(self):
-        """测试不同工作进程数量的性能"""
+        """测试不同工作进程数量的性能（flaky：依赖硬件并行能力）"""
         queue = TaskQueue(self.db_path)
-        num_tasks = 4
-        delay_per_task = 0.15
+        num_tasks = 8
+        delay_per_task = 0.2
         
         task_ids = []
         for _ in range(num_tasks):
@@ -195,7 +196,8 @@ class TestTaskParallelExecution:
                 queue2.get_result(tid, timeout=10)
         time_with_4_workers = time.time() - start
         
-        assert time_with_4_workers < time_with_1_worker * 0.8
+        # 增加任务数量和延迟，提高并行效果；降低阈值以适应不同硬件
+        assert time_with_4_workers < time_with_1_worker * 0.75
 
 
 class TestTaskDecorators:

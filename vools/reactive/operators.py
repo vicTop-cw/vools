@@ -3080,3 +3080,198 @@ def parallel(max_concurrent: int = 4) -> Callable[[Observable[T]], Observable[T]
         return Observable(subscribe)
     
     return operator
+
+
+def dispatch_to_workers(
+    fn: Callable[[T], R] = None,
+    num_workers: int = 4,
+    buffer_size: int = 0,
+    on_drop: Optional[Callable[[T], None]] = None,
+    drop_strategy: str = "oldest",
+    **kwargs,
+) -> Callable[[Observable[T]], Observable[R]]:
+    """按闲/忙状态分发到 worker 池
+
+    核心语义:
+      - 上游每个值 -> 找一个"空闲"的 worker -> 调用 ``fn(value)`` -> 结果发给下游
+      - worker "忙"期间不会再分配新值
+      - 所有 worker 都忙时: 新值进入缓冲队列
+      - 缓冲队列满时: 按 ``drop_strategy`` 丢弃（并调用 ``on_drop``）
+
+    结果按"先完成先发出"的顺序输出（类似带并发上限的 flat_map）。
+
+    Args:
+        fn: 每个值的处理函数，支持同步函数和异步函数（返回 coroutine）
+        num_workers: 最大并发 worker 数，必须 >= 1
+        buffer_size: 缓冲队列大小，0 表示不限（可能导致内存无限增长）
+        on_drop: 值被丢弃时的回调，接收被丢弃的值作为唯一参数
+        drop_strategy: ``"oldest"`` 缓冲满时丢弃最旧的；
+                       ``"newest"`` 缓冲满时丢弃新来的
+        **kwargs: 预留的 curry 参数
+
+    Returns:
+        操作符函数
+    """
+    if num_workers < 1:
+        raise ValueError("num_workers must be >= 1, got %d" % num_workers)
+
+    if drop_strategy not in ("oldest", "newest"):
+        raise ValueError(
+            "drop_strategy must be 'oldest' or 'newest', got %r" % drop_strategy
+        )
+
+    if isinstance(fn, str):
+        fn = _parse_expr(fn, **kwargs)
+    elif kwargs and fn is not None:
+        @curry
+        def curried_fn(*args, **kw):
+            return fn(*args, **kw)
+        fn = curried_fn(**kwargs)
+
+    if fn is None:
+        fn = lambda x: x  # noqa: E731
+
+    def operator(source: Observable[T]) -> Observable[R]:
+        def subscribe(observer: Observer[R]) -> Subscription:
+            from collections import deque
+            from concurrent.futures import ThreadPoolExecutor
+            import threading as _threading
+
+            executor = ThreadPoolExecutor(max_workers=num_workers)
+
+            state_lock = _threading.Lock()
+            state = {
+                "buffer": deque(),
+                "active": 0,
+                "closed": False,
+                "errored": False,
+                "completed_called": False,
+            }
+
+            def try_process_next():
+                if state["errored"] or state["completed_called"]:
+                    return
+                while state["active"] < num_workers and len(state["buffer"]) > 0:
+                    value = state["buffer"].popleft()
+                    state["active"] += 1
+
+                    def worker_task(v=value):
+                        try:
+                            result = fn(v)
+                            if asyncio.iscoroutine(result):
+                                loop = asyncio.new_event_loop()
+                                try:
+                                    result = loop.run_until_complete(result)
+                                finally:
+                                    loop.close()
+                        except Exception as e:
+                            with state_lock:
+                                state["active"] -= 1
+                                if not state["errored"] and not state["completed_called"]:
+                                    observer.on_error(e)
+                            return
+
+                        observer.on_next(result)
+
+                        with state_lock:
+                            state["active"] -= 1
+                            should_complete = (
+                                state["closed"]
+                                and not state["errored"]
+                                and not state["completed_called"]
+                                and state["active"] == 0
+                                and len(state["buffer"]) == 0
+                            )
+                            if should_complete:
+                                state["completed_called"] = True
+                                observer.on_completed()
+                            elif not state["errored"] and not state["completed_called"]:
+                                try_process_next()
+
+                    executor.submit(worker_task)
+
+            def on_next(value: T) -> None:
+                with state_lock:
+                    if state["errored"] or state["completed_called"]:
+                        return
+                    if state["closed"]:
+                        return
+                    # 满了吗？所有 worker 都忙且缓冲已满
+                    full = (
+                        buffer_size > 0
+                        and state["active"] >= num_workers
+                        and len(state["buffer"]) >= buffer_size
+                    )
+                    if full:
+                        if drop_strategy == "oldest":
+                            dropped = state["buffer"].popleft()
+                        else:
+                            dropped = value
+                        if on_drop is not None:
+                            try:
+                                on_drop(dropped)
+                            except Exception:
+                                pass
+                        if drop_strategy == "newest":
+                            return
+                    state["buffer"].append(value)
+                    try_process_next()
+
+            def on_error(error: Exception) -> None:
+                with state_lock:
+                    if state["errored"] or state["completed_called"]:
+                        return
+                    state["errored"] = True
+                    state["buffer"].clear()
+                observer.on_error(error)
+
+            def on_completed() -> None:
+                with state_lock:
+                    if state["closed"] or state["errored"] or state["completed_called"]:
+                        return
+                    state["closed"] = True
+                    if state["active"] == 0 and len(state["buffer"]) == 0:
+                        state["completed_called"] = True
+                        observer.on_completed()
+
+            source_sub = source.subscribe(
+                on_next=on_next,
+                on_error=on_error,
+                on_completed=on_completed,
+            )
+
+            def unsubscribe() -> None:
+                with state_lock:
+                    state["closed"] = True
+                    state["errored"] = True
+                    state["buffer"].clear()
+                try:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                except TypeError:
+                    executor.shutdown(wait=False)
+                source_sub.unsubscribe()
+
+            return Subscription(unsubscribe)
+
+        return Observable(subscribe)
+
+    return operator
+
+
+def dispatch_workers(
+    fn: Callable[[T], R] = None,
+    num_workers: int = 4,
+    buffer_size: int = 0,
+    on_drop: Optional[Callable[[T], None]] = None,
+    drop_strategy: str = "oldest",
+    **kwargs,
+) -> Callable[[Observable[T]], Observable[R]]:
+    """``dispatch_to_workers`` 的短别名。"""
+    return dispatch_to_workers(
+        fn=fn,
+        num_workers=num_workers,
+        buffer_size=buffer_size,
+        on_drop=on_drop,
+        drop_strategy=drop_strategy,
+        **kwargs,
+    )

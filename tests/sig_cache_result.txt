@@ -1,0 +1,20 @@
+vools.sig_cache 基准测试 (直接运行 benchmark_signature_cache.py 的结果摘要)
+==================================================================
+
+场景                         次数     直接(μs)     缓存(μs)      加速比
+simple_func                  1        43.40        19.60        2.2x
+simple_func                  1000      4.64         0.06        76.1x
+simple_func                  100000    4.98         0.05        92.2x
+complex_func                 100000    7.80         0.05       147.0x
+instance_method              100000    5.99         0.05       110.5x
+class_method                 100000    9.93         0.16        60.9x
+static_method                100000   18.90         0.19       100.3x
+str.format                   100000  147.59         0.23       648.0x
+dict.get                     100000  122.27         0.06      2193.1x
+
+8线程并发 simple_func        直接 20.23μs     缓存 0.06μs     ~337x
+8线程并发 complex_func       直接 41.87μs     缓存 0.05μs     ~837x
+
+1000个函数缓存构建耗时: 5.2ms
+1000项缓存内存占用:    ~47KB (平均 48 bytes/项)
+

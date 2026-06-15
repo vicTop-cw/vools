@@ -1,6 +1,8 @@
 from typing import Any, Callable, Dict, List, Tuple, Union, Optional
 import re
+import inspect
 from functools import update_wrapper
+from vools.sig_cache import get_signature
 from ..functional.arrow_func import g,_eval_expr_with_semicolon,arrow_func
 __all__ = ['clone','g','arrow_func']
 
@@ -533,8 +535,7 @@ def _add_custom_methods(custom_methods: Dict[str, Any], new_cls: type, env: Dict
         # 2. 函数类型：直接添加
         elif callable(config):
             # 检查是否是绑定方法（第一个参数是self）
-            import inspect
-            sig = inspect.signature(config)
+            sig = get_signature(config)
             params = list(sig.parameters.values())
             if params and params[0].name == 'self':
                 setattr(new_cls, method_name, config)
@@ -738,8 +739,7 @@ def _process_result_shells(shell_configs: Dict[str, Any], new_cls: type, env: Di
                     if callable(shell_func):
                         try:
                             # 如果shell_func接受dir_filter参数
-                            import inspect
-                            sig = inspect.signature(shell_func)
+                            sig = get_signature(shell_func)
                             if 'dir_filter' in sig.parameters:
                                 new_result = shell_func(original_result, dir_filter=dir_filter)
                             else:

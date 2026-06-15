@@ -159,6 +159,8 @@ from .operators import (
     debounce_evolution,
     cache,
     parallel,
+    dispatch_to_workers,
+    dispatch_workers,
 )
 
 from .extended_operators import (
@@ -252,6 +254,67 @@ from .schedulers import (
     asyncio_scheduler as create_asyncio_scheduler,
     thread_pool_scheduler,
     new_thread_scheduler
+)
+
+from .clipboard import (
+    ClipChangeType,
+    ClipData,
+    ClipboardDispatcher,
+    ClipSubject,
+    ClipObserver,
+    from_clipboard,
+    write_to_clipboard,
+)
+
+from .file_watcher import (
+    FileChangeType,
+    FileData,
+    FileSubject,
+    FileObserver,
+    FileDispatcher,
+    from_filesystem,
+    write_to_filesystem,
+)
+
+from .folder_watcher import (
+    FolderChangeType,
+    FolderData,
+    FolderSubject,
+    FolderObserver,
+    FolderDispatcher,
+    from_foldersystem,
+    write_to_foldersystem,
+)
+
+from .keyboard_mouse import (
+    # 枚举
+    KeyEventType,
+    MouseEventType,
+    KeyModifier,
+
+    # 数据
+    KeyData,
+    MouseData,
+
+    # 分发器
+    KeyboardDispatcher,
+    MouseDispatcher,
+
+    # Subject
+    KeySubject,
+    MouseSubject,
+
+    # Observer
+    KeyObserver,
+    MouseObserver,
+
+    # 工厂函数
+    from_keyboard,
+    from_mouse,
+
+    # 写入操作符
+    write_to_keyboard,
+    write_to_mouse,
 )
 
 __all__ = [
@@ -355,6 +418,8 @@ __all__ = [
     'debounce_evolution',
     'cache',
     'parallel',
+    'dispatch_to_workers',
+    'dispatch_workers',
     
     # Connectable Observable
     'ConnectableObservable',
@@ -428,4 +493,46 @@ __all__ = [
     # 嵌套流展开算子
     'explode',
     'flatten',
+
+    # 剪贴板监控 & 数据分发
+    'ClipChangeType',
+    'ClipData',
+    'ClipboardDispatcher',
+    'ClipSubject',
+    'ClipObserver',
+    'from_clipboard',
+    # 文件监控 & 数据分发
+    'FileChangeType',
+    'FileData',
+    'FileSubject',
+    'FileObserver',
+    'FileDispatcher',
+    'from_filesystem',
+    'write_to_filesystem',
+
+    # 文件夹监控 & 数据分发
+    'FolderChangeType',
+    'FolderData',
+    'FolderSubject',
+    'FolderObserver',
+    'FolderDispatcher',
+    'from_foldersystem',
+    'write_to_foldersystem',
+
+    # 键盘鼠标监控 & 数据分发
+    'KeyEventType',
+    'MouseEventType',
+    'KeyModifier',
+    'KeyData',
+    'MouseData',
+    'KeyboardDispatcher',
+    'MouseDispatcher',
+    'KeySubject',
+    'MouseSubject',
+    'KeyObserver',
+    'MouseObserver',
+    'from_keyboard',
+    'from_mouse',
+    'write_to_keyboard',
+    'write_to_mouse',
 ]

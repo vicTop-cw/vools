@@ -28,6 +28,7 @@ __all__ = [
 import functools
 import inspect
 import threading
+from vools.sig_cache import get_signature
 import time
 import warnings
 from typing import Any, Callable, Optional, Tuple, TypeVar, Union
@@ -275,7 +276,7 @@ def validate(**validators):
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> T:
-            sig = inspect.signature(func)
+            sig = get_signature(func)
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
 

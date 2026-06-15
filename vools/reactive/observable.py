@@ -429,6 +429,20 @@ class PipeBuilder(Generic[T]):
         from .stats_operators import flatten
         return self._add_operator(flatten())
 
+    # ========== worker 分发 ==========
+
+    def dispatch_to_workers(self, fn=None, num_workers=4, buffer_size=0,
+                             on_drop=None, drop_strategy="oldest", **kwargs):
+        from .operators import dispatch_to_workers
+        return self._add_operator(dispatch_to_workers(
+            fn=fn, num_workers=num_workers, buffer_size=buffer_size,
+            on_drop=on_drop, drop_strategy=drop_strategy, **kwargs))
+
+    def dispatch_workers(self, fn=None, num_workers=4, buffer_size=0,
+                         on_drop=None, drop_strategy="oldest", **kwargs):
+        return self.dispatch_to_workers(fn, num_workers, buffer_size,
+                                        on_drop, drop_strategy, **kwargs)
+
 
 class Observable(Generic[T]):
     """Observable 核心类"""

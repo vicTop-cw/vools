@@ -14,6 +14,8 @@ import bisect
 import re
 import math
 import time
+import inspect
+from vools.sig_cache import get_signature
 
 from ..data import Seq, NONE
 from ..decorators import curry
@@ -150,8 +152,7 @@ class P:
         return self.__class__(self.func, *args, **kwargs)
 
     def __signature__(self):
-        import inspect
-        return inspect.signature(self.func)
+        return get_signature(self.func)
 
     def __name__(self):
         name = getattr(self.func, '__name__', None)
