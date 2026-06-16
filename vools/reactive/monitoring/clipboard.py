@@ -48,8 +48,10 @@ from typing import (
     TypeVar,
 )
 
-from .observable import Observable
-from .subject import Subject
+from ..core.observable import Observable
+from ..core.subject import Subject
+from .monitor_subject import MonitorSubject
+from .monitor_observer import MonitorObserver
 
 
 log = logging.getLogger("vools.reactive.clipboard")
@@ -280,7 +282,7 @@ if sys.platform == "win32":
     _shell32.DragQueryFileW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
     _shell32.DragQueryFileW.restype = ctypes.c_uint
     _user32.CreateWindowExW.argtypes = [
-        ctypes.c_uint, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint,
+        ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint,
         ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
         ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
     ]
@@ -311,6 +313,10 @@ if sys.platform == "win32":
     _user32.UnregisterClassW.restype = ctypes.c_int
     _user32.PostQuitMessage.argtypes = [ctypes.c_int]
     _user32.PostQuitMessage.restype = None
+    _gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    _gdi32.GetStockObject.argtypes = [ctypes.c_int]
+    _gdi32.GetStockObject.restype = ctypes.c_void_p
+    _WHITE_BRUSH = 0
 else:
     _kernel32 = None  # type: ignore[assignment]
     _user32 = None  # type: ignore[assignment]
@@ -367,15 +373,17 @@ class _ClipboardReader:
                     available.append(int(fmt))
                     fmt = _user32.EnumClipboardFormats(fmt)
                 if not available:
-                    return ClipChangeType.CLEAR, None, [], {}
+                    _user32.CloseClipboard()
+                    time.sleep(0.02)
+                    continue
 
                 priority: List[int] = [
                     _CF["HDROP"],
                     _CF["DIB"],
-                    self._html_fmt or 0,
-                    self._rtf_fmt or 0,
                     _CF["UNICODETEXT"],
                     _CF["TEXT"],
+                    self._html_fmt or 0,
+                    self._rtf_fmt or 0,
                 ]
                 chosen = next((f for f in priority if f and f in available), available[0])
 
@@ -677,10 +685,11 @@ if sys.platform == "win32":
         """Windows 下基于 AddClipboardFormatListener 的事件驱动后端。
 
         在一个单独的后台线程内：
-          1) 注册窗口类 + 创建隐藏 HWND_MESSAGE 窗口
+          1) 注册自定义窗口类 + 创建隐藏窗口
           2) 调用 user32.AddClipboardFormatListener(hwnd)
           3) 进入 GetMessageW 消息循环；WM_CLIPBOARDUPDATE 触发回调
-          4) 停止时 PostMessageW(hwnd, WM_CLOSE, 0, 0) → 窗口过程收到 WM_CLOSE
+          4) 使用独立的处理线程避免阻塞消息循环
+          5) 停止时 PostMessageW(hwnd, WM_CLOSE, 0, 0) → 窗口过程收到 WM_CLOSE
              → PostQuitMessage(0) → GetMessageW 返回 0 → 线程退出
         """
 
@@ -689,12 +698,17 @@ if sys.platform == "win32":
         def __init__(self, on_change: Callable[[], None]) -> None:
             self._on_change = on_change
             self._thread: Optional[threading.Thread] = None
+            self._worker_thread: Optional[threading.Thread] = None
             self._hwnd: Optional[int] = None
             self._wnd_proc_ref: Optional[_WNDPROC] = None
+            self._class_atom: Optional[int] = None
             self._running = False
+            self._worker_running = False
             self._lock = threading.Lock()
             self._start_done = threading.Event()
             self._start_error: Optional[str] = None
+            self._event_queue: "deque[object]" = deque()
+            self._queue_notify = threading.Event()
 
         @property
         def is_running(self) -> bool:
@@ -706,6 +720,8 @@ if sys.platform == "win32":
                     return
                 self._start_done.clear()
                 self._start_error = None
+                self._event_queue.clear()
+                self._queue_notify.clear()
                 self._thread = threading.Thread(
                     target=self._run, name="vools-clip-win32", daemon=True,
                 )
@@ -722,13 +738,33 @@ if sys.platform == "win32":
                 if not self._running:
                     return
                 self._running = False
+                self._worker_running = False
+            self._queue_notify.set()
             if hwnd:
                 try:
                     _user32.PostMessageW(hwnd, _WM_CLOSE, 0, 0)
-                except Exception:  # pragma: no cover
+                except Exception:
                     pass
+            if self._worker_thread and self._worker_thread.is_alive():
+                self._worker_thread.join(timeout=1.0)
             if self._thread and self._thread.is_alive():
                 self._thread.join(timeout=2.0)
+
+        def _worker_run(self) -> None:
+            """独立的事件处理线程，避免阻塞消息循环。"""
+            try:
+                while self._worker_running:
+                    if self._event_queue:
+                        try:
+                            self._event_queue.popleft()
+                            self._on_change()
+                        except Exception as e:
+                            log.debug("Win32 worker on_change 回调异常: %s", e)
+                    else:
+                        self._queue_notify.wait(timeout=0.1)
+                        self._queue_notify.clear()
+            except Exception as e:
+                log.debug("Win32 worker 线程异常: %s", e)
 
         # ---- 线程主循环 --------------------------------------------------
         def _run(self) -> None:
@@ -736,9 +772,10 @@ if sys.platform == "win32":
                 def wnd_proc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
                     if msg == _WM_CLIPBOARDUPDATE:
                         try:
-                            self._on_change()
-                        except Exception as e:  # pragma: no cover
-                            log.debug("Win32 on_change 回调异常: %s", e)
+                            self._event_queue.append(None)
+                            self._queue_notify.set()
+                        except Exception as e:
+                            log.debug("Win32 事件入队异常: %s", e)
                         return 0
                     if msg in (_WM_CLOSE, _WM_DESTROY):
                         try:
@@ -750,26 +787,26 @@ if sys.platform == "win32":
 
                 self._wnd_proc_ref = _WNDPROC(wnd_proc)
 
-                # 直接使用 Windows 内建的 'STATIC' 控件类 + SetWindowLongPtrW 子类化
+                h_instance = _kernel32.GetModuleHandleW(None)
+                if not h_instance:
+                    self._start_error = "GetModuleHandleW 返回 NULL"
+                    self._start_done.set()
+                    return
+
                 hwnd = _user32.CreateWindowExW(
                     _WS_EX_TOOLWINDOW, "STATIC", "VoolsClip", _WS_POPUP,
-                    0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, h_instance, None,
                 )
                 if not hwnd:
-                    self._start_error = "CreateWindowExW(STATIC) 返回 NULL"
+                    err = ctypes.get_last_error()
+                    self._start_error = f"CreateWindowExW 返回 NULL, 错误码: {err}"
                     self._start_done.set()
                     return
-                _user32.ShowWindow(hwnd, _SW_HIDE)
 
-                # GWLP_WNDPROC = -4: 替换窗口过程(子类化)
-                if not _user32.SetWindowLongPtrW(hwnd, -4, self._wnd_proc_ref):
-                    self._start_error = "SetWindowLongPtrW 失败"
-                    try:
-                        _user32.DestroyWindow(hwnd)
-                    except Exception:
-                        pass
-                    self._start_done.set()
-                    return
+                _GWL_WNDPROC = -4
+                _user32.SetWindowLongPtrW(hwnd, _GWL_WNDPROC, ctypes.cast(self._wnd_proc_ref, ctypes.c_void_p))
+
+                _user32.ShowWindow(hwnd, _SW_HIDE)
 
                 if not _user32.AddClipboardFormatListener(hwnd):
                     self._start_error = "AddClipboardFormatListener 失败"
@@ -781,13 +818,22 @@ if sys.platform == "win32":
                     return
 
                 self._hwnd = hwnd
+                self._worker_running = True
+                self._worker_thread = threading.Thread(
+                    target=self._worker_run, name="vools-clip-worker", daemon=True,
+                )
+                self._worker_thread.start()
                 self._start_done.set()
 
-                # GetMessageW 阻塞直到有消息到达; 对所有线程消息(第二个参数=0)
                 msg = wt.MSG()
                 while _user32.GetMessageW(ctypes.byref(msg), 0, 0, 0) != 0:
                     _user32.TranslateMessage(ctypes.byref(msg))
                     _user32.DispatchMessageW(ctypes.byref(msg))
+
+                self._worker_running = False
+                self._queue_notify.set()
+                if self._worker_thread and self._worker_thread.is_alive():
+                    self._worker_thread.join(timeout=1.0)
 
                 try:
                     _user32.RemoveClipboardFormatListener(hwnd)
@@ -797,8 +843,14 @@ if sys.platform == "win32":
                     _user32.DestroyWindow(hwnd)
                 except Exception:
                     pass
+                try:
+                    if self._class_atom:
+                        _user32.UnregisterClassW(self._class_atom, h_instance)
+                except Exception:
+                    pass
                 self._hwnd = None
-            except Exception as e:  # pragma: no cover
+                self._class_atom = None
+            except Exception as e:
                 self._start_error = f"Win32 hook 异常: {e}"
                 self._start_done.set()
                 log.debug("win32 hook 运行异常: %s", e)
@@ -950,7 +1002,8 @@ class ClipboardDispatcher:
         "_change_types_allowed",
         "_tags",
         "_interval",
-        "_last_signature",
+        "_signature_history",
+        "_signature_ttl",
         "_self_signatures",
         "_dispatch_count",
         "_error_count",
@@ -976,6 +1029,7 @@ class ClipboardDispatcher:
         self_filter: Callable[[ClipData], bool] | None = None,
         self_source: str | None = None,
         self_signature_capacity: int = 32,
+        signature_ttl: float = 1.0,
     ) -> None:
         self._reader = _ClipboardReader.shared()
         self._lock = threading.RLock()
@@ -984,7 +1038,10 @@ class ClipboardDispatcher:
         )
         self._tags: List[str] = list(tags or ())
         self._interval = max(0.02, float(interval))
-        self._last_signature: Optional[Tuple[Any, ...]] = None
+        self._signature_history: "deque[Tuple[float, Tuple[Any, ...]]]" = deque(
+            maxlen=max(8, int(self_signature_capacity))
+        )
+        self._signature_ttl = max(0.01, float(signature_ttl))
         self._self_signatures: "deque[Tuple[Any, ...]]" = deque(
             maxlen=max(1, int(self_signature_capacity))
         )
@@ -1089,15 +1146,31 @@ class ClipboardDispatcher:
             return
 
         sig = _make_signature(change_type, content, files)
+        now = time.time()
+        log.debug("_dispatch_once: received sig=%s, ct=%s, content_len=%d, self_sigs=%d", 
+                  sig[:2] if isinstance(sig, tuple) else sig, change_type, len(content) if content else 0,
+                  len(self._self_signatures))
 
-        # 自过滤：命中签名 → 丢弃
-        if self.filter_self and sig in self._self_signatures:
-            try:
-                self._self_signatures.remove(sig)
-            except ValueError:
-                pass
-            self._self_filtered_count += 1
-            return
+        # 自过滤：命中签名 → 丢弃（需要锁保护，避免与 set_clipboard 竞争）
+        with self._lock:
+            if self.filter_self:
+                if sig in self._self_signatures:
+                    try:
+                        self._self_signatures.remove(sig)
+                    except ValueError:
+                        pass
+                    self._self_filtered_count += 1
+                    return
+                # 额外检查：如果内容长度和类型匹配，也认为是自己写回的
+                for pending_sig in self._self_signatures:
+                    if (pending_sig[0] == sig[0] and 
+                        pending_sig[2] == sig[2]):
+                        try:
+                            self._self_signatures.remove(pending_sig)
+                        except ValueError:
+                            pass
+                        self._self_filtered_count += 1
+                        return
 
         # 自定义 self_filter
         if self.self_filter is not None:
@@ -1113,11 +1186,19 @@ class ClipboardDispatcher:
                 log.debug("self_filter 异常: %s", e)
                 self._error_count += 1
 
-        # 内容签名去重（外部写了完全相同的内容）
-        if sig == self._last_signature:
+        # 时间窗口签名去重：只在 TTL 时间内去重相同内容
+        # 清理过期的签名记录
+        while self._signature_history and self._signature_history[0][0] < now - self._signature_ttl:
+            self._signature_history.popleft()
+
+        # 检查是否在 TTL 内有相同签名
+        is_duplicate = any(s[1] == sig for s in self._signature_history)
+        if is_duplicate:
             self._duplicate_count += 1
             return
-        self._last_signature = sig
+
+        # 记录当前签名和时间
+        self._signature_history.append((now, sig))
 
         # 构造 ClipData：优先 on_change_data，否则默认
         clip: Optional[ClipData] = None
@@ -1166,17 +1247,21 @@ class ClipboardDispatcher:
                 change_type = ClipChangeType.IMAGE
             else:
                 change_type = ClipChangeType.TEXT
+        self._reader.write(content, files, change_type)
+
+        try:
+            ct2, c2, f2, _meta = self._reader.read()
+            if ct2 == ClipChangeType.CLEAR or c2 is None:
+                raise ValueError("clipboard not updated yet")
+            sig = _make_signature(ct2, c2, f2)
+            log.debug("set_clipboard: written sig=%s, ct=%s, content_len=%d", 
+                      sig[:2] if isinstance(sig, tuple) else sig, ct2, len(c2) if c2 else 0)
+        except Exception as e:
+            sig = _make_signature(change_type, content, files)
+            log.debug("set_clipboard: fallback sig=%s, change_type=%s", 
+                      sig[:2] if isinstance(sig, tuple) else sig, change_type)
+
         with self._lock:
-            self._reader.write(content, files, change_type)
-
-            # 读取系统实际写入的内容用于签名，确保与 hook 路径读到一致
-            try:
-                ct2, c2, f2, _meta = self._reader.read()
-                sig = _make_signature(ct2, c2, f2)
-            except Exception:
-                sig = _make_signature(change_type, content, files)
-
-            # 登记签名（hook 路径触发回调时会命中并丢弃）
             self._self_signatures.append(sig)
 
             meta = dict(metadata or {})
@@ -1211,6 +1296,7 @@ def from_clipboard(
     auto_start: bool = True,
     filter_self: bool = True,
     self_source: str | None = None,
+    signature_ttl: float = 1.0,
 ) -> Tuple[Any, ClipboardDispatcher]:
     """顶层工厂函数：返回 (Observable[ClipData], Dispatcher) 二元组。
 
@@ -1224,7 +1310,7 @@ def from_clipboard(
     d = ClipboardDispatcher(
         interval=interval, backend=backend, on_change_data=on_change_data,
         change_types=change_types, tags=tags, filter_self=filter_self,
-        self_source=self_source,
+        self_source=self_source, signature_ttl=signature_ttl,
     )
     if auto_start:
         d.start()
@@ -1309,255 +1395,219 @@ def write_to_clipboard(
 # ClipSubject: 自包含 Dispatcher 的 Subject
 # ====================================================================
 
-class ClipSubject(Subject[ClipData]):
-    """一个带剪贴板监控能力的 Subject。
-
-    与普通 Subject 的区别:
-      - 内部持有 ClipboardDispatcher
-      - 上下文管理器 (with)
-      - 直接暴露 start/stop/set_text/set_files/set_bytes
-      - 继承 Subject[ClipData], 支持 .pipe(...).subscribe(...)
-
-    用法:
-        >>> with ClipSubject() as clip:
-        ...     clip.pipe(ops.filter(lambda c: c.change_type == ClipChangeType.TEXT)) \
-        ...         .subscribe(on_next=lambda c: print(c.content))
-        ...     clip.set_text("Hello")
+class ClipSubject(MonitorSubject):
     """
+    剪贴板事件主题（Subject），继承 MonitorSubject。
 
-    __slots__ = ("_dispatcher",)
+    内部持有 ClipboardDispatcher，提供剪贴板内容变更事件流。
+    """
 
     def __init__(
         self,
         *,
-        interval: float = 0.2,
         backend: str = "auto",
-        change_types: Iterable[ClipChangeType] | None = None,
-        tags: Iterable[str] = (),
+        interval: float = 0.3,
+        tags: Tuple[str, ...] = (),
         filter_self: bool = True,
-        self_filter: Callable[[ClipData], bool] | None = None,
-        self_source: str | None = None,
-        auto_start: bool = True,
-        on_change_data: Callable[[], ClipData] | None = None,
+        self_filter: Optional[Any] = None,
+        self_source: Optional[str] = None,
+        self_signature_capacity: int = 32,
+        change_types: Optional[Any] = None,
+        on_change_data: Optional[Any] = None,
+        signature_ttl: float = 1.0,
     ) -> None:
+        self._backend = backend
+        self._interval = interval
+        self._tags = tags
+        self._filter_self = filter_self
+        self._self_filter = self_filter
+        self._self_source = self_source
+        self._self_signature_capacity = self_signature_capacity
+        self._change_types = change_types
+        self._on_change_data = on_change_data
+        self._signature_ttl = signature_ttl
         super().__init__()
-        self._dispatcher: ClipboardDispatcher = ClipboardDispatcher(
-            on_change_data=on_change_data,
-            interval=interval,
-            backend=backend,
-            change_types=change_types,
-            tags=tags,
-            filter_self=filter_self,
-            self_filter=self_filter,
-            self_source=self_source,
+
+    def _create_dispatcher(self) -> "ClipboardDispatcher":
+        return ClipboardDispatcher(
+            backend=self._backend,
+            interval=self._interval,
+            tags=self._tags,
+            filter_self=self._filter_self,
+            self_filter=self._self_filter,
+            self_source=self._self_source,
+            self_signature_capacity=self._self_signature_capacity,
+            change_types=self._change_types,
+            on_change_data=self._on_change_data,
+            signature_ttl=self._signature_ttl,
         )
-        self._dispatcher.subject.subscribe(
-            on_next=lambda cd: self.on_next(cd),
-            on_error=lambda err: self.on_error(err),
-            on_completed=lambda: self.on_completed(),
+
+    def p(self):
+        from .observable import PipeBuilder, Observable
+        return PipeBuilder(Observable(self._subscribe_generator), origin=self)
+
+    def _connect_dispatcher(self) -> None:
+        self._conn_sub = self._dispatcher.subject.subscribe(
+            on_next=self.on_next,
+            on_error=self.on_error,
+            on_completed=self.on_completed,
         )
-        if auto_start:
-            self._dispatcher.start()
 
     @property
-    def dispatcher(self) -> ClipboardDispatcher:
+    def dispatcher(self) -> "ClipboardDispatcher":
         return self._dispatcher
 
     @property
-    def backend_name(self) -> str:
-        return self._dispatcher.backend_name
+    def subject(self) -> "Subject[ClipData]":
+        return self
 
     @property
     def dispatch_count(self) -> int:
         return self._dispatcher.dispatch_count
 
     @property
-    def self_filtered_count(self) -> int:
-        return self._dispatcher.self_filtered_count
+    def content(self) -> Optional[str]:
+        return self._dispatcher.content
 
     @property
-    def is_running(self) -> bool:
-        return self._dispatcher.is_running
-
-    def start(self) -> None:
-        self._dispatcher.start()
-
-    def stop(self) -> None:
-        self._dispatcher.stop()
+    def backend_name(self) -> str:
+        return self._dispatcher.backend_name
 
     def __enter__(self) -> "ClipSubject":
-        self._dispatcher.start()
+        self.start()
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        self._dispatcher.stop()
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.stop()
+
 
     def set_text(
-        self, text: str, *, source: str | None = None,
-        tags: Iterable[str] = (), metadata: Dict[str, Any] | None = None,
-    ) -> ClipData:
+        self,
+        content: str,
+        *,
+        source: Optional[str] = None,
+        tags: Tuple[str, ...] = (),
+        metadata: Optional[dict] = None,
+    ) -> Any:
+        """设置剪贴板为文本内容。"""
         return self._dispatcher.set_clipboard(
-            content=text, change_type=ClipChangeType.TEXT,
-            source=source, tags=tags, metadata=metadata,
+            content=str(content),
+            files=None,
+            change_type=None,
+            source=source,
+            tags=tags,
+            metadata=metadata,
         )
 
     def set_files(
-        self, files: Iterable[str], *, source: str | None = None,
-        tags: Iterable[str] = (), metadata: Dict[str, Any] | None = None,
-    ) -> ClipData:
+        self,
+        files: Any,
+        *,
+        source: Optional[str] = None,
+        tags: Tuple[str, ...] = (),
+        metadata: Optional[dict] = None,
+    ) -> Any:
+        """设置剪贴板为文件列表。"""
         return self._dispatcher.set_clipboard(
-            files=files, change_type=ClipChangeType.FILES,
-            source=source, tags=tags, metadata=metadata,
+            content=None,
+            files=files,
+            change_type=None,
+            source=source,
+            tags=tags,
+            metadata=metadata,
         )
 
     def set_bytes(
-        self, data: bytes, *, source: str | None = None,
-        tags: Iterable[str] = (), metadata: Dict[str, Any] | None = None,
-    ) -> ClipData:
-        return self._dispatcher.set_clipboard(
-            content=data, change_type=ClipChangeType.IMAGE,
-            source=source, tags=tags, metadata=metadata,
-        )
-
-    def set_clipboard(
         self,
-        content: str | bytes | None = None,
-        files: Iterable[str] | None = None,
-        change_type: ClipChangeType | None = None,
+        content: bytes,
         *,
-        source: str | None = None,
-        tags: Iterable[str] = (),
-        metadata: Dict[str, Any] | None = None,
-    ) -> ClipData:
+        source: Optional[str] = None,
+        tags: Tuple[str, ...] = (),
+        metadata: Optional[dict] = None,
+    ) -> Any:
+        """设置剪贴板为字节内容。"""
         return self._dispatcher.set_clipboard(
-            content=content, files=files, change_type=change_type,
-            source=source, tags=tags, metadata=metadata,
+            content=content,
+            files=None,
+            change_type=None,
+            source=source,
+            tags=tags,
+            metadata=metadata,
         )
+    def __del__(self) -> None:
+        try:
+            self.stop()
+        except Exception:
+            pass
 
-
-# ====================================================================
-# ClipObserver: 按 ClipChangeType 路由的便捷观察者
-# ====================================================================
-
-class ClipObserver:
-    """声明式地监听 ClipSubject / ClipboardDispatcher 发出的事件。
-
-    用它代替手写 lambda + 类型判断。
-
-    用法:
-        >>> obs = ClipObserver(
-        ...     on_text=lambda cd: print("文本:", cd.content),
-        ...     on_files=lambda cd: print("文件:", cd.files),
-        ...     on_any=lambda cd: print("事件:", cd.change_type.name),
-        ... )
-        >>> obs.subscribe(clip_subject)
+class ClipObserver(MonitorObserver):
     """
+    剪贴板事件观察者，按 ClipChangeType 路由回调。
 
-    __slots__ = (
-        "_on_text", "_on_files", "_on_image", "_on_html", "_on_rtf",
-        "_on_clear", "_on_other", "_on_any", "_on_error",
-        "_on_completed", "_subscription",
-    )
+    Args:
+        on_change: 内容变化回调（任意类型）
+        on_text: 文本变化回调
+        on_image: 图像变化回调
+        on_files: 文件列表变化回调
+        on_any: 任意事件回调
+        on_error: 错误回调
+        on_completed: 完成回调
+    """
 
     def __init__(
         self,
         *,
-        on_text: Callable[[ClipData], Any] | None = None,
-        on_files: Callable[[ClipData], Any] | None = None,
-        on_image: Callable[[ClipData], Any] | None = None,
-        on_html: Callable[[ClipData], Any] | None = None,
-        on_rtf: Callable[[ClipData], Any] | None = None,
-        on_clear: Callable[[ClipData], Any] | None = None,
-        on_other: Callable[[ClipData], Any] | None = None,
-        on_any: Callable[[ClipData], Any] | None = None,
-        on_error: Callable[[Exception], Any] | None = None,
-        on_completed: Callable[[], Any] | None = None,
+        on_change: Optional[Callable[[ClipData], Any]] = None,
+        on_text: Optional[Callable[[ClipData], Any]] = None,
+        on_image: Optional[Callable[[ClipData], Any]] = None,
+        on_files: Optional[Callable[[ClipData], Any]] = None,
+        on_any: Optional[Callable[[ClipData], Any]] = None,
+        on_error: Optional[Callable[[Exception], Any]] = None,
+        on_completed: Optional[Callable[[], Any]] = None,
     ) -> None:
-        self._on_text = on_text
-        self._on_files = on_files
-        self._on_image = on_image
-        self._on_html = on_html
-        self._on_rtf = on_rtf
-        self._on_clear = on_clear
-        self._on_other = on_other
-        self._on_any = on_any
-        self._on_error = on_error
-        self._on_completed = on_completed
-        self._subscription: Optional[Any] = None
-
-    def _on_next(self, cd: ClipData) -> None:
-        if self._on_any is not None:
-            try:
-                self._on_any(cd)
-            except Exception as e:
-                log.debug("ClipObserver.on_any 异常: %s", e)
-
-        ct = cd.change_type
-        handler = {
-            ClipChangeType.TEXT: self._on_text,
-            ClipChangeType.FILES: self._on_files,
-            ClipChangeType.IMAGE: self._on_image,
-            ClipChangeType.HTML: self._on_html,
-            ClipChangeType.RTF: self._on_rtf,
-            ClipChangeType.CLEAR: self._on_clear,
-            ClipChangeType.OTHER: self._on_other,
-        }.get(ct, None)
-
-        if handler is not None:
-            try:
-                handler(cd)
-            except Exception as e:
-                log.debug("ClipObserver 回调 %s 异常: %s", ct.name, e)
-
-    def _on_error_handler(self, err: Exception) -> None:
-        if self._on_error is not None:
-            try:
-                self._on_error(err)
-            except Exception as e:
-                log.debug("ClipObserver.on_error 异常: %s", e)
-
-    def _on_completed_handler(self) -> None:
-        if self._on_completed is not None:
-            try:
-                self._on_completed()
-            except Exception as e:
-                log.debug("ClipObserver.on_completed 异常: %s", e)
-
-    def subscribe(self, observable: Any) -> Any:
-        """订阅 Observable/Subject/ClipSubject。返回 Subscription。"""
-        self.unsubscribe()
-        self._subscription = observable.subscribe(
-            on_next=self._on_next,
-            on_error=self._on_error_handler,
-            on_completed=self._on_completed_handler,
+        super().__init__(
+            on_any=on_any, on_error=on_error, on_completed=on_completed,
         )
-        return self._subscription
+        self._on_change = on_change
+        self._on_text = on_text
+        self._on_image = on_image
+        self._on_files = on_files
 
-    def attach(self, subject_or_dispatcher: Any) -> "ClipObserver":
-        self.subscribe(subject_or_dispatcher)
-        return self
+    # ── MonitorObserver hooks ───────────────────────────────────────
+    def _event_type_of(self, value: Any) -> Any:
+        return ClipChangeType(value.change_type)
 
-    def unsubscribe(self) -> None:
-        if self._subscription is not None:
-            try:
-                self._subscription.unsubscribe()
-            except Exception:
-                pass
-            self._subscription = None
+    def _handler_for(self, event_type: Any) -> Optional[Callable[[Any], Any]]:
+        # 类型特定处理器
+        specific = None
+        if event_type == ClipChangeType.TEXT and self._on_text is not None:
+            specific = self._on_text
+        elif event_type == ClipChangeType.IMAGE and self._on_image is not None:
+            specific = self._on_image
+        elif event_type == ClipChangeType.FILES and self._on_files is not None:
+            specific = self._on_files
 
-    @property
-    def is_subscribed(self) -> bool:
-        return self._subscription is not None
+        # 通用 on_change 处理器（如果设置了）
+        if self._on_change is not None:
+            if specific is not None:
+                # 同时调用两个
+                specific_ref = specific
+                on_change_ref = self._on_change
+                def combined(v, s=specific_ref, o=on_change_ref):
+                    s(v)
+                    o(v)
+                return combined
+            return self._on_change
+        return specific
+
+    def _on_next(self, cd: "ClipData") -> None:
+        self.on_next(cd)
 
     def __enter__(self) -> "ClipObserver":
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    def __exit__(self, exc_type, exc, tb) -> None:
         self.unsubscribe()
-
-
-# ====================================================================
-# 对外导出
 # ====================================================================
 
 __all__ = [

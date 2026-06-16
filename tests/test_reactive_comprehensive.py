@@ -17,7 +17,7 @@ from vools.reactive import (
     Observable, Subject, BehaviorSubject, ReplaySubject, AsyncSubject,
     ops, schedulers
 )
-from vools.reactive.connectable import publish, replay, share
+from vools.reactive.core.connectable import publish, replay, share
 
 
 class TestObservableEdgeCases:

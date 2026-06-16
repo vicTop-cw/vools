@@ -12,7 +12,7 @@ import asyncio
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vools.reactive import Observable, Subject, BehaviorSubject, ReplaySubject, ops
-from vools.reactive.connectable import (
+from vools.reactive.core.connectable import (
     ConnectableObservable,
     publish,
     share,

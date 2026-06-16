@@ -7,7 +7,7 @@ Subject 是一种特殊的 Observable，既可以作为 Observable 也可以作�
 from __future__ import annotations
 from typing import TypeVar, Callable, Optional, Any, Set, Generic
 
-from .observable import Subscription, DefaultObserver, Observable
+from .observable import Subscription, DefaultObserver, Observable, PipeDescriptor
 
 T = TypeVar('T')
 
@@ -46,12 +46,11 @@ class Subject(Generic[T]):
         
         return Subscription(unsubscribe)
     
-    def pipe(self, *operators: Callable[..., Observable[Any]]) -> Observable[Any]:
-        source: Observable[Any] = Observable(self._subscribe_generator)
-        for op in operators:
-            if callable(op):
-                source = op(source)
-        return source
+    pipe = PipeDescriptor[T]()
+    
+    def p(self):
+        from .observable import PipeBuilder
+        return PipeBuilder(Observable(self._subscribe_generator), origin=self)
     
     def _subscribe_generator(self, observer) -> Subscription:
         return self.subscribe(observer=observer)

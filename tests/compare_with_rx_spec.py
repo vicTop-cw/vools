@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def get_vools_features():
     """获取 vools-reactive 已实现的功能"""
     from vools.reactive import Observable, ops
-    from vools.reactive.subject import Subject, BehaviorSubject, ReplaySubject, AsyncSubject
+    from vools.reactive.core.subject import Subject, BehaviorSubject, ReplaySubject, AsyncSubject
     
     return {
         'creating': {

@@ -10,14 +10,17 @@ vools-reactive Operators
 from __future__ import annotations
 from typing import TypeVar, Callable, Optional, Any, Generic, List, Dict, Set, Tuple
 import asyncio
-import time
+import time as _time
+import inspect
+import threading as _threading
+import builtins
 
-from ..decorators import curry, lazy
-from ..functional.placeholder import _
-from ..functional.pipe_ops import P
-from ..functional.iif import iif as iif_func
-from .observable import Observable, Observer, Subscription
-from .subject import Subject
+from ...decorators import curry, lazy
+from ...functional.placeholder import _
+from ...functional.pipe_ops import P
+from ...functional.iif import iif as iif_func
+from ..core.observable import Observable, Observer, Subscription
+from ..core.subject import Subject
 
 T = TypeVar('T')
 R = TypeVar('R')
@@ -25,8 +28,14 @@ R = TypeVar('R')
 
 def _parse_expr(expr: str, **env):
     """解析字符串表达式为可调用函数"""
-    from ..functional.placeholder import _expr
-    return _expr(expr, **env)
+    from ...functional.arrow_func import g
+    import re
+    pattern1 = r'(?<!\w)_(?!\w)'
+    pattern2 = r'(?<!\w)_(0*[1-9]\d*)(?!\w)'
+    if not re.search(pattern1, expr) and not re.search(pattern2, expr) and not '=>' in expr and not expr.strip().startswith('lambda'):
+        if re.search(r'\b[a-zA-Z_]\w*\b', expr):
+            return g(f"x => {expr}", env)
+    return g(expr, env=env)
 
 
 # ========== 基础操作符 ==========
@@ -425,7 +434,7 @@ def combine_latest(*sources: Observable[Any]) -> Observable[Tuple]:
             nonlocal is_closed, is_initializing
             if is_closed or is_initializing:
                 return
-            if all(has_emitted):
+            if builtins.all(has_emitted):
                 observer.on_next(tuple(latest_values))
         
         def make_on_next(index):
@@ -455,7 +464,7 @@ def combine_latest(*sources: Observable[Any]) -> Observable[Tuple]:
         
         is_initializing = False
         
-        if all(has_emitted):
+        if builtins.all(has_emitted):
             observer.on_next(tuple(latest_values))
         
         return subscription
@@ -920,7 +929,20 @@ class _GroupedObserver(Observer[T]):
     def __init__(self):
         self._values: List[T] = []
         self._observers: List[Observer[T]] = []
-    
+
+    def on_next(self, value: T) -> None:
+        self._values.append(value)
+        for obs in self._observers:
+            obs.on_next(value)
+
+    def on_error(self, error: Exception) -> None:
+        for obs in self._observers:
+            obs.on_error(error)
+
+    def on_completed(self) -> None:
+        for obs in self._observers:
+            obs.on_completed()
+
     def subscribe(self, observer: Observer[T]) -> Subscription:
         for value in self._values:
             observer.on_next(value)
@@ -952,7 +974,9 @@ def debounce(delay: float) -> Callable[[Observable[T]], Observable[T]]:
                 last_value = value
                 if timer:
                     timer.cancel()
-                timer = asyncio.get_event_loop().call_later(delay, fire)
+                timer = _threading.Timer(delay, fire)
+                timer.daemon = True
+                timer.start()
             
             def on_completed():
                 nonlocal timer
@@ -993,7 +1017,7 @@ def throttle_first(delay: float) -> Callable[[Observable[T]], Observable[T]]:
             
             def on_next(value: T) -> None:
                 nonlocal last_emit_time
-                now = asyncio.get_event_loop().time()
+                now = _time.time()
                 if now - last_emit_time >= delay:
                     last_emit_time = now
                     observer.on_next(value)
@@ -1616,7 +1640,7 @@ def timeout(timeout_duration: float) -> Callable[[Observable[T]], Observable[T]]
     def operator(source: Observable[T]) -> Observable[T]:
         def subscribe(observer: Observer[T]) -> Subscription:
             subscription = Subscription(lambda: None)
-            timeout_task = None
+            timeout_timer = None
             is_timed_out = False
             
             def on_timeout():
@@ -1625,11 +1649,12 @@ def timeout(timeout_duration: float) -> Callable[[Observable[T]], Observable[T]]
                 observer.on_error(TimeoutError("Observable timeout"))
             
             def reset_timeout():
-                nonlocal timeout_task
-                if timeout_task:
-                    timeout_task.cancel()
-                timeout_task = asyncio.create_task(asyncio.sleep(timeout_duration))
-                timeout_task.add_done_callback(lambda _: on_timeout())
+                nonlocal timeout_timer
+                if timeout_timer:
+                    timeout_timer.cancel()
+                timeout_timer = _threading.Timer(timeout_duration, on_timeout)
+                timeout_timer.daemon = True
+                timeout_timer.start()
             
             def on_next(value: T) -> None:
                 if not is_timed_out:
@@ -1640,16 +1665,16 @@ def timeout(timeout_duration: float) -> Callable[[Observable[T]], Observable[T]]
                 nonlocal is_timed_out
                 if not is_timed_out:
                     is_timed_out = True
-                    if timeout_task:
-                        timeout_task.cancel()
+                    if timeout_timer:
+                        timeout_timer.cancel()
                     observer.on_completed()
             
             def on_error(error):
                 nonlocal is_timed_out
                 if not is_timed_out:
                     is_timed_out = True
-                    if timeout_task:
-                        timeout_task.cancel()
+                    if timeout_timer:
+                        timeout_timer.cancel()
                     observer.on_error(error)
             
             reset_timeout()
@@ -1663,8 +1688,8 @@ def timeout(timeout_duration: float) -> Callable[[Observable[T]], Observable[T]]
             def cleanup():
                 nonlocal is_timed_out
                 is_timed_out = True
-                if timeout_task:
-                    timeout_task.cancel()
+                if timeout_timer:
+                    timeout_timer.cancel()
             
             subscription._unsubscribe = cleanup
             return subscription
@@ -1679,7 +1704,7 @@ def timestamp() -> Callable[[Observable[T]], Observable[Tuple[T, float]]]:
     def operator(source: Observable[T]) -> Observable[Tuple[T, float]]:
         def subscribe(observer: Observer[Tuple[T, float]]) -> Subscription:
             def on_next(value: T) -> None:
-                observer.on_next((value, time.time()))
+                observer.on_next((value, _time.time()))
             
             return source.subscribe(
                 on_next=on_next,
@@ -1821,7 +1846,7 @@ def delay(delay_time: float) -> Callable[[Observable[T]], Observable[T]]:
                 nonlocal is_closed
                 if is_closed:
                     return
-                scheduled_time = asyncio.get_event_loop().time() + delay_time
+                scheduled_time = _time.time() + delay_time
                 pending_items.append((scheduled_time, value, 'next'))
                 schedule_next()
             
@@ -1829,7 +1854,7 @@ def delay(delay_time: float) -> Callable[[Observable[T]], Observable[T]]:
                 nonlocal is_closed
                 if is_closed:
                     return
-                scheduled_time = asyncio.get_event_loop().time() + delay_time
+                scheduled_time = _time.time() + delay_time
                 pending_items.append((scheduled_time, error, 'error'))
                 schedule_next()
             
@@ -1837,7 +1862,7 @@ def delay(delay_time: float) -> Callable[[Observable[T]], Observable[T]]:
                 nonlocal is_closed
                 if is_closed:
                     return
-                scheduled_time = asyncio.get_event_loop().time() + delay_time
+                scheduled_time = _time.time() + delay_time
                 pending_items.append((scheduled_time, None, 'completed'))
                 schedule_next()
             
@@ -1854,7 +1879,7 @@ def delay(delay_time: float) -> Callable[[Observable[T]], Observable[T]]:
                 
                 pending_items.sort()
                 scheduled_time, item, kind = pending_items.pop(0)
-                now = asyncio.get_event_loop().time()
+                now = _time.time()
                 wait_time = max(0, scheduled_time - now)
                 
                 def fire():
@@ -1870,7 +1895,9 @@ def delay(delay_time: float) -> Callable[[Observable[T]], Observable[T]]:
                         observer.on_completed()
                     schedule_next()
                 
-                timer = asyncio.get_event_loop().call_later(wait_time, fire)
+                timer = _threading.Timer(wait_time, fire)
+                timer.daemon = True
+                timer.start()
             
             def unsubscribe():
                 nonlocal is_closed, timer
@@ -2035,17 +2062,20 @@ def throttle_latest(period: float) -> Callable[[Observable[T]], Observable[T]]:
         def subscribe(observer: Observer[T]) -> Subscription:
             latest_value = [None]
             has_value = [False]
-            task = [None]
             is_closed = [False]
+            timer = [None]
             
-            async def emit_latest():
+            def emit_latest():
                 while not is_closed[0]:
-                    await asyncio.sleep(period)
                     if is_closed[0]:
                         break
                     if has_value[0]:
                         observer.on_next(latest_value[0])
                         has_value[0] = False
+                    # Wait using Event
+                    ev = _threading.Event()
+                    timer[0] = ev
+                    ev.wait(timeout=period)
             
             def on_next(value: T) -> None:
                 latest_value[0] = value
@@ -2054,19 +2084,16 @@ def throttle_latest(period: float) -> Callable[[Observable[T]], Observable[T]]:
             def on_error(err) -> None:
                 nonlocal is_closed
                 is_closed[0] = True
-                if task[0]:
-                    task[0].cancel()
                 observer.on_error(err)
             
             def on_completed() -> None:
                 nonlocal is_closed
                 is_closed[0] = True
-                if task[0]:
-                    task[0].cancel()
                 observer.on_completed()
             
             source_sub = source.subscribe(on_next=on_next, on_error=on_error, on_completed=on_completed)
-            task[0] = asyncio.create_task(emit_latest())
+            t = _threading.Thread(target=emit_latest, daemon=True)
+            t.start()
             
             def unsubscribe():
                 nonlocal is_closed
@@ -2177,16 +2204,16 @@ def sample(period: float) -> Callable[[Observable[T]], Observable[T]]:
         def subscribe(observer: Observer[T]) -> Subscription:
             latest_value = [None]
             has_value = [False]
-            task = [None]
             is_closed = [False]
             
-            async def emit_sample():
+            def emit_sample():
                 while not is_closed[0]:
-                    await asyncio.sleep(period)
                     if is_closed[0]:
                         break
                     if has_value[0]:
                         observer.on_next(latest_value[0])
+                    # Wait
+                    _threading.Event().wait(timeout=period)
             
             def on_next(value: T) -> None:
                 latest_value[0] = value
@@ -2195,19 +2222,16 @@ def sample(period: float) -> Callable[[Observable[T]], Observable[T]]:
             def on_error(err) -> None:
                 nonlocal is_closed
                 is_closed[0] = True
-                if task[0]:
-                    task[0].cancel()
                 observer.on_error(err)
             
             def on_completed() -> None:
                 nonlocal is_closed
                 is_closed[0] = True
-                if task[0]:
-                    task[0].cancel()
                 observer.on_completed()
             
             source_sub = source.subscribe(on_next=on_next, on_error=on_error, on_completed=on_completed)
-            task[0] = asyncio.create_task(emit_sample())
+            t = _threading.Thread(target=emit_sample, daemon=True)
+            t.start()
             
             def unsubscribe():
                 nonlocal is_closed
@@ -2443,10 +2467,10 @@ def time_interval() -> Callable[[Observable[T]], Observable[Tuple[T, float]]]:
     """
     def operator(source: Observable[T]) -> Observable[Tuple[T, float]]:
         def subscribe(observer: Observer[Tuple[T, float]]) -> Subscription:
-            last_time = [time.time()]
+            last_time = [_time.time()]
             
             def on_next(value: T) -> None:
-                current_time = time.time()
+                current_time = _time.time()
                 elapsed = current_time - last_time[0]
                 last_time[0] = current_time
                 observer.on_next((value, elapsed))
@@ -2804,8 +2828,9 @@ def retry_with_backoff(max_retries: int = None, initial_delay: float = 1.0, max_
             is_closed = [False]
             
             def schedule_retry(delay):
-                async def retry():
-                    await asyncio.sleep(delay)
+                def retry():
+                    nonlocal task
+                    _time.sleep(delay)
                     if is_closed[0]:
                         return
                     
@@ -2823,7 +2848,8 @@ def retry_with_backoff(max_retries: int = None, initial_delay: float = 1.0, max_
                     task[0] = sub
                 
                 if max_retries is None or retry_count[0] < max_retries:
-                    task[0] = asyncio.create_task(retry())
+                    t = _threading.Thread(target=retry, daemon=True)
+                    t.start()
                 else:
                     observer.on_completed()
             
@@ -2915,8 +2941,8 @@ def debounce_evolution(due_time: float, estimator: Callable[[T], float] = None) 
             current_due_time = [due_time]
             is_closed = [False]
             
-            async def emit():
-                await asyncio.sleep(current_due_time[0])
+            def emit():
+                _time.sleep(current_due_time[0])
                 if is_closed[0]:
                     return
                 if last_value[0] is not None:
@@ -2925,12 +2951,14 @@ def debounce_evolution(due_time: float, estimator: Callable[[T], float] = None) 
             
             def on_next(value: T) -> None:
                 nonlocal task, current_due_time
-                if task[0]:
-                    task[0].cancel()
+                if task[0] and task[0].is_alive():
+                    pass  # don't cancel, just replace
                 if estimator:
                     current_due_time[0] = estimator(value)
                 last_value[0] = value
-                task[0] = asyncio.create_task(emit())
+                t = _threading.Thread(target=emit, daemon=True)
+                t.start()
+                task[0] = t
             
             def on_completed():
                 nonlocal is_closed
@@ -2972,7 +3000,7 @@ def cache(duration: float = None, max_size: int = None) -> Callable[[Observable[
         def subscribe(observer: Observer[T]) -> Subscription:
             if cached_values:
                 for i, (value, t) in enumerate(zip(cached_values, cache_time)):
-                    if duration and (time.time() - t) > duration:
+                    if duration and (_time.time() - t) > duration:
                         continue
                     observer.on_next(value)
                 if has_completed[0]:
@@ -2984,7 +3012,7 @@ def cache(duration: float = None, max_size: int = None) -> Callable[[Observable[
                     cached_values.pop(0)
                     cache_time.pop(0)
                 cached_values.append(value)
-                cache_time.append(time.time())
+                cache_time.append(_time.time())
                 observer.on_next(value)
             
             def on_completed():
@@ -3275,3 +3303,1094 @@ def dispatch_workers(
         drop_strategy=drop_strategy,
         **kwargs,
     )
+
+
+# ========================================================================
+# 专用操作符: 生命周期 / 事件过滤 / 节流防抖 / 缓冲分组 / 速率限制
+# ========================================================================
+
+
+def on_start(
+    callback: Callable[..., Any],
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    订阅时执行回调。支持两种回调签名：
+      - ``callback() -> Any``                订阅时立即调用
+      - ``callback(first_value: T) -> Any``   首值到达时调用
+
+    >>> stream.pipe(on_start(lambda: print("started"))).subscribe()
+    >>> stream.pipe(on_start(lambda v: print("first:", v))).subscribe()
+    """
+    try:
+        _sig = inspect.signature(callback)
+        _takes_arg = len(_sig.parameters) > 0
+    except (TypeError, ValueError):
+        _takes_arg = False
+
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            fired = [False]
+
+            def on_next_wrapped(value: T) -> None:
+                if not fired[0] and _takes_arg:
+                    fired[0] = True
+                    try:
+                        callback(value)
+                    except Exception as e:
+                        observer.on_error(e)
+                        return
+                observer.on_next(value)
+
+            if not _takes_arg:
+                try:
+                    callback()
+                except Exception as e:
+                    observer.on_error(e)
+
+            return source.subscribe(
+                on_next=on_next_wrapped if _takes_arg else observer.on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def on_stop(
+    callback: Callable[..., Any],
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    流结束时（完成/错误/取消订阅）执行回调。支持两种签名：
+      - ``callback() -> Any``
+      - ``callback(last_value: Optional[T]) -> Any``
+
+    >>> stream.pipe(on_stop(lambda: print("stopped"))).subscribe()
+    >>> stream.pipe(on_stop(lambda v: print("last:", v))).subscribe()
+    """
+    try:
+        _sig = inspect.signature(callback)
+        _takes_arg = len(_sig.parameters) > 0
+    except (TypeError, ValueError):
+        _takes_arg = False
+
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            last_value: "List[Optional[T]]" = [None]
+
+            def on_next_wrapped(value: T) -> None:
+                if _takes_arg:
+                    last_value[0] = value
+                observer.on_next(value)
+
+            def _fire_stop() -> None:
+                try:
+                    if _takes_arg:
+                        callback(last_value[0])
+                    else:
+                        callback()
+                except Exception:
+                    pass
+
+            sub = source.subscribe(
+                on_next=on_next_wrapped if _takes_arg else observer.on_next,
+                on_error=lambda e: (_fire_stop(), observer.on_error(e)),
+                on_completed=lambda: (_fire_stop(), observer.on_completed()),
+            )
+            sub.add_child(Subscription(_fire_stop))
+            return sub
+        return Observable(subscribe)
+    return operator
+
+
+def when_start(
+    predicate: Callable[[T], bool],
+) -> Callable[[Observable[T]], Observable[T]]:
+    """
+    当条件满足时开始转发事件。在 predicate 返回 True 之前，所有事件都会被丢弃。
+    
+    Args:
+        predicate: 判断函数，接收数据并返回布尔值，返回 True 时开始转发
+
+    >>> stream.pipe(when_start(lambda data: data.is_press)).subscribe()
+    >>> clipboard.pipe(when_start(lambda data: data.change_type == ClipChangeType.TEXT)).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            started = [False]
+
+            def on_next_wrapped(value: T) -> None:
+                if not started[0]:
+                    if predicate(value):
+                        started[0] = True
+                        observer.on_next(value)
+                else:
+                    observer.on_next(value)
+
+            return source.subscribe(
+                on_next=on_next_wrapped,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def when_stop(
+    predicate: Callable[[T], bool],
+    inclusive: bool = True,
+) -> Callable[[Observable[T]], Observable[T]]:
+    """
+    当条件满足时停止转发事件。在 predicate 返回 True 之后，所有事件都会被丢弃。
+    
+    Args:
+        predicate: 判断函数，接收数据并返回布尔值，返回 True 时停止转发
+        inclusive: 是否包含触发停止的事件（默认 True）
+
+    >>> stream.pipe(when_stop(lambda data: data.key == 'Escape')).subscribe()
+    >>> clipboard.pipe(when_stop(lambda data: data.size > 1024 * 1024)).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            stopped = [False]
+
+            def on_next_wrapped(value: T) -> None:
+                if not stopped[0]:
+                    if predicate(value):
+                        stopped[0] = True
+                        if inclusive:
+                            observer.on_next(value)
+                        observer.on_completed()
+                    else:
+                        observer.on_next(value)
+
+            return source.subscribe(
+                on_next=on_next_wrapped,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def filter_by(
+    predicate: Callable[[T], bool],
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""按谓词过滤事件（filter 的语义别名）。"""
+    return filter(predicate)
+
+
+def filter_by_event_type(
+    *event_types: Any,
+    type_extractor: Optional[Callable[[T], Any]] = None,
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    按事件类型枚举值过滤。
+
+    >>> keyboard.pipe(filter_by_event_type(KeyEventType.KEY_DOWN)).subscribe()
+    """
+    allowed: Set[Any] = set(event_types)
+    if type_extractor is None:
+        def _default_extractor(v: Any) -> Any:
+            return getattr(v, "event_type", v)
+        _extract = _default_extractor
+    else:
+        _extract = type_extractor
+
+    def predicate(v: T) -> bool:
+        return _extract(v) in allowed
+    return filter(predicate)
+
+
+def when(
+    predicate: Callable[[T], bool],
+    handler: Callable[[T], Any],
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    条件副作用：当 ``predicate(value)`` 为真时调用 ``handler(value)``，主流通路不变。
+
+    >>> keyboard.pipe(when(lambda kd: kd.key_name == "enter",
+    ...                    lambda kd: print("ENTER"))).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            def on_next(v: T) -> None:
+                try:
+                    if predicate(v):
+                        handler(v)
+                except Exception:
+                    pass
+                observer.on_next(v)
+            return source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def throttle_events(
+    period_seconds: float,
+    key_fn: Optional[Callable[[T], Any]] = None,
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    事件节流 -- 每个 key 每 period_seconds 只发射一次事件。
+
+    >>> mouse.pipe(throttle_events(0.05, key_fn=lambda md: "move")).subscribe()
+    """
+    period = max(0.0, float(period_seconds))
+
+    def operator(source: Observable[T]) -> Observable[T]:
+        last_emitted: Dict[Any, float] = {}
+        lock = _threading.Lock()
+
+        def on_next_wrapper(value: T, emit: Callable[[T], None]) -> None:
+            key = key_fn(value) if key_fn is not None else "__all__"
+            now = _time.monotonic()
+            should_emit = False
+            with lock:
+                last = last_emitted.get(key, -float("inf"))
+                if now - last >= period:
+                    last_emitted[key] = now
+                    should_emit = True
+            if should_emit:
+                emit(value)
+
+        def subscribe(observer: Observer[T]) -> Subscription:
+            return source.subscribe(
+                on_next=lambda v: on_next_wrapper(v, observer.on_next),
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def debounce_events(
+    wait_seconds: float,
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    事件防抖 -- 静止 wait_seconds 后才发射最后一个事件。
+
+    >>> clipboard.pipe(debounce_events(0.2)).subscribe()
+    """
+    wait = max(0.0, float(wait_seconds))
+
+    def operator(source: Observable[T]) -> Observable[T]:
+        timer_state: Dict[str, Any] = {"t": None, "last": None}
+
+        def schedule(observer: Observer[T]) -> None:
+            if timer_state["t"] is not None:
+                try:
+                    timer_state["t"].cancel()
+                except Exception:
+                    pass
+            timer_state["t"] = _threading.Timer(
+                wait, lambda: _emit_last(observer)
+            )
+            timer_state["t"].daemon = True
+            timer_state["t"].start()
+
+        def _emit_last(observer: Observer[T]) -> None:
+            last = timer_state["last"]
+            if last is not None:
+                timer_state["last"] = None
+                try:
+                    observer.on_next(last)
+                except Exception:
+                    pass
+
+        def _cancel_timer() -> None:
+            if timer_state["t"] is not None:
+                try:
+                    timer_state["t"].cancel()
+                except Exception:
+                    pass
+
+        def subscribe(observer: Observer[T]) -> Subscription:
+            def on_next(v: T) -> None:
+                timer_state["last"] = v
+                schedule(observer)
+            sub = source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+            sub.add_child(Subscription(_cancel_timer))
+            return sub
+        return Observable(subscribe)
+    return operator
+
+
+def distinct_until_changed_by(
+    key_fn: Callable[[T], Any],
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    按键去重 -- 连续相同的 key 只发射一次。
+
+    >>> clipboard.pipe(distinct_until_changed_by(lambda cd: cd.content)).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        sentinel = object()
+        last: List[Any] = [sentinel]
+
+        def on_next_wrapper(v: T, emit: Callable[[T], None]) -> None:
+            try:
+                key = key_fn(v)
+            except Exception:
+                emit(v)
+                return
+            if last[0] is sentinel or last[0] != key:
+                last[0] = key
+                emit(v)
+
+        def subscribe(observer: Observer[T]) -> Subscription:
+            return source.subscribe(
+                on_next=lambda v: on_next_wrapper(v, observer.on_next),
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def buffer_with_count(
+    count: int,
+) -> Callable[[Observable[T]], Observable[List[T]]]:
+    r"""
+    按数量缓冲事件 -- 每 count 个事件发射一次列表。
+
+    >>> keyboard.pipe(buffer_with_count(5)).subscribe()
+    """
+    n = max(1, int(count))
+
+    def operator(source: Observable[T]) -> Observable[List[T]]:
+        def subscribe(observer: Observer[List[T]]) -> Subscription:
+            buf: List[T] = []
+
+            def on_next(v: T) -> None:
+                buf.append(v)
+                if len(buf) >= n:
+                    snapshot = list(buf)
+                    buf.clear()
+                    observer.on_next(snapshot)
+
+            def on_completed() -> None:
+                if buf:
+                    observer.on_next(list(buf))
+                observer.on_completed()
+
+            return source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def count_events() -> Callable[[Observable[T]], Observable[int]]:
+    r"""计数 -- 每发射一个事件，输出当前累计计数。"""
+    def operator(source: Observable[T]) -> Observable[int]:
+        def subscribe(observer: Observer[int]) -> Subscription:
+            counter = [0]
+            def on_next(v: T) -> None:
+                counter[0] += 1
+                observer.on_next(counter[0])
+            return source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def group_by_event_type(
+    type_extractor: Optional[Callable[[T], Any]] = None,
+) -> Callable[[Observable[T]], Observable[Tuple[Any, T]]]:
+    r"""
+    按事件类型分组 -- 输出 (event_type, value) 元组。
+
+    >>> keyboard.pipe(group_by_event_type()).subscribe()
+    """
+    if type_extractor is None:
+        def _default(v: Any) -> Any:
+            return getattr(v, "event_type", v)
+        _extract = _default
+    else:
+        _extract = type_extractor
+
+    def operator(source: Observable[T]) -> Observable[Tuple[Any, T]]:
+        def subscribe(observer: Observer[Tuple[Any, T]]) -> Subscription:
+            def on_next(v: T) -> None:
+                et = _extract(v)
+                observer.on_next((et, v))
+            return source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def sample_first(
+    period_seconds: float,
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    时间窗口采样 -- 每个窗口只发射第一个事件。
+
+    >>> keyboard.pipe(sample_first(1.0)).subscribe()
+    """
+    period = max(0.0, float(period_seconds))
+
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            last_time = [-float("inf")]
+
+            def on_next(v: T) -> None:
+                now = _time.monotonic()
+                if now - last_time[0] >= period:
+                    last_time[0] = now
+                    observer.on_next(v)
+
+            return source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def on_next_data(
+    on_next: Callable[[T], Any],
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    语义别名 tap -- 在每个事件上触发副作用，原始值不变。
+
+    >>> stream.pipe(on_next_data(lambda v: print("got", v))).subscribe()
+    """
+    return tap(on_next)
+
+
+def filter_by_data(
+    predicate: Optional[Callable[[T], bool]] = None,
+    **data_matchers: Any,
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    按字段值或谓词过滤事件。
+
+    支持两种方式：
+      - keyword arguments: ``filter_by_data(is_press=True)`` 按字段值过滤
+      - predicate: ``filter_by_data(lambda v: v.size > 1024)``
+      - 两者可组合（AND 语义）
+
+    >>> clipboard.pipe(filter_by_data(change_type=ClipChangeType.TEXT)).subscribe()
+    >>> keyboard.pipe(filter_by_data(is_press=True)).subscribe()
+    """
+    def _field_matcher(v: Any) -> bool:
+        return builtins.all(getattr(v, k, None) == val for k, val in data_matchers.items())
+
+    def operator(source: Observable[T]) -> Observable[T]:
+        def predicate_combined(v: T) -> bool:
+            ok = True
+            if data_matchers:
+                ok = ok and _field_matcher(v)
+            if predicate is not None:
+                try:
+                    ok = ok and bool(predicate(v))
+                except Exception:
+                    ok = False
+            return ok
+
+        def subscribe(observer: Observer[T]) -> Subscription:
+            return source.subscribe(
+                on_next=lambda v: observer.on_next(v) if predicate_combined(v) else None,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def take_until_data(
+    predicate: Callable[[T], bool],
+    inclusive: bool = True,
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    发射事件直到 ``predicate(value)`` 为真，然后完成。
+
+    Args:
+        predicate: 停止条件
+        inclusive: 为真时也发射触发停止的那个事件（默认 True）
+
+    >>> keyboard.pipe(take_until_data(lambda kd: kd.key_name == "escape")).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            state = {"done": False}
+            sub_holder: "List[Optional[Subscription]]" = [None]
+
+            def on_next(v: T) -> None:
+                if state["done"]:
+                    return
+                try:
+                    should_stop = bool(predicate(v))
+                except Exception:
+                    should_stop = False
+                if should_stop:
+                    state["done"] = True
+                    if inclusive:
+                        observer.on_next(v)
+                    observer.on_completed()
+                    if sub_holder[0] is not None:
+                        try:
+                            sub_holder[0].unsubscribe()
+                        except Exception:
+                            pass
+                else:
+                    observer.on_next(v)
+
+            sub_holder[0] = source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+            return sub_holder[0] if sub_holder[0] is not None else Subscription()
+        return Observable(subscribe)
+    return operator
+
+
+def skip_until_data(
+    predicate: Callable[[T], bool],
+    inclusive: bool = True,
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    跳过事件直到 ``predicate(value)`` 为真，然后发射后续所有事件。
+
+    >>> keyboard.pipe(skip_until_data(lambda kd: kd.key_name == "ctrl")).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            state = {"started": False}
+
+            def on_next(v: T) -> None:
+                if not state["started"]:
+                    try:
+                        triggered = bool(predicate(v))
+                    except Exception:
+                        triggered = False
+                    if triggered:
+                        state["started"] = True
+                        if inclusive:
+                            observer.on_next(v)
+                        return
+                observer.on_next(v)
+
+            return source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def finally_with_data(
+    on_finally: Callable[[Optional[T]], Any],
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    流结束时（完成/错误/取消订阅）用最后发射的值调用回调。
+
+    >>> clipboard.pipe(finally_with_data(lambda last: print("last:", last))).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            last_value: "List[Optional[T]]" = [None]
+
+            def _fire() -> None:
+                try:
+                    on_finally(last_value[0])
+                except Exception:
+                    pass
+
+            def on_next_tracked(v: T) -> None:
+                last_value[0] = v
+                observer.on_next(v)
+
+            sub = source.subscribe(
+                on_next=on_next_tracked,
+                on_error=lambda e: (_fire(), observer.on_error(e)),
+                on_completed=lambda: (_fire(), observer.on_completed()),
+            )
+            sub.add_child(Subscription(_fire))
+            return sub
+        return Observable(subscribe)
+    return operator
+
+
+def on_data(
+    predicate: Callable[[T], bool],
+    on_match: Callable[[T], Any],
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    条件副作用（when 的语义别名）。
+
+    >>> keyboard.pipe(on_data(lambda kd: kd.key_name == "enter",
+    ...                       lambda kd: print("ENTER"))).subscribe()
+    """
+    return when(predicate, on_match)
+
+
+def buffer_until_idle(
+    idle_seconds: float,
+    max_size: Optional[int] = None,
+) -> Callable[[Observable[T]], Observable[List[T]]]:
+    r"""
+    空闲缓冲 -- 当静止 idle_seconds 或达到 max_size 时发射缓冲列表。
+
+    >>> file_watcher.pipe(buffer_until_idle(0.3, max_size=50)).subscribe()
+    """
+    idle = max(0.0, float(idle_seconds))
+    _max = int(max_size) if max_size is not None else None
+
+    def operator(source: Observable[T]) -> Observable[List[T]]:
+        def subscribe(observer: Observer[List[T]]) -> Subscription:
+            buf: "List[T]" = []
+            timer_state: Dict[str, Any] = {"t": None}
+            lock = _threading.Lock()
+
+            def _emit_locked() -> None:
+                if timer_state["t"] is not None:
+                    try:
+                        timer_state["t"].cancel()
+                    except Exception:
+                        pass
+                    timer_state["t"] = None
+                if buf:
+                    snapshot = list(buf)
+                    buf.clear()
+                    observer.on_next(snapshot)
+
+            def _schedule() -> None:
+                if timer_state["t"] is not None:
+                    try:
+                        timer_state["t"].cancel()
+                    except Exception:
+                        pass
+                t = _threading.Timer(
+                    idle,
+                    lambda: (lock.acquire(timeout=1.0) and (_emit_locked(), lock.release())),
+                )
+                t.daemon = True
+                timer_state["t"] = t
+                t.start()
+
+            def on_next(v: T) -> None:
+                with lock:
+                    buf.append(v)
+                    if _max is not None and len(buf) >= _max:
+                        _emit_locked()
+                    else:
+                        _schedule()
+
+            def _cleanup() -> None:
+                with lock:
+                    _emit_locked()
+
+            sub = source.subscribe(
+                on_next=on_next,
+                on_error=lambda e: (_cleanup(), observer.on_error(e)),
+                on_completed=lambda: (_cleanup(), observer.on_completed()),
+            )
+            sub.add_child(Subscription(_cleanup))
+            return sub
+        return Observable(subscribe)
+    return operator
+
+
+def take_n_events(n: int) -> Callable[[Observable[T]], Observable[T]]:
+    r"""take 的语义别名：取前 n 个事件后完成。"""
+    return take(n)
+
+
+def skip_n_events(n: int) -> Callable[[Observable[T]], Observable[T]]:
+    r"""skip 的语义别名：跳过前 n 个事件。"""
+    return skip(n)
+
+
+def distinct_values(
+    key_fn: Optional[Callable[[T], Any]] = None,
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    去重（全流生命期）-- 基于 key_fn(value) 去重，任何重复值都被丢弃。
+
+    >>> clipboard.pipe(distinct_values(lambda cd: cd.content)).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            seen: Set[Any] = set()
+            lock = _threading.Lock()
+
+            def on_next(v: T) -> None:
+                try:
+                    key = key_fn(v) if key_fn is not None else v
+                except Exception:
+                    key = v
+                with lock:
+                    if key not in seen:
+                        seen.add(key)
+                        observer.on_next(v)
+
+            return source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def rate_limit(
+    events_per_second: float,
+    burst: int = 1,
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    令牌桶速率限制 -- 每秒最多 events_per_second 个事件，可突发 burst 个。
+
+    >>> mouse.pipe(rate_limit(30, 5)).subscribe()
+    """
+    eps = max(0.0, float(events_per_second))
+    burst_n = max(1, int(burst))
+
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            tokens: float = float(burst_n)
+            last_t: float = _time.monotonic()
+            lock = _threading.Lock()
+
+            def on_next(v: T) -> None:
+                nonlocal tokens, last_t
+                now = _time.monotonic()
+                with lock:
+                    elapsed = now - last_t
+                    tokens = min(float(burst_n), tokens + elapsed * eps)
+                    last_t = now
+                    if tokens >= 1.0:
+                        tokens -= 1.0
+                        observer.on_next(v)
+
+            return source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def debounce_data(
+    wait_seconds: float,
+    key_fn: Optional[Callable[[T], Any]] = None,
+) -> Callable[[Observable[T]], Observable[T]]:
+    r"""
+    按 key 防抖 -- 每个 distinct key_fn(value) 独立防抖。
+
+    >>> clipboard.pipe(debounce_data(0.3, lambda cd: cd.change_type)).subscribe()
+    """
+    wait = max(0.0, float(wait_seconds))
+
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            timers: Dict[Any, Any] = {}
+            last_values: Dict[Any, T] = {}
+            lock = _threading.Lock()
+
+            def _emit_key(key: Any) -> None:
+                with lock:
+                    v = last_values.pop(key, None)
+                    t = timers.pop(key, None)
+                if t is not None:
+                    try:
+                        t.cancel()
+                    except Exception:
+                        pass
+                if v is not None:
+                    observer.on_next(v)
+
+            def on_next(v: T) -> None:
+                key = key_fn(v) if key_fn is not None else "__all__"
+                with lock:
+                    old_t = timers.get(key)
+                    if old_t is not None:
+                        try:
+                            old_t.cancel()
+                        except Exception:
+                            pass
+                    last_values[key] = v
+                    t = _threading.Timer(wait, lambda k=key: _emit_key(k))
+                    t.daemon = True
+                    timers[key] = t
+                    t.start()
+
+            def _cleanup() -> None:
+                with lock:
+                    for t in timers.values():
+                        try:
+                            t.cancel()
+                        except Exception:
+                            pass
+                    timers.clear()
+                    last_values.clear()
+
+            sub = source.subscribe(
+                on_next=on_next,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+            sub.add_child(Subscription(_cleanup))
+            return sub
+        return Observable(subscribe)
+    return operator
+
+
+# ========================================================================
+# 监控场景专用操作符扩展
+# ========================================================================
+
+
+def when_error(
+    on_error: Callable[[Exception], Any],
+) -> Callable[[Observable[T]], Observable[T]]:
+    """
+    错误发生时执行回调。
+    
+    >>> stream.pipe(when_error(lambda e: print(f'Error: {e}'))).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            def on_error_wrapped(error: Exception) -> None:
+                try:
+                    on_error(error)
+                except Exception:
+                    pass
+                observer.on_error(error)
+            
+            return source.subscribe(
+                on_next=observer.on_next,
+                on_error=on_error_wrapped,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def on_every_nth(
+    n: int,
+    on_nth: Callable[[T], Any],
+) -> Callable[[Observable[T]], Observable[T]]:
+    """
+    每第N个事件执行回调。
+    
+    >>> stream.pipe(on_every_nth(5, lambda v: print(f'5th: {v}'))).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            counter = [0]
+            
+            def on_next_wrapped(value: T) -> None:
+                counter[0] += 1
+                if counter[0] % n == 0:
+                    try:
+                        on_nth(value)
+                    except Exception:
+                        pass
+                observer.on_next(value)
+            
+            return source.subscribe(
+                on_next=on_next_wrapped,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def on_condition_met(
+    condition: Callable[[T], bool],
+    on_met: Callable[[T], Any],
+    once: bool = True,
+) -> Callable[[Observable[T]], Observable[T]]:
+    """
+    当条件满足时执行回调。
+    
+    Args:
+        condition: 判断条件函数
+        on_met: 条件满足时的回调
+        once: 是否只触发一次（默认 True）
+    
+    >>> stream.pipe(on_condition_met(lambda v: v > 100, lambda v: print(f'Over 100: {v}'))).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            triggered = [False]
+            
+            def on_next_wrapped(value: T) -> None:
+                if not triggered[0] and condition(value):
+                    triggered[0] = once
+                    try:
+                        on_met(value)
+                    except Exception:
+                        pass
+                observer.on_next(value)
+            
+            return source.subscribe(
+                on_next=on_next_wrapped,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def collect_until(
+    condition: Callable[[T], bool],
+    on_collected: Callable[[List[T]], Any],
+    inclusive: bool = True,
+) -> Callable[[Observable[T]], Observable[T]]:
+    """
+    收集事件直到条件满足，然后执行回调。
+    
+    Args:
+        condition: 停止收集的条件
+        on_collected: 收集完成后的回调
+        inclusive: 是否包含触发条件的事件（默认 True）
+    
+    >>> stream.pipe(collect_until(lambda v: v == 'stop', lambda lst: print(f'Collected: {lst}'))).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            collected: List[T] = []
+            collecting = [True]
+            
+            def on_next_wrapped(value: T) -> None:
+                if collecting[0]:
+                    if inclusive:
+                        collected.append(value)
+                    if condition(value):
+                        collecting[0] = False
+                        try:
+                            on_collected(collected)
+                        except Exception:
+                            pass
+                    elif not inclusive:
+                        collected.append(value)
+                observer.on_next(value)
+            
+            def on_completed_wrapped() -> None:
+                if collecting[0] and collected:
+                    try:
+                        on_collected(collected)
+                    except Exception:
+                        pass
+                observer.on_completed()
+            
+            return source.subscribe(
+                on_next=on_next_wrapped,
+                on_error=observer.on_error,
+                on_completed=on_completed_wrapped,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def with_state(
+    initial_state: S,
+    reducer: Callable[[S, T], S],
+    on_state_change: Optional[Callable[[S], Any]] = None,
+) -> Callable[[Observable[T]], Observable[T]]:
+    """
+    带状态的操作符，类似 Redux 的 reducer 模式。
+    
+    Args:
+        initial_state: 初始状态
+        reducer: 状态更新函数，接收当前状态和新值，返回新状态
+        on_state_change: 状态变化时的回调（可选）
+    
+    >>> stream.pipe(with_state(0, lambda state, v: state + v, lambda s: print(f'Sum: {s}'))).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            state = [initial_state]
+            
+            def on_next_wrapped(value: T) -> None:
+                try:
+                    state[0] = reducer(state[0], value)
+                    if on_state_change:
+                        on_state_change(state[0])
+                except Exception:
+                    pass
+                observer.on_next(value)
+            
+            return source.subscribe(
+                on_next=on_next_wrapped,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+        return Observable(subscribe)
+    return operator
+
+
+def throttle_with_trailing(
+    duration: float,
+    trailing: bool = True,
+) -> Callable[[Observable[T]], Observable[T]]:
+    """
+    节流操作符，可选是否发送最后一个事件。
+    
+    Args:
+        duration: 节流时间（秒）
+        trailing: 是否在节流结束后发送最后一个事件（默认 True）
+    
+    >>> stream.pipe(throttle_with_trailing(0.5)).subscribe()
+    """
+    def operator(source: Observable[T]) -> Observable[T]:
+        def subscribe(observer: Observer[T]) -> Subscription:
+            last_value: "List[Optional[T]]" = [None]
+            last_time = [0.0]
+            timer = [None]
+            
+            def _emit() -> None:
+                timer[0] = None
+                if last_value[0] is not None:
+                    observer.on_next(last_value[0])
+                    last_value[0] = None
+            
+            def on_next_wrapped(value: T) -> None:
+                now = _time.time()
+                if now - last_time[0] >= duration:
+                    last_time[0] = now
+                    observer.on_next(value)
+                elif trailing:
+                    last_value[0] = value
+                    if timer[0] is None:
+                        timer[0] = _threading.Timer(duration, _emit)
+                        timer[0].daemon = True
+                        timer[0].start()
+            
+            def _cleanup() -> None:
+                if timer[0] is not None:
+                    timer[0].cancel()
+                    timer[0] = None
+            
+            sub = source.subscribe(
+                on_next=on_next_wrapped,
+                on_error=observer.on_error,
+                on_completed=observer.on_completed,
+            )
+            sub.add_child(Subscription(_cleanup))
+            return sub
+        return Observable(subscribe)
+    return operator

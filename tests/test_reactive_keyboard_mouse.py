@@ -4,21 +4,24 @@ import sys
 
 import pytest
 
-from vools.reactive.keyboard_mouse import (
+from vools.reactive.monitoring.keyboard import (
     KeyEventType,
-    MouseEventType,
     KeyModifier,
     KeyData,
-    MouseData,
     KeyboardDispatcher,
-    MouseDispatcher,
     KeySubject,
-    MouseSubject,
     KeyObserver,
-    MouseObserver,
     from_keyboard,
-    from_mouse,
     write_to_keyboard,
+)
+
+from vools.reactive.monitoring.mouse import (
+    MouseEventType,
+    MouseData,
+    MouseDispatcher,
+    MouseSubject,
+    MouseObserver,
+    from_mouse,
     write_to_mouse,
 )
 
@@ -133,7 +136,7 @@ def test_mouse_data_json_roundtrip():
 # ============================================================================
 
 def test_vk_code_to_name():
-    from vools.reactive.keyboard_mouse import _vk_code_to_name
+    from vools.reactive.monitoring.keyboard import _vk_code_to_name
 
     assert _vk_code_to_name(0x41) == "A"
     assert _vk_code_to_name(0x0D) == "ENTER"
@@ -143,7 +146,7 @@ def test_vk_code_to_name():
 
 
 def test_name_to_vk_code():
-    from vools.reactive.keyboard_mouse import _name_to_vk_code
+    from vools.reactive.monitoring.keyboard import _name_to_vk_code
 
     assert _name_to_vk_code("A") == 0x41
     assert _name_to_vk_code("ENTER") == 0x0D
@@ -238,7 +241,7 @@ def test_mouse_dispatcher_self_filter():
 # ============================================================================
 
 def test_key_subject_is_subject():
-    from vools.reactive.subject import Subject
+    from vools.reactive.core.subject import Subject
 
     ks = KeySubject(backend="polling")
     # KeySubject has a Subject (composition), but is not a Subject subclass
@@ -278,7 +281,7 @@ def test_key_subject_pipe():
 # ============================================================================
 
 def test_mouse_subject_is_subject():
-    from vools.reactive.subject import Subject
+    from vools.reactive.core.subject import Subject
 
     ms = MouseSubject(backend="polling")
     # MouseSubject has a Subject (composition), but is not a Subject subclass
