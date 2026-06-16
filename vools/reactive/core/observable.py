@@ -164,197 +164,197 @@ class PipeBuilder(Generic[T]):
     # ========== 操作符方法 ==========
     
     def map(self, fn=None, **kwargs):
-        from .operators import map
+        from ..operators import map
         return self._add_operator(map(fn, **kwargs))
     
     def filter(self, fn=None, **kwargs):
-        from .operators import filter
+        from ..operators import filter
         return self._add_operator(filter(fn, **kwargs))
     
     def flat_map(self, fn=None, **kwargs):
-        from .operators import flat_map
+        from ..operators import flat_map
         return self._add_operator(flat_map(fn, **kwargs))
     
     def concat_map(self, fn=None, **kwargs):
-        from .operators import concat_map
+        from ..operators import concat_map
         return self._add_operator(concat_map(fn, **kwargs))
     
     def switch_map(self, fn=None, **kwargs):
-        from .operators import switch_map
+        from ..operators import switch_map
         return self._add_operator(switch_map(fn, **kwargs))
     
     def take(self, n):
-        from .operators import take
+        from ..operators import take
         return self._add_operator(take(n))
     
     def skip(self, n):
-        from .operators import skip
+        from ..operators import skip
         return self._add_operator(skip(n))
     
     def take_while(self, predicate=None, **kwargs):
-        from .operators import take_while
+        from ..operators import take_while
         return self._add_operator(take_while(predicate, **kwargs))
     
     def skip_while(self, predicate=None, **kwargs):
-        from .operators import skip_while
+        from ..operators import skip_while
         return self._add_operator(skip_while(predicate, **kwargs))
     
     def take_until(self, other):
-        from .operators import take_until
+        from ..operators import take_until
         return self._add_operator(take_until(other))
     
     def distinct_until_changed(self, key_fn=None):
-        from .operators import distinct_until_changed
+        from ..operators import distinct_until_changed
         return self._add_operator(distinct_until_changed(key_fn))
     
     def debounce(self, due_time):
-        from .operators import debounce
+        from ..operators import debounce
         return self._add_operator(debounce(due_time))
     
     def throttle_first(self, duration):
-        from .operators import throttle_first
+        from ..operators import throttle_first
         return self._add_operator(throttle_first(duration))
     
     def tap(self, fn=None, **kwargs):
-        from .operators import tap
+        from ..operators import tap
         return self._add_operator(tap(fn, **kwargs))
     
     def delay(self, due_time):
-        from .operators import delay
+        from ..operators import delay
         return self._add_operator(delay(due_time))
     
     def start_with(self, *values):
-        from .operators import start_with
+        from ..operators import start_with
         return self._add_operator(start_with(*values))
     
     def end_with(self, *values):
-        from .operators import end_with
+        from ..operators import end_with
         return self._add_operator(end_with(*values))
     
     def reduce(self, accumulator, seed=None):
-        from .operators import reduce
+        from ..operators import reduce
         return self._add_operator(reduce(accumulator, seed))
     
     def scan(self, accumulator, seed=None):
-        from .operators import scan
+        from ..operators import scan
         return self._add_operator(scan(accumulator, seed))
     
     def count(self):
-        from .operators import count
+        from ..operators import count
         return self._add_operator(count())
     
     def sum(self, key_mapper=None):
-        from .operators import sum
+        from ..operators import sum
         return self._add_operator(sum(key_mapper))
     
     def average(self, key_mapper=None):
-        from .operators import average
+        from ..operators import average
         return self._add_operator(average(key_mapper))
     
     def minimum(self, key_mapper=None):
-        from .operators import minimum
+        from ..operators import minimum
         return self._add_operator(minimum(key_mapper))
     
     def maximum(self, key_mapper=None):
-        from .operators import maximum
+        from ..operators import maximum
         return self._add_operator(maximum(key_mapper))
     
     def all(self, predicate):
-        from .operators import all
+        from ..operators import all
         return self._add_operator(all(predicate))
     
     def any(self, predicate=None):
-        from .operators import any
+        from ..operators import any
         return self._add_operator(any(predicate))
     
     def contains(self, value):
-        from .operators import contains
+        from ..operators import contains
         return self._add_operator(contains(value))
     
     def is_empty(self):
-        from .operators import is_empty
+        from ..operators import is_empty
         return self._add_operator(is_empty())
     
     def to_list(self):
-        from .operators import to_list
+        from ..operators import to_list
         return self._add_operator(to_list())
     
     def buffer(self, count):
-        from .operators import buffer
+        from ..operators import buffer
         return self._add_operator(buffer(count))
     
     def group_by(self, key_fn):
-        from .operators import group_by
+        from ..operators import group_by
         return self._add_operator(group_by(key_fn))
     
     def merge(self, *others):
-        from .operators import merge
+        from ..operators import merge
         return self._add_operator(merge(*others))
     
     def concat(self, *others):
-        from .operators import concat
+        from ..operators import concat
         return self._add_operator(concat(*others))
     
     def catch(self, handler):
-        from .operators import catch
+        from ..operators import catch
         return self._add_operator(catch(handler))
     
     def retry(self, times=None):
-        from .operators import retry
+        from ..operators import retry
         return self._add_operator(retry(times))
     
     def on_error_return(self, value):
-        from .operators import on_error_return
+        from ..operators import on_error_return
         return self._add_operator(on_error_return(value))
     
     def on_error_resume_next(self, fallback):
-        from .operators import on_error_resume_next
+        from ..operators import on_error_resume_next
         return self._add_operator(on_error_resume_next(fallback))
     
     def retry_when(self, handler):
-        from .operators import retry_when
+        from ..operators import retry_when
         return self._add_operator(retry_when(handler))
     
     # ========== 新增操作符 ==========
     
     def first(self, predicate=None):
-        from .operators import first
+        from ..operators import first
         return self._add_operator(first(predicate))
     
     def last(self, predicate=None):
-        from .operators import last
+        from ..operators import last
         return self._add_operator(last(predicate))
     
     def distinct(self, key_fn=None):
-        from .operators import distinct
+        from ..operators import distinct
         return self._add_operator(distinct(key_fn))
     
     def element_at(self, index):
-        from .operators import element_at
+        from ..operators import element_at
         return self._add_operator(element_at(index))
     
     def skip_until(self, other):
-        from .operators import skip_until
+        from ..operators import skip_until
         return self._add_operator(skip_until(other))
     
     def default_if_empty(self, default_value):
-        from .operators import default_if_empty
+        from ..operators import default_if_empty
         return self._add_operator(default_if_empty(default_value))
     
     def sequence_equal(self, other):
-        from .operators import sequence_equal
+        from ..operators import sequence_equal
         return self._add_operator(sequence_equal(other))
     
     def timeout(self, timeout_duration):
-        from .operators import timeout
+        from ..operators import timeout
         return self._add_operator(timeout(timeout_duration))
     
     def timestamp(self):
-        from .operators import timestamp
+        from ..operators import timestamp
         return self._add_operator(timestamp())
     
     def iif(self, condition=None, true_body=None, false_body=None):
-        from .operators import iif
+        from ..operators import iif
         return self._add_operator(iif(condition, true_body, false_body))
     
     # ========== 统计聚合扩展算子 ==========
@@ -473,7 +473,7 @@ class PipeBuilder(Generic[T]):
 
     def dispatch_to_workers(self, fn=None, num_workers=4, buffer_size=0,
                              on_drop=None, drop_strategy="oldest", **kwargs):
-        from .operators import dispatch_to_workers
+        from ..operators import dispatch_to_workers
         return self._add_operator(dispatch_to_workers(
             fn=fn, num_workers=num_workers, buffer_size=buffer_size,
             on_drop=on_drop, drop_strategy=drop_strategy, **kwargs))
@@ -484,197 +484,197 @@ class PipeBuilder(Generic[T]):
                                         on_drop, drop_strategy, **kwargs)
 
     def amb(self, *sources):
-        from .operators import amb
+        from ..operators import amb
         return self._add_operator(amb(*sources))
     def backpressure_buffer(self, max_size=None):
-        from .operators import backpressure_buffer
+        from ..operators import backpressure_buffer
         return self._add_operator(backpressure_buffer(max_size))
     def backpressure_drop(self):
-        from .operators import backpressure_drop
+        from ..operators import backpressure_drop
         return self._add_operator(backpressure_drop())
     def backpressure_error(self, max_size=1):
-        from .operators import backpressure_error
+        from ..operators import backpressure_error
         return self._add_operator(backpressure_error(max_size))
     def backpressure_latest(self):
-        from .operators import backpressure_latest
+        from ..operators import backpressure_latest
         return self._add_operator(backpressure_latest())
     def buffer_until_idle(self, idle_seconds, max_size):
-        from .operators import buffer_until_idle
+        from ..operators import buffer_until_idle
         return self._add_operator(buffer_until_idle(idle_seconds, max_size))
     def buffer_with_count(self, count):
-        from .operators import buffer_with_count
+        from ..operators import buffer_with_count
         return self._add_operator(buffer_with_count(count))
     def cache(self, duration=None, max_size=None):
-        from .operators import cache
+        from ..operators import cache
         return self._add_operator(cache(duration, max_size))
     def circuit_breaker(self, threshold=5, reset_timeout=60.0):
-        from .operators import circuit_breaker
+        from ..operators import circuit_breaker
         return self._add_operator(circuit_breaker(threshold, reset_timeout))
     def collect_until(self, condition, on_collected, inclusive):
-        from .operators import collect_until
+        from ..operators import collect_until
         return self._add_operator(collect_until(condition, on_collected, inclusive))
     def combine_latest(self, *sources):
-        from .operators import combine_latest
+        from ..operators import combine_latest
         return self._add_operator(combine_latest(*sources))
     
     def zip(self, *sources):
-        from .operators import zip
+        from ..operators import zip
         return self._add_operator(zip(*sources))
     def count_events(self, ):
-        from .operators import count_events
+        from ..operators import count_events
         return self._add_operator(count_events())
     def curry_map(self, fn, *args):
-        from .operators import curry_map
+        from ..operators import curry_map
         return self._add_operator(curry_map(fn, *args))
     def debounce_data(self, wait_seconds, key_fn):
-        from .operators import debounce_data
+        from ..operators import debounce_data
         return self._add_operator(debounce_data(wait_seconds, key_fn))
     def debounce_events(self, wait_seconds):
-        from .operators import debounce_events
+        from ..operators import debounce_events
         return self._add_operator(debounce_events(wait_seconds))
     def debounce_evolution(self, due_time, estimator=None):
-        from .operators import debounce_evolution
+        from ..operators import debounce_evolution
         return self._add_operator(debounce_evolution(due_time, estimator))
     def distinct_until_changed_by(self, key_fn):
-        from .operators import distinct_until_changed_by
+        from ..operators import distinct_until_changed_by
         return self._add_operator(distinct_until_changed_by(key_fn))
     def distinct_values(self, key_fn):
-        from .operators import distinct_values
+        from ..operators import distinct_values
         return self._add_operator(distinct_values(key_fn))
     def do_on_completed(self, fn):
-        from .operators import do_on_completed
+        from ..operators import do_on_completed
         return self._add_operator(do_on_completed(fn))
     def do_on_error(self, fn):
-        from .operators import do_on_error
+        from ..operators import do_on_error
         return self._add_operator(do_on_error(fn))
     def do_on_next(self, fn):
-        from .operators import do_on_next
+        from ..operators import do_on_next
         return self._add_operator(do_on_next(fn))
     def finally_with_data(self, on_finally):
-        from .operators import finally_with_data
+        from ..operators import finally_with_data
         return self._add_operator(finally_with_data(on_finally))
     def filter_by(self, predicate):
-        from .operators import filter_by
+        from ..operators import filter_by
         return self._add_operator(filter_by(predicate))
     def filter_by_data(self, predicate, **data_matchers):
-        from .operators import filter_by_data
+        from ..operators import filter_by_data
         return self._add_operator(filter_by_data(predicate, **data_matchers))
     def filter_by_event_type(self, *event_types):
-        from .operators import filter_by_event_type
+        from ..operators import filter_by_event_type
         return self._add_operator(filter_by_event_type(*event_types))
     def flat_map_latest(self, fn):
-        from .operators import flat_map_latest
+        from ..operators import flat_map_latest
         return self._add_operator(flat_map_latest(fn))
     def group_by_event_type(self, type_extractor):
-        from .operators import group_by_event_type
+        from ..operators import group_by_event_type
         return self._add_operator(group_by_event_type(type_extractor))
     def ignore_elements(self, ):
-        from .operators import ignore_elements
+        from ..operators import ignore_elements
         return self._add_operator(ignore_elements())
     def lazy_flat_map(self, lazy_fn, **kwargs):
-        from .operators import lazy_flat_map
+        from ..operators import lazy_flat_map
         return self._add_operator(lazy_flat_map(lazy_fn, **kwargs))
     def observe_on(self, scheduler):
-        from .operators import observe_on
+        from ..operators import observe_on
         return self._add_operator(observe_on(scheduler))
     def on_condition_met(self, condition, on_met, once):
-        from .operators import on_condition_met
+        from ..operators import on_condition_met
         return self._add_operator(on_condition_met(condition, on_met, once))
     def on_data(self, predicate, on_match):
-        from .operators import on_data
+        from ..operators import on_data
         return self._add_operator(on_data(predicate, on_match))
     def on_every_nth(self, n, on_nth):
-        from .operators import on_every_nth
+        from ..operators import on_every_nth
         return self._add_operator(on_every_nth(n, on_nth))
     def on_next_data(self, on_next):
-        from .operators import on_next_data
+        from ..operators import on_next_data
         return self._add_operator(on_next_data(on_next))
     def on_start(self, callback):
-        from .operators import on_start
+        from ..operators import on_start
         return self._add_operator(on_start(callback))
     def on_stop(self, callback):
-        from .operators import on_stop
+        from ..operators import on_stop
         return self._add_operator(on_stop(callback))
     def parallel(self, max_concurrent=4):
-        from .operators import parallel
+        from ..operators import parallel
         return self._add_operator(parallel(max_concurrent))
     def rate_limit(self, events_per_second, burst):
-        from .operators import rate_limit
+        from ..operators import rate_limit
         return self._add_operator(rate_limit(events_per_second, burst))
     def retry_with_backoff(self, max_retries=None, initial_delay=1.0, max_delay=60.0, multiplier=2.0):
-        from .operators import retry_with_backoff
+        from ..operators import retry_with_backoff
         return self._add_operator(retry_with_backoff(max_retries, initial_delay, max_delay, multiplier))
     def sample(self, period):
-        from .operators import sample
+        from ..operators import sample
         return self._add_operator(sample(period))
     def sample_first(self, period_seconds):
-        from .operators import sample_first
+        from ..operators import sample_first
         return self._add_operator(sample_first(period_seconds))
     def seq_bridge(self, seq_op):
-        from .operators import seq_bridge
+        from ..operators import seq_bridge
         return self._add_operator(seq_bridge(seq_op))
     def skip_last(self, n):
-        from .operators import skip_last
+        from ..operators import skip_last
         return self._add_operator(skip_last(n))
     def skip_n_events(self, n):
-        from .operators import skip_n_events
+        from ..operators import skip_n_events
         return self._add_operator(skip_n_events(n))
     def skip_until_data(self, predicate, inclusive):
-        from .operators import skip_until_data
+        from ..operators import skip_until_data
         return self._add_operator(skip_until_data(predicate, inclusive))
     def subscribe_on(self, scheduler):
-        from .operators import subscribe_on
+        from ..operators import subscribe_on
         return self._add_operator(subscribe_on(scheduler))
     def switch(self, ):
-        from .operators import switch
+        from ..operators import switch
         return self._add_operator(switch())
     def take_last(self, n):
-        from .operators import take_last
+        from ..operators import take_last
         return self._add_operator(take_last(n))
     def take_n_events(self, n):
-        from .operators import take_n_events
+        from ..operators import take_n_events
         return self._add_operator(take_n_events(n))
     def take_until_data(self, predicate, inclusive):
-        from .operators import take_until_data
+        from ..operators import take_until_data
         return self._add_operator(take_until_data(predicate, inclusive))
     def throttle_events(self, period_seconds, key_fn):
-        from .operators import throttle_events
+        from ..operators import throttle_events
         return self._add_operator(throttle_events(period_seconds, key_fn))
     def throttle_latest(self, period):
-        from .operators import throttle_latest
+        from ..operators import throttle_latest
         return self._add_operator(throttle_latest(period))
     def throttle_with_trailing(self, duration, trailing):
-        from .operators import throttle_with_trailing
+        from ..operators import throttle_with_trailing
         return self._add_operator(throttle_with_trailing(duration, trailing))
     def time_interval(self, ):
-        from .operators import time_interval
+        from ..operators import time_interval
         return self._add_operator(time_interval())
     def to_map(self, key_fn):
-        from .operators import to_map
+        from ..operators import to_map
         return self._add_operator(to_map(key_fn))
     def to_set(self, ):
-        from .operators import to_set
+        from ..operators import to_set
         return self._add_operator(to_set())
     def when(self, predicate, handler):
-        from .operators import when
+        from ..operators import when
         return self._add_operator(when(predicate, handler))
     def when_error(self, on_error):
-        from .operators import when_error
+        from ..operators import when_error
         return self._add_operator(when_error(on_error))
     def when_start(self, predicate):
-        from .operators import when_start
+        from ..operators import when_start
         return self._add_operator(when_start(predicate))
     def when_stop(self, predicate, inclusive: bool = True):
-        from .operators import when_stop
+        from ..operators import when_stop
         return self._add_operator(when_stop(predicate, inclusive))
     def window(self, window_size):
-        from .operators import window
+        from ..operators import window
         return self._add_operator(window(window_size))
     def with_latest_from(self, other):
-        from .operators import with_latest_from
+        from ..operators import with_latest_from
         return self._add_operator(with_latest_from(other))
     def with_state(self, initial_state, reducer, on_state_change):
-        from .operators import with_state
+        from ..operators import with_state
         return self._add_operator(with_state(initial_state, reducer, on_state_change))
 
 
