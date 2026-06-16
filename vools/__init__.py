@@ -184,6 +184,15 @@ _lazy_modules = {
     'AsyncSubject': '.reactive',
     'ops': '.reactive',
 
+    # 录制回放模块
+    'recorder': '.recorder',
+    'Recorder': '.recorder',
+    'Player': '.recorder',
+    'Parser': '.recorder',
+    'Action': '.recorder',
+    'Recording': '.recorder',
+    'ActionType': '.recorder',
+
     # 编码模块
     'encoding': '.encoding',
     'Encoder': '.encoding',
@@ -465,6 +474,8 @@ _common_names = [
 
     # 响应式模块
     'reactive', 'Observable', 'Subject', 'BehaviorSubject', 'ReplaySubject', 'AsyncSubject', 'ops',
+    # 录制回放模块
+    'recorder', 'Recorder', 'Player', 'Parser', 'Action', 'Recording', 'ActionType',
 ]
 
 for name in __all__:
