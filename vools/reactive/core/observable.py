@@ -7,8 +7,10 @@ from typing import TypeVar, Callable, Optional, Any, Generic, Iterator, AsyncIte
 from abc import ABC, abstractmethod
 import asyncio
 import sys
+import threading
+import time
 
-from ..decorators import curry, lazy
+from ...decorators import curry, lazy
 
 T = TypeVar('T')
 R = TypeVar('R')
@@ -91,14 +93,24 @@ class DefaultObserver(Observer[T]):
         self._on_completed()
 
 
+class PipeDescriptor(Generic[T]):
+    """pipe 描述符 - 同时支持可调用和链式调用"""
+    
+    def __get__(self, instance: Observable[T], owner=None) -> 'PipeBuilder[T]':
+        if instance is None:
+            return self
+        return PipeBuilder(instance, origin=instance)
+
+
 class PipeBuilder(Generic[T]):
     """链式管道构建器"""
     
-    __slots__ = ('_source', '_operators')
+    __slots__ = ('_source', '_operators', '_origin')
     
-    def __init__(self, source: Observable[T]):
+    def __init__(self, source: Observable[T], origin=None):
         self._source = source
         self._operators = []
+        self._origin = origin if origin is not None else source
     
     def _add_operator(self, operator):
         self._operators.append(operator)
@@ -113,12 +125,35 @@ class PipeBuilder(Generic[T]):
     
     def subscribe(self, on_next=None, on_error=None, on_completed=None, observer=None):
         """直接订阅"""
+        if hasattr(self._origin, 'start') and callable(self._origin.start):
+            self._origin.start()
         return self._build().subscribe(on_next, on_error, on_completed, observer)
+    
+    def connect(self):
+        """连接 ConnectableObservable"""
+        result = self._build()
+        if hasattr(result, 'connect'):
+            return result.connect()
+        raise AttributeError("'PipeBuilder' object has no attribute 'connect' - the result is not a ConnectableObservable")
+    
+    def __getattr__(self, name):
+        """代理其他属性到构建结果"""
+        result = self._build()
+        if hasattr(result, name):
+            return getattr(result, name)
+        raise AttributeError(f"'PipeBuilder' object has no attribute '{name}'")
     
     def __rshift__(self, other):
         """支持 >> 操作符"""
         if callable(other):
             self._operators.append(other)
+        return self
+    
+    def __call__(self, *operators):
+        """支持 pipe(f1, f2, f3) 调用方式"""
+        for op in operators:
+            if callable(op):
+                self._operators.append(op)
         return self
     
     # ========== 操作符方法 ==========
@@ -151,13 +186,13 @@ class PipeBuilder(Generic[T]):
         from .operators import skip
         return self._add_operator(skip(n))
     
-    def take_while(self, predicate):
+    def take_while(self, predicate=None, **kwargs):
         from .operators import take_while
-        return self._add_operator(take_while(predicate))
+        return self._add_operator(take_while(predicate, **kwargs))
     
-    def skip_while(self, predicate):
+    def skip_while(self, predicate=None, **kwargs):
         from .operators import skip_while
-        return self._add_operator(skip_while(predicate))
+        return self._add_operator(skip_while(predicate, **kwargs))
     
     def take_until(self, other):
         from .operators import take_until
@@ -203,27 +238,27 @@ class PipeBuilder(Generic[T]):
         from .operators import count
         return self._add_operator(count())
     
-    def sum(self):
+    def sum(self, key_mapper=None):
         from .operators import sum
-        return self._add_operator(sum())
+        return self._add_operator(sum(key_mapper))
     
-    def average(self):
+    def average(self, key_mapper=None):
         from .operators import average
-        return self._add_operator(average())
+        return self._add_operator(average(key_mapper))
     
-    def minimum(self):
+    def minimum(self, key_mapper=None):
         from .operators import minimum
-        return self._add_operator(minimum())
+        return self._add_operator(minimum(key_mapper))
     
-    def maximum(self):
+    def maximum(self, key_mapper=None):
         from .operators import maximum
-        return self._add_operator(maximum())
+        return self._add_operator(maximum(key_mapper))
     
     def all(self, predicate):
         from .operators import all
         return self._add_operator(all(predicate))
     
-    def any(self, predicate):
+    def any(self, predicate=None):
         from .operators import any
         return self._add_operator(any(predicate))
     
@@ -443,6 +478,200 @@ class PipeBuilder(Generic[T]):
         return self.dispatch_to_workers(fn, num_workers, buffer_size,
                                         on_drop, drop_strategy, **kwargs)
 
+    def amb(self, *sources):
+        from .operators import amb
+        return self._add_operator(amb(*sources))
+    def backpressure_buffer(self, max_size=None):
+        from .operators import backpressure_buffer
+        return self._add_operator(backpressure_buffer(max_size))
+    def backpressure_drop(self):
+        from .operators import backpressure_drop
+        return self._add_operator(backpressure_drop())
+    def backpressure_error(self, max_size=1):
+        from .operators import backpressure_error
+        return self._add_operator(backpressure_error(max_size))
+    def backpressure_latest(self):
+        from .operators import backpressure_latest
+        return self._add_operator(backpressure_latest())
+    def buffer_until_idle(self, idle_seconds, max_size):
+        from .operators import buffer_until_idle
+        return self._add_operator(buffer_until_idle(idle_seconds, max_size))
+    def buffer_with_count(self, count):
+        from .operators import buffer_with_count
+        return self._add_operator(buffer_with_count(count))
+    def cache(self, duration=None, max_size=None):
+        from .operators import cache
+        return self._add_operator(cache(duration, max_size))
+    def circuit_breaker(self, threshold=5, reset_timeout=60.0):
+        from .operators import circuit_breaker
+        return self._add_operator(circuit_breaker(threshold, reset_timeout))
+    def collect_until(self, condition, on_collected, inclusive):
+        from .operators import collect_until
+        return self._add_operator(collect_until(condition, on_collected, inclusive))
+    def combine_latest(self, *sources):
+        from .operators import combine_latest
+        return self._add_operator(combine_latest(*sources))
+    
+    def zip(self, *sources):
+        from .operators import zip
+        return self._add_operator(zip(*sources))
+    def count_events(self, ):
+        from .operators import count_events
+        return self._add_operator(count_events())
+    def curry_map(self, fn, *args):
+        from .operators import curry_map
+        return self._add_operator(curry_map(fn, *args))
+    def debounce_data(self, wait_seconds, key_fn):
+        from .operators import debounce_data
+        return self._add_operator(debounce_data(wait_seconds, key_fn))
+    def debounce_events(self, wait_seconds):
+        from .operators import debounce_events
+        return self._add_operator(debounce_events(wait_seconds))
+    def debounce_evolution(self, due_time, estimator=None):
+        from .operators import debounce_evolution
+        return self._add_operator(debounce_evolution(due_time, estimator))
+    def distinct_until_changed_by(self, key_fn):
+        from .operators import distinct_until_changed_by
+        return self._add_operator(distinct_until_changed_by(key_fn))
+    def distinct_values(self, key_fn):
+        from .operators import distinct_values
+        return self._add_operator(distinct_values(key_fn))
+    def do_on_completed(self, fn):
+        from .operators import do_on_completed
+        return self._add_operator(do_on_completed(fn))
+    def do_on_error(self, fn):
+        from .operators import do_on_error
+        return self._add_operator(do_on_error(fn))
+    def do_on_next(self, fn):
+        from .operators import do_on_next
+        return self._add_operator(do_on_next(fn))
+    def finally_with_data(self, on_finally):
+        from .operators import finally_with_data
+        return self._add_operator(finally_with_data(on_finally))
+    def filter_by(self, predicate):
+        from .operators import filter_by
+        return self._add_operator(filter_by(predicate))
+    def filter_by_data(self, predicate, **data_matchers):
+        from .operators import filter_by_data
+        return self._add_operator(filter_by_data(predicate, **data_matchers))
+    def filter_by_event_type(self, *event_types):
+        from .operators import filter_by_event_type
+        return self._add_operator(filter_by_event_type(*event_types))
+    def flat_map_latest(self, fn):
+        from .operators import flat_map_latest
+        return self._add_operator(flat_map_latest(fn))
+    def group_by_event_type(self, type_extractor):
+        from .operators import group_by_event_type
+        return self._add_operator(group_by_event_type(type_extractor))
+    def ignore_elements(self, ):
+        from .operators import ignore_elements
+        return self._add_operator(ignore_elements())
+    def lazy_flat_map(self, lazy_fn, **kwargs):
+        from .operators import lazy_flat_map
+        return self._add_operator(lazy_flat_map(lazy_fn, **kwargs))
+    def observe_on(self, scheduler):
+        from .operators import observe_on
+        return self._add_operator(observe_on(scheduler))
+    def on_condition_met(self, condition, on_met, once):
+        from .operators import on_condition_met
+        return self._add_operator(on_condition_met(condition, on_met, once))
+    def on_data(self, predicate, on_match):
+        from .operators import on_data
+        return self._add_operator(on_data(predicate, on_match))
+    def on_every_nth(self, n, on_nth):
+        from .operators import on_every_nth
+        return self._add_operator(on_every_nth(n, on_nth))
+    def on_next_data(self, on_next):
+        from .operators import on_next_data
+        return self._add_operator(on_next_data(on_next))
+    def on_start(self, callback):
+        from .operators import on_start
+        return self._add_operator(on_start(callback))
+    def on_stop(self, callback):
+        from .operators import on_stop
+        return self._add_operator(on_stop(callback))
+    def parallel(self, max_concurrent=4):
+        from .operators import parallel
+        return self._add_operator(parallel(max_concurrent))
+    def rate_limit(self, events_per_second, burst):
+        from .operators import rate_limit
+        return self._add_operator(rate_limit(events_per_second, burst))
+    def retry_with_backoff(self, max_retries=None, initial_delay=1.0, max_delay=60.0, multiplier=2.0):
+        from .operators import retry_with_backoff
+        return self._add_operator(retry_with_backoff(max_retries, initial_delay, max_delay, multiplier))
+    def sample(self, period):
+        from .operators import sample
+        return self._add_operator(sample(period))
+    def sample_first(self, period_seconds):
+        from .operators import sample_first
+        return self._add_operator(sample_first(period_seconds))
+    def seq_bridge(self, seq_op):
+        from .operators import seq_bridge
+        return self._add_operator(seq_bridge(seq_op))
+    def skip_last(self, n):
+        from .operators import skip_last
+        return self._add_operator(skip_last(n))
+    def skip_n_events(self, n):
+        from .operators import skip_n_events
+        return self._add_operator(skip_n_events(n))
+    def skip_until_data(self, predicate, inclusive):
+        from .operators import skip_until_data
+        return self._add_operator(skip_until_data(predicate, inclusive))
+    def subscribe_on(self, scheduler):
+        from .operators import subscribe_on
+        return self._add_operator(subscribe_on(scheduler))
+    def switch(self, ):
+        from .operators import switch
+        return self._add_operator(switch())
+    def take_last(self, n):
+        from .operators import take_last
+        return self._add_operator(take_last(n))
+    def take_n_events(self, n):
+        from .operators import take_n_events
+        return self._add_operator(take_n_events(n))
+    def take_until_data(self, predicate, inclusive):
+        from .operators import take_until_data
+        return self._add_operator(take_until_data(predicate, inclusive))
+    def throttle_events(self, period_seconds, key_fn):
+        from .operators import throttle_events
+        return self._add_operator(throttle_events(period_seconds, key_fn))
+    def throttle_latest(self, period):
+        from .operators import throttle_latest
+        return self._add_operator(throttle_latest(period))
+    def throttle_with_trailing(self, duration, trailing):
+        from .operators import throttle_with_trailing
+        return self._add_operator(throttle_with_trailing(duration, trailing))
+    def time_interval(self, ):
+        from .operators import time_interval
+        return self._add_operator(time_interval())
+    def to_map(self, key_fn):
+        from .operators import to_map
+        return self._add_operator(to_map(key_fn))
+    def to_set(self, ):
+        from .operators import to_set
+        return self._add_operator(to_set())
+    def when(self, predicate, handler):
+        from .operators import when
+        return self._add_operator(when(predicate, handler))
+    def when_error(self, on_error):
+        from .operators import when_error
+        return self._add_operator(when_error(on_error))
+    def when_start(self, predicate):
+        from .operators import when_start
+        return self._add_operator(when_start(predicate))
+    def when_stop(self, predicate, inclusive: bool = True):
+        from .operators import when_stop
+        return self._add_operator(when_stop(predicate, inclusive))
+    def window(self, window_size):
+        from .operators import window
+        return self._add_operator(window(window_size))
+    def with_latest_from(self, other):
+        from .operators import with_latest_from
+        return self._add_operator(with_latest_from(other))
+    def with_state(self, initial_state, reducer, on_state_change):
+        from .operators import with_state
+        return self._add_operator(with_state(initial_state, reducer, on_state_change))
+
 
 class Observable(Generic[T]):
     """Observable 核心类"""
@@ -462,12 +691,7 @@ class Observable(Generic[T]):
         observer = DefaultObserver(on_next, on_error, on_completed)
         return self._subscribe_fn(observer)
     
-    def pipe(self, *operators):
-        source = self
-        for op in operators:
-            if callable(op):
-                source = op(source)
-        return source
+    pipe = PipeDescriptor[T]()
     
     def p(self) -> PipeBuilder[T]:
         """返回链式管道构建器"""
@@ -537,73 +761,76 @@ class Observable(Generic[T]):
     @classmethod
     def interval(cls, period: float):
         """创建一个每隔指定时间发射递增整数的 Observable
-        
+
         Args:
             period: 发射间隔（秒）
-        
+
         Returns:
             Observable[int]: 发射 0, 1, 2, 3, ... 的序列
         """
         def subscribe(observer):
             counter = 0
-            task = None
-            
-            async def emit():
-                nonlocal counter, task
-                while True:
+            stopped = threading.Event()
+
+            def emit_loop():
+                nonlocal counter
+                while not stopped.is_set():
                     observer.on_next(counter)
                     counter += 1
-                    await asyncio.sleep(period)
-            
+                    stopped.wait(timeout=period)
+                    # 如果 period 期间触发了停止，wait 提前返回 True，循环退出
+
             def unsubscribe():
-                nonlocal task
-                if task:
-                    task.cancel()
-            
-            task = asyncio.create_task(emit())
-            
+                stopped.set()
+
+            t = threading.Thread(target=emit_loop, daemon=True)
+            t.start()
+
             return Subscription(unsubscribe)
-        
+
         return cls(subscribe)
     
     @classmethod
     def timer(cls, due_time: float, period: float = None):
         """创建一个在指定延迟后发射单个值或周期性发射值的 Observable
-        
+
         Args:
             due_time: 首次发射前的延迟（秒）
             period: 后续发射的间隔（秒），如果为 None 则只发射一次
-        
+
         Returns:
             Observable[int]: 发射 0, 1, 2, 3, ... 的序列
         """
         def subscribe(observer):
             counter = 0
-            task = None
-            
-            async def emit():
-                nonlocal counter, task
-                await asyncio.sleep(due_time)
-                
+            stopped = threading.Event()
+
+            def emit_once():
+                nonlocal counter
+                # 等待首次延迟
+                if stopped.wait(timeout=due_time):
+                    return  # 被取消
+                observer.on_next(counter)
+                counter += 1
+
                 if period is None:
-                    observer.on_next(counter)
                     observer.on_completed()
                     return
-                
-                while True:
+
+                # 周期性发射
+                while not stopped.is_set():
                     observer.on_next(counter)
                     counter += 1
-                    await asyncio.sleep(period)
-            
+                    stopped.wait(timeout=period)
+
             def unsubscribe():
-                nonlocal task
-                if task:
-                    task.cancel()
-            
-            task = asyncio.create_task(emit())
-            
+                stopped.set()
+
+            t = threading.Thread(target=emit_once, daemon=True)
+            t.start()
+
             return Subscription(unsubscribe)
-        
+
         return cls(subscribe)
     
     @classmethod

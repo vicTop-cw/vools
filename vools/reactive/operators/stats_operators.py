@@ -11,7 +11,7 @@ import heapq
 import operator as op
 from collections import deque
 
-from .observable import Observable, Observer, Subscription
+from ..core.observable import Observable, Observer, Subscription
 
 T = TypeVar('T')
 R = TypeVar('R')
