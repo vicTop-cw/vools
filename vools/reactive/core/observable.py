@@ -105,22 +105,27 @@ class PipeDescriptor(Generic[T]):
 class PipeBuilder(Generic[T]):
     """链式管道构建器"""
     
-    __slots__ = ('_source', '_operators', '_origin')
+    __slots__ = ('_source', '_operators', '_origin', '_cached_result')
     
     def __init__(self, source: Observable[T], origin=None):
         self._source = source
         self._operators = []
         self._origin = origin if origin is not None else source
+        self._cached_result = None
     
     def _add_operator(self, operator):
         self._operators.append(operator)
+        self._cached_result = None
         return self
     
     def _build(self) -> Observable:
         """构建最终的 Observable"""
+        if self._cached_result is not None:
+            return self._cached_result
         source = self._source
         for op in self._operators:
             source = op(source)
+        self._cached_result = source
         return source
     
     def subscribe(self, on_next=None, on_error=None, on_completed=None, observer=None):

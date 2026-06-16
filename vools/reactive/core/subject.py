@@ -46,6 +46,10 @@ class Subject(Generic[T]):
         
         return Subscription(unsubscribe)
     
+    def subscribe_(self, on_next=None, on_error=None, on_completed=None):
+        """直接传递回调函数"""
+        return self.subscribe(on_next, on_error, on_completed)
+    
     pipe = PipeDescriptor[T]()
     
     def p(self):
