@@ -4,6 +4,19 @@ vools.reactive 是一个功能完整的响应式编程框架，实现了 Rx 4.0 
 
 ---
 
+## 模块结构
+
+vools.reactive 采用模块化设计，分为三个子包：
+
+```
+vools/reactive/
+├── core/          # 基础核心：Observable、Subject、Scheduler、Connectable
+├── monitoring/    # 监控类：键盘、鼠标、剪贴板、文件系统、目录监控
+└── operators/     # 操作符：核心操作符、统计操作符、监控操作符
+```
+
+所有符号通过 `vools.reactive` 统一导出，保持 API 兼容性。
+
 ## reactive 模块
 
 ### 基本用法
@@ -593,5 +606,144 @@ print(result)  # Success(5.0)
 # 失败情况
 result = divide(10, 0)
 print(result)  # Failure(ZeroDivisionError(...))
+```
+
+## 响应式监控模块
+
+vools.reactive 提供了完整的系统监控能力，支持键盘、鼠标、剪贴板、文件系统和目录监控。
+
+### 键盘监控
+
+```python
+from vools.reactive import KeySubject, KeyObserver, from_keyboard
+
+# 创建键盘监控
+obs, disp = from_keyboard(backend="polling")
+
+# 或使用 KeySubject
+with KeySubject(backend="polling") as ks:
+    received = []
+    ks.subscribe(on_next=lambda kd: received.append(kd))
+    # 监控开始...
+
+# 使用 KeyObserver 按事件类型路由
+ko = KeyObserver(
+    on_press=lambda kd: print(f"Press: {kd.key_name}"),
+    on_release=lambda kd: print(f"Release: {kd.key_name}"),
+)
+ko.attach(ks)
+```
+
+### 鼠标监控
+
+```python
+from vools.reactive import MouseSubject, MouseObserver, from_mouse
+
+# 创建鼠标监控
+obs, disp = from_mouse(backend="polling")
+
+# 使用 MouseSubject
+with MouseSubject(backend="polling") as ms:
+    ms.subscribe(on_next=lambda md: print(f"Mouse: {md.x}, {md.y}"))
+
+# 使用 MouseObserver 路由
+mo = MouseObserver(
+    on_move=lambda md: print(f"Move: {md.x}, {md.y}"),
+    on_click=lambda md: print(f"Click: {md.button}"),
+    on_scroll=lambda md: print(f"Scroll: {md.delta}"),
+)
+mo.attach(ms)
+```
+
+### 剪贴板监控
+
+```python
+from vools.reactive import ClipSubject, ClipObserver, from_clipboard
+
+# 创建剪贴板监控
+obs, disp = from_clipboard()
+
+# 使用 ClipSubject
+with ClipSubject(backend="polling") as cs:
+    cs.subscribe(on_next=lambda cd: print(f"Clipboard: {cd.content}"))
+
+# 使用 ClipObserver 按内容类型路由
+co = ClipObserver(
+    on_text=lambda cd: print(f"Text: {cd.content}"),
+    on_files=lambda cd: print(f"Files: {cd.files}"),
+    on_image=lambda cd: print(f"Image: {len(cd.content)} bytes"),
+)
+co.attach(cs)
+
+# 写入剪贴板
+cs.set_text("Hello World")
+```
+
+### 文件系统监控
+
+```python
+from vools.reactive import FileSubject, FileObserver, from_filesystem
+
+# 创建文件监控
+obs, disp = from_filesystem(paths=["/path/to/watch"], backend="polling")
+
+# 使用 FileSubject
+with FileSubject(paths=["/path"], backend="polling") as fs:
+    fs.subscribe(on_next=lambda fd: print(f"File: {fd.path} {fd.change_type}"))
+
+# 使用 FileObserver 按变更类型路由
+fo = FileObserver(
+    on_created=lambda fd: print(f"Created: {fd.path}"),
+    on_modified=lambda fd: print(f"Modified: {fd.path}"),
+    on_deleted=lambda fd: print(f"Deleted: {fd.path}"),
+    on_renamed=lambda fd: print(f"Renamed: {fd.old_path} -> {fd.path}"),
+)
+fo.attach(fs)
+```
+
+### 目录监控
+
+```python
+from vools.reactive import FolderSubject, FolderObserver, from_foldersystem
+
+# 创建目录监控
+obs, disp = from_foldersystem(paths=["/path/to/watch"], backend="polling")
+
+# 使用 FolderSubject
+with FolderSubject(paths=["/path"], backend="polling") as fs:
+    fs.subscribe(on_next=lambda fd: print(f"Folder: {fd.path}"))
+
+# 使用 FolderObserver 路由
+fo = FolderObserver(
+    on_folder_created=lambda fd: print(f"Folder created: {fd.path}"),
+    on_folder_deleted=lambda fd: print(f"Folder deleted: {fd.path}"),
+)
+fo.attach(fs)
+```
+
+### 监控后端
+
+每个监控模块支持多种后端：
+
+| 模块 | Windows | macOS | Linux | 通用 |
+|------|---------|-------|-------|------|
+| 键盘 | WH_KEYBOARD_LL | polling | polling | polling |
+| 鼠标 | WH_MOUSE_LL | polling | polling | polling |
+| 剪贴板 | AddClipboardFormatListener | polling | polling | polling |
+| 文件 | ReadDirectoryChangesW | FSEvents | inotify | polling |
+| 目录 | ReadDirectoryChangesW | FSEvents | inotify | polling |
+
+### 自我过滤机制
+
+所有监控模块支持自我过滤，避免循环触发：
+
+```python
+from vools.reactive import ClipSubject, write_to_clipboard
+
+# 过滤自身写入的事件
+cs = ClipSubject(filter_self=True)
+
+# 写入操作会自动登记签名，不会触发自己的监控
+cs.set_text("test")
 ```
 
