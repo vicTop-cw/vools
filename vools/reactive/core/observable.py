@@ -741,6 +741,9 @@ class Observable(Generic[T]):
         
         subscription = self._subscribe_fn(observer)
         
+        if subscription is None:
+            return Subscription(lambda: observer.release())
+        
         original_unsubscribe = subscription._unsubscribe
         def wrapped_unsubscribe():
             original_unsubscribe()
