@@ -31,6 +31,8 @@ from .core.connectable import (
     ConnectableObservable, publish, share, replay, publish_replay, auto_connect
 )
 
+from .core.object_pool import ObjectPool, get_pool, pooled_acquire, pooled_release, clear_all_pools
+
 from .operators.operators import (
     map, filter, flat_map, concat_map, switch_map,
     take, skip, take_while, skip_while, take_until,

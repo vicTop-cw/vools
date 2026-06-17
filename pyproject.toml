@@ -45,3 +45,14 @@ vools = "vools.__main__:main"
 "Homepage" = "https://github.com/vicTop-cw/vools"
 "Repository" = "https://github.com/vicTop-cw/vools"
 "Issues" = "https://github.com/vicTop-cw/vools/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"
+
+[tool.coverage.run]
+source = ["vools"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80

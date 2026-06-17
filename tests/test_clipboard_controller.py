@@ -23,16 +23,16 @@ test_texts = [
     "STOP_TEST"
 ]
 
-logging.info("开始测试，依次设置剪贴板内�?..")
+logging.info("å¼å§æµè¯ï¼ä¾æ¬¡è®¾ç½®åªè´´æ¿åå®?..")
 for i, text in enumerate(test_texts):
-    logging.info(f"设置剪贴�? '{text}'")
+    logging.info(f"è®¾ç½®åªè´´æ? '{text}'")
     for attempt in range(3):
         try:
             dispatcher.set_clipboard(content=text, change_type="TEXT")
             break
         except Exception as e:
-            logging.warning(f"  尝试 {attempt+1} 失败: {e}")
+            logging.warning(f"  å°è¯ {attempt+1} å¤±è´¥: {e}")
             time.sleep(0.1)
     time.sleep(1)
 
-logging.info("测试完成")
+logging.info("æµè¯å®æ")

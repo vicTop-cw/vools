@@ -527,13 +527,16 @@ def take(n: int) -> Callable[[Observable[T]], Observable[T]]:
         def subscribe(observer: Observer[T]) -> Subscription:
             counter = 0
             is_closed = False
+            source_sub = None
             
             def unsubscribe():
-                nonlocal is_closed
+                nonlocal is_closed, source_sub
                 is_closed = True
+                if source_sub is not None:
+                    source_sub.unsubscribe()
             
             def on_next(value: T) -> None:
-                nonlocal counter, is_closed
+                nonlocal counter, is_closed, source_sub
                 if is_closed:
                     return
                 if counter < n:
@@ -541,6 +544,8 @@ def take(n: int) -> Callable[[Observable[T]], Observable[T]]:
                     counter += 1
                     if counter == n:
                         is_closed = True
+                        if source_sub is not None:
+                            source_sub.unsubscribe()
                         observer.on_completed()
             
             def on_completed():
@@ -555,7 +560,9 @@ def take(n: int) -> Callable[[Observable[T]], Observable[T]]:
                 on_completed=on_completed
             )
             
-            return Subscription(unsubscribe)
+            result = Subscription(unsubscribe)
+            result.add_child(source_sub)
+            return result
         
         return Observable(subscribe)
     
@@ -567,6 +574,12 @@ def skip(n: int) -> Callable[[Observable[T]], Observable[T]]:
     def operator(source: Observable[T]) -> Observable[T]:
         def subscribe(observer: Observer[T]) -> Subscription:
             counter = 0
+            source_sub = None
+            
+            def unsubscribe():
+                nonlocal source_sub
+                if source_sub is not None:
+                    source_sub.unsubscribe()
             
             def on_next(value: T) -> None:
                 nonlocal counter
@@ -575,11 +588,15 @@ def skip(n: int) -> Callable[[Observable[T]], Observable[T]]:
                 else:
                     counter += 1
             
-            return source.subscribe(
+            source_sub = source.subscribe(
                 on_next=on_next,
                 on_error=observer.on_error,
                 on_completed=observer.on_completed
             )
+            
+            result = Subscription(unsubscribe)
+            result.add_child(source_sub)
+            return result
         
         return Observable(subscribe)
     
@@ -591,23 +608,30 @@ def first(predicate: Optional[Callable[[T], bool]] = None) -> Callable[[Observab
     def operator(source: Observable[T]) -> Observable[T]:
         def subscribe(observer: Observer[T]) -> Subscription:
             is_closed = False
+            source_sub = None
             
             def unsubscribe():
-                nonlocal is_closed
+                nonlocal is_closed, source_sub
                 is_closed = True
+                if source_sub is not None:
+                    source_sub.unsubscribe()
             
             def on_next(value: T) -> None:
-                nonlocal is_closed
+                nonlocal is_closed, source_sub
                 if is_closed:
                     return
                 
                 try:
                     if predicate is None or predicate(value):
                         is_closed = True
+                        if source_sub is not None:
+                            source_sub.unsubscribe()
                         observer.on_next(value)
                         observer.on_completed()
                 except Exception as e:
                     is_closed = True
+                    if source_sub is not None:
+                        source_sub.unsubscribe()
                     observer.on_error(e)
             
             def on_completed():
@@ -622,11 +646,9 @@ def first(predicate: Optional[Callable[[T], bool]] = None) -> Callable[[Observab
                 on_completed=on_completed
             )
             
-            def cleanup():
-                unsubscribe()
-                source_sub.unsubscribe()
-            
-            return Subscription(cleanup)
+            result = Subscription(unsubscribe)
+            result.add_child(source_sub)
+            return result
         
         return Observable(subscribe)
     
@@ -669,23 +691,38 @@ def distinct(key_fn: Optional[Callable[[T], Any]] = None) -> Callable[[Observabl
     """过滤重复元素"""
     def operator(source: Observable[T]) -> Observable[T]:
         def subscribe(observer: Observer[T]) -> Subscription:
-            seen = set()
+            seen = {}
+            source_sub = None
+            
+            def unsubscribe():
+                nonlocal source_sub, seen
+                seen.clear()
+                if source_sub is not None:
+                    source_sub.unsubscribe()
             
             def on_next(value: T) -> None:
                 nonlocal seen
                 try:
                     key = key_fn(value) if key_fn else value
                     if key not in seen:
-                        seen.add(key)
+                        seen[key] = True
                         observer.on_next(value)
                 except Exception as e:
                     observer.on_error(e)
             
-            return source.subscribe(
+            def on_completed():
+                seen.clear()
+                observer.on_completed()
+            
+            source_sub = source.subscribe(
                 on_next=on_next,
                 on_error=observer.on_error,
-                on_completed=observer.on_completed
+                on_completed=on_completed
             )
+            
+            result = Subscription(unsubscribe)
+            result.add_child(source_sub)
+            return result
         
         return Observable(subscribe)
     
@@ -961,6 +998,7 @@ def debounce(delay: float) -> Callable[[Observable[T]], Observable[T]]:
         def subscribe(observer: Observer[T]) -> Subscription:
             timer = None
             last_value = None
+            source_sub = None
             
             def fire():
                 nonlocal timer, last_value
@@ -979,19 +1017,23 @@ def debounce(delay: float) -> Callable[[Observable[T]], Observable[T]]:
                 timer.start()
             
             def on_completed():
-                nonlocal timer
+                nonlocal timer, last_value
                 if timer:
                     timer.cancel()
                     timer = None
                 if last_value is not None:
                     observer.on_next(last_value)
+                    last_value = None
                 observer.on_completed()
             
             def unsubscribe():
-                nonlocal timer
+                nonlocal timer, last_value, source_sub
                 if timer:
                     timer.cancel()
                     timer = None
+                last_value = None
+                if source_sub is not None:
+                    source_sub.unsubscribe()
             
             source_sub = source.subscribe(
                 on_next=on_next,
@@ -1014,6 +1056,7 @@ def throttle_first(delay: float) -> Callable[[Observable[T]], Observable[T]]:
     def operator(source: Observable[T]) -> Observable[T]:
         def subscribe(observer: Observer[T]) -> Subscription:
             last_emit_time = -float('inf')
+            source_sub = None
             
             def on_next(value: T) -> None:
                 nonlocal last_emit_time
@@ -1022,11 +1065,21 @@ def throttle_first(delay: float) -> Callable[[Observable[T]], Observable[T]]:
                     last_emit_time = now
                     observer.on_next(value)
             
-            return source.subscribe(
+            def unsubscribe():
+                nonlocal source_sub, last_emit_time
+                last_emit_time = -float('inf')
+                if source_sub is not None:
+                    source_sub.unsubscribe()
+            
+            source_sub = source.subscribe(
                 on_next=on_next,
                 on_error=observer.on_error,
                 on_completed=observer.on_completed
             )
+            
+            result = Subscription(unsubscribe)
+            result.add_child(source_sub)
+            return result
         
         return Observable(subscribe)
     

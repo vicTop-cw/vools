@@ -1,9 +1,9 @@
 """
-MouseObserver �?MouseSubject 集成测试
+MouseObserver å?MouseSubject éææµè¯
 
-测试方案:
-1. 部署两个独立进程：监控程�?+ 鼠标模拟程序
-2. 禁用自过滤机制，确保所有鼠标事件完整传�?3. 覆盖各类鼠标操作场景（移动、点击、拖拽、滚轮等�?4. 生成详细的事件日志记录（事件类型、触发时间、坐标、事件传递路径）
+æµè¯æ¹æ¡:
+1. é¨ç½²ä¸¤ä¸ªç¬ç«è¿ç¨ï¼çæ§ç¨åº?+ é¼ æ æ¨¡æç¨åº
+2. ç¦ç¨èªè¿æ»¤æºå¶ï¼ç¡®ä¿ææé¼ æ äºä»¶å®æ´ä¼ é?3. è¦çåç±»é¼ æ æä½åºæ¯ï¼ç§»å¨ãç¹å»ãææ½ãæ»è½®ç­ï¼?4. çæè¯¦ç»çäºä»¶æ¥å¿è®°å½ï¼äºä»¶ç±»åãè§¦åæ¶é´ãåæ ãäºä»¶ä¼ éè·¯å¾ï¼
 """
 
 import os
@@ -23,7 +23,7 @@ from vools.reactive.monitoring.mouse import (
 
 
 def log_event(log_file: str, event_type: str, **data) -> None:
-    """记录测试事件"""
+    """è®°å½æµè¯äºä»¶"""
     entry = {
         "timestamp": datetime.now().isoformat(),
         "event_type": event_type,
@@ -37,13 +37,13 @@ def log_event(log_file: str, event_type: str, **data) -> None:
 
 
 def write_control(control_file: str, action: str, **kwargs) -> None:
-    """写入控制指令"""
+    """åå¥æ§å¶æä»¤"""
     with open(control_file, "w", encoding="utf-8") as f:
         json.dump({"action": action, "timestamp": datetime.now().isoformat(), **kwargs}, f)
 
 
 def read_control(control_file: str) -> Dict | None:
-    """读取控制指令"""
+    """è¯»åæ§å¶æä»¤"""
     if not os.path.exists(control_file):
         return None
     try:
@@ -54,7 +54,7 @@ def read_control(control_file: str) -> Dict | None:
 
 
 def monitor_process(control_file: str, log_file: str, disable_filter: bool = True):
-    """监控程序进程"""
+    """çæ§ç¨åºè¿ç¨"""
     import logging
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
     
@@ -84,11 +84,11 @@ def monitor_process(control_file: str, log_file: str, disable_filter: bool = Tru
                   y=md.y,
                   mouse_event_type=MouseEventType(md.event_type).name,
                   path="backend -> _on_change -> subject -> observer -> callback")
-        print(f"[监控] 收到鼠标事件: {MouseEventType(md.event_type).name} ({md.x},{md.y}) - seq={md.sequence}")
+        print(f"[çæ§] æ¶å°é¼ æ äºä»¶: {MouseEventType(md.event_type).name} ({md.x},{md.y}) - seq={md.sequence}")
     
     filter_self = not disable_filter
     
-    print(f"[监控] filter_self={filter_self} (自过滤已禁用)")
+    print(f"[çæ§] filter_self={filter_self} (èªè¿æ»¤å·²ç¦ç¨)")
     
     ms = MouseSubject(
         backend="polling",
@@ -100,9 +100,9 @@ def monitor_process(control_file: str, log_file: str, disable_filter: bool = Tru
     
     current_memory = process.memory_info().rss / 1024 / 1024
     
-    print(f"[监控] 启动成功，后�? {ms.backend_name}")
-    print(f"[监控] filter_self: {ms.dispatcher._filter_self}")
-    print(f"[监控] 初始内存: {initial_memory:.2f}MB, 当前内存: {current_memory:.2f}MB")
+    print(f"[çæ§] å¯å¨æåï¼åç«? {ms.backend_name}")
+    print(f"[çæ§] filter_self: {ms.dispatcher._filter_self}")
+    print(f"[çæ§] åå§åå­: {initial_memory:.2f}MB, å½ååå­: {current_memory:.2f}MB")
     
     log_event(log_file, "monitor_config",
               backend=ms.backend_name,
@@ -147,11 +147,11 @@ def monitor_process(control_file: str, log_file: str, disable_filter: bool = Tru
     with open(results_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     
-    print(f"[监控] 停止，收�?{len(events_received)} 个鼠标事�?)
+    print(f"[çæ§] åæ­¢ï¼æ¶å?{len(events_received)} ä¸ªé¼ æ äºä»?)
 
 
 def simulator_process(control_file: str, log_file: str):
-    """鼠标模拟程序进程"""
+    """é¼ æ æ¨¡æç¨åºè¿ç¨"""
     from vools.reactive.monitoring.mouse import _move_to, _click, _scroll, _move_relative
     
     log_event(log_file, "simulator_start", pid=os.getpid())
@@ -179,32 +179,32 @@ def simulator_process(control_file: str, log_file: str):
                   name=name,
                   action=action,
                   **kwargs)
-        print(f"[模拟] {name}: {action}")
+        print(f"[æ¨¡æ] {name}: {action}")
     
     scenarios = [
-        ("move_center", "移动到屏幕中�?, {"x": 960, "y": 540}),
-        ("move_top_left", "移动到左上角", {"x": 100, "y": 100}),
-        ("move_top_right", "移动到右上角", {"x": 1820, "y": 100}),
-        ("move_bottom_left", "移动到左下角", {"x": 100, "y": 1060}),
-        ("move_bottom_right", "移动到右下角", {"x": 1820, "y": 1060}),
+        ("move_center", "ç§»å¨å°å±å¹ä¸­å¿?, {"x": 960, "y": 540}),
+        ("move_top_left", "ç§»å¨å°å·¦ä¸è§", {"x": 100, "y": 100}),
+        ("move_top_right", "ç§»å¨å°å³ä¸è§", {"x": 1820, "y": 100}),
+        ("move_bottom_left", "ç§»å¨å°å·¦ä¸è§", {"x": 100, "y": 1060}),
+        ("move_bottom_right", "ç§»å¨å°å³ä¸è§", {"x": 1820, "y": 1060}),
         
-        ("left_click_center", "左键点击中心", {"x": 960, "y": 540, "button": "left"}),
-        ("left_double_click", "左键双击", {"x": 960, "y": 540, "button": "left", "double": True}),
-        ("right_click", "右键点击", {"x": 960, "y": 540, "button": "right"}),
-        ("middle_click", "中键点击", {"x": 960, "y": 540, "button": "middle"}),
+        ("left_click_center", "å·¦é®ç¹å»ä¸­å¿", {"x": 960, "y": 540, "button": "left"}),
+        ("left_double_click", "å·¦é®åå»", {"x": 960, "y": 540, "button": "left", "double": True}),
+        ("right_click", "å³é®ç¹å»", {"x": 960, "y": 540, "button": "right"}),
+        ("middle_click", "ä¸­é®ç¹å»", {"x": 960, "y": 540, "button": "middle"}),
         
-        ("scroll_up_small", "滚轮向上小幅�?, {"delta": 1}),
-        ("scroll_down_small", "滚轮向下小幅�?, {"delta": -1}),
-        ("scroll_up_large", "滚轮向上大幅�?, {"delta": 3}),
-        ("scroll_down_large", "滚轮向下大幅�?, {"delta": -3}),
+        ("scroll_up_small", "æ»è½®åä¸å°å¹åº?, {"delta": 1}),
+        ("scroll_down_small", "æ»è½®åä¸å°å¹åº?, {"delta": -1}),
+        ("scroll_up_large", "æ»è½®åä¸å¤§å¹åº?, {"delta": 3}),
+        ("scroll_down_large", "æ»è½®åä¸å¤§å¹åº?, {"delta": -3}),
         
-        ("rapid_moves", "快速连续移�?, {"points": [(200, 200), (400, 200), (600, 200), (800, 200)]}),
-        ("zigzag_moves", "之字形移�?, {"points": [(500, 300), (600, 400), (500, 500), (600, 600)]}),
+        ("rapid_moves", "å¿«éè¿ç»­ç§»å?, {"points": [(200, 200), (400, 200), (600, 200), (800, 200)]}),
+        ("zigzag_moves", "ä¹å­å½¢ç§»å?, {"points": [(500, 300), (600, 400), (500, 500), (600, 600)]}),
         
-        ("rapid_clicks", "快速连续点�?, {"count": 5, "x": 960, "y": 540}),
+        ("rapid_clicks", "å¿«éè¿ç»­ç¹å?, {"count": 5, "x": 960, "y": 540}),
     ]
     
-    print(f"\n[模拟] 开始执�?{len(scenarios)} 个测试场�?..")
+    print(f"\n[æ¨¡æ] å¼å§æ§è¡?{len(scenarios)} ä¸ªæµè¯åºæ?..")
     
     for i, scenario in enumerate(scenarios):
         name, action, params = scenario[0], scenario[1], scenario[2]
@@ -245,12 +245,12 @@ def simulator_process(control_file: str, log_file: str):
             
         except Exception as e:
             log_event(log_file, "simulator_error", name=name, error=str(e))
-            print(f"[模拟] 错误: {e}")
+            print(f"[æ¨¡æ] éè¯¯: {e}")
         
         time.sleep(0.15)
         
         if (i + 1) % 5 == 0:
-            print(f"[模拟] 已完�?{i+1}/{len(scenarios)} 个场�?)
+            print(f"[æ¨¡æ] å·²å®æ?{i+1}/{len(scenarios)} ä¸ªåºæ?)
     
     ops_path = os.path.join(os.path.dirname(control_file) or os.path.expanduser("~"), "_mouse_operations.json")
     with open(ops_path, "w", encoding="utf-8") as f:
@@ -261,19 +261,19 @@ def simulator_process(control_file: str, log_file: str):
     write_control(control_file, "stop")
     
     log_event(log_file, "simulator_stop", operations=len(operations))
-    print(f"[模拟] 完成 {len(operations)} 个鼠标操�?)
+    print(f"[æ¨¡æ] å®æ {len(operations)} ä¸ªé¼ æ æä½?)
 
 
 def run_integration_test():
-    """运行集成测试"""
+    """è¿è¡éææµè¯"""
     import tempfile
     
     control_file = os.path.join(tempfile.gettempdir(), f"vools_mouse_control_{os.getpid()}.json")
     log_file = os.path.join(tempfile.gettempdir(), f"vools_mouse_test_log_{os.getpid()}.json")
     
     print("=" * 80)
-    print("MouseObserver/MouseSubject 集成测试")
-    print("自过滤状�? 已禁用（确保所有鼠标事件完整传递）")
+    print("MouseObserver/MouseSubject éææµè¯")
+    print("èªè¿æ»¤ç¶æ? å·²ç¦ç¨ï¼ç¡®ä¿ææé¼ æ äºä»¶å®æ´ä¼ éï¼")
     print("=" * 80)
     
     if os.path.exists(log_file):
@@ -307,89 +307,89 @@ def run_integration_test():
         monitor_stdout, monitor_stderr = monitor_proc.communicate()
     
     print("\n" + "=" * 80)
-    print("监控程序输出:")
+    print("çæ§ç¨åºè¾åº:")
     print("-" * 40)
     print(monitor_stdout[-2000:] if monitor_stdout else "")
     if monitor_stderr:
-        print("错误:")
+        print("éè¯¯:")
         print(monitor_stderr[-500:] if monitor_stderr else "")
     
     print("\n" + "=" * 80)
-    print("模拟程序输出:")
+    print("æ¨¡æç¨åºè¾åº:")
     print("-" * 40)
     print(simulator_stdout[-2000:] if simulator_stdout else "")
     if simulator_stderr:
-        print("错误:")
+        print("éè¯¯:")
         print(simulator_stderr[-500:] if simulator_stderr else "")
     
     results_path = os.path.join(os.path.dirname(control_file) or os.path.expanduser("~"), "_mouse_monitor_results.json")
     ops_path = os.path.join(os.path.dirname(control_file) or os.path.expanduser("~"), "_mouse_operations.json")
     
     print("\n" + "=" * 80)
-    print("测试结果分析:")
+    print("æµè¯ç»æåæ:")
     print("-" * 40)
     
     if os.path.exists(results_path):
         with open(results_path, "r", encoding="utf-8") as f:
             results = json.load(f)
         
-        print(f"收到鼠标事件�? {len(results['events_received'])}")
-        print(f"分发计数: {results['dispatch_count']}")
-        print(f"过滤计数: {results['filtered_count']}")
-        print(f"后端: {results['backend']}")
+        print(f"æ¶å°é¼ æ äºä»¶æ? {len(results['events_received'])}")
+        print(f"ååè®¡æ°: {results['dispatch_count']}")
+        print(f"è¿æ»¤è®¡æ°: {results['filtered_count']}")
+        print(f"åç«¯: {results['backend']}")
         print(f"filter_self: {results['filter_self']}")
-        print(f"初始内存: {results['initial_memory_mb']:.2f}MB")
-        print(f"最终内�? {results['final_memory_mb']:.2f}MB")
-        print(f"内存增量: {results['memory_delta_mb']:.2f}MB")
+        print(f"åå§åå­: {results['initial_memory_mb']:.2f}MB")
+        print(f"æç»åå­? {results['final_memory_mb']:.2f}MB")
+        print(f"åå­å¢é: {results['memory_delta_mb']:.2f}MB")
         
-        print("\n鼠标事件类型统计:")
+        print("\né¼ æ äºä»¶ç±»åç»è®¡:")
         type_counts: Dict[str, int] = {}
         for evt in results['events_received']:
             ct = evt['event_type']
             type_counts[ct] = type_counts.get(ct, 0) + 1
         for ct, count in sorted(type_counts.items()):
-            print(f"  - {ct}: {count} �?)
+            print(f"  - {ct}: {count} ä¸?)
     
     if os.path.exists(ops_path):
         with open(ops_path, "r", encoding="utf-8") as f:
             ops = json.load(f)
-        print(f"\n执行的鼠标操作数: {len(ops['operations'])}")
+        print(f"\næ§è¡çé¼ æ æä½æ°: {len(ops['operations'])}")
     
     print("\n" + "=" * 80)
-    print("测试验证总结:")
+    print("æµè¯éªè¯æ»ç»:")
     print("-" * 40)
     
     if os.path.exists(results_path):
         results = json.load(open(results_path, "r", encoding="utf-8"))
         events = results['events_received']
         
-        print(f"�?事件接收�? {len(events)} �?)
-        print(f"�?过滤计数: {results['filtered_count']} �?(应为0)")
+        print(f"â?äºä»¶æ¥æ¶æ? {len(events)} ä¸?)
+        print(f"â?è¿æ»¤è®¡æ°: {results['filtered_count']} ä¸?(åºä¸º0)")
         
         if results['filter_self'] == False and results['filtered_count'] == 0:
-            print("✓✓�?自过滤功能已正确禁用")
+            print("âââ?èªè¿æ»¤åè½å·²æ­£ç¡®ç¦ç¨")
         else:
-            print("�?自过滤状态需要检�?)
+            print("â?èªè¿æ»¤ç¶æéè¦æ£æ?)
         
         memory_stable = results['memory_delta_mb'] < 10
-        print(f"�?内存稳定�? {'通过' if memory_stable else '警告'} (增量: {results['memory_delta_mb']:.2f}MB)")
+        print(f"â?åå­ç¨³å®æ? {'éè¿' if memory_stable else 'è­¦å'} (å¢é: {results['memory_delta_mb']:.2f}MB)")
         
-        print("\n事件覆盖情况:")
+        print("\näºä»¶è¦çæåµ:")
         type_counts = {}
         for evt in events:
             ct = evt['event_type']
             type_counts[ct] = type_counts.get(ct, 0) + 1
         
-        print(f"  - MOVE: {type_counts.get('MOVE', 0)} �?)
-        print(f"  - LEFT_DOWN: {type_counts.get('LEFT_DOWN', 0)} �?)
-        print(f"  - LEFT_UP: {type_counts.get('LEFT_UP', 0)} �?)
-        print(f"  - RIGHT_DOWN: {type_counts.get('RIGHT_DOWN', 0)} �?)
-        print(f"  - RIGHT_UP: {type_counts.get('RIGHT_UP', 0)} �?)
-        print(f"  - SCROLL: {type_counts.get('SCROLL', 0)} �?)
-        print(f"  - DRAG: {type_counts.get('DRAG', 0)} �?)
+        print(f"  - MOVE: {type_counts.get('MOVE', 0)} ä¸?)
+        print(f"  - LEFT_DOWN: {type_counts.get('LEFT_DOWN', 0)} ä¸?)
+        print(f"  - LEFT_UP: {type_counts.get('LEFT_UP', 0)} ä¸?)
+        print(f"  - RIGHT_DOWN: {type_counts.get('RIGHT_DOWN', 0)} ä¸?)
+        print(f"  - RIGHT_UP: {type_counts.get('RIGHT_UP', 0)} ä¸?)
+        print(f"  - SCROLL: {type_counts.get('SCROLL', 0)} ä¸?)
+        print(f"  - DRAG: {type_counts.get('DRAG', 0)} ä¸?)
     
     print("\n" + "=" * 80)
-    print("测试完成")
+    print("æµè¯å®æ")
     print("=" * 80)
 
 

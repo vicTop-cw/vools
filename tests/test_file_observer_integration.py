@@ -1,10 +1,10 @@
 """
-FileObserver �?FileSubject 集成测试
+FileObserver å?FileSubject éææµè¯
 
-测试方案:
-1. 部署两个独立进程：监控程�?+ 文件操作程序
-2. 监控程序实现默认自过滤功�?3. 验证非监控程序产生的变更能被正确捕获
-4. 验证监控程序自身产生的修改不会触发订阅事�?"""
+æµè¯æ¹æ¡:
+1. é¨ç½²ä¸¤ä¸ªç¬ç«è¿ç¨ï¼çæ§ç¨åº?+ æä»¶æä½ç¨åº
+2. çæ§ç¨åºå®ç°é»è®¤èªè¿æ»¤åè?3. éªè¯éçæ§ç¨åºäº§ççåæ´è½è¢«æ­£ç¡®æè·
+4. éªè¯çæ§ç¨åºèªèº«äº§ççä¿®æ¹ä¸ä¼è§¦åè®¢éäºä»?"""
 
 import os
 import sys
@@ -16,7 +16,7 @@ from datetime import datetime
 
 
 def log_event(log_file, event_type, **data):
-    """记录测试事件"""
+    """è®°å½æµè¯äºä»¶"""
     entry = {
         "timestamp": datetime.now().isoformat(),
         "event_type": event_type,
@@ -30,13 +30,13 @@ def log_event(log_file, event_type, **data):
 
 
 def write_control(control_file, action):
-    """写入控制指令"""
+    """åå¥æ§å¶æä»¤"""
     with open(control_file, "w", encoding="utf-8") as f:
         json.dump({"action": action, "timestamp": datetime.now().isoformat()}, f)
 
 
 def read_control(control_file):
-    """读取控制指令"""
+    """è¯»åæ§å¶æä»¤"""
     if not os.path.exists(control_file):
         return None
     try:
@@ -47,7 +47,7 @@ def read_control(control_file):
 
 
 def monitor_process(test_dir, control_file, log_file):
-    """监控程序进程"""
+    """çæ§ç¨åºè¿ç¨"""
     import logging
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
     
@@ -71,12 +71,12 @@ def monitor_process(test_dir, control_file, log_file):
                   change_type=fd.change_type.name,
                   size=fd.size,
                   filtered=False)
-        print(f"[监控] 收到事件: {fd.change_type.name} - {os.path.basename(fd.path)}")
+        print(f"[çæ§] æ¶å°äºä»¶: {fd.change_type.name} - {os.path.basename(fd.path)}")
     
     fs = FileSubject(paths=[test_dir], auto_start=True, filter_self=True)
     
-    print(f"[监控] 启动成功，后�? {fs.backend_name}")
-    print(f"[监控] filter_self: {fs.dispatcher.filter_self}")
+    print(f"[çæ§] å¯å¨æåï¼åç«? {fs.backend_name}")
+    print(f"[çæ§] filter_self: {fs.dispatcher.filter_self}")
     log_event(log_file, "monitor_config", backend=fs.backend_name, filter_self=fs.dispatcher.filter_self)
     
     subscription = fs.subscribe(on_next=on_event)
@@ -89,7 +89,7 @@ def monitor_process(test_dir, control_file, log_file):
     time.sleep(0.5)
     
     self_file = os.path.join(test_dir, "self_modified.txt")
-    print(f"[监控] 开始自修改测试: {self_file}")
+    print(f"[çæ§] å¼å§èªä¿®æ¹æµè¯: {self_file}")
     log_event(log_file, "self_modify_start", path=self_file)
     
     fs.dispatcher.register_self_signature(self_file, FileChangeType.CREATED)
@@ -112,7 +112,7 @@ def monitor_process(test_dir, control_file, log_file):
               filtered_before=filtered_before,
               filtered_after=fs.dispatcher._self_filtered_count)
     
-    print(f"[监控] 自修改测试完�?- 新增事件: {len(events_received) - events_before_self}, 过滤事件: {fs.dispatcher._self_filtered_count - filtered_before}")
+    print(f"[çæ§] èªä¿®æ¹æµè¯å®æ?- æ°å¢äºä»¶: {len(events_received) - events_before_self}, è¿æ»¤äºä»¶: {fs.dispatcher._self_filtered_count - filtered_before}")
     
     while True:
         control = read_control(control_file)
@@ -135,11 +135,11 @@ def monitor_process(test_dir, control_file, log_file):
             "filtered_count": fs.dispatcher._self_filtered_count,
         }, f, ensure_ascii=False, indent=2)
     
-    print(f"[监控] 停止，收�?{len(events_received)} 个事�?)
+    print(f"[çæ§] åæ­¢ï¼æ¶å?{len(events_received)} ä¸ªäºä»?)
 
 
 def file_operations_process(test_dir, control_file, log_file):
-    """文件操作程序进程"""
+    """æä»¶æä½ç¨åºè¿ç¨"""
     log_event(log_file, "ops_start", pid=os.getpid())
     
     while True:
@@ -166,7 +166,7 @@ def file_operations_process(test_dir, control_file, log_file):
             **kwargs
         })
         log_event(log_file, "file_operation", name=name, action=action, path=path, **kwargs)
-        print(f"[操作] {name}: {action} {os.path.basename(path)}")
+        print(f"[æä½] {name}: {action} {os.path.basename(path)}")
     
     op("create_text", "create", text_file, content="Hello, World!")
     with open(text_file, "w", encoding="utf-8") as f:
@@ -213,18 +213,18 @@ def file_operations_process(test_dir, control_file, log_file):
     write_control(control_file, "stop")
     
     log_event(log_file, "ops_stop", operations=len(operations))
-    print(f"[操作] 完成 {len(operations)} 个操�?)
+    print(f"[æä½] å®æ {len(operations)} ä¸ªæä½?)
 
 
 def run_integration_test():
-    """运行集成测试"""
+    """è¿è¡éææµè¯"""
     test_dir = tempfile.mkdtemp(prefix="vools_file_test_")
     control_file = os.path.join(tempfile.gettempdir(), f"vools_control_{os.getpid()}.json")
     log_file = os.path.join(tempfile.gettempdir(), f"vools_test_log_{os.getpid()}.json")
     
     print("=" * 70)
-    print("FileObserver/FileSubject 集成测试")
-    print(f"测试目录: {test_dir}")
+    print("FileObserver/FileSubject éææµè¯")
+    print(f"æµè¯ç®å½: {test_dir}")
     print("=" * 70)
     
     if os.path.exists(log_file):
@@ -250,19 +250,19 @@ def run_integration_test():
     ops_stdout, ops_stderr = ops_proc.communicate(timeout=60)
     
     print("\n" + "=" * 70)
-    print("监控程序输出:")
+    print("çæ§ç¨åºè¾åº:")
     print("-" * 40)
     print(monitor_stdout)
     if monitor_stderr:
-        print("错误:")
+        print("éè¯¯:")
         print(monitor_stderr)
     
     print("\n" + "=" * 70)
-    print("文件操作程序输出:")
+    print("æä»¶æä½ç¨åºè¾åº:")
     print("-" * 40)
     print(ops_stdout)
     if ops_stderr:
-        print("错误:")
+        print("éè¯¯:")
         print(ops_stderr)
     
     results_path = os.path.join(test_dir, "_monitor_results.json")
@@ -273,13 +273,13 @@ def run_integration_test():
             results = json.load(f)
         
         print("\n" + "=" * 70)
-        print("测试结果分析:")
+        print("æµè¯ç»æåæ:")
         print("-" * 40)
-        print(f"收到事件�? {len(results['events_received'])}")
-        print(f"分发计数: {results['dispatch_count']}")
-        print(f"自过滤计�? {results['filtered_count']}")
+        print(f"æ¶å°äºä»¶æ? {len(results['events_received'])}")
+        print(f"ååè®¡æ°: {results['dispatch_count']}")
+        print(f"èªè¿æ»¤è®¡æ? {results['filtered_count']}")
         
-        print("\n收到的事�?")
+        print("\næ¶å°çäºä»?")
         for evt in results['events_received']:
             print(f"  - {evt['change_type']}: {os.path.basename(evt['path'])}")
     
@@ -287,12 +287,12 @@ def run_integration_test():
         with open(ops_path, "r", encoding="utf-8") as f:
             ops = json.load(f)
         
-        print("\n执行的操�?")
+        print("\næ§è¡çæä½?")
         for op in ops['operations']:
             print(f"  - {op['name']}: {op['action']} {os.path.basename(op['path'])}")
     
     print("\n" + "=" * 70)
-    print("测试验证总结:")
+    print("æµè¯éªè¯æ»ç»:")
     print("-" * 40)
     if os.path.exists(results_path):
         events = results['events_received']
@@ -303,24 +303,24 @@ def run_integration_test():
         test_rename_events = [e for e in events if 'test_renamed' in e['path']]
         self_modified_events = [e for e in events if 'self_modified' in e['path']]
         
-        print(f"�?文本文件事件: {len(test_text_events)} �?(创建/修改/删除)")
-        print(f"�?二进制文件事�? {len(test_binary_events)} �?(创建/修改/删除)")
-        print(f"�?重命名文件事�? {len(test_rename_events)} �?)
-        print(f"�?自修改文件事�? {len(self_modified_events)} 个被接收 (部分MODIFIED未过滤是正常�?")
-        print(f"�?自过滤事件数: {filtered_count} �?(CREATED/MODIFIED/DELETED�?�?")
+        print(f"â?ææ¬æä»¶äºä»¶: {len(test_text_events)} ä¸?(åå»º/ä¿®æ¹/å é¤)")
+        print(f"â?äºè¿å¶æä»¶äºä»? {len(test_binary_events)} ä¸?(åå»º/ä¿®æ¹/å é¤)")
+        print(f"â?éå½åæä»¶äºä»? {len(test_rename_events)} ä¸?)
+        print(f"â?èªä¿®æ¹æä»¶äºä»? {len(self_modified_events)} ä¸ªè¢«æ¥æ¶ (é¨åMODIFIEDæªè¿æ»¤æ¯æ­£å¸¸ç?")
+        print(f"â?èªè¿æ»¤äºä»¶æ°: {filtered_count} ä¸?(CREATED/MODIFIED/DELETEDå?ä¸?")
         
         if filtered_count >= 3:
-            print("\n✓✓�?自过滤功能验证成�? 监控程序自身产生的文件变更事件被正确过滤")
+            print("\nâââ?èªè¿æ»¤åè½éªè¯æå? çæ§ç¨åºèªèº«äº§ççæä»¶åæ´äºä»¶è¢«æ­£ç¡®è¿æ»¤")
         else:
-            print("\n�?自过滤功能验证未完全通过")
+            print("\nâ?èªè¿æ»¤åè½éªè¯æªå®å¨éè¿")
         
         if len(test_text_events) > 0 and len(test_binary_events) > 0:
-            print("✓✓�?文件变更捕获验证成功: 其他进程产生的文件变更事件被正确捕获")
+            print("âââ?æä»¶åæ´æè·éªè¯æå: å¶ä»è¿ç¨äº§ççæä»¶åæ´äºä»¶è¢«æ­£ç¡®æè·")
         else:
-            print("�?文件变更捕获验证未完全通过")
+            print("â?æä»¶åæ´æè·éªè¯æªå®å¨éè¿")
     
     print("\n" + "=" * 70)
-    print("测试完成")
+    print("æµè¯å®æ")
     print("=" * 70)
 
 
