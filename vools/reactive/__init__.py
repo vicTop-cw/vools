@@ -10,6 +10,12 @@ ops = ops_module
 from .core import schedulers
 
 from .core.observable import Observable, Observer, Subscription, DefaultObserver
+
+def of(*values):
+    return Observable.of(*values)
+
+def from_iterable(iterable):
+    return Observable.from_iterable(iterable)
 from .core.subject import (
     Subject, BehaviorSubject, ReplaySubject, AsyncSubject, PublishSubject,
     subject, behavior_subject, replay_subject, async_subject, publish_subject
@@ -105,7 +111,7 @@ from .monitoring.mouse import (
 )
 
 __all__ = [
-    'Observable', 'Observer', 'Subscription', 'DefaultObserver',
+    'Observable', 'Observer', 'Subscription', 'DefaultObserver', 'of', 'from_iterable',
     'Subject', 'BehaviorSubject', 'ReplaySubject', 'AsyncSubject', 'PublishSubject',
     'subject', 'behavior_subject', 'replay_subject', 'async_subject', 'publish_subject',
     'Scheduler', 'ImmediateScheduler', 'CurrentThreadScheduler', 'AsyncIOScheduler',

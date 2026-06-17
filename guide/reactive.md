@@ -17,6 +17,17 @@ vools/reactive/
 
 所有符号通过 `vools.reactive` 统一导出，保持 API 兼容性。
 
+## 性能优势
+
+vools.reactive 在性能上显著优于业界主流的 reactivex 库：
+
+- **简单操作（map/filter/scan）**：快 1.1-2.7x
+- **复杂操作（distinct/flat_map/buffer）**：快 6-2475x
+- **内存占用**：普遍低于 reactivex
+- **总体平均性能比**：90.79x
+
+详细性能对比数据请参考 changelog/v0.1.16.md。
+
 ## reactive 模块
 
 ### 基本用法
