@@ -159,6 +159,12 @@ class PipeBuilder(Generic[T]):
         for op in operators:
             if callable(op):
                 self._operators.append(op)
+        
+        if len(self._operators) == 1:
+            result = self._operators[0](self._source)
+            if isinstance(result, Subscription):
+                return result
+        
         return self
     
     # ========== 操作符方法 ==========
@@ -360,113 +366,113 @@ class PipeBuilder(Generic[T]):
     # ========== 统计聚合扩展算子 ==========
     
     def median(self):
-        from .stats_operators import median
+        from ..operators.stats_operators import median
         return self._add_operator(median())
     
     def variance(self, ddof: int = 0):
-        from .stats_operators import variance
+        from ..operators.stats_operators import variance
         return self._add_operator(variance(ddof))
     
     def std(self, ddof: int = 0):
-        from .stats_operators import std
+        from ..operators.stats_operators import std
         return self._add_operator(std(ddof))
     
     def quantile(self, q: float):
-        from .stats_operators import quantile
+        from ..operators.stats_operators import quantile
         return self._add_operator(quantile(q))
     
     def arg_min(self):
-        from .stats_operators import arg_min
+        from ..operators.stats_operators import arg_min
         return self._add_operator(arg_min())
     
     def arg_max(self):
-        from .stats_operators import arg_max
+        from ..operators.stats_operators import arg_max
         return self._add_operator(arg_max())
     
     def n_unique(self):
-        from .stats_operators import n_unique
+        from ..operators.stats_operators import n_unique
         return self._add_operator(n_unique())
     
     # ========== 滚动窗口算子 ==========
     
     def rolling_sum(self, window_size: int):
-        from .stats_operators import rolling_sum
+        from ..operators.stats_operators import rolling_sum
         return self._add_operator(rolling_sum(window_size))
     
     def rolling_min(self, window_size: int):
-        from .stats_operators import rolling_min
+        from ..operators.stats_operators import rolling_min
         return self._add_operator(rolling_min(window_size))
     
     def rolling_max(self, window_size: int):
-        from .stats_operators import rolling_max
+        from ..operators.stats_operators import rolling_max
         return self._add_operator(rolling_max(window_size))
     
     def rolling_mean(self, window_size: int):
-        from .stats_operators import rolling_mean
+        from ..operators.stats_operators import rolling_mean
         return self._add_operator(rolling_mean(window_size))
     
     # ========== 累积变换算子 ==========
     
     def cum_sum(self):
-        from .stats_operators import cum_sum
+        from ..operators.stats_operators import cum_sum
         return self._add_operator(cum_sum())
     
     def cum_min(self):
-        from .stats_operators import cum_min
+        from ..operators.stats_operators import cum_min
         return self._add_operator(cum_min())
     
     def cum_max(self):
-        from .stats_operators import cum_max
+        from ..operators.stats_operators import cum_max
         return self._add_operator(cum_max())
     
     def cum_mean(self):
-        from .stats_operators import cum_mean
+        from ..operators.stats_operators import cum_mean
         return self._add_operator(cum_mean())
     
     def cum_prod(self):
-        from .stats_operators import cum_prod
+        from ..operators.stats_operators import cum_prod
         return self._add_operator(cum_prod())
     
     # ========== 排序 Top-N 算子 ==========
     
     def sort(self, key_fn=None, reverse=False):
-        from .stats_operators import sort
+        from ..operators.stats_operators import sort
         return self._add_operator(sort(key_fn, reverse))
     
     def top_k(self, k: int, key_fn=None):
-        from .stats_operators import top_k
+        from ..operators.stats_operators import top_k
         return self._add_operator(top_k(k, key_fn))
     
     def bottom_k(self, k: int, key_fn=None):
-        from .stats_operators import bottom_k
+        from ..operators.stats_operators import bottom_k
         return self._add_operator(bottom_k(k, key_fn))
     
     # ========== None 值处理与数学工具 ==========
     
     def drop_none(self):
-        from .stats_operators import drop_none
+        from ..operators.stats_operators import drop_none
         return self._add_operator(drop_none())
     
     def fill_none(self, default_value):
-        from .stats_operators import fill_none
+        from ..operators.stats_operators import fill_none
         return self._add_operator(fill_none(default_value))
     
     def abs(self):
-        from .stats_operators import abs_op
+        from ..operators.stats_operators import abs_op
         return self._add_operator(abs_op())
     
     def clamp(self, min_val, max_val):
-        from .stats_operators import clamp
+        from ..operators.stats_operators import clamp
         return self._add_operator(clamp(min_val, max_val))
     
     # ========== 嵌套流展开算子 ==========
     
     def explode(self):
-        from .stats_operators import explode
+        from ..operators.stats_operators import explode
         return self._add_operator(explode())
     
     def flatten(self):
-        from .stats_operators import flatten
+        from ..operators.stats_operators import flatten
         return self._add_operator(flatten())
 
     # ========== worker 分发 ==========
