@@ -1,12 +1,15 @@
 """
-rself 类装饰器 - 最终版本
+rself 类装饰器 - 支持自定义初始化的增强版本
 
 核心功能：
 1. 限制继承方式为最多单继承或不继承
 2. 方法返回值处理：
    - 返回 None → 返回自身实例
    - 返回父类实例 → 转换为子类实例
-   - 其他情况保持原返回值
+3. 自定义初始化支持：
+   - 定义 __from_parent__ 类方法来自定义转换逻辑
+   - 支持传递额外参数（kwargs）
+   - 自动保存和恢复实例属性
 
 解决场景：
 当创建如 class SuperText(str) 的子类时，调用 s.upper() 返回的是 str 类型，
@@ -15,9 +18,10 @@ rself 类装饰器 - 最终版本
 
 import functools
 import inspect
-from typing import Any, Type
+from typing import Any, Type, Optional, Dict
 
 __all__ = ['rself']
+
 
 def rself(cls: Type) -> Type:
     """
@@ -28,8 +32,11 @@ def rself(cls: Type) -> Type:
     2. 拦截非魔法方法、属性、类方法、静态方法
     3. 返回值处理：
        - None → 返回自身实例
-       - 父类实例 → 转换为子类实例返回
-       - 其他 → 保持原返回值
+       - 父类实例 → 转换为子类实例
+    4. 自定义初始化支持：
+       - 若类定义了 __from_parent__ 类方法，使用该方法进行转换
+       - 否则使用默认的 cls(value) 方式
+       - 自动保存和恢复实例属性
 
     不影响：
     - 魔法方法（如 __init__、__getattr__ 等）
@@ -59,6 +66,9 @@ def rself(cls: Type) -> Type:
             )
     parent_cls = bases[0] if bases else None
 
+    # 检查是否定义了 __from_parent__ 方法
+    has_from_parent = callable(getattr(cls, '__from_parent__', None))
+
     # 保存原有的 __getattr__（如果有）
     original_getattr = cls.__dict__.get('__getattr__', None)
 
@@ -66,18 +76,59 @@ def rself(cls: Type) -> Type:
         """
         应用返回值转换规则：
         - None → 返回 self
-        - 已经是当前类或其子类的实例 → 直接返回原值（无需转换）
-        - 父类实例 → 返回子类实例（用子类重新包装）
+        - 已经是当前类或其子类的实例 → 直接返回原值
+        - 父类实例 → 使用 __from_parent__ 或 cls(value) 转换
+
+        支持自定义初始化，通过 __from_parent__ 方法或实例属性传递参数
         """
         if value is None:
             return self
+
         if isinstance(value, cls):
             return value
-        if parent_cls is not None and isinstance(value, parent_cls):
-            try:
-                return cls(value)
-            except Exception:
-                return value
+
+        # 检查是否是当前类或其任何祖先类的实例
+        # 用于处理继承链的情况
+        if parent_cls is not None:
+            for base in cls.__mro__:
+                if base is object:
+                    break
+                if isinstance(value, base):
+                    # 找到匹配的基类，使用该基类的转换逻辑
+                    # 尝试从实例属性获取初始化参数
+                    kwargs = {}
+                    try:
+                        kwargs_attr = object.__getattribute__(self, '_rself_kwargs')
+                        kwargs = dict(kwargs_attr) if kwargs_attr else {}
+                    except AttributeError:
+                        pass
+
+                    # 优先使用 __from_parent__ 类方法
+                    if has_from_parent:
+                        try:
+                            # 调用类的 __from_parent__ 方法
+                            result = cls.__from_parent__(value, **kwargs)
+                            return result
+                        except TypeError:
+                            # 如果 __from_parent__ 不接受 kwargs，尝试无参数调用
+                            try:
+                                result = cls.__from_parent__(value)
+                                return result
+                            except Exception:
+                                pass
+
+                    # 使用默认的 cls(value) 方式
+                    try:
+                        return cls(value)
+                    except TypeError:
+                        # 如果构造函数需要额外参数但没有 __from_parent__，抛出错误
+                        if kwargs:
+                            raise TypeError(
+                                f"类 {cls.__name__} 的构造函数不支持直接用父类实例初始化，"
+                                f"请定义 __from_parent__(cls, parent_val, **kwargs) 类方法来处理"
+                            )
+                        raise
+
         return value
 
     def __getattribute__(self, name: str):
@@ -91,7 +142,7 @@ def rself(cls: Type) -> Type:
                 raise
 
         # 过滤：魔法方法(__xx__) 或下划线开头(_) 的成员直接返回原值
-        if name.startswith('_'):
+        if name.startswith('_') and not (name.startswith('__') and name.endswith('__')):
             return attr
         if name.startswith('__') and name.endswith('__'):
             return attr
@@ -118,6 +169,66 @@ def rself(cls: Type) -> Type:
         # 其他普通属性直接返回
         return attr
 
+    # 保存原始 __init__ 和 __new__ 方法
+    original_init = cls.__dict__.get('__init__')
+    original_new = cls.__dict__.get('__new__')
+
+    # 不可变类型列表，这些类型需要特殊的 __new__ 处理
+    _IMMUTABLE_TYPES = (str, int, float, bool, tuple, bytes, frozenset)
+
+    def _wrap_new(cls, *args, **kwargs):
+        """包装后的 __new__，保存初始化参数"""
+        # 从 kwargs 中提取父类构造所需的参数
+        # 对于 str 子类，第一个参数是 value
+        if args:
+            parent_value = args[0]
+        else:
+            parent_value = kwargs.pop('value', '')
+
+        # 存储 kwargs 用于后续的 __from_parent__ 调用
+        # 注意：保留原始 kwargs 因为子类可能需要这些参数
+        stored_kwargs = kwargs.copy() if kwargs else {}
+
+        # 创建实例 - 对于不可变类型，必须使用父类的 __new__
+        if original_new is not None:
+            # 调用原始 __new__，保留所有参数
+            instance = original_new(cls, *args, **kwargs)
+        elif parent_cls is not None and isinstance(parent_cls, _IMMUTABLE_TYPES):
+            # 对于不可变类型的子类，使用父类的 __new__
+            instance = parent_cls.__new__(cls, parent_value)
+        else:
+            # 对于可变类型或没有父类的情况，使用 object.__new__
+            instance = object.__new__(cls)
+
+        # 存储 kwargs 作为实例属性，用于 __from_parent__ 调用
+        instance._rself_kwargs = stored_kwargs
+
+        return instance
+
+    def _wrap_init(self, *args, **kwargs):
+        """包装后的 __init__，保存初始化参数"""
+        # 将初始化参数存储为实例属性
+        # 注意：对于不可变类型，__new__ 已经处理了 kwargs
+        if not hasattr(self, '_rself_kwargs'):
+            self._rself_kwargs = kwargs.copy() if kwargs else {}
+
+        # 调用原始 __init__
+        if original_init is not None:
+            original_init(self, *args, **kwargs)
+
+    # 如果类有自定义 __new__，替换为包装版本
+    if original_new is not None and original_new is not _wrap_new:
+        cls.__new__ = staticmethod(lambda cls, *args, **kwargs: _wrap_new(cls, *args, **kwargs))
+    elif original_new is None and parent_cls is not None and isinstance(parent_cls, _IMMUTABLE_TYPES):
+        # 仅对不可变类型的子类添加 __new__ 包装
+        cls.__new__ = staticmethod(lambda cls, *args, **kwargs: _wrap_new(cls, *args, **kwargs))
+
+    # 如果类有自定义 __init__，替换为包装版本
+    if original_init is not None and '__init__' not in cls.__dict__:
+        cls.__init__ = _wrap_init
+    elif original_init is not None and original_init is not _wrap_init:
+        cls.__init__ = _wrap_init
+
     # 注入新方法
     cls.__getattribute__ = __getattribute__
     return cls
@@ -128,25 +239,44 @@ if __name__ == "__main__":
     @rself
     class SuperText(str):
         """扩展的字符串类，支持链式调用自定义方法"""
-        def __init__(self, value: str = ""):
+        def __init__(self, value: str = "", extra: str = None):
             # str 是不可变类型，初始化时需调用父类 __new__
             super().__init__()
-            self._times = 1          # 自定义属性：重复次数
-            self._prefix = ">> "     # 自定义属性：前缀
+            self._value = value
+            self._extra = extra
 
         @property
-        def times(self):
-            return self._times
+        def extra(self):
+            return self._extra
 
-        def set_times(self, n: int):
-            self._times = n
-
-        def set_prefix(self, prefix: str):
-            self._prefix = prefix
+        def set_extra(self, extra: str):
+            """设置额外参数"""
+            self._extra = extra
 
         def decorated(self):
             """自定义方法：返回带前缀并重复的字符串"""
-            return self._prefix + (self * self._times)
+            prefix = self._extra or ""
+            return prefix + self._value
+
+    @rself
+    class SuperTextWithFactory(str):
+        """使用 __from_parent__ 的字符串类"""
+        def __new__(cls, value: str = "", prefix: str = "", suffix: str = ""):
+            instance = super().__new__(cls, value)
+            instance._prefix = prefix
+            instance._suffix = suffix
+            return instance
+
+        @classmethod
+        def __from_parent__(cls, parent_val, **kwargs):
+            """自定义工厂方法，支持传递额外参数"""
+            prefix = kwargs.get('prefix', '>> ')
+            suffix = kwargs.get('suffix', '')
+            return cls(str(parent_val), prefix=prefix, suffix=suffix)
+
+        def with_affix(self):
+            """返回带前后缀的字符串"""
+            return self._prefix + str(self) + self._suffix
 
     @rself
     class SuperList(list):
@@ -175,26 +305,28 @@ if __name__ == "__main__":
     assert isinstance(result, SuperText), "s.upper() 应该返回 SuperText 类型"
 
     # set_times() 返回 None → 返回自身
-    # 注意：upper() 返回新实例，所以 set_times() 返回的是新实例，不是原始的 s
-    result2 = result.set_times(3)
-    print(f"type(result.set_times(3)) = {type(result2).__name__}")
-    assert result2 is result, "set_times() 应该返回新实例"
-
-    # 使用同一个实例链式调用
-    s2 = SuperText("hello")
-    result3 = s2.set_times(3)
-    print(f"s2.set_times(3) is s2 = {result3 is s2}")
-    assert result3 is s2, "set_times() 应该返回自身"
+    result2 = result.set_extra("prefix:")
+    print(f"type(result.set_extra()) = {type(result2).__name__}")
+    assert result2 is result, "set_extra() 应该返回自身"
 
     # 2. 自定义方法返回 str → 也会被包装
     d = s.decorated()
     print(f"type(s.decorated()) = {type(d).__name__}, value = '{d}'")
     assert isinstance(d, SuperText), "decorated() 应该返回 SuperText 类型"
 
-    # 3. 链式调用
-    chained = SuperText("hello").upper().set_prefix("## ").decorated()
-    print(f"链式调用结果: '{chained}'")
-    assert isinstance(chained, SuperText), "链式调用应该返回 SuperText 类型"
+    # ----- 测试 SuperTextWithFactory -----
+    print("\n=== 测试 SuperTextWithFactory ===")
+    s2 = SuperTextWithFactory("hello", prefix=">> ", suffix=" <<")
+
+    # 链式调用继承方法
+    result = s2.upper()
+    print(f"type(s2.upper()) = {type(result).__name__}, value = '{result}'")
+    assert isinstance(result, SuperTextWithFactory), "upper() 应该返回 SuperTextWithFactory 类型"
+
+    # 链式调用自定义方法
+    result2 = result.with_affix()
+    print(f"type(s2.with_affix()) = {type(result2).__name__}, value = '{result2}'")
+    assert isinstance(result2, SuperTextWithFactory), "with_affix() 应该返回 SuperTextWithFactory 类型"
 
     # ----- 测试 SuperList -----
     print("\n=== 测试 SuperList ===")
