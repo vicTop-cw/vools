@@ -1,5 +1,5 @@
 """
-vools-recorder 测试
+vools-recorder æµè¯
 """
 import sys
 import os
@@ -10,13 +10,13 @@ from datetime import datetime
 from typing import List
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 测试类型定义
+# æµè¯ç±»åå®ä¹
 from vools.recorder import Action, Recording, ActionType, Parser
 from vools.recorder.typedefs import MouseButton, MOD_SHIFT, MOD_CTRL, MOD_ALT, MOD_WIN
 
 
 class TestAction:
-    """Action 测试"""
+    """Action æµè¯"""
     
     def test_create_key_action(self):
         action = Action(ActionType.KEY_DOWN, 100.0, {'key': 'A'})
@@ -60,7 +60,7 @@ class TestAction:
 
 
 class TestRecording:
-    """Recording 测试"""
+    """Recording æµè¯"""
     
     def test_create_recording(self):
         now = datetime.now()
@@ -109,7 +109,7 @@ class TestRecording:
 
 
 class TestParser:
-    """Parser 测试"""
+    """Parser æµè¯"""
     
     def test_parse_key_commands(self):
         parser = Parser()
@@ -189,8 +189,10 @@ keypress:B
     
     def test_skip_comments(self):
         parser = Parser()
-        script = '''// 这是一条注�?keydown:A
-# 另一条注�?type:hello
+        script = '''// comment
+keydown:A
+# another comment
+type:hello
 '''
         actions = parser.parse(script)
         assert len(actions) == 2
@@ -221,7 +223,7 @@ keypress:B
 
 
 class TestConstants:
-    """常量测试"""
+    """å¸¸éæµè¯"""
     
     def test_modifier_constants(self):
         assert MOD_SHIFT == 1

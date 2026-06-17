@@ -11,6 +11,7 @@ import threading
 import time
 
 from ...decorators import curry, lazy
+from .object_pool import get_pool, pooled_acquire, pooled_release
 
 T = TypeVar('T')
 R = TypeVar('R')
@@ -76,12 +77,13 @@ class Observer(Generic[T], ABC):
 class DefaultObserver(Observer[T]):
     """默认观察者实现"""
     
-    __slots__ = ('_on_next', '_on_error', '_on_completed')
+    __slots__ = ('_on_next', '_on_error', '_on_completed', '_pool')
     
     def __init__(self, on_next=None, on_error=None, on_completed=None):
         self._on_next = on_next or (lambda _: None)
         self._on_error = on_error or (lambda e: None)
         self._on_completed = on_completed or (lambda: None)
+        self._pool = None
     
     def on_next(self, value):
         self._on_next(value)
@@ -91,6 +93,22 @@ class DefaultObserver(Observer[T]):
     
     def on_completed(self):
         self._on_completed()
+    
+    def reset(self):
+        """重置观察者状态"""
+        self._on_next = lambda _: None
+        self._on_error = lambda e: None
+        self._on_completed = lambda: None
+    
+    def set_pool(self, pool):
+        """设置所属对象池"""
+        self._pool = pool
+    
+    def release(self):
+        """释放回对象池"""
+        if self._pool is not None:
+            self.reset()
+            self._pool.release(self)
 
 
 class PipeDescriptor(Generic[T]):
@@ -694,13 +712,42 @@ class Observable(Generic[T]):
     
     def subscribe(self, on_next=None, on_error=None, on_completed=None, observer=None):
         if observer is None:
-            observer = DefaultObserver(on_next, on_error, on_completed)
-        return self._subscribe_fn(observer)
+            observer_pool = get_pool(DefaultObserver, max_size=200, min_size=20)
+            observer = observer_pool.acquire()
+            observer._on_next = on_next or (lambda _: None)
+            observer._on_error = on_error or (lambda e: None)
+            observer._on_completed = on_completed or (lambda: None)
+            observer._pool = observer_pool
+        
+        subscription = self._subscribe_fn(observer)
+        
+        original_unsubscribe = subscription._unsubscribe
+        def wrapped_unsubscribe():
+            original_unsubscribe()
+            if hasattr(observer, 'release') and callable(observer.release):
+                observer.release()
+        
+        subscription._unsubscribe = wrapped_unsubscribe
+        return subscription
     
     def subscribe_(self, on_next=None, on_error=None, on_completed=None):
         """直接传递回调函数，避免创建 DefaultObserver"""
-        observer = DefaultObserver(on_next, on_error, on_completed)
-        return self._subscribe_fn(observer)
+        observer_pool = get_pool(DefaultObserver, max_size=200, min_size=20)
+        observer = observer_pool.acquire()
+        observer._on_next = on_next or (lambda _: None)
+        observer._on_error = on_error or (lambda e: None)
+        observer._on_completed = on_completed or (lambda: None)
+        observer._pool = observer_pool
+        
+        subscription = self._subscribe_fn(observer)
+        
+        original_unsubscribe = subscription._unsubscribe
+        def wrapped_unsubscribe():
+            original_unsubscribe()
+            observer.release()
+        
+        subscription._unsubscribe = wrapped_unsubscribe
+        return subscription
     
     pipe = PipeDescriptor[T]()
     
@@ -715,22 +762,27 @@ class Observable(Generic[T]):
     def from_iterable(cls, iterable):
         def subscribe(observer):
             iterator = iter(iterable)
+            subscription = None
             is_closed = False
             
             def unsubscribe():
                 nonlocal is_closed
                 is_closed = True
             
+            subscription = Subscription(unsubscribe)
+            
             try:
                 while not is_closed:
                     observer.on_next(next(iterator))
+                    if is_closed:
+                        break
             except StopIteration:
                 pass
             
             if not is_closed:
                 observer.on_completed()
             
-            return Subscription(unsubscribe)
+            return subscription
         return cls(subscribe)
     
     @classmethod

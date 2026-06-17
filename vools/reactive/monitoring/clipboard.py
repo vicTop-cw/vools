@@ -1443,7 +1443,7 @@ class ClipSubject(MonitorSubject):
         )
 
     def p(self):
-        from .observable import PipeBuilder, Observable
+        from ..core.observable import PipeBuilder, Observable
         return PipeBuilder(Observable(self._subscribe_generator), origin=self)
 
     def _connect_dispatcher(self) -> None:

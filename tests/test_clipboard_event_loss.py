@@ -24,7 +24,7 @@ def set_clipboard_text_tk(text: str):
 
 def test_rapid_consecutive_copy():
     logging.info("=" * 60)
-    logging.info("测试1: 快速连续复制相同内容（验证不会永久丢失事件�?)
+    logging.info("æµè¯1: å¿«éè¿ç»­å¤å¶ç¸ååå®¹ï¼éªè¯ä¸ä¼æ°¸ä¹ä¸¢å¤±äºä»¶ï¼?)
     logging.info("=" * 60)
     
     received_events = []
@@ -37,18 +37,18 @@ def test_rapid_consecutive_copy():
         with lock:
             received_events.append((x.change_type, x.content))
         content = str(x.content)[:50] if x.content else "None"
-        logging.info(f"  收到: type={x.change_type.name}, content={content}, seq={x.sequence}")
+        logging.info(f"  æ¶å°: type={x.change_type.name}, content={content}, seq={x.sequence}")
     
     pb = clip.p().when_stop(lambda x: x.content and "TEST_DONE" in str(x.content))
     sub = pb.subscribe(on_next)
     
-    logging.info(f"使用后端: {dispatcher.backend_name}")
-    logging.info("等待1秒后开始测�?..")
+    logging.info(f"ä½¿ç¨åç«¯: {dispatcher.backend_name}")
+    logging.info("ç­å¾1ç§åå¼å§æµè¯?..")
     time.sleep(1)
     
     same_text = "same_content_test"
     for i in range(5):
-        logging.info(f"  设置剪贴�?[{i+1}/5]: '{same_text}'")
+        logging.info(f"  è®¾ç½®åªè´´æ?[{i+1}/5]: '{same_text}'")
         set_clipboard_text_tk(same_text)
         time.sleep(0.1)
     
@@ -62,19 +62,19 @@ def test_rapid_consecutive_copy():
         count = len(received_events)
         unique_contents = set(str(e[1]) for e in received_events)
     
-    logging.info(f"\n结果: 收到 {count} 个事�? 不同内容�? {len(unique_contents)}")
-    logging.info(f"统计: dispatch={dispatcher.dispatch_count}, duplicate={dispatcher.duplicate_count}, error={dispatcher.error_count}")
+    logging.info(f"\nç»æ: æ¶å° {count} ä¸ªäºä»? ä¸ååå®¹æ? {len(unique_contents)}")
+    logging.info(f"ç»è®¡: dispatch={dispatcher.dispatch_count}, duplicate={dispatcher.duplicate_count}, error={dispatcher.error_count}")
     
     if count >= 1:
-        logging.info("�?测试通过：至少收到了一个事�?)
+        logging.info("â?æµè¯éè¿ï¼è³å°æ¶å°äºä¸ä¸ªäºä»?)
     else:
-        logging.error("�?测试失败：没有收到任何事�?)
+        logging.error("â?æµè¯å¤±è´¥ï¼æ²¡ææ¶å°ä»»ä½äºä»?)
     
     return count >= 1
 
 def test_rapid_different_copy():
     logging.info("\n" + "=" * 60)
-    logging.info("测试2: 快速连续复制不同内容（验证所有事件都能被捕获�?)
+    logging.info("æµè¯2: å¿«éè¿ç»­å¤å¶ä¸ååå®¹ï¼éªè¯ææäºä»¶é½è½è¢«æè·ï¼?)
     logging.info("=" * 60)
     
     received_events = []
@@ -87,13 +87,13 @@ def test_rapid_different_copy():
         with lock:
             received_events.append((x.change_type, x.content))
         content = str(x.content)[:50] if x.content else "None"
-        logging.info(f"  收到: type={x.change_type.name}, content={content}, seq={x.sequence}")
+        logging.info(f"  æ¶å°: type={x.change_type.name}, content={content}, seq={x.sequence}")
     
     pb = clip.p().when_stop(lambda x: x.content and "TEST_DONE" in str(x.content))
     sub = pb.subscribe(on_next)
     
-    logging.info(f"使用后端: {dispatcher.backend_name}")
-    logging.info("等待1秒后开始测�?..")
+    logging.info(f"ä½¿ç¨åç«¯: {dispatcher.backend_name}")
+    logging.info("ç­å¾1ç§åå¼å§æµè¯?..")
     time.sleep(1)
     
     expected_texts = [
@@ -105,7 +105,7 @@ def test_rapid_different_copy():
     ]
     
     for i, text in enumerate(expected_texts):
-        logging.info(f"  设置剪贴�?[{i+1}/5]: '{text}'")
+        logging.info(f"  è®¾ç½®åªè´´æ?[{i+1}/5]: '{text}'")
         set_clipboard_text_tk(text)
         time.sleep(0.08)
     
@@ -121,22 +121,22 @@ def test_rapid_different_copy():
     
     found_count = sum(1 for et in expected_texts if et in received_contents)
     
-    logging.info(f"\n结果: 收到 {count} 个事�?)
-    logging.info(f"期望内容: {expected_texts}")
-    logging.info(f"实际收到: {received_contents}")
-    logging.info(f"找到 {found_count}/{len(expected_texts)} 个期望内�?)
-    logging.info(f"统计: dispatch={dispatcher.dispatch_count}, duplicate={dispatcher.duplicate_count}, error={dispatcher.error_count}")
+    logging.info(f"\nç»æ: æ¶å° {count} ä¸ªäºä»?)
+    logging.info(f"ææåå®¹: {expected_texts}")
+    logging.info(f"å®éæ¶å°: {received_contents}")
+    logging.info(f"æ¾å° {found_count}/{len(expected_texts)} ä¸ªææåå®?)
+    logging.info(f"ç»è®¡: dispatch={dispatcher.dispatch_count}, duplicate={dispatcher.duplicate_count}, error={dispatcher.error_count}")
     
     if found_count == len(expected_texts):
-        logging.info("�?测试通过：所有期望内容都被捕�?)
+        logging.info("â?æµè¯éè¿ï¼ææææåå®¹é½è¢«æè?)
     else:
-        logging.error(f"�?测试失败：只找到�?{found_count}/{len(expected_texts)} 个期望内�?)
+        logging.error(f"â?æµè¯å¤±è´¥ï¼åªæ¾å°äº?{found_count}/{len(expected_texts)} ä¸ªææåå®?)
     
     return found_count == len(expected_texts)
 
 def test_time_window_dedup():
     logging.info("\n" + "=" * 60)
-    logging.info("测试3: 时间窗口去重（验证相同内容在TTL后可再次触发�?)
+    logging.info("æµè¯3: æ¶é´çªå£å»éï¼éªè¯ç¸ååå®¹å¨TTLåå¯åæ¬¡è§¦åï¼?)
     logging.info("=" * 60)
     
     received_events = []
@@ -149,26 +149,26 @@ def test_time_window_dedup():
         with lock:
             received_events.append((x.change_type, x.content))
         content = str(x.content)[:50] if x.content else "None"
-        logging.info(f"  收到: type={x.change_type.name}, content={content}, seq={x.sequence}")
+        logging.info(f"  æ¶å°: type={x.change_type.name}, content={content}, seq={x.sequence}")
     
     pb = clip.p().when_stop(lambda x: x.content and "TEST_DONE" in str(x.content))
     sub = pb.subscribe(on_next)
     
-    logging.info(f"使用后端: {dispatcher.backend_name}")
-    logging.info("等待1秒后开始测�?..")
+    logging.info(f"ä½¿ç¨åç«¯: {dispatcher.backend_name}")
+    logging.info("ç­å¾1ç§åå¼å§æµè¯?..")
     time.sleep(1)
     
     same_text = "time_window_test"
     
-    logging.info(f"第一次设�? '{same_text}'")
+    logging.info(f"ç¬¬ä¸æ¬¡è®¾ç½? '{same_text}'")
     set_clipboard_text_tk(same_text)
     time.sleep(0.2)
     
-    logging.info(f"第二次设置（TTL内）: '{same_text}'")
+    logging.info(f"ç¬¬äºæ¬¡è®¾ç½®ï¼TTLåï¼: '{same_text}'")
     set_clipboard_text_tk(same_text)
     time.sleep(0.6)
     
-    logging.info(f"第三次设置（TTL后）: '{same_text}'")
+    logging.info(f"ç¬¬ä¸æ¬¡è®¾ç½®ï¼TTLåï¼: '{same_text}'")
     set_clipboard_text_tk(same_text)
     time.sleep(0.5)
     
@@ -181,19 +181,19 @@ def test_time_window_dedup():
         count = len(received_events)
         same_content_count = sum(1 for e in received_events if str(e[1]) == same_text)
     
-    logging.info(f"\n结果: 收到 {count} 个事�? 其中相同内容事件�? {same_content_count}")
-    logging.info(f"统计: dispatch={dispatcher.dispatch_count}, duplicate={dispatcher.duplicate_count}, error={dispatcher.error_count}")
+    logging.info(f"\nç»æ: æ¶å° {count} ä¸ªäºä»? å¶ä¸­ç¸ååå®¹äºä»¶æ? {same_content_count}")
+    logging.info(f"ç»è®¡: dispatch={dispatcher.dispatch_count}, duplicate={dispatcher.duplicate_count}, error={dispatcher.error_count}")
     
     if same_content_count >= 2:
-        logging.info("�?测试通过：相同内容在TTL后成功再次触�?)
+        logging.info("â?æµè¯éè¿ï¼ç¸ååå®¹å¨TTLåæååæ¬¡è§¦å?)
     else:
-        logging.error("�?测试失败：相同内容没有在TTL后再次触�?)
+        logging.error("â?æµè¯å¤±è´¥ï¼ç¸ååå®¹æ²¡æå¨TTLååæ¬¡è§¦å?)
     
     return same_content_count >= 2
 
 def test_self_filter():
     logging.info("\n" + "=" * 60)
-    logging.info("测试4: 自过滤机制（验证写回不会导致无限循环�?)
+    logging.info("æµè¯4: èªè¿æ»¤æºå¶ï¼éªè¯ååä¸ä¼å¯¼è´æ éå¾ªç¯ï¼?)
     logging.info("=" * 60)
     
     received_events = []
@@ -206,20 +206,20 @@ def test_self_filter():
         with lock:
             received_events.append((x.change_type, x.content))
         content = str(x.content)[:50] if x.content else "None"
-        logging.info(f"  收到: type={x.change_type.name}, content={content}, seq={x.sequence}")
+        logging.info(f"  æ¶å°: type={x.change_type.name}, content={content}, seq={x.sequence}")
     
     pb = clip.p().when_stop(lambda x: x.content and "TEST_DONE" in str(x.content))
     sub = pb.subscribe(on_next)
     
-    logging.info(f"使用后端: {dispatcher.backend_name}")
-    logging.info("等待1秒后开始测�?..")
+    logging.info(f"ä½¿ç¨åç«¯: {dispatcher.backend_name}")
+    logging.info("ç­å¾1ç§åå¼å§æµè¯?..")
     time.sleep(1)
     
-    logging.info("外部设置剪贴�? 'external_content'")
+    logging.info("å¤é¨è®¾ç½®åªè´´æ? 'external_content'")
     set_clipboard_text_tk("external_content")
     time.sleep(0.5)
     
-    logging.info("通过dispatcher写回: 'written_back_content'")
+    logging.info("éè¿dispatcheråå: 'written_back_content'")
     clip.set_text("written_back_content", source="test")
     time.sleep(0.5)
     
@@ -231,18 +231,18 @@ def test_self_filter():
     with lock:
         count = len(received_events)
     
-    logging.info(f"\n结果: 收到 {count} 个事�?)
-    logging.info(f"统计: dispatch={dispatcher.dispatch_count}, self_filtered={dispatcher.self_filtered_count}, error={dispatcher.error_count}")
+    logging.info(f"\nç»æ: æ¶å° {count} ä¸ªäºä»?)
+    logging.info(f"ç»è®¡: dispatch={dispatcher.dispatch_count}, self_filtered={dispatcher.self_filtered_count}, error={dispatcher.error_count}")
     
     if dispatcher.self_filtered_count >= 1:
-        logging.info("�?测试通过：自过滤机制正常工作")
+        logging.info("â?æµè¯éè¿ï¼èªè¿æ»¤æºå¶æ­£å¸¸å·¥ä½")
     else:
-        logging.error("�?测试失败：自过滤机制没有正常工作")
+        logging.error("â?æµè¯å¤±è´¥ï¼èªè¿æ»¤æºå¶æ²¡ææ­£å¸¸å·¥ä½")
     
     return dispatcher.self_filtered_count >= 1
 
 if __name__ == "__main__":
-    logging.info("剪贴板事件丢失修复验证测�?)
+    logging.info("åªè´´æ¿äºä»¶ä¸¢å¤±ä¿®å¤éªè¯æµè¯?)
     logging.info("=" * 60)
     
     results = []
@@ -255,11 +255,11 @@ if __name__ == "__main__":
     logging.info("\n" + "=" * 60)
     passed = sum(results)
     total = len(results)
-    logging.info(f"测试结果: {passed}/{total} 通过")
+    logging.info(f"æµè¯ç»æ: {passed}/{total} éè¿")
     
     if passed == total:
-        logging.info("�?所有测试通过�?)
+        logging.info("â?æææµè¯éè¿ï¼?)
         sys.exit(0)
     else:
-        logging.error("�?部分测试失败")
+        logging.error("â?é¨åæµè¯å¤±è´¥")
         sys.exit(1)

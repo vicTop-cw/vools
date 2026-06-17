@@ -72,11 +72,11 @@ def monitor_process(control_file: str, log_file: str, disable_filter: bool):
                   key_name=kd.key_name,
                   key_event_type=KeyEventType(kd.event_type).name,
                   path="backend -> _on_change -> subject -> observer -> callback")
-        print(f"[监控] 收到键盘事件: {KeyEventType(kd.event_type).name} - {kd.key_name} (0x{kd.key_code:02X}) - seq={kd.sequence}")
+        print(f"[çæ§] æ¶å°é®çäºä»¶: {KeyEventType(kd.event_type).name} - {kd.key_name} (0x{kd.key_code:02X}) - seq={kd.sequence}")
     
     filter_self = not disable_filter
     
-    print(f"[监控] filter_self={filter_self} (自过滤已禁用)")
+    print(f"[çæ§] filter_self={filter_self} (èªè¿æ»¤å·²ç¦ç¨)")
     
     try:
         ks = KeySubject(
@@ -86,7 +86,7 @@ def monitor_process(control_file: str, log_file: str, disable_filter: bool):
         ks.subscribe(on_next=on_key_event)
         ks.start()
     except Exception as e:
-        print(f"[监控] win32 后端启动失败，回退�?polling 后端: {e}")
+        print(f"[çæ§] win32 åç«¯å¯å¨å¤±è´¥ï¼åéå?polling åç«¯: {e}")
         ks = KeySubject(
             backend="polling",
             filter_self=filter_self,
@@ -96,9 +96,9 @@ def monitor_process(control_file: str, log_file: str, disable_filter: bool):
     
     current_memory = process.memory_info().rss / 1024 / 1024
     
-    print(f"[监控] 启动成功，后�? {ks.backend_name}")
-    print(f"[监控] filter_self: {ks.dispatcher._filter_self}")
-    print(f"[监控] 初始内存: {initial_memory:.2f}MB, 当前内存: {current_memory:.2f}MB")
+    print(f"[çæ§] å¯å¨æåï¼åç«? {ks.backend_name}")
+    print(f"[çæ§] filter_self: {ks.dispatcher._filter_self}")
+    print(f"[çæ§] åå§åå­: {initial_memory:.2f}MB, å½ååå­: {current_memory:.2f}MB")
     
     log_event(log_file, "monitor_config",
               backend=ks.backend_name,
@@ -124,7 +124,7 @@ def monitor_process(control_file: str, log_file: str, disable_filter: bool):
               self_filtered_count=ks.self_filtered_count,
               final_memory_mb=final_memory)
     
-    print(f"[监控] 停止，收�?{len(events_received)} 个键盘事�?)
+    print(f"[çæ§] åæ­¢ï¼æ¶å?{len(events_received)} ä¸ªé®çäºä»?)
     
     events_path = os.path.join(os.path.dirname(control_file) or os.path.expanduser("~"), "_keyboard_events.json")
     with open(events_path, "w", encoding="utf-8") as f:
@@ -165,34 +165,34 @@ def simulator_process(control_file: str, log_file: str):
                   name=name,
                   action=action,
                   **kwargs)
-        print(f"[模拟] {name}: {action}")
+        print(f"[æ¨¡æ] {name}: {action}")
     
     scenarios = [
-        ("tap_a", "按字�?A", {"key": "a"}),
-        ("tap_b", "按字�?B", {"key": "b"}),
-        ("tap_c", "按字�?C", {"key": "c"}),
-        ("tap_1", "按数�?1", {"key": "1"}),
-        ("tap_enter", "按回车键", {"key": "enter"}),
+        ("tap_a", "æå­æ¯?A", {"key": "a"}),
+        ("tap_b", "æå­æ¯?B", {"key": "b"}),
+        ("tap_c", "æå­æ¯?C", {"key": "c"}),
+        ("tap_1", "ææ°å­?1", {"key": "1"}),
+        ("tap_enter", "æåè½¦é®", {"key": "enter"}),
         
-        ("tap_shift", "�?Shift �?, {"key": "shift"}),
-        ("tap_ctrl", "�?Ctrl �?, {"key": "ctrl"}),
-        ("tap_alt", "�?Alt �?, {"key": "alt"}),
-        ("tap_win", "�?Win �?, {"key": "win"}),
+        ("tap_shift", "æ?Shift é?, {"key": "shift"}),
+        ("tap_ctrl", "æ?Ctrl é?, {"key": "ctrl"}),
+        ("tap_alt", "æ?Alt é?, {"key": "alt"}),
+        ("tap_win", "æ?Win é?, {"key": "win"}),
         
         ("ctrl_a", "Ctrl+A", {"keys": ["ctrl", "a"]}),
         ("ctrl_c", "Ctrl+C", {"keys": ["ctrl", "c"]}),
         ("ctrl_v", "Ctrl+V", {"keys": ["ctrl", "v"]}),
         
         ("shift_a", "Shift+A", {"keys": ["shift", "a"]}),
-        ("rapid_taps", "快速连续按�?, {"keys": ["a", "b", "c", "d", "e"], "delay": 0.05}),
-        ("function_keys", "功能�?F1-F4", {"keys": ["f1", "f2", "f3", "f4"]}),
+        ("rapid_taps", "å¿«éè¿ç»­æé?, {"keys": ["a", "b", "c", "d", "e"], "delay": 0.05}),
+        ("function_keys", "åè½é?F1-F4", {"keys": ["f1", "f2", "f3", "f4"]}),
         
-        ("type_hello", "输入文本 'hello'", {"text": "hello"}),
+        ("type_hello", "è¾å¥ææ¬ 'hello'", {"text": "hello"}),
     ]
     
     from vools.reactive.monitoring.keyboard import _press, _release, _type_text, _hotkey
     
-    print(f"\n[模拟] 开始执�?{len(scenarios)} 个测试场�?..")
+    print(f"\n[æ¨¡æ] å¼å§æ§è¡?{len(scenarios)} ä¸ªæµè¯åºæ?..")
     
     for i, scenario in enumerate(scenarios):
         name, action, params = scenario[0], scenario[1], scenario[2]
@@ -220,12 +220,12 @@ def simulator_process(control_file: str, log_file: str):
             
         except Exception as e:
             log_event(log_file, "simulator_error", name=name, error=str(e))
-            print(f"[模拟] 错误: {e}")
+            print(f"[æ¨¡æ] éè¯¯: {e}")
         
         time.sleep(0.15)
         
         if (i + 1) % 5 == 0:
-            print(f"[模拟] 已完�?{i+1}/{len(scenarios)} 个场�?)
+            print(f"[æ¨¡æ] å·²å®æ?{i+1}/{len(scenarios)} ä¸ªåºæ?)
     
     ops_path = os.path.join(os.path.dirname(control_file) or os.path.expanduser("~"), "_keyboard_operations.json")
     with open(ops_path, "w", encoding="utf-8") as f:
@@ -233,7 +233,7 @@ def simulator_process(control_file: str, log_file: str):
     
     write_control(control_file, "done")
     
-    print(f"\n[模拟] 完成 {len(scenarios)} 个键盘操�?)
+    print(f"\n[æ¨¡æ] å®æ {len(scenarios)} ä¸ªé®çæä½?)
 
 
 def main():
@@ -248,8 +248,8 @@ def main():
         os.remove(log_file)
     
     print("=" * 80)
-    print("KeyObserver/KeySubject 集成测试")
-    print(f"自过滤状�? {'已禁用（确保所有键盘事件完整传递）' if disable_filter else '已启�?}")
+    print("KeyObserver/KeySubject éææµè¯")
+    print(f"èªè¿æ»¤ç¶æ? {'å·²ç¦ç¨ï¼ç¡®ä¿ææé®çäºä»¶å®æ´ä¼ éï¼' if disable_filter else 'å·²å¯ç?}")
     print("=" * 80)
     
     monitor = multiprocessing.Process(target=monitor_process, args=(control_file, log_file, disable_filter))
@@ -269,7 +269,7 @@ def main():
         monitor.join()
     
     print("\n" + "=" * 80)
-    print("测试结果分析:")
+    print("æµè¯ç»æåæ:")
     print("-" * 40)
     
     events_path = os.path.join(os.path.expanduser("~"), "_keyboard_events.json")
@@ -283,19 +283,19 @@ def main():
             et = evt.get("event_type", "UNKNOWN")
             event_type_counts[et] = event_type_counts.get(et, 0) + 1
         
-        print(f"收到键盘事件�? {len(events)}")
-        print(f"分发计数: {data.get('dispatch_count', 0)}")
-        print(f"过滤计数: {data.get('self_filtered_count', 0)}")
-        print(f"后端: {data.get('backend', 'unknown')}")
+        print(f"æ¶å°é®çäºä»¶æ? {len(events)}")
+        print(f"ååè®¡æ°: {data.get('dispatch_count', 0)}")
+        print(f"è¿æ»¤è®¡æ°: {data.get('self_filtered_count', 0)}")
+        print(f"åç«¯: {data.get('backend', 'unknown')}")
         print(f"filter_self: {data.get('filter_self', 'unknown')}")
-        print(f"初始内存: {data.get('initial_memory_mb', 0):.2f}MB")
-        print(f"最终内�? {data.get('final_memory_mb', 0):.2f}MB")
+        print(f"åå§åå­: {data.get('initial_memory_mb', 0):.2f}MB")
+        print(f"æç»åå­? {data.get('final_memory_mb', 0):.2f}MB")
         mem_delta = data.get('final_memory_mb', 0) - data.get('initial_memory_mb', 0)
-        print(f"内存增量: {'+' if mem_delta >= 0 else ''}{mem_delta:.2f}MB")
+        print(f"åå­å¢é: {'+' if mem_delta >= 0 else ''}{mem_delta:.2f}MB")
         
-        print("\n键盘事件类型统计:")
+        print("\né®çäºä»¶ç±»åç»è®¡:")
         for et, count in sorted(event_type_counts.items()):
-            print(f"  - {et}: {count} �?)
+            print(f"  - {et}: {count} ä¸?)
         
         ops_path = os.path.join(os.path.expanduser("~"), "_keyboard_operations.json")
         ops_count = 0
@@ -304,10 +304,10 @@ def main():
                 ops_data = json.load(f)
             ops_count = len(ops_data.get("operations", []))
         
-        print(f"\n执行的键盘操作数: {ops_count}")
+        print(f"\næ§è¡çé®çæä½æ°: {ops_count}")
     
     print("\n" + "=" * 80)
-    print("测试验证总结:")
+    print("æµè¯éªè¯æ»ç»:")
     print("-" * 40)
     
     if os.path.exists(events_path):
@@ -317,28 +317,28 @@ def main():
         events = data.get("events", [])
         filtered = data.get("self_filtered_count", 0)
         
-        print(f"�?事件接收�? {len(events)} �?)
-        print(f"�?过滤计数: {filtered} �?(应为0)")
+        print(f"â?äºä»¶æ¥æ¶æ? {len(events)} ä¸?)
+        print(f"â?è¿æ»¤è®¡æ°: {filtered} ä¸?(åºä¸º0)")
         
         if filtered == 0 and disable_filter:
-            print("✓✓�?自过滤功能已正确禁用")
+            print("âââ?èªè¿æ»¤åè½å·²æ­£ç¡®ç¦ç¨")
         else:
-            print("�?自过滤功能可能存在问�?)
+            print("â?èªè¿æ»¤åè½å¯è½å­å¨é®é¢?)
         
         mem_delta = data.get('final_memory_mb', 0) - data.get('initial_memory_mb', 0)
         if abs(mem_delta) < 10:
-            print(f"�?内存稳定�? 通过 (增量: {'+' if mem_delta >= 0 else ''}{mem_delta:.2f}MB)")
+            print(f"â?åå­ç¨³å®æ? éè¿ (å¢é: {'+' if mem_delta >= 0 else ''}{mem_delta:.2f}MB)")
         else:
-            print(f"�?内存稳定�? 警告 (增量: {'+' if mem_delta >= 0 else ''}{mem_delta:.2f}MB)")
+            print(f"â?åå­ç¨³å®æ? è­¦å (å¢é: {'+' if mem_delta >= 0 else ''}{mem_delta:.2f}MB)")
         
-        print("\n事件覆盖情况:")
+        print("\näºä»¶è¦çæåµ:")
         event_types = ["KEY_DOWN", "KEY_UP"]
         for et in event_types:
             count = sum(1 for e in events if e.get("event_type") == et)
-            print(f"  - {et}: {count} �?)
+            print(f"  - {et}: {count} ä¸?)
     
     print("\n" + "=" * 80)
-    print("测试完成")
+    print("æµè¯å®æ")
     print("=" * 80)
 
 

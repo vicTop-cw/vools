@@ -17,25 +17,25 @@ from vools.reactive.monitoring.clipboard import ClipSubject, ClipChangeType, Cli
 clip = ClipSubject(change_types=ClipChangeType.TEXT, filter_self=False)
 dispatcher = clip.dispatcher
 
-logging.info(f"使用后端: {type(dispatcher._backend).__name__}")
+logging.info(f"ä½¿ç¨åç«¯: {type(dispatcher._backend).__name__}")
 
 received_events = []
 
 def on_next(x):
     content = str(x.content)[:100] if x.content else "None"
-    logging.info(f"剪贴板变�?- type={x.change_type.name}, content={content}")
+    logging.info(f"åªè´´æ¿åæ?- type={x.change_type.name}, content={content}")
     received_events.append((x.change_type, x.content))
 
 def on_error(e):
-    logging.error(f"错误: {e}")
+    logging.error(f"éè¯¯: {e}")
 
 def on_completed():
-    logging.info("监控完成")
+    logging.info("çæ§å®æ")
 
 pb = clip.p().when_stop(lambda x: x.content and "STOP_TEST" in str(x.content))
 sub = pb.subscribe(on_next, on_error, on_completed)
 
-logging.info("监控已启动，等待1秒后开始设置剪贴板...")
+logging.info("çæ§å·²å¯å¨ï¼ç­å¾1ç§åå¼å§è®¾ç½®åªè´´æ¿...")
 time.sleep(1)
 
 test_texts = [
@@ -46,18 +46,18 @@ test_texts = [
     "STOP_TEST"
 ]
 
-logging.info("开始设置剪贴板内容...")
+logging.info("å¼å§è®¾ç½®åªè´´æ¿åå®¹...")
 for text in test_texts:
-    logging.info(f"设置剪贴�? '{text}'")
+    logging.info(f"è®¾ç½®åªè´´æ? '{text}'")
     for attempt in range(5):
         try:
             dispatcher.set_clipboard(content=text, change_type="TEXT")
             break
         except Exception as e:
-            logging.warning(f"  尝试 {attempt+1} 失败: {e}")
+            logging.warning(f"  å°è¯ {attempt+1} å¤±è´¥: {e}")
             time.sleep(0.05)
     time.sleep(0.5)
 
-logging.info(f"测试完成，收�?{len(received_events)} 个事�?)
+logging.info(f"æµè¯å®æï¼æ¶å?{len(received_events)} ä¸ªäºä»?)
 for i, (ct, content) in enumerate(received_events):
-    logging.info(f"  事件 {i}: {ct.name} - {str(content)[:50]}")
+    logging.info(f"  äºä»¶ {i}: {ct.name} - {str(content)[:50]}")
