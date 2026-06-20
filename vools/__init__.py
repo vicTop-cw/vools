@@ -174,6 +174,13 @@ _lazy_modules = {
     'TaskStatus': '.task',
     'Task': '.task',
     'batch_execute': '.task',
+    'DagScheduler': '.task',
+    'DagValidationError': '.task',
+    'Rule': '.task',
+    'RuleEngine': '.task',
+    'RuleSet': '.task',
+    'RuleStatus': '.task',
+    'rule': '.task',
 
     # 响应式模块
     'reactive': '.reactive',
@@ -252,6 +259,17 @@ def __getattr__(name: str) -> Any:
     if name in ('vicTools', 'vicDate', 'vicText', 'vicList'):
         _load_vic()
         return _vic_classes.get(name)
+
+    if name in ('VList', 'VText', 'VDate'):
+        if name == 'VList':
+            from .data.vlist import VList as _cls
+            return _cls
+        elif name == 'VText':
+            from .data.vtext import VText as _cls
+            return _cls
+        elif name == 'VDate':
+            from .datetime.vdate_class import VDate as _cls
+            return _cls
 
     if name in _lazy_modules:
         module_path = _lazy_modules[name]
@@ -440,6 +458,18 @@ __all__ = [
     'TaskStatus',
     'Task',
     'batch_execute',
+    'DagScheduler',
+    'DagValidationError',
+    'Rule',
+    'RuleEngine',
+    'RuleSet',
+    'RuleStatus',
+    'rule',
+
+    # V 类
+    'VList',
+    'VText',
+    'VDate',
 ]
 
 _common_names = [
@@ -471,6 +501,10 @@ _common_names = [
     'generate_key', 'generate_token',
     # 任务模块
     'task', 'TaskQueue', 'WorkerPool', 'ThreadPool', 'TaskStatus', 'Task', 'batch_execute',
+    'DagScheduler', 'DagValidationError', 'Rule', 'RuleEngine', 'RuleSet', 'RuleStatus', 'rule',
+
+    # V 类
+    'VList', 'VText', 'VDate',
 
     # 响应式模块
     'reactive', 'Observable', 'Subject', 'BehaviorSubject', 'ReplaySubject', 'AsyncSubject', 'ops',

@@ -74,7 +74,9 @@ def box(func=None, *, signature_from=None):
             return rs
         
         # 延迟导入避免循环导入
-        from ..vic import vicList, vicDate, vicText
+        from ..data.vlist import VList as vicList
+        from ..datetime.vdate_class import VDate as vicDate
+        from ..data.vtext import VText as vicText
         
         # 使用对应的 vic 类包装返回值
         if isinstance(rs, str):
@@ -239,7 +241,7 @@ class Box(AOP):
 
             if name not in methods:
                 try:
-                    from ..vic import vicDate
+                    from ..datetime.vdate_class import VDate as vicDate
                     vic_date_methods = {m: getattr(vicDate, m) for m in dir(vicDate) if not m.startswith('_')}
                     if name in vic_date_methods:
                         method = vic_date_methods[name]
@@ -341,7 +343,7 @@ class Box(AOP):
         elif isinstance(base, datetime):
             ks = set(_get_methods('datetime').keys())
             try:
-                from ..vic import vicDate
+                from ..datetime.vdate_class import VDate as vicDate
                 ks = ks | {m for m in dir(vicDate) if not m.startswith('_')}
             except ImportError:
                 pass
