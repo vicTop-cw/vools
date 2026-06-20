@@ -452,6 +452,53 @@ class NewOverloadManager(OverloadManager):
         # 注册主函数
         self._register_function(func, priority=priority)
 
+    # ---- serialization support ----
+
+    def __getstate__(self):
+        """Return serialization state (exclude check functions)"""
+        import pickle as _pickle
+        serializable = []
+        for _, func, priority, reg_index, func_name in self.overloads:
+            try:
+                # Verify the function is pickleable
+                _pickle.dumps(func)
+                serializable.append((None, func, priority, reg_index, func_name))
+            except (_pickle.PicklingError, AttributeError, TypeError):
+                # Function is not pickleable (e.g. name shadowed by manager)
+                pass
+        return {
+            'mode': self.mode,
+            'overloads': serializable,
+            'main_func': self.main_func,
+            'export_mode': self.export_mode,
+            'func_name': self.func_name,
+            'module': self.module,
+            'qualname': self.qualname,
+            'scope': self.scope,
+            'key': self.key,
+            'counter': self.counter,
+            '_allow_chain_register': self._allow_chain_register,
+        }
+
+    def __setstate__(self, state):
+        """Restore from serialization state"""
+        self.mode = state['mode']
+        raw_overloads = state.get('overloads', [])
+        self.overloads = []
+        for _, func, priority, reg_index, func_name in raw_overloads:
+            check = self._get_check_func(func)
+            self.overloads.append((check, func, priority, reg_index, func_name))
+        self.main_func = state['main_func']
+        self.export_mode = state['export_mode']
+        self.func_name = state['func_name']
+        self.module = state['module']
+        self.qualname = state['qualname']
+        self.scope = state['scope']
+        self.key = state['key']
+        self.counter = state['counter']
+        self._allow_chain_register = state.get('_allow_chain_register', True)
+        self.parent = None
+
     def _validate_mode(self) -> None:
         """验证模式组合的合法性"""
         mode = self.mode

@@ -749,7 +749,25 @@ class Seq(SeqBase):
         def _inner(self,*args,**kwargs):
             return func(self,*args,**kwargs)
         setattr(self,func.__name__,_inner)
-        
+
+    # ---- serialization support ----
+
+    def __getstate__(self):
+        """返回序列化状态：将延迟求值的数据物化为列表保存"""
+        # 物化数据：触发实际求值，保存结果列表
+        data = list(self._evaluate())
+        return {'_data': data}
+
+    def __setstate__(self, state):
+        """从序列化状态恢复：从物化数据重建 Seq"""
+        data = state.get('_data', [])
+        self._collection = list(data)
+        self._last = len(data) - 1
+        self._current = -1
+        self._origin = iter([])  # empty origin, data already in _collection
+        self._ops = []
+        self._active_op = _identify
+
 
 def collect(xs,f=None,factory=Seq) :
     """_summary_
