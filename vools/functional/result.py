@@ -160,6 +160,17 @@ class Result(Generic[T, E]):
         return (self._is_success == other._is_success and
                 self._value == other._value)
 
+    # ─── 序列化支持 ───
+
+    def __getstate__(self) -> dict:
+        """返回序列化状态"""
+        return {'_value': self._value, '_is_success': self._is_success}
+
+    def __setstate__(self, state: dict) -> None:
+        """从序列化状态恢复"""
+        self._value = state['_value']
+        self._is_success = state['_is_success']
+
 
 class Success(Result[T, E]):
     """成功结果的便捷子类"""
