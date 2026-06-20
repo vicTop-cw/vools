@@ -102,7 +102,6 @@ class Pipe:
         return cls(_compose)
     
     @classmethod
-
     def compose(cls, *funcs):
         """创建组合函数"""
         return cls.pipe(*reversed(funcs))

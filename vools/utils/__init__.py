@@ -67,7 +67,7 @@ def pipe(*funcs: Callable) -> Callable:
 # stuff - 高级参数注入装饰器
 # ============================================================================
 
-from .stuff import stuff, Stuff, StuffConfig, IndexedDict
+from .stuff import stuff, Stuff, IndexedDict
 from .hoder import Hoder
 
-__all__.extend(['Stuff', 'StuffConfig', 'IndexedDict', 'Hoder'])
+__all__.extend(['Stuff', 'IndexedDict', 'Hoder'])

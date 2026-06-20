@@ -277,26 +277,6 @@ class TaskStorage:
         """生成唯一Worker ID"""
         return str(uuid.uuid4())
 
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def _row_to_task(self, row: tuple) -> Task:
         """将数据库行转换为Task对象"""
         # 获取列名

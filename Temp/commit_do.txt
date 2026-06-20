@@ -1,6 +1,0 @@
-添加 do() 实例方法到所有非 __slots__/Enum 类
-
-所有用户可见类添加 do(self, f=print, pre_f=None, sub_f=None) 方法
-返回 self 支持链式调用，用于副作用调试/日志
-
-Co-Authored-By: AtomCode (deepseek-v4-flash) <noreply@atomgit.com>

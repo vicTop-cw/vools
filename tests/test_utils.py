@@ -89,11 +89,11 @@ def test_stuff():
     def multiply(a, b, c):
         return a * b * c
 
-    @multiply.provide
+    @multiply.register
     def get_a():
         return 2
 
-    @multiply.provide(for_param=['b', 'c'])
+    @multiply.register(param_name=['b', 'c'])
     def get_bc():
         return 3, 4
 

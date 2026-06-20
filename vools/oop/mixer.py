@@ -140,7 +140,6 @@ class Mixer_:
 
     # ===== 缓存优化 =====
     @lru_cache(maxsize=256)
-
     def _get_cached_attr(self, name):
         """LRU缓存优化方法（内部使用）"""
         return self.__getattr__(name)
@@ -201,7 +200,6 @@ class Mixer(Mixer_):
             'partial_args': partial_args if partial_args else [],
             'partial_kwargs': partial_kwargs if partial_kwargs else {}
         }
-
 
     def __getattr__(self, name):
         """获取属性"""

@@ -113,26 +113,6 @@ class SafeExpressionEvaluator:
         else:
             raise SafeEvalError(f"不支持的表达式类型: {type(node).__name__}")
 
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def evaluate(self, expr: str) -> Any:
         try:
             tree = ast.parse(expr, mode='eval')

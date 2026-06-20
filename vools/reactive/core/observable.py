@@ -71,7 +71,6 @@ class Observer(Generic[T], ABC):
         pass
     
     @abstractmethod
-
     def on_completed(self):
         pass
 
@@ -116,7 +115,6 @@ class DefaultObserver(Observer[T]):
 class PipeDescriptor(Generic[T]):
     """pipe 描述符 - 同时支持可调用和链式调用"""
     
-
     def __get__(self, instance: Observable[T], owner=None) -> 'PipeBuilder[T]':
         if instance is None:
             return self

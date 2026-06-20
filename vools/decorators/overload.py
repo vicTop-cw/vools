@@ -417,26 +417,6 @@ class OverloadManager:
         else:
             return candidates[0][0](*args, **kwargs)
 
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def is_overload_manager(self) -> bool:
         """检查是否是 OverloadManager"""
         return True
@@ -518,26 +498,6 @@ class NewOverloadManager(OverloadManager):
         self.counter = state['counter']
         self._allow_chain_register = state.get('_allow_chain_register', True)
         self.parent = None
-
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
 
     def _validate_mode(self) -> None:
         """验证模式组合的合法性"""
@@ -627,26 +587,6 @@ class StrictMode:
         else:
             self._enabled = enabled
             self.func = func
-
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
 
     def __call__(self, *args, **kwargs):
         if self._enabled:

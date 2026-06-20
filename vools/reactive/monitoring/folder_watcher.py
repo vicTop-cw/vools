@@ -208,26 +208,6 @@ class FolderData:
         return pickle.loads(b)
 
     # ---- 表示 --------------------------------------------------------
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __str__(self) -> str:
         parts = [f"FolderData(path={self.path!r}"]
         if self.old_path:
@@ -1393,26 +1373,6 @@ class FolderSubject(MonitorSubject):
     def __exit__(self, exc_type, exc, tb) -> None:
         self.stop()
 
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __del__(self) -> None:
         try:
             self.stop()
@@ -1487,26 +1447,6 @@ class FolderObserver(MonitorObserver):
 
     def __enter__(self) -> "FolderObserver":
         return self
-
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.unsubscribe()

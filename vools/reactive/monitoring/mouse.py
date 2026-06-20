@@ -125,26 +125,6 @@ class MouseData:
     def from_pickle(cls, data: bytes) -> "MouseData":
         return cls.from_dict(pickle.loads(data))
 
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __repr__(self) -> str:
         return (
             f"MouseData(x={self.x}, y={self.y}, "
@@ -803,26 +783,6 @@ class MouseDispatcher:
         _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
         return self
 
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def release_button(self, button: str = "left") -> "MouseDispatcher":
         if button == "left":
             u = MOUSEEVENTF_LEFTUP
@@ -932,26 +892,6 @@ class MouseSubject(MonitorSubject):
     def __exit__(self, exc_type, exc, tb) -> None:
         self.stop()
 
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __del__(self) -> None:
         try:
             self.stop()
@@ -996,26 +936,6 @@ class MouseObserver(MonitorObserver):
 
     def __enter__(self) -> "MouseObserver":
         return self
-
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.unsubscribe()

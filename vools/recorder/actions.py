@@ -44,26 +44,6 @@ class Action:
         """从 JSON 字符串创建"""
         return cls.from_dict(json.loads(json_str))
     
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __repr__(self) -> str:
         params_str = ', '.join(f'{k}={v!r}' for k, v in self.params.items())
         return f"Action({self.action_type.value}, {self.timestamp:.1f}ms, {params_str})"
@@ -194,25 +174,5 @@ class Recording:
     def __repr__(self) -> str:
         return f"Recording({len(self.actions)} actions, {self.duration:.1f}ms)"
     
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __len__(self) -> int:
         return len(self.actions)

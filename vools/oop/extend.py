@@ -773,26 +773,6 @@ if __name__ == "__main__":
         def add(self, a, b):
             return a + b
         
-
-            def do(self, f=print, pre_f=None, sub_f=None):
-                """Apply a function for side effects, return self.
-
-                Args:
-                    f: Function to apply (default print)
-                    pre_f: Pre-processing function
-                    sub_f: Post-processing function (no return value expected)
-
-                Returns:
-                    self, for chaining
-                """
-                rs = self
-                if pre_f:
-                    rs = pre_f(rs)
-                rs = f(rs)
-                if sub_f:
-                    sub_f(rs)
-                return self
-
         def multiply(self, a, b):
             return a * b
     
@@ -808,26 +788,6 @@ if __name__ == "__main__":
         def show(self, sep):
             print(sep.join(map(str, self.data)))
             
-
-            def do(self, f=print, pre_f=None, sub_f=None):
-                """Apply a function for side effects, return self.
-
-                Args:
-                    f: Function to apply (default print)
-                    pre_f: Pre-processing function
-                    sub_f: Post-processing function (no return value expected)
-
-                Returns:
-                    self, for chaining
-                """
-                rs = self
-                if pre_f:
-                    rs = pre_f(rs)
-                rs = f(rs)
-                if sub_f:
-                    sub_f(rs)
-                return self
-
         def update_version(self, a, b):
 
             return a * b
