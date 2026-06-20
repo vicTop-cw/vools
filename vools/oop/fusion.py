@@ -294,7 +294,21 @@ class ClassFusion:
         self._class_name = None
         self._auto_wrap_return = False
         self._fused_class = None
-    
+
+    def __getstate__(self):
+        """返回序列化状态"""
+        return {
+            '_classes': self._classes,
+            '_method_overrides': self._method_overrides,
+            '_method_wrappers': self._method_wrappers,
+        }
+
+    def __setstate__(self, state):
+        """从序列化状态恢复"""
+        for k in ('_classes', '_method_overrides', '_method_wrappers'):
+            setattr(self, k, state[k])
+        self._fused_class = None
+
     def add_class(self, cls: Type) -> 'ClassFusion':
         """添加要融合的类"""
         self._classes.append(cls)

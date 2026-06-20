@@ -50,6 +50,14 @@ class CurriedMethod:
         # 检查所有必需参数是否都被填充
         return filled == set(self.required_params)
     
+    def __getstate__(self):
+        """Return serialization state"""
+        return {k: getattr(self, k) for k in ('func','instance','required_params','has_varargs','has_varkw','all_param_names','method_name','collected_args','collected_kwargs')}
+    def __setstate__(self, state):
+        """Restore from serialization state"""
+        for k, v in state.items():
+            setattr(self, k, v)
+
     def __call__(self, *args, **kwargs):
         new_args = self.collected_args + list(args)
         new_kwargs = {**self.collected_kwargs, **kwargs}
