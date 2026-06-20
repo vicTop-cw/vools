@@ -38,6 +38,17 @@ class _OnceWrapper:
         self.__signature__ = signature(func)
         self.force_default = False  # 默认值
     
+    def __getstate__(self):
+        """Return serialization state"""
+        return {k: getattr(self, k) for k in ('func','called','result','force','called_args','called_kwargs','last_called_time')}
+    def __setstate__(self, state):
+        """Restore from serialization state"""
+        for k, v in state.items():
+            setattr(self, k, v)
+        from inspect import signature
+        self.__signature__ = signature(self.func)
+        self.force_default = getattr(self.func, '_force_default', False)
+
     def __call__(self, *args, **kwargs) -> Any:
         # 使用 force_default 作为默认值，如果调用时提供了 force 参数则覆盖
         force = kwargs.pop("force", self.force_default)

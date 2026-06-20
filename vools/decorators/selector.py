@@ -39,6 +39,15 @@ class Selector:
         raise TypeError(f"Not all functions are {'ready' if not shoud_full else 'full'}")
     
     
+    def __getstate__(self):
+        """Return serialization state"""
+        return {'funcs': self.funcs, '_is_init': self._is_init}
+
+    def __setstate__(self, state):
+        """Restore from serialization state"""
+        self.funcs = state['funcs']
+        self._is_init = state.get('_is_init', True)
+
     def __str__(self):
         return "Selector(" + '\n==========================\n'.join(map(str,self.funcs)) + ")"
     
@@ -168,6 +177,17 @@ class Overloads(Selector):
         if returnOverload:
             return cls(result)
         return result
+    def __getstate__(self):
+        """Return serialization state"""
+        base = super().__getstate__()
+        base['delaied'] = self.delaied
+        return base
+
+    def __setstate__(self, state):
+        """Restore from serialization state"""
+        super().__setstate__(state)
+        self.delaied = state.get('delaied', False)
+
     def __str__(self):
         return "Overloads(" + '\n==========================\n'.join(map(str,self.funcs)) + ")"
     

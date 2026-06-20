@@ -229,6 +229,17 @@ class _OnceWrapper:
         self.last_called_time = None
         self.__signature__ = signature(func)
     
+    def __getstate__(self):
+        """Return serialization state"""
+        return {k: getattr(self, k) for k in ('func','called','result','force','called_args','called_kwargs','last_called_time')}
+    def __setstate__(self, state):
+        """Restore from serialization state"""
+        for k, v in state.items():
+            setattr(self, k, v)
+        from inspect import signature
+        self.__signature__ = signature(self.func)
+        self.force_default = False
+
     def __call__(self, *args, **kwargs) -> Any:
         force = kwargs.pop("force", False)
         if force:

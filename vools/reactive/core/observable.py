@@ -710,7 +710,24 @@ class Observable(Generic[T]):
     
     def __init__(self, subscribe_fn):
         self._subscribe_fn = subscribe_fn
-    
+
+    def __getstate__(self):
+        """Return serialization state"""
+        d = {}
+        for s in ('_subscribe_fn', '_source', '_subject', '_connection', '_has_subscribed'):
+            try:
+                d[s] = getattr(self, s)
+            except AttributeError:
+                d[s] = None
+        d['connect'] = getattr(self, 'connect', None)
+        return d
+    def __setstate__(self, state):
+        """Restore from serialization state"""
+        for s in ('_subscribe_fn', '_source', '_subject', '_connection', '_has_subscribed'):
+            object.__setattr__(self, s, state.get(s))
+        self._subscriptions = set()
+        object.__setattr__(self, 'connect', state.get('connect'))
+
     def subscribe(self, on_next=None, on_error=None, on_completed=None, observer=None):
         if observer is None:
             observer_pool = get_pool(DefaultObserver, max_size=200, min_size=20)

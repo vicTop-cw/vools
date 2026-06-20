@@ -158,6 +158,14 @@ class PipeX:
         """
         self.ops = (prev.ops + [op]) if prev else [op]
 
+    def __getstate__(self):
+        """Return serialization state"""
+        return {'ops': self.ops}
+
+    def __setstate__(self, state):
+        """Restore from serialization state"""
+        self.ops = state['ops']
+
     def __getattr__(self, name):
         """继续构建管道：属性访问"""
         return PipeX(('attr', name), self)
@@ -394,6 +402,14 @@ class PipeY:
             prev: 前一个 PipeY 实例（用于链式构建）
         """
         self.ops = (prev.ops + [op]) if prev else [op]
+
+    def __getstate__(self):
+        """Return serialization state"""
+        return {'ops': self.ops}
+
+    def __setstate__(self, state):
+        """Restore from serialization state"""
+        self.ops = state['ops']
 
     def __getattr__(self, name):
         """继续构建管道：属性访问"""
