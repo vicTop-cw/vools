@@ -107,6 +107,14 @@ class _X:
             cls._instance = super().__new__(cls)
         return cls._instance
 
+    def __getstate__(self):
+        """Singleton: return module path reference"""
+        return {'__singleton__': 'vools.functional.placeholder_impl:X'}
+
+    def __setstate__(self, state):
+        """Singleton: nothing to restore"""
+        pass
+
     def __getattr__(self, name):
         """拦截属性访问，开始构建管道"""
         return PipeX(('attr', name))
@@ -335,6 +343,14 @@ class _Y:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
+
+    def __getstate__(self):
+        """Singleton: return module path reference"""
+        return {'__singleton__': 'vools.functional.placeholder_impl:Y'}
+
+    def __setstate__(self, state):
+        """Singleton: nothing to restore"""
+        pass
 
     def __getattr__(self, name):
         """拦截属性访问，开始构建管道"""

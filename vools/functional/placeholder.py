@@ -283,6 +283,49 @@ class _IndexHolder:
     
     def __hash__(self):
         return hash(self.expr)
+
+    def __getstate__(self):
+        """Return serialization state (convert module refs to strings)"""
+        import importlib as _il
+        state = {}
+        for slot in self.__slots__:
+            try:
+                val = getattr(self, slot)
+                if slot == 'X':
+                    continue
+                if slot == 'env' and isinstance(val, dict):
+                    env_ser = {}
+                    for k, v in val.items():
+                        if isinstance(v, type(_il)):
+                            env_ser[k] = f"__module__:{v.__name__}"
+                        else:
+                            env_ser[k] = v
+                    state[slot] = env_ser
+                elif slot == '_cached_call':
+                    continue
+                else:
+                    state[slot] = val
+            except AttributeError:
+                pass
+        return state
+
+    def __setstate__(self, state):
+        """Restore from serialization state"""
+        import importlib as _il
+        for k, v in state.items():
+            if k == 'env' and isinstance(v, dict):
+                env_restored = {}
+                for ek, ev in v.items():
+                    if isinstance(ev, str) and ev.startswith('__module__:'):
+                        mod_name = ev[len('__module__:'):]
+                        env_restored[ek] = _il.import_module(mod_name)
+                    else:
+                        env_restored[ek] = ev
+                object.__setattr__(self, 'env', env_restored)
+            else:
+                object.__setattr__(self, k, v)
+        object.__setattr__(self, 'X', None)
+        object.__setattr__(self, '_cached_call', None)
     
     @property
     def call(self):
