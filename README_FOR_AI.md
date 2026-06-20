@@ -175,6 +175,9 @@ def evaluate(self, context: Dict[str, Any]) -> Result:
 | 修改函数签名 | 类型注解 + docstring 参数说明 |
 | 新增子包 | 父包 `README.md` 子包索引 + 新子包 `README.md` |
 | 修改行为 | docstring 示例 + 依赖该 API 的调用方 |
+| **修改源码** | **检查并更新对应的 `tests/test_*.py` 测试文件** |
+
+> 修改任何源码后，必须运行相关测试并确保通过。如果测试文件没有覆盖改动，可能需要新增测试用例。
 
 ---
 
