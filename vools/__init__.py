@@ -37,6 +37,8 @@ from .decorators import (
     memorize, once, persist,
     lazy, repeat, retry, rerun,
     overload, overcurry, overloads,
+    OverloadManager, OverloadMode, reset_registry,
+    Priority, AllowSyncName, Strict, Ambiguous,
     curry, curry_class, rself
 )
 
@@ -316,6 +318,8 @@ __all__ = [
     'smart_partial',
     'delay_curry',
     'overload',
+    'OverloadManager', 'OverloadMode', 'reset_registry',
+    'Priority', 'AllowSyncName', 'Strict', 'Ambiguous',
     'overcurry',
     'overloads',
     'curry',
@@ -481,7 +485,9 @@ _common_names = [
     'ConfigManager', 'DatabaseConfig', 'CacheConfig', 'AppConfig',
     'config', 'ConfigManager',
     'memorize', 'once', 'persist', 'lazy', 'repeat', 'retry', 'rerun',
-    'overload', 'overcurry', 'overloads',
+    'overload', 'OverloadManager', 'OverloadMode', 'reset_registry',
+    'Priority', 'AllowSyncName', 'Strict', 'Ambiguous',
+    'overcurry', 'overloads',
     '_', '_1', '_2', '_3', 'g', 'iif', 'ConditionBuilder', 'LazyProperty',
     'Box', 'box', 'Seq',
     'P', 'X', 'Y', 'Ops', 'O', 'calltype',

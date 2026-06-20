@@ -17,6 +17,9 @@ from vools.decorators import (
     curry, delay_curry, is_curried,
     overload, strict,
 )
+from vools.decorators.overload import (
+    Priority, AllowSyncName, Strict, Ambiguous, ParentMode
+)
 
 
 def test_curry_basic():
@@ -199,12 +202,14 @@ def test_overload_basic():
     @overload
     def process():
         return "无参数"
-    
-    @process.register
+
+    from vools.decorators.overload import ParentMode
+
+    @process.register(export_mode=ParentMode)
     def process_x(x):
         return f"一个参数: {x}"
     
-    @process.register
+    @process.register(export_mode=ParentMode)
     def process_xy(x, y):
         return f"两个参数: {x}, {y}"
     
@@ -221,12 +226,12 @@ def test_overload_strict():
     print("测试 overload 严格模式")
     print("="*50)
     
-    @overload(is_strict=True)
+    @overload(mode=Strict | Ambiguous)
     def process(a: int, b: int):
         return a + b
     
-    @process.register
-    def process_str(a: str, b: str):
+    @process.register(export_mode=ParentMode)
+    def process(a: str, b: str):
         return a + b
     
     assert process(1, 2) == 3, "测试1失败"
@@ -247,15 +252,15 @@ def test_overload_priority():
     print("测试 overload 优先级")
     print("="*50)
     
-    @overload(priority='first')
+    @overload(mode=Priority | AllowSyncName | Strict | Ambiguous)
     def process():
         return "主函数"
     
-    @process.register(priority=1)
+    @process.register(priority=1, export_mode=ParentMode)
     def process_one(arg):
         return f"优先级1: {arg}"
     
-    @process.register(priority=10)
+    @process.register(priority=10, export_mode=ParentMode)
     def process_high(arg):
         return f"高优先级: {arg}"
     
@@ -274,16 +279,16 @@ def test_overload_class_method():
     class Processor:
         def __init__(self, prefix):
             self.prefix = prefix
-        
-        @overload(is_strict=True)
+
+        @overload(mode=Priority | AllowSyncName | Strict | Ambiguous)
         def process(self):
             return f"{self.prefix}: 无参数"
-        
-        @process.register
+
+        @process.register(export_mode=ParentMode)
         def process_int(self, x: int):
             return f"{self.prefix}: 整数({x})"
-        
-        @process.register
+
+        @process.register(export_mode=ParentMode)
         def process_str(self, x: str):
             return f"{self.prefix}: 字符串({x})"
     

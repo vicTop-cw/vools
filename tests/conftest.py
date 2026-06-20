@@ -9,13 +9,11 @@ def clear_caches():
     clear_sig_cache()
     
     # 清理 overloads 注册表
-    from vools.decorators.overloads import _registry, _wrappers_cache
-    _registry.clear()
-    _wrappers_cache.clear()
+    from vools.decorators.overload import reset_registry
+    reset_registry()
     
     yield
     
     # 测试后再次清理
     clear_sig_cache()
-    _registry.clear()
-    _wrappers_cache.clear()
+    reset_registry()
