@@ -11,6 +11,7 @@ from enum import Enum
 
 from .typedefs import ActionType
 from .actions import Action, Recording
+__all__ = ['log', 'PlaybackState', 'Player']
 
 # 尝试导入 reactive 模块
 try:

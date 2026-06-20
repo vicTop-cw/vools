@@ -1,9 +1,6 @@
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from environment import run_command
+from .environment import run_command
 
 
 def publish_to_pypi(project_root, config, test=False):

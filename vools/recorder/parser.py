@@ -9,6 +9,7 @@ from typing import List, Optional, Tuple, Dict, Any
 
 from .typedefs import ActionType, MouseButton
 from .actions import Action, Recording
+__all__ = ['log', 'ParserError', 'Parser']
 
 log = logging.getLogger(__name__)
 

@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import shlex
 from pathlib import Path
 
 
@@ -35,15 +36,23 @@ def check_pypirc(config):
 
 
 def run_command(cmd, cwd=None, capture_output=True, env=None):
-    """运行命令并返回结果"""
+    """
+    运行命令并返回结果
+
+    安全说明：始终使用 shell=False，命令参数以列表形式传递，
+    避免 shell 注入风险。如果传入字符串，会使用 shlex.split 安全拆分。
+    """
     try:
+        if isinstance(cmd, str):
+            cmd = shlex.split(cmd)
+
         result = subprocess.run(
             cmd,
             cwd=cwd,
             capture_output=capture_output,
             text=True,
             env=env,
-            shell=True
+            shell=False
         )
         return {
             "success": result.returncode == 0,
@@ -62,11 +71,11 @@ def run_command(cmd, cwd=None, capture_output=True, env=None):
 
 def install_dependencies(requirements_file="requirements.txt"):
     """安装项目依赖"""
-    result = run_command(f"pip install -r {requirements_file}")
+    result = run_command(["pip", "install", "-r", requirements_file])
     return result
 
 
 def install_build_tools():
     """安装构建工具"""
-    result = run_command("pip install build twine")
+    result = run_command(["pip", "install", "build", "twine"])
     return result

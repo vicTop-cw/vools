@@ -9,6 +9,7 @@ import json
 import time as _time
 
 from .typedefs import ActionType, MouseButton
+__all__ = ['Action', 'Recording']
 
 @dataclass
 class Action:

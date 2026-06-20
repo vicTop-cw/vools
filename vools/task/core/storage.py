@@ -7,7 +7,7 @@ __all__ = ['TaskStorage']
 import sqlite3
 import uuid
 import json
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
@@ -76,6 +76,23 @@ class TaskStorage:
                 CREATE INDEX IF NOT EXISTS idx_worker_lease
                 ON tasks (worker_id, lease_timeout)
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS task_dependencies (
+                    task_id INTEGER NOT NULL,
+                    depends_on_id INTEGER NOT NULL,
+                    PRIMARY KEY (task_id, depends_on_id),
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                    FOREIGN KEY (depends_on_id) REFERENCES tasks(id) ON DELETE CASCADE
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_dep_task
+                ON task_dependencies (task_id)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_dep_depends
+                ON task_dependencies (depends_on_id)
+            """)
 
     def insert_task(self, task: Task) -> int:
         """插入新任务"""
@@ -93,7 +110,13 @@ class TaskStorage:
                 task.priority,
                 task.max_retries,
             ))
-            return cursor.lastrowid
+            task_id = cursor.lastrowid
+            for dep_id in task.dependencies:
+                conn.execute("""
+                    INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_id)
+                    VALUES (?, ?)
+                """, (task_id, dep_id))
+            return task_id
 
     def claim_task(self, worker_id: str, lease_seconds: int = 300) -> Optional[Task]:
         """

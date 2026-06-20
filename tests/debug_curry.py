@@ -22,5 +22,5 @@ except Exception as e:
     traceback.print_exc()
 
 # Check signature
-from vools.sig_cache import cache_info
+from vools.cache import cache_info
 print(f"sig cache: {cache_info()}")

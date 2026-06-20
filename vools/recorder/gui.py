@@ -21,6 +21,7 @@ from .player import Player
 from .parser import Parser
 from .actions import Recording
 from .typedefs import ActionType
+__all__ = ['RecorderGUI', 'main']
 
 
 class _GUIState(Enum):

@@ -1,10 +1,7 @@
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from environment import run_command
-from config import get_current_version, increment_version, update_version
+from .environment import run_command
+from .config import get_current_version, increment_version, update_version
 
 
 def get_git_log_since_last_tag(project_root):

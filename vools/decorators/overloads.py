@@ -1,7 +1,7 @@
 import inspect
 from typing import Any, Callable, Optional, List, Tuple, Union, Dict
 import wrapt
-from vools.sig_cache import get_signature
+from vools.cache.sigcache import get_signature
 
 
 """参数个数相同的情况，*args, **kws 不要指望只靠数据类型 来选择执行的函数"""

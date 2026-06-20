@@ -25,7 +25,7 @@ import types
 from functools import wraps
 from typing import Any, Callable, Optional, List, Tuple, Union, Dict
 import typing
-from vools.sig_cache import get_signature
+from vools.cache.sigcache import get_signature
 
 from .curry_core import is_curried, Curried
 

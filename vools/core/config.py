@@ -8,14 +8,7 @@ __all__ = ['DatabaseConfig', 'CacheConfig', 'AppConfig', 'ConfigManager']
 import os
 from typing import Dict, Optional
 
-try:
-    from dataclasses import dataclass
-except ImportError:
-    from attr import attrs, attrib
-
-    def dataclass(cls):
-        """兼容 dataclass 的装饰器（使用 attrs）"""
-        return attrs(cls)
+from .dataclass_compat import dataclass
 
 
 @dataclass

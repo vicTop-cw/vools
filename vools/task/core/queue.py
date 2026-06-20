@@ -7,10 +7,10 @@ __all__ = ['TaskQueue']
 import pickle
 import base64
 import time
-from typing import Any, Callable, Optional, List
+from typing import Any, Callable, Optional, List, Set, Dict
 from functools import partial
 
-from .models import Task, TaskStatus
+from .models import Task, TaskStatus, DagValidationError
 from .storage import TaskStorage
 
 
@@ -38,6 +38,7 @@ class TaskQueue:
         # 提取特殊参数
         priority = kwargs.pop('priority', 0)
         max_retries = kwargs.pop('max_retries', 3)
+        depends_on: Set[int] = kwargs.pop('depends_on', None) or set()
 
         # 序列化函数
         func_data = self._serialize_func(func)
@@ -51,7 +52,12 @@ class TaskQueue:
             status=TaskStatus.PENDING,
             priority=priority,
             max_retries=max_retries,
+            dependencies=depends_on,
         )
+
+        # DAG依赖校验
+        if depends_on:
+            self._validate_dag(task)
 
         return self.storage.insert_task(task)
 
@@ -179,3 +185,43 @@ class TaskQueue:
         """
         func = self._deserialize_func(task.task_func)
         return func(*task.args, **task.kwargs)
+
+    def _validate_dag(self, task: Task) -> None:
+        """
+        DAG依赖校验：检查依赖ID是否存在，以及是否存在循环依赖
+
+        Args:
+            task: 待校验的任务
+
+        Raises:
+            DagValidationError: 依赖校验失败
+        """
+        visited: Set[int] = set()
+
+        def dfs(current_id: int, chain: Set[int]) -> None:
+            """DFS检查循环依赖"""
+            if current_id in chain:
+                raise DagValidationError(
+                    f"Circular dependency detected: task {task.id} "
+                    f"depends on task {current_id} which is already "
+                    f"in the dependency chain {chain}"
+                )
+
+            if current_id in visited:
+                return
+            visited.add(current_id)
+
+            # 检查依赖任务是否存在
+            dep_task = self.get_task(current_id)
+            if dep_task is None:
+                raise DagValidationError(
+                    f"Dependency task {current_id} not found"
+                )
+
+            # 递归检查上游依赖
+            if dep_task.dependencies:
+                for dep_id in dep_task.dependencies:
+                    dfs(dep_id, chain | {current_id})
+
+        for dep_id in task.dependencies:
+            dfs(dep_id, {task.id})

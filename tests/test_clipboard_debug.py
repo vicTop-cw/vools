@@ -62,6 +62,6 @@ for text in test_texts:
     set_clipboard_text_tk(text)
     time.sleep(0.8)
 
-logging.info(f"æµè¯å®æï¼æ¶å?{len(received_events)} ä¸ªäºä»?)
+logging.info(f"æµè¯å®æï¼æ¶å?{len(received_events)} ä¸ªäºä»?")
 for i, (ct, content) in enumerate(received_events):
     logging.info(f"  äºä»¶ {i}: {ct.name} - {str(content)[:50]}")

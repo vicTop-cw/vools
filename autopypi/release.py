@@ -1,11 +1,8 @@
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from config import load_config, get_current_version, increment_version, update_version
-from logger import setup_logger, log_step, log_separator
-from environment import (
+from .config import load_config, get_current_version, increment_version, update_version
+from .logger import setup_logger, log_step, log_separator
+from .environment import (
     check_python_version,
     check_dependencies,
     check_git_repo,
@@ -13,8 +10,8 @@ from environment import (
     install_build_tools,
     run_command,
 )
-from packaging import build_package, check_package, verify_package
-from versioning import (
+from .packaging import build_package, check_package, verify_package
+from .versioning import (
     create_changelog,
     git_add_all,
     git_commit,
@@ -23,7 +20,7 @@ from versioning import (
     git_push_tag,
     get_git_status,
 )
-from publishing import publish_to_pypi
+from .publishing import publish_to_pypi
 
 
 class ReleaseError(Exception):

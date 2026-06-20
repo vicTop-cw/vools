@@ -7,6 +7,7 @@ recorder 命令行入口
 """
 import sys
 import argparse
+__all__ = ['main']
 
 
 def main() -> None:

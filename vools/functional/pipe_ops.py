@@ -15,7 +15,7 @@ import re
 import math
 import time
 import inspect
-from vools.sig_cache import get_signature
+from vools.cache.sigcache import get_signature
 
 from ..data import Seq, NONE
 from ..decorators import curry

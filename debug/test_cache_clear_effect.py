@@ -2,7 +2,7 @@
 import sys
 sys.path.insert(0, '.')
 
-from vools.sig_cache import get_signature, clear_cache, _preload_builtins
+from vools.cache import get_signature, clear_cache, _preload_builtins
 from vools.decorators import curry as curry_decorator
 
 # 先使用 curry

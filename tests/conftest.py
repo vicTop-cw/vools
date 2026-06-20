@@ -4,8 +4,8 @@ import pytest
 @pytest.fixture(autouse=True)
 def clear_caches():
     """在每个测试前清理所有缓存"""
-    # 清理 sig_cache
-    from vools.sig_cache import clear_cache as clear_sig_cache
+    # 清理 cache
+    from vools.cache import clear_cache as clear_sig_cache
     clear_sig_cache()
     
     # 清理 overloads 注册表

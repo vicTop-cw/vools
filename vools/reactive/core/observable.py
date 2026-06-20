@@ -12,6 +12,7 @@ import time
 
 from ...decorators import curry, lazy
 from .object_pool import get_pool, pooled_acquire, pooled_release
+__all__ = ['T', 'R', 'Subscription', 'Observer', 'DefaultObserver', 'PipeDescriptor', 'PipeBuilder', 'Observable']
 
 T = TypeVar('T')
 R = TypeVar('R')
