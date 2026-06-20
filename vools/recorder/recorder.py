@@ -12,6 +12,7 @@ from threading import Event
 
 from .typedefs import ActionType, MOD_SHIFT, MOD_CTRL, MOD_ALT, MOD_WIN
 from .actions import Action, Recording
+__all__ = ['log', 'Recorder']
 
 # 尝试导入 reactive 模块
 try:

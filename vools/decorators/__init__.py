@@ -15,7 +15,7 @@ from .cache import memorize, once, persist
 from .lazy import lazy
 from .control import repeat, retry, rerun
 from .trd import trd, proc
-from .extend import extend
+# extend 延迟导入（原 decorators.extend 已移至 oop.method_extend）
 from .shotcut import (
     timeit,
     safe,
@@ -160,3 +160,11 @@ __all__ = [
     'apply',
     'curried_apply',
 ]
+
+# 向后兼容：extend 装饰器（原 decorators.extend，现移至 oop.method_extend）
+# 使用延迟导入避免循环导入
+def __getattr__(name):
+    if name == 'extend':
+        from ..oop.method_extend import extend
+        return extend
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 # 延迟导入 Observable
 from .observable import Observable
+__all__ = ['T', 'K', 'ConnectableObservable', 'ref_count', 'publish', 'share', 'replay', 'publish_replay', 'auto_connect']
 
 T = TypeVar('T')
 K = TypeVar('K')

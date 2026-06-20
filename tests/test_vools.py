@@ -11,7 +11,7 @@ import os
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from vools import vicTools, vicDate, vicText, vicList, Seq, NONE
+from vools import vicTools, vicDate, vicText, vicList, VList, VText, VDate, Seq, NONE
 
 # 测试vicTools
 print("=== 测试 vicTools ===")
@@ -77,9 +77,9 @@ try:
     print(f"upper() 测试: {text1.upper()}")
     print(f"lower() 测试: {text1.lower()}")
     
-    # 测试正则表达式方法
+    # 测试正则表达式方法 (使用 vicTools)
     text2 = vicText("Hello 123 World 456")
-    result = text2.regexp_findall(r"\d+")
+    result = vicTools.regexp_findall(r"\d+", str(text2))
     print(f"regexp_findall 测试: {result}")
     
     # 测试split方法

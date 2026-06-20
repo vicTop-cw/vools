@@ -1,11 +1,11 @@
-"""vools.sig_cache 功能验证测试"""
+"""vools.cache 功能验证测试"""
 import sys
 import os
 import builtins
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from vools.sig_cache import (
+from vools.cache import (
     get_signature, add_custom_sig, cached_getsignature,
     clear_cache, cache_info,
 )

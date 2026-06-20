@@ -2,36 +2,30 @@
 任务数据模型和状态定义
 """
 
-__all__ = ['TaskStatus', 'Task']
+__all__ = ['TaskStatus', 'Task', 'DagValidationError']
 
 from enum import Enum
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, Set
 from datetime import datetime
 import json
 
-try:
-    from dataclasses import dataclass, field
-except ImportError:
-    from attr import attrs, attrib
+from vools.core.dataclass_compat import dataclass, field
 
-    def dataclass(cls):
-        """兼容 dataclass 的装饰器（使用 attrs）"""
-        return attrs(cls)
 
-    def field(default_factory=None, default=None):
-        """兼容 dataclass.field 的函数（使用 attrs）"""
-        if default_factory is not None:
-            return attrib(factory=default_factory)
-        return attrib(default=default)
+class DagValidationError(Exception):
+    """DAG 验证异常（循环依赖等）"""
+    pass
 
 
 class TaskStatus(Enum):
     """任务状态枚举"""
     PENDING = "PENDING"      # 等待处理
+    READY = "READY"          # 依赖已满足，可调度
     RUNNING = "RUNNING"      # 正在处理
     RETRYING = "RETRYING"    # 重试中
     FAILED = "FAILED"        # 失败
     SUCCESS = "SUCCESS"      # 成功
+    SKIPPED = "SKIPPED"      # 因上游失败被跳过
     CANCEL = "CANCEL"        # 已取消
 
 
@@ -49,6 +43,7 @@ class Task:
     max_retries: int = 3
     error_message: Optional[str] = None
     result: Any = None
+    dependencies: Set[int] = field(default_factory=set)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
@@ -70,6 +65,7 @@ class Task:
             "max_retries": self.max_retries,
             "error_message": self.error_message,
             "result": json.dumps(self.result) if self.result is not None else None,
+            "dependencies": json.dumps(list(self.dependencies)),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
@@ -93,6 +89,7 @@ class Task:
             max_retries=data.get("max_retries", 3),
             error_message=data.get("error_message"),
             result=json.loads(data.get("result")) if data.get("result") else None,
+            dependencies=set(json.loads(data.get("dependencies", "[]"))),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
             updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else None,
             started_at=datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None,

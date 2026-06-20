@@ -12,13 +12,10 @@ vools 自动化发布脚本
 """
 
 import argparse
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from release import ReleaseManager
-from config import save_config, DEFAULT_CONFIG
+from .release import ReleaseManager
+from .config import save_config, DEFAULT_CONFIG
 
 
 def main():

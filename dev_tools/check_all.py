@@ -1,68 +1,85 @@
-#!/usr/bin/env python
-"""
-检查所有 .py 文件是否都有 __all__ 变量
-"""
-import os
-import ast
-from pathlib import Path
+"""全量合规检查脚本"""
+import ast, os, sys
 
+base = 'vools'
+report = []
 
-def has_all_list(file_path):
-    """检查文件是否有 __all__ 变量"""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        tree = ast.parse(content)
-    except Exception:
-        return False
-    
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == '__all__':
-                    if isinstance(node.value, ast.List):
-                        return True
-    return False
-
-
-def main():
-    project_root = Path(__file__).parent
-    missing_all = []
-    
-    for dirpath, _, filenames in os.walk(project_root):
-        dirpath = Path(dirpath)
-        
-        # 跳过某些目录
-        if 'tests' in dirpath.parts:
+# --- 1. __all__ ---
+all_miss = []
+for r, _, fs in os.walk(base):
+    for fn in fs:
+        if not fn.endswith('.py'):
             continue
-        if '.git' in dirpath.parts:
+        p = os.path.join(r, fn)
+        rel = os.path.relpath(p, base).replace('\\', '/')
+        if fn.endswith('__init__.py'):
             continue
-        if '__pycache__' in dirpath.parts:
-            continue
-        if 'checkpoint' in str(dirpath).lower():
-            continue
-        
-        for filename in filenames:
-            if filename.endswith('.py'):
-                file_path = dirpath / filename
-                if not has_all_list(file_path):
-                    missing_all.append(str(file_path.relative_to(project_root)))
-    
-    print("=" * 80)
-    print("检查 __all__ 变量")
-    print("=" * 80)
-    
-    if not missing_all:
-        print("[OK] 所有文件都有 __all__ 变量")
-        return
-    
-    print(f"[WARN] 发现 {len(missing_all)} 个文件缺少 __all__ 变量：")
-    print()
-    for file in missing_all:
-        print(f"  - {file}")
-    
-    return missing_all
+        src = open(p, encoding='utf-8').read()
+        if '__all__' not in src:
+            all_miss.append(rel)
+report.append(f"1. Missing __all__: {len(all_miss)}")
+for x in sorted(all_miss):
+    report.append(f"   {x}")
 
+# --- 2. README ---
+pkg_set = set()
+for r, _, fs in os.walk(base):
+    if '__init__.py' in fs:
+        pkg_set.add(os.path.relpath(r, base).replace('\\', '/'))
+readme_miss = []
+for p in sorted(pkg_set):
+    if not os.path.exists(os.path.join(base, p.replace('/', '\\'), 'README.md')):
+        readme_miss.append(p)
+report.append(f"\n2. Missing README: {len(readme_miss)}")
+for x in readme_miss:
+    report.append(f"   {x}")
 
-if __name__ == '__main__':
-    main()
+# --- 3. Return annotations ---
+ret_miss = []
+for r, _, fs in os.walk(base):
+    for fn in fs:
+        if not fn.endswith('.py'):
+            continue
+        p = os.path.join(r, fn)
+        rel = os.path.relpath(p, base).replace('\\', '/')
+        tree = ast.parse(open(p, encoding='utf-8').read())
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef) and not node.name.startswith('_'):
+                if node.returns is None:
+                    ret_miss.append(f"{rel}:L{node.lineno} def {node.name}")
+            if isinstance(node, ast.ClassDef):
+                for m in node.body:
+                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and not m.name.startswith('_'):
+                        if m.returns is None:
+                            ret_miss.append(f"{rel}:L{m.lineno} {node.name}.{m.name}")
+report.append(f"\n3. Missing return annotations: {len(ret_miss)}")
+for x in sorted(ret_miss):
+    report.append(f"   {x}")
+
+# --- 4. Missing docstrings ---
+doc_miss = []
+for r, _, fs in os.walk(base):
+    for fn in fs:
+        if not fn.endswith('.py'):
+            continue
+        p = os.path.join(r, fn)
+        rel = os.path.relpath(p, base).replace('\\', '/')
+        tree = ast.parse(open(p, encoding='utf-8').read())
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.ClassDef):
+                for m in node.body:
+                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and not m.name.startswith('_'):
+                        has_doc = bool(
+                            m.body and isinstance(m.body[0], ast.Expr)
+                            and isinstance(m.body[0].value, ast.Constant)
+                        )
+                        if not has_doc:
+                            doc_miss.append(f"{rel}:L{m.lineno} {node.name}.{m.name}")
+report.append(f"\n4. Missing docstrings (public methods): {len(doc_miss)}")
+for x in sorted(doc_miss):
+    report.append(f"   {x}")
+
+# Print
+print('\n'.join(report))
+print(f"\n=== Summary ===")
+print(f"__all__: {len(all_miss)} | README: {len(readme_miss)} | Annotations: {len(ret_miss)} | Docstrings: {len(doc_miss)}")

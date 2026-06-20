@@ -5,7 +5,7 @@
 import inspect
 from functools import wraps
 from typing import Callable, Any, Dict, List
-from vools.sig_cache import get_signature
+from vools.cache.sigcache import get_signature
 
 __all__ = ['curry_class']
 

@@ -11,6 +11,7 @@ from .exceptions import (
     ValidationError,
     ImportError,
 )
+from .dataclass_compat import dataclass, field, asdict, is_dataclass, MISSING
 from .config import (
     ConfigManager,
     DatabaseConfig,
@@ -30,4 +31,9 @@ __all__ = [
     'DatabaseConfig',
     'CacheConfig',
     'AppConfig',
+    'dataclass',
+    'field',
+    'asdict',
+    'is_dataclass',
+    'MISSING',
 ]

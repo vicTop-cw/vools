@@ -10,6 +10,8 @@ from vools import (
     overcurry,
     vicText,
     vicList,
+    VText,
+    VList,
 )
 
 

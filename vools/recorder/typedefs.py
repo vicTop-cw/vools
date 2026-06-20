@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import time as _time
 import json
+__all__ = ['ActionType', 'MouseButton', 'MOD_SHIFT', 'MOD_CTRL', 'MOD_ALT', 'MOD_WIN']
 
 class ActionType(Enum):
     """操作动作类型，参考 Quicker InputScript"""
