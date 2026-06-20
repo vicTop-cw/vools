@@ -104,7 +104,15 @@ class BehaviorSubject(Subject[T], Generic[T]):
     def __init__(self, initial_value: T):
         super().__init__()
         self._value = initial_value
-    
+
+    def __getstate__(self):
+        d = Subject.__getstate__(self)
+        d['_value'] = self._value
+        return d
+    def __setstate__(self, state):
+        Subject.__setstate__(self, state)
+        self._value = state['_value']
+
     def subscribe(
         self,
         on_next: Optional[Callable[[T], Any]] = None,
@@ -144,7 +152,17 @@ class ReplaySubject(Subject[T], Generic[T]):
         super().__init__()
         self._buffer_size = buffer_size
         self._buffer = []
-    
+
+    def __getstate__(self):
+        d = Subject.__getstate__(self)
+        d['_buffer'] = list(self._buffer)
+        d['_buffer_size'] = self._buffer_size
+        return d
+    def __setstate__(self, state):
+        Subject.__setstate__(self, state)
+        self._buffer_size = state['_buffer_size']
+        self._buffer = list(state.get('_buffer', []))
+
     def subscribe(
         self,
         on_next: Optional[Callable[[T], Any]] = None,
@@ -183,7 +201,17 @@ class AsyncSubject(Subject[T], Generic[T]):
         super().__init__()
         self._has_value = False
         self._value: T = None
-    
+
+    def __getstate__(self):
+        d = Subject.__getstate__(self)
+        d['_value'] = self._value
+        d['_has_value'] = self._has_value
+        return d
+    def __setstate__(self, state):
+        Subject.__setstate__(self, state)
+        self._value = state['_value']
+        self._has_value = state['_has_value']
+
     def subscribe(
         self,
         on_next: Optional[Callable[[T], Any]] = None,
