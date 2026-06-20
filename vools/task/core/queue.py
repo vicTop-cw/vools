@@ -192,6 +192,26 @@ class TaskQueue:
         func = self._deserialize_func(task.task_func)
         return func(*task.args, **task.kwargs)
 
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
     def _validate_dag(self, task: Task) -> None:
         """
         DAG依赖校验：检查依赖ID是否存在，以及是否存在循环依赖

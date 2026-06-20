@@ -36,6 +36,7 @@ class Rule:
     priority: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+
     def evaluate(self, context: Dict[str, Any]) -> Result:
         """
         执行规则：先检查 condition，通过后执行 action
@@ -156,6 +157,7 @@ class RuleSet:
 
     def __len__(self) -> int:
         return len(self._rules)
+
 
     def __repr__(self) -> str:
         return f"RuleSet({len(self._rules)} rules)"

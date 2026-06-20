@@ -82,6 +82,7 @@ class Task:
         }
 
     @classmethod
+
     def from_dict(cls, data: Dict[str, Any]) -> "Task":
         """从字典创建任务"""
         return cls(

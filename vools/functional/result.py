@@ -166,6 +166,7 @@ class Result(Generic[T, E]):
         """返回序列化状态"""
         return {'_value': self._value, '_is_success': self._is_success}
 
+
     def __setstate__(self, state: dict) -> None:
         """从序列化状态恢复"""
         self._value = state['_value']
@@ -175,6 +176,7 @@ class Result(Generic[T, E]):
 class Success(Result[T, E]):
     """成功结果的便捷子类"""
     
+
     def __init__(self, value: T):
         super().__init__(value, is_success=True)
 
@@ -182,6 +184,7 @@ class Success(Result[T, E]):
 class Failure(Result[T, E]):
     """失败结果的便捷子类"""
     
+
     def __init__(self, error: E):
         super().__init__(error, is_success=False)
 

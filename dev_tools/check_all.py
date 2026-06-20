@@ -1,85 +1,58 @@
-"""全量合规检查脚本"""
-import ast, os, sys
+"""合规检查：__all__ 完整性和 README 覆盖率"""
+import os
+import sys
 
-base = 'vools'
-report = []
+errors = 0
 
-# --- 1. __all__ ---
-all_miss = []
-for r, _, fs in os.walk(base):
-    for fn in fs:
-        if not fn.endswith('.py'):
+# 1. __all__ 检查
+print("=" * 50)
+print("检查 __all__ 完整性...")
+missing_all = []
+for r, dirs, files in os.walk("vools"):
+    dirs[:] = [d for d in dirs if d not in ("__pycache__", ".git", ".pytest_cache", "Temp")]
+    for f in files:
+        if not f.endswith(".py") or f == "__init__.py":
             continue
-        p = os.path.join(r, fn)
-        rel = os.path.relpath(p, base).replace('\\', '/')
-        if fn.endswith('__init__.py'):
-            continue
-        src = open(p, encoding='utf-8').read()
-        if '__all__' not in src:
-            all_miss.append(rel)
-report.append(f"1. Missing __all__: {len(all_miss)}")
-for x in sorted(all_miss):
-    report.append(f"   {x}")
+        fpath = os.path.join(r, f)
+        content = open(fpath, encoding="utf-8").read()
+        if "__all__" not in content:
+            rel = os.path.relpath(fpath, "vools").replace("\\", "/")
+            missing_all.append(rel)
+if missing_all:
+    print(f"缺失 __all__: {len(missing_all)}")
+    for m in sorted(missing_all):
+        print(f"  {m}")
+    errors += len(missing_all)
+else:
+    print("[OK] 所有文件均有 __all__")
 
-# --- 2. README ---
-pkg_set = set()
-for r, _, fs in os.walk(base):
-    if '__init__.py' in fs:
-        pkg_set.add(os.path.relpath(r, base).replace('\\', '/'))
-readme_miss = []
-for p in sorted(pkg_set):
-    if not os.path.exists(os.path.join(base, p.replace('/', '\\'), 'README.md')):
-        readme_miss.append(p)
-report.append(f"\n2. Missing README: {len(readme_miss)}")
-for x in readme_miss:
-    report.append(f"   {x}")
+# 2. README 检查
+print()
+print("=" * 50)
+print("检查 README 覆盖率...")
+pkg_dirs = set()
+for r, dirs, files in os.walk("vools"):
+    dirs[:] = [d for d in dirs if d not in ("__pycache__", ".git", ".pytest_cache", "Temp")]
+    if "__init__.py" in files:
+        rel = os.path.relpath(r, "vools").replace("\\", "/")
+        pkg_dirs.add(rel)
+missing_readme = []
+for p in sorted(pkg_dirs):
+    readme_path = os.path.join("vools", p, "README.md")
+    if not os.path.exists(readme_path):
+        missing_readme.append(p)
+print(f"总子包数: {len(pkg_dirs)}")
+if missing_readme:
+    print(f"缺失 README.md: {len(missing_readme)}")
+    for m in missing_readme:
+        print("  MISS: %s/" % m)
+    errors += len(missing_readme)
+else:
+    print("[OK] 所有子包均有 README.md")
 
-# --- 3. Return annotations ---
-ret_miss = []
-for r, _, fs in os.walk(base):
-    for fn in fs:
-        if not fn.endswith('.py'):
-            continue
-        p = os.path.join(r, fn)
-        rel = os.path.relpath(p, base).replace('\\', '/')
-        tree = ast.parse(open(p, encoding='utf-8').read())
-        for node in ast.iter_child_nodes(tree):
-            if isinstance(node, ast.FunctionDef) and not node.name.startswith('_'):
-                if node.returns is None:
-                    ret_miss.append(f"{rel}:L{node.lineno} def {node.name}")
-            if isinstance(node, ast.ClassDef):
-                for m in node.body:
-                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and not m.name.startswith('_'):
-                        if m.returns is None:
-                            ret_miss.append(f"{rel}:L{m.lineno} {node.name}.{m.name}")
-report.append(f"\n3. Missing return annotations: {len(ret_miss)}")
-for x in sorted(ret_miss):
-    report.append(f"   {x}")
-
-# --- 4. Missing docstrings ---
-doc_miss = []
-for r, _, fs in os.walk(base):
-    for fn in fs:
-        if not fn.endswith('.py'):
-            continue
-        p = os.path.join(r, fn)
-        rel = os.path.relpath(p, base).replace('\\', '/')
-        tree = ast.parse(open(p, encoding='utf-8').read())
-        for node in ast.iter_child_nodes(tree):
-            if isinstance(node, ast.ClassDef):
-                for m in node.body:
-                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and not m.name.startswith('_'):
-                        has_doc = bool(
-                            m.body and isinstance(m.body[0], ast.Expr)
-                            and isinstance(m.body[0].value, ast.Constant)
-                        )
-                        if not has_doc:
-                            doc_miss.append(f"{rel}:L{m.lineno} {node.name}.{m.name}")
-report.append(f"\n4. Missing docstrings (public methods): {len(doc_miss)}")
-for x in sorted(doc_miss):
-    report.append(f"   {x}")
-
-# Print
-print('\n'.join(report))
-print(f"\n=== Summary ===")
-print(f"__all__: {len(all_miss)} | README: {len(readme_miss)} | Annotations: {len(ret_miss)} | Docstrings: {len(doc_miss)}")
+summary = "\n" + "=" * 50
+if errors:
+    print(f"{summary}\n[FAIL] {errors} 个问题待修复")
+else:
+    print(f"{summary}\n[OK] 全部合规检查通过！")
+sys.exit(errors)

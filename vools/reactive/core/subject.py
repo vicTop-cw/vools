@@ -141,6 +141,7 @@ class BehaviorSubject(Subject[T], Generic[T]):
         super().on_next(value)
     
     @property
+
     def value(self) -> T:
         return self._value
 
@@ -187,6 +188,7 @@ class ReplaySubject(Subject[T], Generic[T]):
         
         return Subscription(unsubscribe)
     
+
     def on_next(self, value: T) -> None:
         self._buffer.append(value)
         if self._buffer_size is not None and len(self._buffer) > self._buffer_size:
@@ -239,6 +241,7 @@ class AsyncSubject(Subject[T], Generic[T]):
         self._value = value
         self._has_value = True
     
+
     def on_completed(self) -> None:
         if not self._is_closed and not self._is_completed:
             self._is_completed = True

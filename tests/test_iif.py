@@ -189,12 +189,12 @@ class TestIIFFunction:
     def test_iif_with_cases(self):
         """测试使用 cases 参数"""
         # 使用 whens 替代 cases，因为 cases 的默认比较器是 '_?' (检查值是否为真)
-        result = iif(3, whens=[(lambda x: x == 1, "one"), (lambda x: x == 2, "two"), (lambda x: x == 3, "three")])
+        result = iif(data=3, whens=[(lambda x: x == 1, "one"), (lambda x: x == 2, "two"), (lambda x: x == 3, "three")])
         assert result == "three"
     
     def test_iif_with_whens(self):
         """测试使用 whens 参数"""
-        result = iif(15, whens=[(lambda x: x > 10, "big"), (lambda x: x <= 10, "small")])
+        result = iif(data=15, whens=[(lambda x: x > 10, "big"), (lambda x: x <= 10, "small")])
         assert result == "big"
     
     def test_iif_supp_mode(self):

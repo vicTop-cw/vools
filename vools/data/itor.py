@@ -772,6 +772,26 @@ class Itor:
         self._iterator = None
         self._stop_requested = False
 
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
     def _add_history(self, node: Node) -> None:
         """将节点加入历史链表尾（必须持有锁）。"""
         node.next = None

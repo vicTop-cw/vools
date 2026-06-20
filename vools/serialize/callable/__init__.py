@@ -38,6 +38,7 @@ class CallableHandler(ABC):
         raise NotImplementedError
 
     @abstractmethod
+
     def restore(self, state: Dict[str, Any]) -> Any:
         """从序列化状态恢复对象"""
         raise NotImplementedError
