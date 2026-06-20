@@ -38,8 +38,11 @@ from .shotcut import (
 from .curry_core import curry, Curried, CurryDescriptor, is_curried, CurryExecutionError
 from .curry_delay import delay_curry, DelayCurried, is_lazy
 from .curry_decorator import curry_class
-# 重载装饰器
-from .overload import overload, OverloadManager, strict
+# 重载装饰器（新模式：基于 OverloadMode 标志）
+from .overload import overload, OverloadManager, OverloadMode, strict
+from .overload import Priority, AllowSyncName, Strict, Ambiguous
+from .overload import ParentMode, ExportAsFunction, ExportAsManager
+from .overload import reset_registry
 
 # overcurry 装饰器
 from .overcurry import overcurry, OvercurryManager
@@ -126,7 +129,13 @@ __all__ = [
     # 重载
     'overload',
     'OverloadManager',
+    'OverloadMode',
     'strict',
+    'Priority',
+    'AllowSyncName',
+    'Strict',
+    'Ambiguous',
+    'reset_registry',
 
     # overcurry
     'overcurry',
