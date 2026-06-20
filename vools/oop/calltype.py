@@ -197,6 +197,7 @@ def test_callable_type_detection():
             pass
         
     class CallableInstance:
+
         def __call__(self):
             pass
     
@@ -278,6 +279,7 @@ if __name__ == '__main__':
 
     # 测试实现了 __call__ 的类实例
     class CallableClass:
+
         def __call__(self, a, b=10):
             return a + b
 

@@ -1,0 +1,6 @@
+添加序列化支持: X, Y, _IndexHolder
+
+- X, Y: 单例序列化，pickle/json 双后端支持（__vools_singleton__ 格式）
+- _IndexHolder: env 中的模块引用自动转 module name 字符串，恢复时重建
+
+Co-Authored-By: AtomCode (deepseek-v4-flash) <noreply@atomgit.com>

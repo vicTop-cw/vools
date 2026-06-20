@@ -262,6 +262,7 @@ class RuleEngine:
         return Result.success(ordered)
 
     @classmethod
+
     def from_json(
         cls,
         json_path: str,

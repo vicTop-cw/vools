@@ -193,6 +193,7 @@ class CodecRegistry:
         return cls._encoders.copy()
     
     @classmethod
+
     def get_decoders(cls) -> Dict[str, Callable]:
         """
         获取所有解码器
@@ -525,6 +526,7 @@ class Encoder(metaclass=EncoderMeta):
     def __repr__(self):
         return f"Encoder(data={repr(self._data)}, history={self._history})"
     
+
     def __str__(self):
         return str(self._data)
 
@@ -777,6 +779,7 @@ class Decoder(metaclass=EncoderMeta):
     def __repr__(self):
         return f"Decoder(data={repr(self._data)}, history={self._history})"
     
+
     def __str__(self):
         return str(self._data)
 

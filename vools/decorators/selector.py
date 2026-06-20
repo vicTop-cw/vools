@@ -156,6 +156,26 @@ class Selector:
         return self.__class__(*self.funcs*other)
 
 
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
     def toOverloads(self,delaied=False):
         return Overloads(*self.funcs,delaied=delaied)
 
@@ -232,6 +252,26 @@ class Overloads(Selector):
             else:
                 # 如果 result 不是 Overloads 对象，直接返回它
                 return result
+
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
 
     def toSelector(self):
         return Selector(*self.funcs)

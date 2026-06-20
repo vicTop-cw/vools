@@ -552,6 +552,7 @@ class PipeY:
         ops = self.ops
 
         class SubscriptExecutor:
+
             def __getitem__(self_, arg):
                 if isinstance(arg, tuple):
                     if not arg:
