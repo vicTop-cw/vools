@@ -29,6 +29,17 @@ class Mixer_:
         self._attr_cache = {}  # 属性缓存
         self._attr_code = {}  # 额外代码
 
+    def __getstate__(self):
+        return {'_objs': self._objs, '_priority_map': self._priority_map,
+                '_attr_cache': {}, '_attr_code': self._attr_code}
+    def __setstate__(self, state):
+        self._objs = state['_objs']
+        self._priority_map = state['_priority_map']
+        self._attr_cache = {}
+        self._attr_code = state.get('_attr_code', {})
+        self._ObjInfo = namedtuple('ObjInfo', 'obj priority')
+        self.dir_tuple = attr_Enum.WITH_NAME | attr_Enum.WITH_CLS_NAME
+
     @property
     def dir_tuple(self):
         return self._dir_tuple

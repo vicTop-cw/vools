@@ -22,7 +22,15 @@ class Subject(Generic[T]):
         self._is_closed = False
         self._is_completed = False
         self._cached_callbacks = None
-    
+
+    def __getstate__(self):
+        return {'_is_closed': self._is_closed, '_is_completed': self._is_completed}
+    def __setstate__(self, state):
+        self._observers = set()
+        self._is_closed = state['_is_closed']
+        self._is_completed = state['_is_completed']
+        self._cached_callbacks = None
+
     def subscribe(
         self,
         on_next: Optional[Callable[[T], Any]] = None,

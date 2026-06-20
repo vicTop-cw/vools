@@ -73,6 +73,17 @@ class Player:
         # 线程同步
         self._pause_event = threading.Event()
         self._stop_event = threading.Event()
+
+    def __getstate__(self):
+        return {'_state': self._state.value, '_speed': self._speed}
+    def __setstate__(self, state):
+        self._state = PlaybackState(state['_state']) if isinstance(state['_state'], str) else PlaybackState(state['_state'])
+        self._speed = state['_speed']
+        self._stop_event = threading.Event()
+        self._play_thread = None
+        self._key_dispatcher = None
+        self._mouse_dispatcher = None
+        self._clip_dispatcher = None
         self._play_thread: Optional[threading.Thread] = None
         
         # 回调

@@ -29,6 +29,19 @@ class Worker:
         self.storage = TaskStorage(db_path)
         self.queue = TaskQueue(db_path)
 
+    def __getstate__(self):
+        return {'worker_id': self.worker_id, 'db_path': self.db_path,
+                'lease_seconds': self.lease_seconds, 'poll_interval': self.poll_interval,
+                '_running': False}
+    def __setstate__(self, state):
+        self.worker_id = state['worker_id']
+        self.db_path = state['db_path']
+        self.lease_seconds = state['lease_seconds']
+        self.poll_interval = state['poll_interval']
+        self._running = False
+        self.storage = TaskStorage(self.db_path)
+        self.queue = TaskQueue(self.db_path)
+
     def start(self):
         """启动Worker"""
         self._running = True

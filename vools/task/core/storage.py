@@ -21,6 +21,12 @@ class TaskStorage:
         self.db_path = db_path
         self._init_db()
 
+    def __getstate__(self):
+        return {'db_path': self.db_path}
+    def __setstate__(self, state):
+        self.db_path = state['db_path']
+        self._init_db()
+
     def _get_connection(self) -> sqlite3.Connection:
         """获取新的数据库连接（每次都创建新连接）"""
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
