@@ -9,8 +9,8 @@ from vools import (
     zlib_compress, zlib_decompress,
     json_dumps, json_loads,
     urlencode, urldecode,
-    serialize, deserialize
 )
+from vools.encoding import serialize, deserialize
 
 print("="*60)
 print("测试标准库功能")

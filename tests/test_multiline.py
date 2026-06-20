@@ -156,7 +156,8 @@ def test_sql_template():
     from {tbi}
     where dt >= '{dt}'
     """
-    from vools.datetime import get_week, vDate as VDate
+    from vools.datetime.vdate_class import VDate
+    from vools.datetime.utils import get_week
     run_date_std = VDate().run_date_standard
     gap = 10
     print(get_week(run_date_std,gap))
