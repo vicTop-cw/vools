@@ -50,8 +50,8 @@ class TestDatetimeModule(unittest.TestCase):
 
 def test_vicDate():
     """测试 vicDate 类"""
-    from vools.datetime import VDate
-    date = VDate()
+    from vools.datetime import vDate
+    date = vDate()
     result = date.__dir__()
     assert result is not None, "vicDate __dir__() should not return None"
     assert isinstance(result, list), "vicDate __dir__() should return a list"

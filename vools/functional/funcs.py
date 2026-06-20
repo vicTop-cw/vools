@@ -36,13 +36,13 @@ def waiter(
 for_ = lambda func, n = 1,p = False : vic_execute(max_workers=n, use_process=p)(func)
 
 def foreach(lst, func=print, filter_func=None, filter_first=True):
-    from ..vic import vicList
+    from ..data.vlist import VList as vicList
     return vicList(lst).foreach(func, filter_func, filter_first)
 
 for_p = for_(print)
 
 def build(x):
-    from ..vic import vicText
+    from ..data.vtext import VText as vicText
     return vicText(x).build
 
 build_text = build

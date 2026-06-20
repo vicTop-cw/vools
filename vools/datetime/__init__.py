@@ -34,6 +34,6 @@ __all__ = [
 def __getattr__(name):
     """延迟加载 vicDate"""
     if name == 'vicDate':
-        from ..vic import vicDate
+        from ..datetime.vdate_class import VDate as vicDate
         return vicDate
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
