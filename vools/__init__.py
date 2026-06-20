@@ -93,12 +93,15 @@ def _load_vic():
     """延迟加载 vic 类"""
     global _vic_loaded, _vic_classes
     if not _vic_loaded:
-        from . import vools as _vools_module
+        from .utils import tools as _tools_module
+        from .data.vtext import VText
+        from .data.vlist import VList
+        from .datetime.vdate_class import VDate
         _vic_classes = {
-            'vicTools': _vools_module.vicTools,
-            'vicDate': _vools_module.vicDate,
-            'vicText': _vools_module.vicText,
-            'vicList': _vools_module.vicList,
+            'vicTools': _tools_module,
+            'vicDate': VDate,
+            'vicText': VText,
+            'vicList': VList,
         }
         _vic_loaded = True
 
