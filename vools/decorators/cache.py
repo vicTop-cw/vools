@@ -110,26 +110,6 @@ class FileLock:
         self.acquire()
         return self
     
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.release()
 
@@ -173,26 +153,6 @@ class TimedCache:
         with self._lock:
             self._cache.clear()
     
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __len__(self):
         """返回缓存条目数"""
         with self._lock:

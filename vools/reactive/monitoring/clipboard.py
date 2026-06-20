@@ -215,26 +215,6 @@ class ClipData:
             return pickle.load(f)
 
     # ---- 表示 --------------------------------------------------------
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __str__(self) -> str:
         body = self.content
         if isinstance(body, (bytes, bytearray)):
@@ -1554,26 +1534,6 @@ class ClipSubject(MonitorSubject):
             tags=tags,
             metadata=metadata,
         )
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __del__(self) -> None:
         try:
             self.stop()
@@ -1645,26 +1605,6 @@ class ClipObserver(MonitorObserver):
 
     def __enter__(self) -> "ClipObserver":
         return self
-
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.unsubscribe()

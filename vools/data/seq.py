@@ -758,26 +758,6 @@ class Seq(SeqBase):
         data = list(self._evaluate())
         return {'_data': data}
 
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def __setstate__(self, state):
         """从序列化状态恢复：从物化数据重建 Seq"""
         data = state.get('_data', [])
@@ -876,26 +856,6 @@ if __name__ == '__main__':
                 self.x += 1
                 yield randint(1, 100) + self.x
     
-
-            def do(self, f=print, pre_f=None, sub_f=None):
-                """Apply a function for side effects, return self.
-
-                Args:
-                    f: Function to apply (default print)
-                    pre_f: Pre-processing function
-                    sub_f: Post-processing function (no return value expected)
-
-                Returns:
-                    self, for chaining
-                """
-                rs = self
-                if pre_f:
-                    rs = pre_f(rs)
-                rs = f(rs)
-                if sub_f:
-                    sub_f(rs)
-                return self
-
         def register(self, func):
             @wraps(func)
             def _inner(self,*args, **kwargs):

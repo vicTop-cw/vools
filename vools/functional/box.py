@@ -133,26 +133,6 @@ class CallableDescriptor:
     def enable(self):
         self.enabled = True
 
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
     def disable(self):
         self.enabled = False
 
@@ -373,26 +353,6 @@ class Box(AOP):
         if '__call__' in rs and not callable(self.__wrapped__):
             rs -= set(['__call__'])
         return list(sorted(rs))
-
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
 
     def __hasattr__(self, name):
         if name.startswith('_') and len(name) > 1:

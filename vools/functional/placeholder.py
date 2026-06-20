@@ -241,7 +241,6 @@ class Magic:
     
     gene_magic_func = staticmethod(_gene_magic_func)
     
-
     def __getattr__(self, name):
         if name in self.__dict__:
             return self.__dict__[name]

@@ -200,7 +200,6 @@ class CryptoRegistry:
         return cls._encryptors.copy()
     
     @classmethod
-
     def get_decryptors(cls) -> Dict[str, Callable]:
         """
         获取所有解密器
@@ -541,7 +540,6 @@ class Encryptor(metaclass=CryptoMeta):
     def __repr__(self):
         return f"Encryptor(data={repr(self._data)}, history={self._history})"
     
-
     def __str__(self):
         return str(self._data)
 
@@ -631,7 +629,6 @@ class Decryptor(metaclass=CryptoMeta):
     def __repr__(self):
         return f"Decryptor(data={repr(self._data)}, history={self._history})"
     
-
     def __str__(self):
         return str(self._data)
 
