@@ -22,6 +22,16 @@ class TimedCache:
         self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._max_size = max_size
         self._lock = threading.Lock()
+
+    def __getstate__(self):
+        d = {'max_size': self.max_size}
+        with self._lock:
+            d['_cache'] = dict(getattr(self, '_cache', {}))
+        return d
+    def __setstate__(self, state):
+        self.max_size = state['max_size']
+        self._cache = state.get('_cache', {})
+        self._lock = threading.Lock()
     
     def _is_obsolete(self, entry: Dict[str, Any], duration: float) -> bool:
         """检查缓存是否过期"""

@@ -21,6 +21,12 @@ class TaskQueue:
         self.storage = TaskStorage(db_path)
         self._func_registry = {}
 
+    def __getstate__(self):
+        return {'storage': self.storage, '_func_registry': self._func_registry}
+    def __setstate__(self, state):
+        self.storage = state['storage']
+        self._func_registry = state['_func_registry']
+
     def submit(self, func: Callable, *args, **kwargs) -> int:
         """
         提交任务

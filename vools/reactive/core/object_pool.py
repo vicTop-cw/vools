@@ -26,6 +26,20 @@ class ObjectPool:
         self._expire_time = expire_time
         
         self._preallocate()
+
+    def __getstate__(self):
+        return {'_pool': [], '_max_size': self._max_size, '_min_size': self._min_size,
+                '_type': self._type, '_create_fn': self._create_fn, '_reset_fn': self._reset_fn,
+                '_expire_time': self._expire_time}
+    def __setstate__(self, state):
+        self._pool = []
+        self._max_size = state['_max_size']
+        self._min_size = state['_min_size']
+        self._lock = threading.Lock()
+        self._type = state['_type']
+        self._create_fn = state['_create_fn']
+        self._reset_fn = state['_reset_fn']
+        self._expire_time = state['_expire_time']
     
     def _preallocate(self):
         """预分配最小数量的对象"""

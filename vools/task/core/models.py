@@ -43,6 +43,13 @@ class Task:
     max_retries: int = 3
     error_message: Optional[str] = None
     result: Any = None
+
+    def __getstate__(self):
+        return {k: getattr(self, k) for k in self.__dataclass_fields__}
+    def __setstate__(self, state):
+        for k, v in state.items():
+            setattr(self, k, v)
+
     dependencies: Set[int] = field(default_factory=set)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
