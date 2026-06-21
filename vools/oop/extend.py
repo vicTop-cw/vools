@@ -75,6 +75,13 @@ def clone(cls=None, *args, **kwargs):
         pass
     
     """
+    # 如果 cls 是字符串且包含 ":" 或 "=>"，说明是属性配置，应该作为 args 处理
+    # 这支持 @clone('name:Direct') 用法（等效于 @clone(None, 'name:Direct')）
+    if isinstance(cls, str) and (':' in cls or '=>' in cls):
+        # 作为位置参数处理
+        args = (cls,) + args
+        cls = None
+    
     def wrapper(target_cls):
         # 基础环境变量
         base_env = {
@@ -187,17 +194,24 @@ def _process_args(args: Tuple[str], new_cls: type, env: Dict, deco: Callable = p
 
 def _auto_convert_type(value_str: str) -> Any:
     """自动转换字符串类型"""
-    # 尝试转换为int
+    # 尝试转换为int（支持负数）
     if value_str.isdigit():
         return int(value_str)
+    # 处理负数
+    if value_str.startswith('-') and value_str[1:].isdigit():
+        return int(value_str)
+    # 处理浮点数
     if value_str.count('.') == 1 and value_str.replace('.', '').isdigit():
         return float(value_str)
+    # 处理负浮点数
+    if value_str.startswith('-') and value_str[1:].count('.') == 1 and value_str[1:].replace('.', '').isdigit():
+        return float(value_str)
     
-    if value_str.startswith('0x') and value_str[2:].isdigit():
+    if value_str.startswith('0x') and all(c in '0123456789abcdefABCDEF' for c in value_str[2:]):
         return int(value_str, 16)
-    if value_str.startswith('0b') and value_str[2:].isdigit():
+    if value_str.startswith('0b') and all(c in '01' for c in value_str[2:]):
         return int(value_str, 2)
-    if value_str.startswith('0o') and value_str[2:].isdigit():
+    if value_str.startswith('0o') and all(c in '01234567' for c in value_str[2:]):
         return int(value_str, 8)
     # 尝试转换为bool
     if value_str.lower() in ('true', 'false'):
@@ -329,7 +343,12 @@ def _process_copy_from(copy_from_configs: Dict[str, Any], new_cls: type, env: Di
                                 except Exception as e:
                                     print(f"Warning: Failed to evaluate return_result for {name}: {e}")
                             else:
-                                result = return_result
+                                # 作为表达式评估（如 'self' 应评估为 self 对象）
+                                try:
+                                    result = _eval_expr_with_semicolon(return_result.strip(), local_env)
+                                except Exception as e:
+                                    # 如果评估失败，作为字面量
+                                    result = return_result
                         elif callable(return_result):
                             result = return_result(result)
                     
@@ -430,7 +449,7 @@ def _process_copy_list_from(copy_list_from_configs: Dict[str, Any], new_cls: typ
         for method_name in method_names:
             
             orig_method = None
-            def copied_method(self, *args, **kwargs):
+            def copied_method(self, *args, _method_name=method_name, **kwargs):
                 # 调用原始方法
                 # 创建源实例（如果需要）
                 nonlocal orig_method
@@ -490,7 +509,7 @@ def _process_copy_list_from(copy_list_from_configs: Dict[str, Any], new_cls: typ
                     # 已经是实例
                     source_instance = source
                 if source_instance :
-                    orig_method =   getattr(source_instance, method_name)  
+                    orig_method =   getattr(source_instance, _method_name)  
                     rs = orig_method(*args, **kwargs)
                 else:
                     orig_method = source
@@ -511,9 +530,14 @@ def _process_copy_list_from(copy_list_from_configs: Dict[str, Any], new_cls: typ
                             try:
                                 rs = _eval_expr_with_semicolon(return_result[2:].strip(), env)
                             except Exception as e:
-                                print(f"Warning: Failed to evaluate return_result for {method_name}: {e}")
+                                print(f"Warning: Failed to evaluate return_result for {_method_name}: {e}")
                         else:
-                            rs = return_result
+                            # 作为表达式评估（如 'self' 应评估为 self 对象）
+                            try:
+                                rs = _eval_expr_with_semicolon(return_result.strip(), env)
+                            except Exception as e:
+                                # 如果评估失败，作为字面量
+                                rs = return_result
                     elif callable(return_result):
                         rs = return_result(rs)
                 
@@ -612,7 +636,12 @@ def _add_dict_method(method_name: str, config: Dict, new_cls: type, env: Dict):
                         except Exception as e:
                             print(f"Warning: Failed to evaluate return expression for {name}: {e}")
                     else:
-                        return_value = return_conf
+                        # 作为表达式评估（如 'self' 应评估为 self 对象）
+                        try:
+                            return_value = _eval_expr_with_semicolon(return_conf.strip(), local_env)
+                        except Exception as e:
+                            # 如果评估失败，作为字面量
+                            return_value = return_conf
             
             return return_value
         

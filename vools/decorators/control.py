@@ -132,29 +132,52 @@ def silent(fn: Optional[Callable] = None, *, default: Any = None) -> Callable:
 # suppress - 抑制异常装饰器
 # ============================================================================
 
-def suppress(*exc_types: Type[Exception]) -> Callable:
+def suppress(*args):
     """
-    抑制指定类型的异常，不返回任何值
+    抑制指定类型的异常，不返回任何值。
+
+    支持两种调用方式：
+        @suppress              → 抑制所有 Exception
+        @suppress(ValueError)  → 抑制指定异常类型
 
     Args:
-        *exc_types: 要抑制的异常类型
+        *args: 要抑制的异常类型（为空时默认抑制 Exception）
 
     Returns:
-        装饰器
+        装饰器或已装饰函数
 
     Example:
-        >>> @suppress(ValueError, TypeError)
-        ... def risky():
+        >>> @suppress
+        ... def risky1():
         ...     raise ValueError("错误")
-        >>> result = risky()
-        >>> print(result)
-        None
+        >>> risky1() is None
+        True
+        >>> @suppress(ValueError, TypeError)
+        ... def risky2():
+        ...     raise ValueError("错误")
+        >>> risky2() is None
+        True
     """
-    def decorator(func: Callable) -> Callable:
+    # 判断调用方式：@suppress（无括号）→ args[0] 是可调用对象
+    if len(args) == 1 and callable(args[0]) and not isinstance(args[0], type):
+        # 无括号调用：@suppress
+        func = args[0]
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*wargs, **wkwargs):
             try:
-                return func(*args, **kwargs)
+                return func(*wargs, **wkwargs)
+            except Exception:
+                pass
+        return wrapper
+
+    # 带参数调用：@suppress(...) 或 @suppress
+    exc_types = args if args else (Exception,)
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*wargs, **wkwargs):
+            try:
+                return func(*wargs, **wkwargs)
             except exc_types:
                 pass
         return wrapper
@@ -165,31 +188,47 @@ def suppress(*exc_types: Type[Exception]) -> Callable:
 # ignore - 忽略返回值装饰器
 # ============================================================================
 
-def ignore(fn: Callable) -> Callable:
+def ignore(*args):
     """
-    忽略函数的返回值
+    忽略函数的返回值（始终返回 None）。
+
+    支持两种调用方式：
+        @ignore              → 直接装饰
+        @ignore(some_arg)   → 带参数装饰（参数暂未使用，保留扩展性）
 
     Args:
-        fn: 要装饰的函数
+        *args: 可选参数（保留扩展性，当前未使用）
 
     Returns:
-        装饰后的函数
+        装饰器或已装饰函数
 
     Example:
         >>> @ignore
         ... def returns_value():
         ...     return 42
-        >>> result = returns_value()
-        >>> print(result)
-        None
+        >>> returns_value() is None
+        True
     """
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        fn(*args, **kwargs)
-    return wrapper
+    # 判断调用方式：@ignore（无括号）→ args[0] 是可调用对象
+    if len(args) == 1 and callable(args[0]) and not isinstance(args[0], type):
+        func = args[0]
+        @wraps(func)
+        def wrapper(*wargs, **wkwargs):
+            func(*wargs, **wkwargs)
+            return None
+        return wrapper
+
+    # 带参数调用（当前参数未使用）
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*wargs, **wkwargs):
+            func(*wargs, **wkwargs)
+            return None
+        return wrapper
+    return decorator
 
 
-__all__ = ['repeat', 'retry', 'rerun', 'merge_params', 'excepts', 'silent', 'suppress', 'ignore']
+__all__ = ['repeat', 'retry', 'rerun', 'merge_params', 'excepts', 'suppress', 'ignore']
 
 # 定义可调用类型变量
 F = TypeVar('F', bound=Callable[..., Any])

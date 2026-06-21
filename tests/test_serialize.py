@@ -252,7 +252,7 @@ class TestNoneSentinelSerialization:
 
     def test_none_round_trip(self):
         """测试 NONE 基本序列化/反序列化往返"""
-        from vools.data.seq import NONE
+        from vools.serialize.sentinel import NONE
 
         s = Serializer(backend='pickle')
         data = s.dumps(NONE)
@@ -261,7 +261,7 @@ class TestNoneSentinelSerialization:
 
     def test_none_with_json_backend(self):
         """测试 NONE 使用 JSON 后端"""
-        from vools.data.seq import NONE
+        from vools.serialize.sentinel import NONE
 
         s = Serializer(backend='json')
         data = s.dumps(NONE)
@@ -270,7 +270,7 @@ class TestNoneSentinelSerialization:
 
     def test_none_with_msgpack_backend(self):
         """测试 NONE 使用 msgpack 后端"""
-        from vools.data.seq import NONE
+        from vools.serialize.sentinel import NONE
 
         s = Serializer(backend='msgpack')
         data = s.dumps(NONE)
@@ -551,13 +551,13 @@ class TestVicTypeSerialization:
 
     def test_vicdate_serialization(self):
         """测试 VDate 序列化"""
-        from vools.datetime import VDate
+        from vools.datetime import vDate
 
-        d = VDate('2024-06-15')
+        d = vDate('2024-06-15')
         s = Serializer(backend='pickle')
         data = s.dumps(d)
         restored = s.loads(data)
-        assert type(restored) is VDate
+        assert type(restored) is vDate
         assert str(restored) == '2024-06-15'
 
     def test_viclist_serialization(self):
