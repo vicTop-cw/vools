@@ -128,6 +128,9 @@ def deserialize_callable(handler_name: str, handler_state: Any, backend_deserial
     # 查找处理器
     for handler in _HANDLERS:
         if handler.handler_name == handler_name:
+            # JSON 后端会将 bytes 转为 list，需转回 bytes
+            if isinstance(handler_state, list) and all(isinstance(b, int) for b in handler_state):
+                handler_state = bytes(handler_state)
             state = backend_deserializer.loads(handler_state)
             return handler.restore(state)
 

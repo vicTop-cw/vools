@@ -27,6 +27,24 @@ from .placeholder_impl import X, Y
 __all__ = ['_', 'magic', 'f', 'to_holder', 'F', 'flip', 'apply', 'hd', 'X', 'Y'] + [f"_{i}" for i in range(1, 21)]
 
 
+def _resolve_placeholder_singleton(name: str):
+    """Resolve a named placeholder singleton (used by __reduce__)."""
+    return getattr(sys.modules[__name__], name)
+
+
+def _reconstruct_index_holder(expr, env, arity, ix):
+    """Reconstruct a non-singleton _IndexHolder (used by __reduce__)."""
+    import importlib
+    # 将 ('__module__', name) 元组转换回模块
+    clean_env = {}
+    for k, v in env.items():
+        if isinstance(v, tuple) and len(v) == 2 and v[0] == '__module__':
+            clean_env[k] = importlib.import_module(v[1])
+        else:
+            clean_env[k] = v
+    return _IndexHolder(expr, clean_env, arity, ix)
+
+
 # 安全的内置函数白名单
 safe_builtins = [
     'abs', 'all', 'any', 'bool', 'bytes', 'chr', 'complex', 'dict',
@@ -277,7 +295,7 @@ _eval_cache = {}
 
 class _IndexHolder:
     """占位符类 - 优化版本"""
-    __slots__ = ('expr', 'env', 'arity', 'ix', 'is_use_getitem', 'X', '_cached_call')
+    __slots__ = ('expr', 'env', 'arity', 'ix', 'is_use_getitem', 'X', '_cached_call', '_singleton_name')
     
     def __init__(self, expr=None, env=None, arity=1, ix=1):
         i = '' if ix == 0 else ix
@@ -293,6 +311,7 @@ class _IndexHolder:
         object.__setattr__(self, 'is_use_getitem', None)
         object.__setattr__(self, 'X', X)
         object.__setattr__(self, '_cached_call', None)
+        object.__setattr__(self, '_singleton_name', None)
     
     def __setattr__(self, name, value):
         raise AttributeError("Object is immutable")
@@ -305,6 +324,10 @@ class _IndexHolder:
 
     def __getstate__(self):
         """Return serialization state (convert module refs to strings)"""
+        # 单例占位符：返回单例标记
+        if self._singleton_name is not None:
+            return {'__singleton__': f'vools.functional.placeholder:{self._singleton_name}'}
+
         import importlib as _il
         state = {}
         for slot in self.__slots__:
@@ -322,6 +345,8 @@ class _IndexHolder:
                     state[slot] = env_ser
                 elif slot == '_cached_call':
                     continue
+                elif slot == '_singleton_name':
+                    continue
                 else:
                     state[slot] = val
             except AttributeError:
@@ -332,6 +357,9 @@ class _IndexHolder:
         """Restore from serialization state"""
         import importlib as _il
         for k, v in state.items():
+            if k == '__singleton__':
+                # 单例标记：state 会被忽略，由 codec.py 的 _resolve_singleton 处理
+                continue
             if k == 'env' and isinstance(v, dict):
                 env_restored = {}
                 for ek, ev in v.items():
@@ -341,11 +369,29 @@ class _IndexHolder:
                     else:
                         env_restored[ek] = ev
                 object.__setattr__(self, 'env', env_restored)
+            elif k == '_singleton_name':
+                # 不覆盖单例名称（由单例解析直接返回实例）
+                continue
             else:
                 object.__setattr__(self, k, v)
-        object.__setattr__(self, 'X', None)
-        object.__setattr__(self, '_cached_call', None)
-    
+        if not hasattr(self, 'X') or self.X is None:
+            object.__setattr__(self, 'X', None)
+        if not hasattr(self, '_cached_call') or self._cached_call is not None:
+            object.__setattr__(self, '_cached_call', None)
+
+    def __reduce__(self):
+        """Pickle 支持：单例返回单例，非单例返回重建参数"""
+        if self._singleton_name is not None:
+            return (_resolve_placeholder_singleton, (self._singleton_name,))
+        # 非单例：env 中的模块需转换为可 pickle 格式
+        env_serializable = {}
+        for k, v in self.env.items():
+            if isinstance(v, type(sys)):  # module
+                env_serializable[k] = ('__module__', v.__name__)
+            else:
+                env_serializable[k] = v
+        return (_reconstruct_index_holder, (self.expr, env_serializable, self.arity, self.ix))
+
     @property
     def call(self):
         """缓存 eval 结果"""
@@ -599,26 +645,47 @@ class _IndexHolder:
 
 # 创建占位符实例
 _ = _IndexHolder(ix=0)
+object.__setattr__(_, '_singleton_name', '_')
 _1 = _IndexHolder(ix=1)
+object.__setattr__(_1, '_singleton_name', '_1')
 _2 = _IndexHolder(ix=2)
+object.__setattr__(_2, '_singleton_name', '_2')
 _3 = _IndexHolder(ix=3)
+object.__setattr__(_3, '_singleton_name', '_3')
 _4 = _IndexHolder(ix=4)
+object.__setattr__(_4, '_singleton_name', '_4')
 _5 = _IndexHolder(ix=5)
+object.__setattr__(_5, '_singleton_name', '_5')
 _6 = _IndexHolder(ix=6)
+object.__setattr__(_6, '_singleton_name', '_6')
 _7 = _IndexHolder(ix=7)
+object.__setattr__(_7, '_singleton_name', '_7')
 _8 = _IndexHolder(ix=8)
+object.__setattr__(_8, '_singleton_name', '_8')
 _9 = _IndexHolder(ix=9)
+object.__setattr__(_9, '_singleton_name', '_9')
 _10 = _IndexHolder(ix=10)
+object.__setattr__(_10, '_singleton_name', '_10')
 _11 = _IndexHolder(ix=11)
+object.__setattr__(_11, '_singleton_name', '_11')
 _12 = _IndexHolder(ix=12)
+object.__setattr__(_12, '_singleton_name', '_12')
 _13 = _IndexHolder(ix=13)
+object.__setattr__(_13, '_singleton_name', '_13')
 _14 = _IndexHolder(ix=14)
+object.__setattr__(_14, '_singleton_name', '_14')
 _15 = _IndexHolder(ix=15)
+object.__setattr__(_15, '_singleton_name', '_15')
 _16 = _IndexHolder(ix=16)
+object.__setattr__(_16, '_singleton_name', '_16')
 _17 = _IndexHolder(ix=17)
+object.__setattr__(_17, '_singleton_name', '_17')
 _18 = _IndexHolder(ix=18)
+object.__setattr__(_18, '_singleton_name', '_18')
 _19 = _IndexHolder(ix=19)
+object.__setattr__(_19, '_singleton_name', '_19')
 _20 = _IndexHolder(ix=20)
+object.__setattr__(_20, '_singleton_name', '_20')
 
 # 别名
 hd = _
