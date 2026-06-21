@@ -34,6 +34,25 @@ class Scheduler(Generic[T]):
         """延迟调度一个操作"""
         raise NotImplementedError
     
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def schedule_absolute(self, time: float, action: Callable[[], None]) -> Subscription:
         """在指定时间调度一个操作"""
         raise NotImplementedError
@@ -54,6 +73,25 @@ class ImmediateScheduler(Scheduler):
     def schedule_absolute(self, time: float, action: Callable[[], None]) -> Subscription:
         delay = max(0, time - time.time())
         return self.schedule_relative(delay, action)
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class CurrentThreadScheduler(Scheduler):
@@ -82,6 +120,25 @@ class CurrentThreadScheduler(Scheduler):
             action()
         return self.schedule(delayed_action)
     
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def schedule_absolute(self, time: float, action: Callable[[], None]) -> Subscription:
         delay = max(0, time - time.time())
         return self.schedule_relative(delay, action)
@@ -118,6 +175,25 @@ class AsyncIOScheduler(Scheduler):
     def schedule_absolute(self, time: float, action: Callable[[], None]) -> Subscription:
         delay = max(0, time - self._loop.time())
         return self.schedule_relative(delay, action)
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class ThreadPoolScheduler(Scheduler):
@@ -145,6 +221,25 @@ class ThreadPoolScheduler(Scheduler):
         delay = max(0, time - time.time())
         return self.schedule_relative(delay, action)
     
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def shutdown(self, wait: bool = True):
         """关闭线程池"""
         self._executor.shutdown(wait=wait)
@@ -172,6 +267,25 @@ class NewThreadScheduler(Scheduler):
     def schedule_absolute(self, time: float, action: Callable[[], None]) -> Subscription:
         delay = max(0, time - time.time())
         return self.schedule_relative(delay, action)
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 # ========== 全局调度器实例 ==========

@@ -80,6 +80,8 @@ class Calculator:
         self.base = base_value
         self.multiplier = multiplier
     
+
+
     def compute(self, x):
         return self.base + x * self.multiplier
 
@@ -255,6 +257,8 @@ class A:
     
     def getB(self):
         return 2
+
+
     def getC(self):
         return 1
 
@@ -279,6 +283,8 @@ class C:
     def __ne__(self, value):
         return  not self.__eq__(value)
     
+
+
     def __str__(self):
         return f"C<{self.args}>"
 print(*(i() for i in C(1,2,3,5).bound_args.values()))
@@ -299,6 +305,25 @@ print('3. class test pass')
 
 class StuffExecutionError(Exception):
     pass
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 class IndexedDict:
     def __init__(self,data,providers_pos=0,providers=None):
@@ -343,6 +368,25 @@ class IndexedDict:
     def __next__(self):
         return next(iter(self._data.values()))
     
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __repr__(self):
         return f"IndexedDict({self._data})"
 
@@ -387,6 +431,25 @@ def _create_faked_func(func):
             __siganture__ = new_sig
             __name__ = func.__name__
             __doc__ = func.__doc__
+            def do(self, f=print, pre_f=None, sub_f=None):
+                """Apply a function for side effects, return self for chaining.
+
+                Args:
+                    f: Function to apply (default print)
+                    pre_f: Pre-processing function applied before f
+                    sub_f: Post-processing function (no return expected)
+
+                Returns:
+                    self, for chaining
+                """
+                rs = self
+                if pre_f:
+                    rs = pre_f(rs)
+                rs = f(rs)
+                if sub_f:
+                    sub_f(rs)
+                return self
+
             
         return fake
 
@@ -696,6 +759,25 @@ class Stuff: #延迟调用执行
             self.curried = self.curried(*args,**kwargs)
         return func
 
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def register_stuff(self,func=None,*args,**kwargs):
         """ 套用在目标函数上，若提供参数 param_name,则自动解析参数，并提供给self目标函数。
             余下参数为目标函数提供参数。并返回 stuff 实例。
@@ -800,6 +882,25 @@ if __name__ == "__main__":
         
         def getB(self):
             return 2
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
         def getC(self):
             return 1
     
@@ -824,6 +925,25 @@ if __name__ == "__main__":
         def __ne__(self, value):
             return  not self.__eq__(value)
         
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
         def __str__(self):
             return f"C<{self.args}>"
     print(*(i() for i in C(1,2,3,5).bound_args.values()))

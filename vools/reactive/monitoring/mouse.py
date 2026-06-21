@@ -45,6 +45,25 @@ class MouseEventType(IntEnum):
     MIDDLE_UP = 6
     SCROLL = 7
     DRAG = 8
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 def _make_mouse_signature(x: int, y: int, event_type: int) -> Tuple[int, int, int]:
@@ -148,11 +167,69 @@ if sys.platform == "win32":
             ("time", ctypes.c_ulong),
             ("dwExtraInfo", ULONG_PTR),
         ]
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 
     class INPUT(ctypes.Structure):
         class _INPUT_UNION(ctypes.Union):
             _fields_ = [("mi", MOUSEINPUT)]
+
+            def do(self, f=print, pre_f=None, sub_f=None):
+                """Apply a function for side effects, return self for chaining.
+
+                Args:
+                    f: Function to apply (default print)
+                    pre_f: Pre-processing function applied before f
+                    sub_f: Post-processing function (no return expected)
+
+                Returns:
+                    self, for chaining
+                """
+                rs = self
+                if pre_f:
+                    rs = pre_f(rs)
+                rs = f(rs)
+                if sub_f:
+                    sub_f(rs)
+                return self
+
         _fields_ = [("type", ctypes.c_ulong), ("U", _INPUT_UNION)]
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 
     INPUT_MOUSE = 0
 
@@ -263,6 +340,25 @@ class _BaseBackend:
     @property
     def is_running(self) -> bool:
         raise NotImplementedError
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 if sys.platform == "win32":
@@ -287,6 +383,25 @@ if sys.platform == "win32":
             ("time", wt.DWORD),
             ("dwExtraInfo", ULONG_PTR),
         ]
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 
     _ms_pending: Queue = Queue()
 
@@ -444,6 +559,44 @@ if sys.platform == "win32":
             if local_thread and local_thread.is_alive():
                 local_thread.join(timeout=max(1.0, self._interval * 5 + 0.5))
             self._cleanup()
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
+
 
 else:
     class _Win32MouseBackend(_BaseBackend):
@@ -607,6 +760,25 @@ class _PollingMouseBackend(_BaseBackend):
             self._stop_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=max(1.0, self._interval * 5 + 0.5))
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class MouseDispatcher:
@@ -783,6 +955,25 @@ class MouseDispatcher:
         _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
         return self
 
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def release_button(self, button: str = "left") -> "MouseDispatcher":
         if button == "left":
             u = MOUSEEVENTF_LEFTUP
@@ -892,6 +1083,25 @@ class MouseSubject(MonitorSubject):
     def __exit__(self, exc_type, exc, tb) -> None:
         self.stop()
 
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __del__(self) -> None:
         try:
             self.stop()
@@ -939,6 +1149,25 @@ class MouseObserver(MonitorObserver):
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.unsubscribe()
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 def from_mouse(
@@ -999,6 +1228,25 @@ class _WriteMouseOperator:
         return source.pipe(
             _ops.map(lambda x: (on_next(x) or x))
         )
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 def write_to_mouse(

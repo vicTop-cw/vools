@@ -281,19 +281,15 @@ def repeat(
 # retry - 重试装饰器
 # ============================================================================
 
-def retry(
-    tries: int = 3,
-    delay: float = 1,
-    backoff: float = 2,
-    exceptions: Union[Type[Exception], Tuple[Type[Exception], ...]] = Exception,
-    check_func: Optional[Callable[[Any], bool]] = None,
-    logic: str = 'or',
-    logger: Optional[logging.Logger] = None
-) -> Callable:
+def retry(*args, **kwargs):
     """
     重试装饰器，支持多种重试条件和灵活的重试逻辑
     
-    参数:
+    支持两种调用方式：
+        @retry              # 使用默认参数
+        @retry(tries=3, delay=1)  # 指定参数
+    
+    参数（仅限关键字参数）：
         tries: 最大重试次数（包括首次执行）
         delay: 初始延迟时间（秒）
         backoff: 延迟时间倍增因子
@@ -303,6 +299,13 @@ def retry(
         logger: 日志记录器实例
     
     示例:
+        >>> @retry
+        ... def unreliable_request():
+        ...     import random
+        ...     if random.random() < 0.8:
+        ...         raise ConnectionError("网络连接失败")
+        ...     return "请求成功"
+        
         >>> @retry(tries=3, delay=0.5)
         ... def unreliable_request():
         ...     import random
@@ -310,6 +313,41 @@ def retry(
         ...         raise ConnectionError("网络连接失败")
         ...     return "请求成功"
     """
+    # 检测是否直接调用（@retry）
+    if len(args) == 1 and callable(args[0]):
+        # @retry 直接调用
+        return _retry_decorator()(args[0])
+    
+    # @retry(...) 带参数调用
+    tries = kwargs.get('tries', 3)
+    delay = kwargs.get('delay', 1)
+    backoff = kwargs.get('backoff', 2)
+    exceptions = kwargs.get('exceptions', Exception)
+    check_func = kwargs.get('check_func', None)
+    logic = kwargs.get('logic', 'or')
+    logger = kwargs.get('logger', None)
+    
+    return _retry_decorator(
+        tries=tries,
+        delay=delay,
+        backoff=backoff,
+        exceptions=exceptions,
+        check_func=check_func,
+        logic=logic,
+        logger=logger
+    )
+
+
+def _retry_decorator(
+    tries: int = 3,
+    delay: float = 1,
+    backoff: float = 2,
+    exceptions: Union[Type[Exception], Tuple[Type[Exception], ...]] = Exception,
+    check_func: Optional[Callable[[Any], bool]] = None,
+    logic: str = 'or',
+    logger: Optional[logging.Logger] = None
+) -> Callable:
+    """内部函数：创建 retry 装饰器"""
     # 验证逻辑参数
     valid_logics = {'or', '|', '||', 'and', '&', '&&', 'xor', '^'}
     if logic not in valid_logics:
@@ -317,8 +355,8 @@ def retry(
     
     # 规范化逻辑关键词
     logic = 'or' if logic in {'|', '||'} else \
-            'and' if logic in {'&', '&&'} else \
-            'xor' if logic in {'^'} else logic
+           'and' if logic in {'&', '&&'} else \
+           'xor' if logic in {'^'} else logic
     
     # 设置日志记录器
     log = logger.info if logger else print
@@ -394,11 +432,15 @@ def retry(
 # rerun - 重新运行装饰器
 # ============================================================================
 
-def rerun(until: Callable[[Any], bool], interval: int = 5, time_out: int = 300):
+def rerun(*args, **kwargs):
     """
     周期性执行函数直到满足终止条件或超时
     
-    参数:
+    支持两种调用方式：
+        @rerun              # 使用默认参数
+        @rerun(until=..., interval=5, time_out=300)  # 指定参数
+    
+    参数（仅限关键字参数）：
         until: 检查函数返回值的谓词函数，返回True时停止
         interval: 重试间隔时间（秒）
         time_out: 总超时时间（秒）
@@ -410,13 +452,36 @@ def rerun(until: Callable[[Any], bool], interval: int = 5, time_out: int = 300):
         TimeoutError: 当超过time_out时间仍未满足条件时抛出
     
     示例:
-        >>> @rerun(lambda x: x.get('status') == 'success', interval=1, time_out=10)
+        >>> @rerun
+        ... def check_status():
+        ...     return {'status': 'success'}
+        
+        >>> @rerun(until=lambda x: x.get('status') == 'success', interval=1, time_out=10)
         ... def check_status():
         ...     import random
         ...     if random.random() < 0.7:
         ...         return {'status': 'pending'}
         ...     return {'status': 'success'}
     """
+    # 检测是否直接调用（@rerun）
+    if len(args) == 1 and callable(args[0]):
+        # @rerun 直接调用
+        return _rerun_decorator()(args[0])
+    
+    # @rerun(...) 带参数调用
+    until = kwargs.get('until', lambda x: x is not None)
+    interval = kwargs.get('interval', 5)
+    time_out = kwargs.get('time_out', 300)
+    
+    return _rerun_decorator(until=until, interval=interval, time_out=time_out)
+
+
+def _rerun_decorator(
+    until: Callable[[Any], bool] = lambda x: x is not None,
+    interval: int = 5,
+    time_out: int = 300
+):
+    """内部函数：创建 rerun 装饰器"""
     if WRAPT_AVAILABLE:
         @wrapt.decorator
         def wrapper(wrapped, instance, args, kwargs):

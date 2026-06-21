@@ -36,6 +36,25 @@ class Rule:
     priority: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def evaluate(self, context: Dict[str, Any]) -> Result:
         """
         执行规则：先检查 condition，通过后执行 action
@@ -157,5 +176,24 @@ class RuleSet:
     def __len__(self) -> int:
         return len(self._rules)
 
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __repr__(self) -> str:
         return f"RuleSet({len(self._rules)} rules)"

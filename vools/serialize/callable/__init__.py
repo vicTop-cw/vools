@@ -38,6 +38,25 @@ class CallableHandler(ABC):
         raise NotImplementedError
 
     @abstractmethod
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def restore(self, state: Dict[str, Any]) -> Any:
         """从序列化状态恢复对象"""
         raise NotImplementedError

@@ -15,6 +15,25 @@ from vools.core.dataclass_compat import dataclass, field
 class DagValidationError(Exception):
     """DAG 验证异常（循环依赖等）"""
     pass
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class TaskStatus(Enum):

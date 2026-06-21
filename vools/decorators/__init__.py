@@ -11,9 +11,9 @@
 - extend: 函数扩展装饰器
 """
 
-from .cache import memorize, once, persist
+from ..cache import memorize, once, persist
 from .lazy import lazy
-from .control import repeat, retry, rerun
+from .control import repeat, retry, rerun, excepts, suppress, ignore
 from .trd import trd, proc
 # extend 延迟导入（原 decorators.extend 已移至 oop.method_extend）
 from .shotcut import (
@@ -90,6 +90,9 @@ __all__ = [
     'repeat',
     'retry',
     'rerun',
+    'excepts',
+    'suppress',
+    'ignore',
 
     # 多线程
     'trd',

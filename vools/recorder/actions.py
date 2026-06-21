@@ -43,7 +43,7 @@ class Action:
     def from_json(cls, json_str: str) -> Action:
         """从 JSON 字符串创建"""
         return cls.from_dict(json.loads(json_str))
-    
+
     def __repr__(self) -> str:
         params_str = ', '.join(f'{k}={v!r}' for k, v in self.params.items())
         return f"Action({self.action_type.value}, {self.timestamp:.1f}ms, {params_str})"

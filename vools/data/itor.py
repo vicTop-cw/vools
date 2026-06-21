@@ -755,23 +755,25 @@ class Itor:
         self._iterator = None
         self._stop_requested = False
 
-    # ---- serialization support ----
 
-    def __getstate__(self):
-        """return serialization state (exclude non-serializable fields)"""
-        exclude = {'_lock', '_pause_event', '_iterator'}
-        return {k: v for k, v in self.__dict__.items() if k not in exclude}
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
 
-    def __setstate__(self, state):
-        """restore from serialization state, recreate non-serializable fields"""
-        self.__dict__.update(state)
-        import threading
-        self._lock = threading.Lock()
-        self._pause_event = threading.Event()
-        self._pause_event.set()
-        self._iterator = None
-        self._stop_requested = False
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
 
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def _add_history(self, node: Node) -> None:
         """将节点加入历史链表尾（必须持有锁）。"""
         node.next = None

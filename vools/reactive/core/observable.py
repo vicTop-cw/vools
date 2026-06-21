@@ -71,6 +71,25 @@ class Observer(Generic[T], ABC):
         pass
     
     @abstractmethod
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def on_completed(self):
         pass
 
@@ -95,6 +114,25 @@ class DefaultObserver(Observer[T]):
     def on_completed(self):
         self._on_completed()
     
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+        
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+        
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+    
     def reset(self):
         """重置观察者状态"""
         self._on_next = lambda _: None
@@ -115,6 +153,25 @@ class DefaultObserver(Observer[T]):
 class PipeDescriptor(Generic[T]):
     """pipe 描述符 - 同时支持可调用和链式调用"""
     
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __get__(self, instance: Observable[T], owner=None) -> 'PipeBuilder[T]':
         if instance is None:
             return self

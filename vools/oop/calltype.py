@@ -195,8 +195,46 @@ def test_callable_type_detection():
         @staticmethod
         def static_method():
             pass
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
         
     class CallableInstance:
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
         def __call__(self):
             pass
     
@@ -272,12 +310,50 @@ if __name__ == '__main__':
     class ExampleClass:
         def __init__(self, x: float, y: int = 0):
             pass
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 
     fake_class_init = create_fake(ExampleClass)
     print(inspect.signature(fake_class_init))  # 输出: (self, x: float, y: int = 0) -> None
 
     # 测试实现了 __call__ 的类实例
     class CallableClass:
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
         def __call__(self, a, b=10):
             return a + b
 
