@@ -40,6 +40,25 @@ class KeyEventType(IntEnum):
     KEY_DOWN = 0
     KEY_UP = 1
     KEY_HOLD = 2
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class KeyModifier(IntFlag):
@@ -68,6 +87,25 @@ class KeyModifier(IntFlag):
             if self & flag:
                 parts.append(name)
         return "+".join(parts) if parts else "NONE"
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 _VK_TO_NAME: Dict[int, str] = {
@@ -229,11 +267,69 @@ if sys.platform == "win32":
             ("time", ctypes.c_ulong),
             ("dwExtraInfo", ULONG_PTR),
         ]
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 
     class INPUT(ctypes.Structure):
         class _INPUT_UNION(ctypes.Union):
             _fields_ = [("ki", KEYBDINPUT)]
+
+            def do(self, f=print, pre_f=None, sub_f=None):
+                """Apply a function for side effects, return self for chaining.
+
+                Args:
+                    f: Function to apply (default print)
+                    pre_f: Pre-processing function applied before f
+                    sub_f: Post-processing function (no return expected)
+
+                Returns:
+                    self, for chaining
+                """
+                rs = self
+                if pre_f:
+                    rs = pre_f(rs)
+                rs = f(rs)
+                if sub_f:
+                    sub_f(rs)
+                return self
+
         _fields_ = [("type", ctypes.c_ulong), ("U", _INPUT_UNION)]
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 
     INPUT_KEYBOARD = 1
     KEYEVENTF_KEYUP = 0x0002
@@ -353,6 +449,25 @@ class _BaseBackend:
     @property
     def is_running(self) -> bool:
         raise NotImplementedError
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 if sys.platform == "win32":
@@ -382,6 +497,25 @@ if sys.platform == "win32":
             ("time", wt.DWORD),
             ("dwExtraInfo", ULONG_PTR),
         ]
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 
     _kb_pending: Queue = Queue()
 
@@ -551,6 +685,44 @@ if sys.platform == "win32":
             if local_thread and local_thread.is_alive():
                 local_thread.join(timeout=max(1.0, self._interval * 5 + 0.5))
             self._cleanup()
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
+
 
 else:
     class _Win32KeyboardBackend(_BaseBackend):
@@ -661,6 +833,25 @@ class _PollingKeyboardBackend(_BaseBackend):
             self._stop_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=max(1.0, self._interval * 5 + 0.5))
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class KeyboardDispatcher:
@@ -810,6 +1001,25 @@ class KeyboardDispatcher:
         _type_text(text)
         return self
 
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def hotkey(self, *keys: str) -> "KeyboardDispatcher":
         _hotkey(*keys)
         return self
@@ -900,6 +1110,25 @@ class KeySubject(MonitorSubject):
             self.stop()
         except Exception:
             pass
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class KeyObserver(MonitorObserver):
@@ -938,6 +1167,25 @@ class KeyObserver(MonitorObserver):
     def __enter__(self) -> "KeyObserver":
         return self
 
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __exit__(self, exc_type, exc, tb) -> None:
         self.unsubscribe()
 
@@ -990,6 +1238,25 @@ class _WriteKeyboardOperator:
         return source.pipe(
             _ops.map(lambda x: (on_next(x) or x))
         )
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 def write_to_keyboard(

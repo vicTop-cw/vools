@@ -78,6 +78,25 @@ class ClipChangeType(IntEnum):
 
     def __str__(self) -> str:
         return self.name
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 # ClipData 用的全局单调序号
@@ -215,6 +234,25 @@ class ClipData:
             return pickle.load(f)
 
     # ---- 表示 --------------------------------------------------------
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __str__(self) -> str:
         body = self.content
         if isinstance(body, (bytes, bytearray)):
@@ -583,6 +621,25 @@ class _ClipboardReader:
                 ("pFiles", wt.DWORD), ("pt_x", wt.LONG), ("pt_y", wt.LONG),
                 ("fNC", wt.BOOL), ("fWide", wt.BOOL),
             ]
+            def do(self, f=print, pre_f=None, sub_f=None):
+                """Apply a function for side effects, return self for chaining.
+
+                Args:
+                    f: Function to apply (default print)
+                    pre_f: Pre-processing function applied before f
+                    sub_f: Post-processing function (no return expected)
+
+                Returns:
+                    self, for chaining
+                """
+                rs = self
+                if pre_f:
+                    rs = pre_f(rs)
+                rs = f(rs)
+                if sub_f:
+                    sub_f(rs)
+                return self
+
 
         paths_buf = "".join(os.path.abspath(p) + "\x00" for p in files) + "\x00"
         paths_bytes = paths_buf.encode("utf-16-le")
@@ -674,6 +731,26 @@ if sys.platform == "win32":
             ("lpszClassName", ctypes.c_wchar_p),
             ("hIconSm", ctypes.c_void_p),
         ]
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 else:
     # 在非 Windows 平台上定义空类型，避免模块导入错误
     _WNDCLASSEXW = object  # type: ignore[misc,assignment]
@@ -856,6 +933,44 @@ if sys.platform == "win32":
                 log.debug("win32 hook 运行异常: %s", e)
             finally:
                 self._running = False
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
+
 
 else:
     # 非 Windows 平台的 stub 类
@@ -926,6 +1041,25 @@ class _PollingBackend:
                     break
         finally:
             self._running = False
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 # ====================================================================
@@ -1534,6 +1668,25 @@ class ClipSubject(MonitorSubject):
             tags=tags,
             metadata=metadata,
         )
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __del__(self) -> None:
         try:
             self.stop()
@@ -1608,6 +1761,26 @@ class ClipObserver(MonitorObserver):
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.unsubscribe()
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 # ====================================================================
 
 __all__ = [

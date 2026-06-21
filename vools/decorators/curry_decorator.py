@@ -123,6 +123,25 @@ class CurriedMethod:
             self.method_name, new_args, new_kwargs
         )
     
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __getattr__(self, name):
         if name == self.method_name:
             return lambda *args, **kwargs: self.__call__(*args, **kwargs)
@@ -145,6 +164,24 @@ def curry_class(cls: type):
         def add(self, a, b, c):
             return a + b + c
         
+        def do(self, f=print, pre_f=None, sub_f=None):
+            '''Apply a function for side effects, return self.
+            
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+            
+            Returns:
+                self, for chaining
+            '''
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
         def sum_all(self, a, b, *c, **k):
             total = a + b + sum(c)
             if k:
@@ -285,6 +322,25 @@ class T:
             return self.data[index]
         return default
     
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __lt__(self, a, b):
         """小于比较"""
         return a < b

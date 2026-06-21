@@ -193,6 +193,25 @@ class CodecRegistry:
         return cls._encoders.copy()
     
     @classmethod
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def get_decoders(cls) -> Dict[str, Callable]:
         """
         获取所有解码器
@@ -259,6 +278,25 @@ class EncoderMeta(type):
     def __new__(cls, name: str, bases: tuple, attrs: dict):
         new_cls = super().__new__(cls, name, bases, attrs)
         return new_cls
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class Encoder(metaclass=EncoderMeta):
@@ -525,6 +563,25 @@ class Encoder(metaclass=EncoderMeta):
     def __repr__(self):
         return f"Encoder(data={repr(self._data)}, history={self._history})"
     
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __str__(self):
         return str(self._data)
 
@@ -779,6 +836,25 @@ class Decoder(metaclass=EncoderMeta):
     
     def __str__(self):
         return str(self._data)
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 # 注册默认编解码器

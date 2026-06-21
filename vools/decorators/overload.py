@@ -37,6 +37,25 @@ except ImportError:
         return False
     class Curried:
         pass
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 
 __all__ = [
     'overload',
@@ -59,6 +78,25 @@ class OverloadMode(IntFlag):
     AllowSyncName = 1 << 1  # 允许非同名函数注册
     Strict = 1 << 2          # 严格类型检查
     Ambiguous = 1 << 3       # 允许模糊匹配（多个候选时选第一个）
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 # 别名
@@ -417,6 +455,25 @@ class OverloadManager:
         else:
             return candidates[0][0](*args, **kwargs)
 
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def is_overload_manager(self) -> bool:
         """检查是否是 OverloadManager"""
         return True
@@ -507,6 +564,25 @@ class NewOverloadManager(OverloadManager):
             raise ValueError(
                 "NewOverloadManager 必须启用 AllowSyncName"
             )
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 # =============================================================================
@@ -588,6 +664,25 @@ class StrictMode:
             self._enabled = enabled
             self.func = func
 
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __call__(self, *args, **kwargs):
         if self._enabled:
             return _strict_wrapper(self.func)(*args, **kwargs)

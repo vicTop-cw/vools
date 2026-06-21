@@ -128,6 +128,25 @@ class _X:
         if isinstance(key, tuple):
             return PipeX(('index', key))
         return PipeX(('index', (key,)))
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class PipeX:
@@ -371,6 +390,25 @@ class _Y:
     def __call__(self, *args, **kwargs):
         """拦截方法调用，开始构建管道"""
         return PipeY(('call', args, kwargs))
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class PipeY:
@@ -577,6 +615,25 @@ class PipeY:
                 if extra:
                     result = result[extra[0]] if len(extra) == 1 else result[tuple(extra)]
                 return result
+            def do(self, f=print, pre_f=None, sub_f=None):
+                """Apply a function for side effects, return self for chaining.
+
+                Args:
+                    f: Function to apply (default print)
+                    pre_f: Pre-processing function applied before f
+                    sub_f: Post-processing function (no return expected)
+
+                Returns:
+                    self, for chaining
+                """
+                rs = self
+                if pre_f:
+                    rs = pre_f(rs)
+                rs = f(rs)
+                if sub_f:
+                    sub_f(rs)
+                return self
+
 
         return SubscriptExecutor()
 

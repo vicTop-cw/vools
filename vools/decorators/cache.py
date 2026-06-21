@@ -110,6 +110,25 @@ class FileLock:
         self.acquire()
         return self
     
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.release()
 
@@ -157,6 +176,25 @@ class TimedCache:
         """返回缓存条目数"""
         with self._lock:
             return len(self._cache)
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function applied after f (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
 
 
 _CACHE = TimedCache(max_size=1000)
@@ -307,6 +345,25 @@ def once(obj: Any) -> Any:
                     cls._instance._initialized = False
                 return cls._instance
             
+
+            def do(self, f=print, pre_f=None, sub_f=None):
+                """Apply a function for side effects, return self.
+
+                Args:
+                    f: Function to apply (default print)
+                    pre_f: Pre-processing function
+                    sub_f: Post-processing function (no return value expected)
+
+                Returns:
+                    self, for chaining
+                """
+                rs = self
+                if pre_f:
+                    rs = pre_f(rs)
+                rs = f(rs)
+                if sub_f:
+                    sub_f(rs)
+                return self
             def __init__(self, *args, **kwargs):
                 if not self._initialized:
                     super().__init__(*args, **kwargs)

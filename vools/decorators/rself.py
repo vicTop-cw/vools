@@ -253,6 +253,25 @@ if __name__ == "__main__":
             """设置额外参数"""
             self._extra = extra
 
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
         def decorated(self):
             """自定义方法：返回带前缀并重复的字符串"""
             prefix = self._extra or ""
@@ -277,10 +296,48 @@ if __name__ == "__main__":
         def with_affix(self):
             """返回带前后缀的字符串"""
             return self._prefix + str(self) + self._suffix
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 
     @rself
     class SuperList(list):
         """增强版列表类，支持链式调用"""
+
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function
+                sub_f: Post-processing function (no return value expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
         def add(self, item):
             new_list = SuperList(self)
             new_list.append(item)
@@ -294,6 +351,25 @@ if __name__ == "__main__":
 
         def increment(self):
             self.value += 1
+        def do(self, f=print, pre_f=None, sub_f=None):
+            """Apply a function for side effects, return self for chaining.
+
+            Args:
+                f: Function to apply (default print)
+                pre_f: Pre-processing function applied before f
+                sub_f: Post-processing function (no return expected)
+
+            Returns:
+                self, for chaining
+            """
+            rs = self
+            if pre_f:
+                rs = pre_f(rs)
+            rs = f(rs)
+            if sub_f:
+                sub_f(rs)
+            return self
+
 
     # ----- 测试 SuperText -----
     print("=== 测试 SuperText ===")
@@ -354,6 +430,26 @@ if __name__ == "__main__":
         @rself
         class MultiInherit(str, list):
             pass
+
+            def do(self, f=print, pre_f=None, sub_f=None):
+                """Apply a function for side effects, return self for chaining.
+
+                Args:
+                    f: Function to apply (default print)
+                    pre_f: Pre-processing function applied before f
+                    sub_f: Post-processing function (no return expected)
+
+                Returns:
+                    self, for chaining
+                """
+                rs = self
+                if pre_f:
+                    rs = pre_f(rs)
+                rs = f(rs)
+                if sub_f:
+                    sub_f(rs)
+                return self
+
         print("[FAIL] 应该抛出错误")
     except TypeError as e:
         print(f"[OK] 正确抛出错误: {e}")

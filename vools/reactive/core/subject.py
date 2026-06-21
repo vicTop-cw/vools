@@ -141,6 +141,25 @@ class BehaviorSubject(Subject[T], Generic[T]):
         super().on_next(value)
     
     @property
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def value(self) -> T:
         return self._value
 
@@ -192,6 +211,25 @@ class ReplaySubject(Subject[T], Generic[T]):
         if self._buffer_size is not None and len(self._buffer) > self._buffer_size:
             self._buffer.pop(0)
         super().on_next(value)
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 class AsyncSubject(Subject[T], Generic[T]):
@@ -239,6 +277,25 @@ class AsyncSubject(Subject[T], Generic[T]):
         self._value = value
         self._has_value = True
     
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function
+            sub_f: Post-processing function (no return value expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
     def on_completed(self) -> None:
         if not self._is_closed and not self._is_completed:
             self._is_completed = True

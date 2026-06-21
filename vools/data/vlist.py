@@ -20,6 +20,25 @@ class ListLikeMeta(type):
     """列表类似元类，使 isinstance(x, VList) 对普通 list 也返回 True"""
     def __instancecheck__(cls, instance):
         return isinstance(instance, (list, cls))
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
 
 
 @rself
