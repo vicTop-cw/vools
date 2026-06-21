@@ -140,16 +140,14 @@ class BehaviorSubject(Subject[T], Generic[T]):
         self._value = value
         super().on_next(value)
     
-    @property
-
     def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
+        """Apply a function for side effects, return self for chaining.
+        
         Args:
             f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+        
         Returns:
             self, for chaining
         """
@@ -160,6 +158,8 @@ class BehaviorSubject(Subject[T], Generic[T]):
         if sub_f:
             sub_f(rs)
         return self
+    
+    @property
     def value(self) -> T:
         return self._value
 
