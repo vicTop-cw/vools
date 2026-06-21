@@ -55,6 +55,10 @@ __all__ = [
     'register_type',
     'get_type_handler',
     'get_type_deserializer',
+
+    # 哨兵对象
+    'NONE',
+    'NoneSentinel',
 ]
 
 # 延迟导入避免循环依赖
@@ -76,3 +80,6 @@ try:
     __all__.append('MsgpackBackend')
 except ImportError:
     pass
+
+# 哨兵对象
+from .sentinel import NONE, NoneSentinel
