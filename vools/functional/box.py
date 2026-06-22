@@ -3,8 +3,11 @@ from collections.abc import Iterable
 from wrapt import decorator as wdeco, ObjectProxy as AOP
 from .arrow_func import g
 from datetime import datetime
+from typing import Any, Callable, Optional, Union, TypeVar, List
 
 __all__ = ['box', 'Box', 'setattr_box']
+
+R = TypeVar('R')
 
 
 _RETURN_TYPE_RESTRICTED_METHODS = {
@@ -55,7 +58,20 @@ def _get_methods(type_name):
     return methods
 
 
-def box(func=None, *, signature_from=None):
+def box(func: Optional[Callable[..., R]] = None, *, signature_from: Optional[Callable[..., Any]] = None) -> Union[Callable[[Callable[..., R]], Callable[..., 'Box']], Callable[..., 'Box']]:
+    """将函数返回值包装为 Box 对象，支持链式调用。
+    
+    支持两种用法：
+    1. 装饰器用法：@box 或 @box(signature_from=...)
+    2. 函数调用用法：box(some_func)
+    
+    Args:
+        func: 要包装的函数（装饰器用法时为 None）
+        signature_from: 可选，从该函数复制签名信息
+        
+    Returns:
+        装饰后的函数或直接返回 Box 对象
+    """
     if func is None:
         return lambda f: box(f, signature_from=signature_from)
     @wdeco
@@ -105,6 +121,18 @@ def box(func=None, *, signature_from=None):
 
 @box
 def __box_wrapped_call__(self, *args, **kwargs):
+    """内部函数，用于处理被 Box 包装的可调用对象的调用。
+    
+    当通过 __call__ 描述符访问时，实际调用此函数。
+    
+    Args:
+        self: Box 实例
+        *args: 位置参数
+        **kwargs: 关键字参数
+        
+    Returns:
+        调用结果
+    """
     if callable(self):
         return self(*args, **kwargs)
     if not callable(self.__wrapped__):
@@ -113,8 +141,13 @@ def __box_wrapped_call__(self, *args, **kwargs):
 
 
 class CallableDescriptor:
-    """描述符，控制__call__属性的访问"""
-    def __init__(self):
+    """描述符，控制 __call__ 属性的访问。
+    
+    用于 Box 类，使其可以像函数一样被调用。
+    只有当 __wrapped__ 是可调用对象时，__call__ 才可用。
+    """
+    def __init__(self) -> None:
+        """初始化描述符，禁用状态默认为 False。"""
         self.enabled = False
 
     def __get__(self, instance, owner):
@@ -130,13 +163,15 @@ class CallableDescriptor:
             raise TypeError(f"'{type(instance).__name__}' object is not callable")
         return partial(__box_wrapped_call__, instance)
 
-    def enable(self):
+    def enable(self) -> None:
+        """启用 __call__ 功能，使 Box 实例可被调用。"""
         self.enabled = True
 
-    def disable(self):
+    def disable(self) -> None:
+        """禁用 __call__ 功能，使 Box 实例不可被调用。"""
         self.enabled = False
 
-    def do(self, f=print, pre_f=None, sub_f=None):
+    def do(self, f: Callable[..., Any] = print, pre_f: Optional[Callable[..., Any]] = None, sub_f: Optional[Callable[..., Any]] = None) -> 'CallableDescriptor':
         """Apply a function for side effects, return self for chaining.
         
         Args:
@@ -290,36 +325,90 @@ class Box(AOP):
 
         raise AttributeError(f"type object '{type(self).__name__}' has no attribute '{name}'")
 
-    def copy(self):
+    def copy(self) -> 'Box':
+        """返回 Box 的浅拷贝。
+        
+        Returns:
+            包装了 __wrapped__ 副本的新 Box
+        """
         cls = type(self)
         return cls(self.__wrapped__.copy())
 
     @box
-    def map(self, func):
-        """映射操作"""
+    def map(self, func: Callable[[Any], Any]) -> List[Any]:
+        """对 Box 内的可迭代对象执行 map 操作。
+        
+        Args:
+            func: 映射函数，应用于每个元素
+            
+        Returns:
+            映射结果列表
+            
+        Raises:
+            TypeError: 当 __wrapped__ 不是可迭代对象时
+        """
         base = self.__wrapped__
         if isinstance(base, Iterable) and not isinstance(base, (str, bytes)):
             return [func(item) for item in base]
         raise TypeError("map 操作只适用于可迭代对象")
 
     @box
-    def filter(self, func):
-        """过滤操作"""
+    def filter(self, func: Callable[[Any], bool]) -> List[Any]:
+        """对 Box 内的可迭代对象执行过滤操作。
+        
+        Args:
+            func: 过滤函数，返回 True 保留元素，False 丢弃元素
+            
+        Returns:
+            过滤后的列表
+            
+        Raises:
+            TypeError: 当 __wrapped__ 不是可迭代对象时
+        """
         base = self.__wrapped__
         if isinstance(base, Iterable) and not isinstance(base, (str, bytes)):
             return [item for item in base if func(item)]
         raise TypeError("filter 操作只适用于可迭代对象")
 
     @box
-    def reduce(self, func, initial=None):
-        """归约操作"""
+    def reduce(self, func: Callable[[Any, Any], Any], initial: Optional[Any] = None) -> Any:
+        """对 Box 内的可迭代对象执行归约操作。
+        
+        Args:
+            func: 归约函数，接收两个参数（累积值，当前元素）
+            initial: 可选的初始值
+            
+        Returns:
+            归约结果
+            
+        Raises:
+            TypeError: 当 __wrapped__ 不是可迭代对象时
+        """
         base = self.__wrapped__
         if isinstance(base, Iterable) and not isinstance(base, (str, bytes)):
             return reduce(func, base, initial) if initial is not None else reduce(func, base)
         raise TypeError("reduce 操作只适用于可迭代对象")
 
     @box
-    def run(self, func=print, *args, **kwargs):
+    def run(self, func: Union[Callable[..., Any], str] = print, *args: Any, **kwargs: Any) -> Any:
+        """执行函数并返回结果，支持多种调用模式。
+        
+        Args:
+            func: 要执行的函数或字符串（会被 g 函数解析）
+            *args: 额外的位置参数
+            **kwargs: 额外的关键字参数
+            
+        Keyword Args:
+            nobox: bool, 是否传递 Box 本身而非 __wrapped__ 给 func
+            unpack: str, 解包模式，"*" 解包可迭代对象，"**" 解包字典
+            rerun: bool, 是否对每个元素执行函数
+            
+        Returns:
+            函数执行结果
+            
+        Raises:
+            TypeError: 当 func 参数类型错误时
+        """
         if isinstance(func, str):
             func = g(func)
         if not callable(func):
@@ -340,7 +429,15 @@ class Box(AOP):
             return func(arg0, *args, **kwargs)
 
     @box
-    def __dir__(self):
+    def __dir__(self) -> List[str]:
+        """返回 Box 对象的目录列表。
+        
+        包括 __wrapped__ 的所有属性，以及 Box 特有方法（map, filter, reduce, copy, run）
+        和数字索引访问属性（_1, _2, ...）。
+        
+        Returns:
+            排序后的属性名字符串列表
+        """
         base = self.__wrapped__
         rs = dir(base)
         st = set(rs)
@@ -373,7 +470,17 @@ class Box(AOP):
             rs -= set(['__call__'])
         return list(sorted(rs))
 
-    def __hasattr__(self, name):
+    def __hasattr__(self, name: str) -> bool:
+        """检查 Box 对象是否具有指定名称的属性。
+        
+        支持数字索引属性（如 _1, _2, _-1 等）的动态检查。
+        
+        Args:
+            name: 属性名称
+            
+        Returns:
+            如果属性存在则返回 True，否则返回 False
+        """
         if name.startswith('_') and len(name) > 1:
             if name[1:].isdigit():
                 index = int(name[1:]) - 1
@@ -388,16 +495,16 @@ class Box(AOP):
 
         return name in self.__dir__()
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
-
+    def do(self, f: Callable[..., Any] = print, pre_f: Optional[Callable[..., Any]] = None, sub_f: Optional[Callable[..., Any]] = None) -> 'Box':
+        """对 Box 执行副作用函数，返回 self 以支持链式调用。
+        
         Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function (no return expected)
-
+            f: 要执行的函数（默认为 print）
+            pre_f: 执行前的预处理函数
+            sub_f: 执行后的后处理函数（不关心返回值）
+            
         Returns:
-            self, for chaining
+            self 本身，用于链式调用
         """
         rs = self
         if pre_f:
@@ -408,8 +515,20 @@ class Box(AOP):
         return self
 
 
-def setattr_box(func, attr_name, cover=True):
-    """将函数设置为 Box 类的方法"""
+def setattr_box(func: Callable[..., Any], attr_name: str, cover: bool = True) -> Optional[bool]:
+    """将函数设置为 Box 类的方法。
+    
+    Args:
+        func: 要设置为 Box 方法的函数
+        attr_name: 方法名称
+        cover: 是否覆盖已存在的属性，默认为 True
+        
+    Returns:
+        成功返回 True，失败返回 None
+        
+    Raises:
+        AttributeError: 当 cover=False 且属性已存在时
+    """
     if not callable(func):
         return None
 

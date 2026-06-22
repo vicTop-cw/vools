@@ -1,8 +1,13 @@
+"""Clipboard single-event integration tests (Windows only)."""
 import sys
 import time
 import logging
 import threading
 from datetime import datetime
+
+import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
 
 sys.path.insert(0, 'e:/IDEProjects/AI/vools')
 

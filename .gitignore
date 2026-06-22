@@ -1,13 +1,11 @@
-# Byte-compiled / optimized / DLL files
+# ===== Python / Byte-compiled =====
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
+*.pyd
 
-# Distribution / packaging
-.Python
+# ===== Distribution / Packaging =====
 build/
 develop-eggs/
 dist/
@@ -25,16 +23,23 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Unit test / coverage reports
+# ===== Virtual environments =====
+.venv/
+venv/
+env/
+ENV/
+.venv.bak/
+venv.bak/
+.python-version
+
+# ===== PyInstaller =====
+*.manifest
+*.spec
+
+# ===== Testing / Coverage =====
 htmlcov/
 .tox/
 .nox/
@@ -49,108 +54,62 @@ coverage.xml
 .pytest_cache/
 pytestdebug.log
 
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-Pipfile.lock
-
-# poetry
-poetry.lock
-
-# pdm
-.pdm.toml
-
-# PEP 582
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
+# ===== Type checker caches =====
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre type checker
 .pyre/
-
-# pytype static type analyzer
 .pytype/
+.ruff_cache/
 
-# Cython debug symbols
-cython_debug/
+# ===== Jupyter / Notebook =====
+.ipynb_checkpoints/
 
-# IDE
+# ===== IDE / Editor =====
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+.run/
+.atomcode/
 
-# 敏感配置文件
-vools/config.py
-
-# 操作系统
+# ===== OS =====
 .DS_Store
 Thumbs.db
+Desktop.ini
 
-# 项目特定
+# ===== Project-specific =====
+# Runtime SQLite / data files
+db/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Serialization / persist test caches
+tests/__persist__/
+vools/decorators/__persist__/
+
+# Temp / debug / scratch scripts
+Temp/
+temp/
+debug/
+dev_tools/
+
+# Local config / secrets
+vools/config.py
+.env
+.env.local
+
+# Misc scratch
+*.bak
 *.xlsx
 *.xls
 *.csv
 *.json.bak
+
+# Build / dist artifacts
+logs/
+release.log
+

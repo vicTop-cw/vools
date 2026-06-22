@@ -1,4 +1,5 @@
-"""
+"""MouseObserver integration tests (Windows only).
+
 MouseObserver å ?MouseSubject é  æ  æµ è¯
 
 æµ è¯ æ ¹æ¡ :
@@ -14,6 +15,10 @@ import subprocess
 import psutil
 from datetime import datetime
 from typing import Dict, List, Any
+
+import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

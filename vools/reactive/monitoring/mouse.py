@@ -1,5 +1,6 @@
 """
-mouse - Mouse input monitoring and simulation.
+vools/reactive/monitoring/mouse.py
+仅支持 Windows 平台。
 """
 from __future__ import annotations
 
@@ -72,6 +73,19 @@ def _make_mouse_signature(x: int, y: int, event_type: int) -> Tuple[int, int, in
 
 @dataclass
 class MouseData:
+    """鼠标事件数据。
+
+    字段:
+        x: 鼠标 X 坐标（屏幕坐标）
+        y: 鼠标 Y 坐标（屏幕坐标）
+        event_type: 事件类型（MouseEventType）
+        button: 鼠标按钮（"left", "right", "middle"）
+        delta: 滚轮滚动量（用于 SCROLL 事件）
+        timestamp: 事件时间戳
+        sequence: 全局序号（单调递增）
+        tags: 用户自定义标签
+        metadata: 扩展元信息
+    """
     x: int = 0
     y: int = 0
     event_type: int = MouseEventType.MOVE
@@ -992,6 +1006,20 @@ class MouseDispatcher:
 
 
 class MouseSubject(MonitorSubject):
+    """鼠标事件主题（Subject），继承 MonitorSubject。
+
+    内部持有 MouseDispatcher，提供鼠标事件流。
+
+    方法:
+        move_to(x, y): 移动鼠标到指定坐标
+        click(button): 模拟点击
+        double_click(button): 模拟双击
+        scroll(delta): 模拟滚轮滚动
+        move_relative(dx, dy): 相对移动鼠标
+        drag_to(x, y, button): 拖拽到指定位置
+        press_button(button): 按下鼠标按钮
+        release_button(button): 释放鼠标按钮
+    """
     def __init__(
         self,
         *,
@@ -1001,6 +1029,15 @@ class MouseSubject(MonitorSubject):
         tags: Tuple[str, ...] = (),
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """初始化鼠标监控主题。
+
+        Args:
+            backend: 后端类型，"auto" | "win32" | "polling"
+            filter_self: 是否过滤自模拟的鼠标事件
+            interval: 轮询间隔（秒）
+            tags: 默认附加的标签
+            metadata: 默认元数据
+        """
         self._backend = backend
         self._filter_self = filter_self
         self._interval = interval

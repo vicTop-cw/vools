@@ -1,9 +1,9 @@
-"""
-vools-recorder æµè¯
-"""
+"""Recorder integration tests (Windows only)."""
 import sys
 import os
 import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
 import json
 import yaml
 from datetime import datetime

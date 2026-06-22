@@ -176,9 +176,20 @@ class RecorderGUI:
             self.btn_cancel.state(["!disabled"])
 
     def _set_status(self, text: str) -> None:
+        """更新状态标签文本。
+
+        Args:
+            text: 状态文本
+        """
         self.status_label.configure(text=f"状态: {text}")
 
     def _set_time_label(self, duration_ms: float, count: int = 0) -> None:
+        """更新时长和动作计数标签。
+
+        Args:
+            duration_ms: 录制时长（毫秒）
+            count: 动作数量
+        """
         text = f"时长: {duration_ms / 1000:.1f}s"
         if count:
             text += f"  |  动作: {count}"
@@ -387,7 +398,10 @@ class RecorderGUI:
             sub_f(rs)
         return self
     def run(self) -> None:
-        """运行 GUI 主循环"""
+        """运行 GUI 主循环。
+
+        启动 Tkinter 事件循环，显示窗口并处理用户交互。
+        """
         self.root.mainloop()
 
 

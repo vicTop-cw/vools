@@ -8,6 +8,8 @@ import threading
 
 import pytest
 
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
+
 from vools.reactive import (
     FolderChangeType,
     FolderData,

@@ -23,7 +23,7 @@
 import inspect as ins
 from collections.abc import Iterable
 from functools import wraps, lru_cache
-from typing import Any, Callable, Optional, Union, List, Dict, Tuple, overload
+from typing import Any, Callable, Optional, Union, List, Dict, Tuple, overload, Literal
 from ..security.safe_eval import safe_lambda, SafeEvalError
 
 __all__ = ["LazyProperty", "ConditionBuilder", "iif"]
@@ -307,7 +307,7 @@ class ConditionBuilder:
         self._conditions.append((self._get_condition(value), result))
         return self
 
-    def cases(self, *cases: Any) -> "ConditionBuilder":
+    def cases(self, *cases: Union[Dict[Any, Any], Tuple[Any, Any], List[Any]]) -> "ConditionBuilder":
         """批量添加条件分支。
 
         支持传入 dict 或长度为 2 的 list/tuple。
@@ -320,7 +320,7 @@ class ConditionBuilder:
                 self.case(case_item[0], case_item[1])
         return self
 
-    def when(self, value: Any, result: Any, logic: Optional[str] = None) -> "ConditionBuilder":
+    def when(self, value: Any, result: Any, logic: Optional[Literal['and', 'or']] = None) -> "ConditionBuilder":
         """添加条件分支，支持逻辑组合（'and' / 'or'）。"""
         if self._chain_locked:
             raise RuntimeError("链式调用已被 otherwise() 终止，无法继续添加条件")
@@ -338,7 +338,7 @@ class ConditionBuilder:
             self._conditions[-1] = (new_cond, result)
         return self
 
-    def whens(self, *whens: Any) -> "ConditionBuilder":
+    def whens(self, *whens: Tuple[Any, Any]) -> "ConditionBuilder":
         """批量添加 when 条件。
 
         每项须为长度 2 或 3 的 list/tuple，格式：(value, result) 或 (value, result, logic)。

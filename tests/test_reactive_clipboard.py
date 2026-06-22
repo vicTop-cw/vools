@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""Tests for vools.reactive.clipboard (Windows only / integration)."""
+import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
+
 """
-测试 vools.reactive.clipboard 模块
-- ClipChangeType 枚举
+ClipChangeType 枚举
 - ClipData 数据类与序列化/反序列化
 - 剪贴板读写
 - ClipboardDispatcher(Win32 hook + polling 回退)

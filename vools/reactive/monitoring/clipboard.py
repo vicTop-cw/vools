@@ -1535,7 +1535,6 @@ class ClipSubject(MonitorSubject):
 
     内部持有 ClipboardDispatcher，提供剪贴板内容变更事件流。
     """
-
     def __init__(
         self,
         *,
@@ -1550,6 +1549,20 @@ class ClipSubject(MonitorSubject):
         on_change_data: Optional[Any] = None,
         signature_ttl: float = 1.0,
     ) -> None:
+        """初始化剪贴板监控主题。
+
+        Args:
+            backend: 后端类型，"auto" | "win32" | "polling"
+            interval: 轮询间隔（秒）
+            tags: 默认附加的标签
+            filter_self: 是否启用自过滤
+            self_filter: 可选的自定义丢弃规则
+            self_source: 写回时写入 metadata._source 的来源标识
+            self_signature_capacity: 自过滤签名队列的最大长度
+            change_types: 白名单；仅分发列出的 ClipChangeType
+            on_change_data: 可选；每次检测到变更时用它返回的 ClipData 作为分发内容
+            signature_ttl: 签名去重时间窗口（秒）
+        """
         self._backend = backend
         self._interval = interval
         self._tags = tags

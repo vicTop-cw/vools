@@ -103,18 +103,18 @@ _seq_counter = itertools.count(1)
 
 @dataclass(slots=True)  # type: ignore[call-overload]
 class FileData:
-    """结构化的文件事件数据。
+    """文件变化事件数据。
 
     字段:
-        path:           触发变更的完整路径
-        old_path:       重命名时旧路径；其它情况 None
-        change_type:    变更类型（FileChangeType）
-        is_directory:   是否为目录
-        size:           变更后文件大小（删除时 None）
-        timestamp:      检测到变更的时间
-        sequence:       全局序号（单调递增）
-        tags:           用户自定义标签
-        metadata:       扩展元信息
+        path: 触发变更的完整路径
+        old_path: 重命名时旧路径；其它情况 None
+        change_type: 变更类型（FileChangeType）
+        is_directory: 是否为目录
+        size: 变更后文件大小（删除时 None）
+        timestamp: 检测到变更的时间
+        sequence: 全局序号（单调递增）
+        tags: 用户自定义标签
+        metadata: 扩展元信息
     """
 
     path: str
@@ -1439,12 +1439,10 @@ def write_to_filesystem(
 
 
 class FileSubject(MonitorSubject):
-    """
-    文件监控主题（Subject），继承 MonitorSubject。
+    """文件监控主题（Subject），继承 MonitorSubject。
 
     内部持有 FileDispatcher，提供文件变更事件流。
     """
-
     def __init__(
         self,
         *,
@@ -1456,6 +1454,17 @@ class FileSubject(MonitorSubject):
         auto_start: bool = False,
         filter_self: bool = True,
     ) -> None:
+        """初始化文件监控主题。
+
+        Args:
+            paths: 监控路径列表
+            backend: 后端类型，"auto" | "win32" | "macos" | "inotify" | "polling"
+            interval: 轮询间隔（秒）
+            tags: 默认附加的标签
+            change_types: 白名单；仅分发列出的 FileChangeType
+            auto_start: 是否在构造时自动启动
+            filter_self: 是否启用自过滤
+        """
         self._paths = paths
         self._backend = backend
         self._interval = interval

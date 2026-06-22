@@ -1,8 +1,13 @@
+"""Clipboard event-loss integration tests (Windows only)."""
 import sys
 import time
 import logging
 import threading
 import tkinter as tk
+
+import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
 
 sys.path.insert(0, 'e:/IDEProjects/AI/vools')
 

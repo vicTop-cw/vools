@@ -1,4 +1,5 @@
-"""
+"""FolderObserver integration tests (Windows only).
+
 FolderObserver å ?FolderSubject é  æ  æµ è¯
 
 æµ è¯ æ ¹æ¡ :
@@ -16,6 +17,10 @@ import subprocess
 import psutil
 from datetime import datetime
 from typing import Dict, List, Any
+
+import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
 
 
 def log_event(log_file: str, event_type: str, **data) -> None:

@@ -1,22 +1,24 @@
-# vools 核心功能
+# vools 核心功能指南（v0.1.18）
 
-本指南涵盖占位符、重载装饰器、stuff、persist、box、g、iif 等核心模块。
+本指南覆盖 vools 中最常用的核心组件：占位符、重载装饰器、`stuff`、`persist`、`Box`、`g`、`iif` 以及 `Result`/`safe`。所有示例均可运行。
+
+> Python 3.9+ 支持
 
 ---
 
-## 快速示例
+## 1. 快速示例
 
 ```python
 from vools import _, _1, _2, overload, stuff, persist
 
-# 占位符
+# 占位符：简单匿名函数
 f = _ + 1
-print(f(2))  # 输出: 3
+print(f(2))              # 3
 
 f = _1 + _2
-print(f(1, 2))  # 输出: 3
+print(f(1, 2))           # 3
 
-# 使用重载
+# 基于参数数量的重载
 @overload
 def process():
     return "无参数"
@@ -25,269 +27,201 @@ def process():
 def process(x):
     return f"一个参数: {x}"
 
-print(process())     # 输出: 无参数
-print(process(10))   # 输出: 一个参数: 10
+print(process())         # 无参数
+print(process(10))       # 一个参数: 10
 
-# 使用 stuff
+# stuff 柯里化延迟调用
 @stuff
 def add(a, b, c):
     return a + b + c
 
-result = add(1)(2)(3)()
-print(result)  # 输出: 6
+print(add(1)(2)(3)())    # 6
+print(add(1, 2, 3)())     # 6
 
-# 使用 persist
-@persist(filepath='cache.pkl')
-def expensive_computation(x):
+# persist: 结果缓存到本地 JSON 文件
+@persist
+def expensive(x):
     return x ** 2
 
-result = expensive_computation(5)
-print(result)  # 输出: 25
+print(expensive(5))      # 25（第 1 次会写入 __persist__/expensive.json）
+print(expensive(5))      # 25（第 2 次直接从缓存读取）
+
+# Box：将返回值包装为可扩展的容器
+from vools.functional import Box, box
+
+data = Box([10, 20, 30])
+print(data.map(lambda x: x * 2))   # [20, 40, 60]
+
+# g：用字符串生成函数
+from vools.functional import g
+f = g("x, y => x * y + 1")
+print(f(3, 4))                     # 13
+
+# iif：条件表达式
+from vools.functional import iif
+print(iif(True, "yes", "no"))      # yes
 ```
 
-## 占位符
+---
 
-占位符提供了一种简洁的方式来创建匿名函数，特别适合函数式编程场景。
+## 2. 占位符（`_` / `_1` / `_2`）
 
-### 基本用法
+通过运算符重载构造匿名函数，省去 `lambda`。
+
+### 基本运算符
 
 ```python
-from vools.functional.placeholder import _, _1, _2, _3, f, magic, hd
+from vools.functional import _, _1, _2
 
-# 基本运算符
-f = _ + 1
-assert f(2) == 3
+# 单参数
+f = _ + 10
+assert f(5) == 15
 
-# 二元运算符
-f = _ + _
-assert f(1, 2) == 3
+f = _ * _
+assert f(3, 3) == 9
+```
 
-# 索引占位符
+### 数字索引占位符（`_1` / `_2` / `_3`…）
+
+`_n` 表示第 n 个位置参数，适合多参数函数调用：
+
+```python
 f = _1 + _2
-assert f(1, 2) == 3
+assert f(3, 4) == 7
 
-# 属性访问
+f = _1 * (_2 + _2)
+assert f(2, 3) == 12
+```
+
+### 属性访问
+
+属性访问返回一个可调用对象，需要再次 `()` 求值：
+
+```python
 f = _.upper
 assert f("hello")() == "HELLO"
 
-# 索引访问
+f = _.split
+assert f("a,b,c")(",") == ["a", "b", "c"]
+```
+
+### 下标访问
+
+```python
 f = _[0]
-assert f([1, 2, 3]) == 1
+assert f([10, 20, 30]) == 10
 
-# 复杂表达式
-f = _1 * (_2 + _3)
-assert f(2, 3, 4) == 14
+f = _1[1]
+assert f([1, 2, 3]) == 2
 ```
 
-### __expr__ 方法
+### 复杂表达式
 
 ```python
-# 单行表达式
-f1 = _.__expr__("_ + 1")
-assert f1(2) == 3
-
-# 索引表达式
-f2 = _.__expr__("_1 + _2 * _3")
-assert f2(1, 2, 3) == 7
+f = (_1 + _2) * _3
+assert f(2, 3, 4) == 20
 ```
 
-### f 函数
+---
+
+## 3. 重载装饰器
+
+vools 提供三种重载机制，分别适用于不同场景。
+
+### 3.1 `@overload` — 基于参数数量 / 类型的重载
+
+这是推荐用法。`@overload` 把函数转换为一个 `OverloadManager`，通过 `.register(...)` 注册不同参数数量的实现。调用时根据传入参数数量选择分支。
 
 ```python
-def add(a, b):
-    return a + b
+from vools import overload
 
-# 使用 f 函数构造占位符表达式
-f1 = f(add, _, _)
-assert f1(1, 2) == 3
-```
-
-### magic 对象
-
-magic 对象提供了一系列魔法方法的快捷访问：
-
-```python
-# 使用 magic 方法
-result = magic.map([1, 2, 3], lambda x: x * 2)
-# 支持的方法包括：map, filter, reduce, fold, compose, pipe, curry 等
-```
-
-### 转换方法
-
-```python
-# 类型转换
-f = _.toString
-assert f(123) == "123"
-
-f = _.toInt
-assert f("123") == 123
-
-f = _.toList
-assert f(range(3)) == [0, 1, 2]
-```
-
-### 逻辑操作
-
-```python
-# 逻辑运算
-f = _.and_(_ > 0, _ < 10)
-assert f(5) == True
-
-f = _.or_(_ == 0, _ == 1)
-assert f(0) == True
-```
-
-## 重载装饰器
-
-vools 提供三种不同的重载装饰器实现，适用于不同场景。
-
-### 1. @overload - 基于参数数量的重载
-
-```python
-from vools import overload, strict
-
-# 基本用法
 @overload
 def process():
     return "无参数"
 
 @process.register
-def process_x(x):
+def process(x):
     return f"一个参数: {x}"
 
 @process.register
-def process_xy(x, y):
+def process(x, y):
     return f"两个参数: {x}, {y}"
 
 assert process() == "无参数"
 assert process(10) == "一个参数: 10"
-assert process(20, 30) == "两个参数: 20, 30"
-
-# 严格模式（类型检查）
-@overload(is_strict=True)
-def add(a: int, b: int):
-    return a + b
-
-@add.register
-def add_str(a: str, b: str):
-    return a + b
-
-assert add(1, 2) == 3
-assert add("a", "b") == "ab"
-
-# 优先级控制
-@overload(priority='first')
-def process():
-    return "主函数"
-
-@process.register(priority=1)
-def process_one(arg):
-    return f"优先级1: {arg}"
-
-@process.register(priority=10)
-def process_high(arg):
-    return f"高优先级: {arg}"
-
-assert process("hello") == "高优先级: hello"
-
-# 类方法重载
-class Processor:
-    def __init__(self, prefix):
-        self.prefix = prefix
-    
-    @overload(is_strict=True)
-    def process(self):
-        return f"{self.prefix}: 无参数"
-    
-    @process.register
-    def process_int(self, x: int):
-        return f"{self.prefix}: 整数({x})"
-    
-    @process.register
-    def process_str(self, x: str):
-        return f"{self.prefix}: 字符串({x})"
-
-proc = Processor("测试")
-assert proc.process() == "测试: 无参数"
-assert proc.process(10) == "测试: 整数(10)"
-assert proc.process("text") == "测试: 字符串(text)"
+assert process(10, 20) == "两个参数: 10, 20"
 ```
 
-### 2. @overcurry - 柯里化与重载结合
+用于类方法时按同样模式注册（默认按参数数量匹配）：
+
+```python
+class Calc:
+    @overload
+    def compute(self, x: int):
+        return x * 2
+
+    @compute.register
+    def compute(self, x: str):
+        return len(x)
+
+    @compute.register
+    def compute(self, x: list):
+        return sum(x)
+
+c = Calc()
+assert c.compute(5) == 10
+assert c.compute("hello") == 5
+assert c.compute([1, 2, 3]) == 6
+```
+
+> 提示：每个 `@xxx.register` 下面的函数名不要求与主函数同名，内部按注册顺序尝试匹配。
+
+### 3.2 `@overcurry` — 柯里化 + 重载
+
+`@overcurry` 把每个注册的函数视为自动柯里化。可以一段一段地给参数，收集到足够参数后再执行；也可以直接一次性传入全部参数。
 
 ```python
 from vools import overcurry
 
-# 基本用法
 @overcurry
 def add(a, b):
     return a + b
 
 @add.register
-def add_3(a, b, c):
+def add(a, b, c):
     return a + b + c
 
 @add.register
-def add_4(a, b, c, d):
+def add(a, b, c, d):
     return a + b + c + d
 
-# 柯里化调用
+# 柯里化：分多次给参数
 assert add(1)(2) == 3
+# 一次性给足参数
 assert add(1, 2, 3) == 6
 assert add(1, 2, 3, 4) == 10
-
-# 严格模式（类型检查）
-@overcurry(is_strict=True)
-def process(a: int, b: int):
-    return a + b
-
-@process.register
-def process_str(a: str, b: str):
-    return a + b
-
-assert process(1)(2) == 3
-assert process("hello")(" world") == "hello world"
 ```
 
-### 3. @overloads - 同名方法重载
+它内部按"实际提供的参数数量"选择合适的分支执行。
 
-```python
-from vools import overloads
+### 3.3 `@overloads` — 同名函数重载（已弃用）
 
-class Calculator:
-    @overloads
-    def compute(self, x: int):
-        return x * 2
-    
-    @overloads
-    def compute(self, x: str):
-        return len(x)
-    
-    @overloads
-    def compute(self, x: list):
-        return sum(x)
+`@overloads` 目前仅作为 `@overload` 的别名存在，**建议直接使用 `@overload` + `.register`** 的模式。若仍然使用它，将触发 `DeprecationWarning`。
 
-calc = Calculator()
-assert calc.compute(5) == 10
-assert calc.compute("hello") == 5
-assert calc.compute([1, 2, 3]) == 6
-```
+### 3.4 三种重载方式对比
 
-### 三种重载方式对比
-
-| 特性 | @overload | @overcurry | @overloads |
-|------|-----------|------------|------------|
+| 特性 | `@overload` | `@overcurry` | `@overloads`（弃用） |
+|---|---|---|---|
 | 柯里化支持 | 否 | 是 | 否 |
-| 类型检查 | 支持 | 支持 | 支持 |
-| 优先级控制 | 支持 | 否 | 否 |
-| 类方法支持 | 是 | 是 | 是 |
-| 注册方式 | register | register | 同名方法 |
+| 按参数数量匹配 | 是 | 是 | 是 |
+| 注册方式 | `.register` | `.register` | 同名函数 |
+| 推荐等级 | ★★★ | ★★ | ★ |
 
-## stuff 函数
+---
 
-stuff 函数是一个强大的依赖注入装饰器，允许函数参数在运行时自动解析。
+## 4. `stuff` 函数 — 延迟柯里化执行
 
-### 基本用法
+`@stuff` 把一个普通函数包装成可分步传参的 `Stuff` 实例：每次调用 `(...)` 都会累积参数，最后以 `()` 触发实际执行。
 
 ```python
 from vools import stuff
@@ -296,62 +230,21 @@ from vools import stuff
 def add(a, b, c):
     return a + b + c
 
-# 柯里化调用
-result = add(1)(2)(3)()
-assert result == 6
-
-# 批量参数
-result = add(1, 2, 3)()
-assert result == 6
+# 分步传入
+assert add(1)(2)(3)() == 6
+# 一次传入
+assert add(1, 2, 3)() == 6
+# 混合
+assert add(1, 2)(3)() == 6
 ```
 
-### 参数依赖注入
+> 注意：不要在目标函数的关键字参数中使用 `Stuff` 内部保留的参数绑定语法；正常调用时只需关注"未传够参数前返回新的 `Stuff`，传够后用 `()` 触发"这一规则。
 
-```python
-@stuff
-def multiply(a, b, c):
-    return a * b * c
+---
 
-@multiply.register
-def get_a():
-    return 2
+## 5. `persist` 装饰器 — 本地文件缓存
 
-@multiply.register(param_name=['b', 'c'])
-def get_bc():
-    return 3, 4
-
-# 自动注入参数
-result = multiply()
-assert result == 24
-```
-
-### 高级用法
-
-```python
-@stuff
-def connect(host, port, timeout):
-    return f"连接到 {host}:{port}，超时 {timeout} 秒"
-
-@connect.register
-def host():
-    return "localhost"
-
-@connect.register(param_name='port')
-def get_port():
-    return 8080
-
-# 覆盖注入参数
-result = connect(timeout=30)
-assert result == "连接到 localhost:8080，超时 30 秒"
-
-# 部分注入
-result = connect(host="192.168.1.1")
-assert result == "连接到 192.168.1.1:8080，超时 None 秒"
-```
-
-## persist 装饰器
-
-`persist` 装饰器将函数的执行结果缓存到本地文件，并提供灵活的刷新控制，引擎重启后缓存仍然有效。
+把函数执行结果缓存为 JSON 文件，后续以相同参数调用时直接返回缓存值。
 
 ### 基本用法
 
@@ -360,321 +253,261 @@ from vools import persist
 
 @persist
 def expensive_computation(x):
-    import time
-    time.sleep(1)  # 模拟耗时计算
     return x ** 2
 
-# 第一次执行，保存结果
-result = expensive_computation(5)  # 耗时约 1 秒
-assert result == 25
-
-# 第二次执行，直接返回缓存（跳过计算）
-result = expensive_computation(5)  # 几乎立即返回
-assert result == 25
+# 第一次执行，结果写入 __persist__/expensive_computation.json
+assert expensive_computation(5) == 25
+# 第二次执行，命中缓存直接返回
+assert expensive_computation(5) == 25
+# 强制刷新（忽略已有缓存）
+assert expensive_computation(5, force=True) == 25
 ```
 
-### 调用时的关键字参数
-
-被装饰的函数会自动获得以下关键字参数：
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `file_key` | str | None | 缓存文件名（不含扩展名），默认使用函数名 |
-| `force` | bool | False | 是否强制重新执行，忽略缓存 |
-| `force_when` | Callable | None | 当 `force=False` 时，若此函数返回 `True` 则强制刷新 |
-| `target_folder` | str | None | 缓存文件所在目录，默认与被装饰函数所在文件同级的 `__persist__` 目录 |
-
-### 高级用法
-
-```python
-# 使用 file_key 指定缓存文件名
-@persist
-def fetch_weather(city):
-    import random
-    print(f"[执行] 正在获取 {city} 的天气...")
-    return random.randint(20, 30)
-
-# 使用 file_key 区分不同参数的缓存
-temp = fetch_weather("Beijing", file_key="weather_beijing")
-temp = fetch_weather("Shanghai", file_key="weather_shanghai")
-
-# 强制刷新缓存
-temp = fetch_weather("Beijing", file_key="weather_beijing", force=True)
-
-# 使用 force_when 条件刷新
-# 示例：距离上次执行超过 5 秒或温度高于 27 度时刷新
-import time
-temp = fetch_weather(
-    "Beijing",
-    file_key="weather_beijing",
-    force_when=lambda result, start, end: time.time() - end > 5 or result > 27
-)
-
-# 指定缓存目录
-import tempfile
-temp_dir = tempfile.mkdtemp()
-temp = fetch_weather("Beijing", file_key="weather_beijing", target_folder=temp_dir)
-```
-
-### force_when 参数说明
-
-`force_when` 函数接收三个参数：
+### 可用的关键字参数
 
 | 参数 | 类型 | 说明 |
-|------|------|------|
-| `result` | Any | 缓存的结果值 |
-| `start` | float | 上次执行的开始时间戳 |
-| `end` | float | 上次执行的结束时间戳 |
+|---|---|---|
+| `file_key` | `str` | 缓存文件名（不含 `.json`），默认使用函数名 |
+| `force` | `bool` | 是否忽略缓存，强制重新执行，默认 `False` |
+| `force_when` | `Callable[[result, start, end], bool]` | 自定义刷新条件：入参分别为上次缓存结果、上次执行开始时间戳、上次执行结束时间戳。返回 `True` 时重新执行 |
+| `target_folder` | `str` | 缓存目录路径；默认在被装饰函数所在文件同级目录下创建 `__persist__` |
 
-返回 `True` 时强制重新执行，返回 `False` 时使用缓存。
-
-### 注意事项
-
-- 函数返回值必须可 JSON 序列化（基本类型、列表、字典、None）
-- 缓存文件保存为 JSON 格式，包含 `result`、`start_time`、`end_time`
-- 默认缓存目录为与被装饰函数所在文件同级的 `__persist__` 目录
-
-## box 装饰器
-
-### 基本用法
-
-`box` 装饰器用于将函数的返回值包装成 `Box` 对象，提供链式调用能力。
+### 更完整示例
 
 ```python
-from vools.functional.box import box
+import time, tempfile
+
+tmp = tempfile.mkdtemp()
+
+@persist
+def fetch_weather(city):
+    # 模拟耗时操作
+    return {"city": city, "temperature": 25}
+
+# 不同参数用不同 file_key 区分缓存
+weather = fetch_weather("Beijing", file_key="weather_bj", target_folder=tmp)
+weather = fetch_weather("Beijing", file_key="weather_bj", target_folder=tmp)
+
+# 超过 1 小时则刷新
+weather = fetch_weather(
+    "Beijing",
+    file_key="weather_bj",
+    target_folder=tmp,
+    force_when=lambda result, start, end: time.time() - end > 3600,
+)
+```
+
+### 约束
+
+- 函数返回值必须可 JSON 序列化（`dict` / `list` / `str` / `int` / `float` / `bool` / `None` 及其嵌套）。
+- 缓存文件为 JSON，包含 `result`、`start_time`、`end_time`。
+- 文件写入使用简单的跨平台文件锁，避免并发写入竞争。
+
+---
+
+## 6. `Box` 类与 `box` 装饰器
+
+`Box` 是基于 `wrapt.ObjectProxy` 的通用包装容器，为任意对象附加 `map` / `filter` / `reduce` / `run` 等函数式操作，并允许按数字索引访问元素。`@box` 则把函数返回值自动包装成 `Box`。
+
+### `Box(dict_or_list)`
+
+```python
+from vools.functional import Box
+
+# 包装字典 — 通过 dict 方法访问
+d = Box({"name": "Alice", "age": 30})
+print(d.items())       # dict_items([('name', 'Alice'), ('age', 30)])
+print(d.get("name"))    # Alice
+
+# 数字索引访问（按插入顺序：_1 第一个，_2 第二个…）
+print(d._1)             # Alice
+print(d._2)             # 30
+
+# 包装列表 — 可链式调用
+l = Box([10, 20, 30, 40])
+print(l.map(lambda x: x * 2))         # [20, 40, 60, 80]
+print(l.filter(lambda x: x > 15))      # [20, 30, 40]
+print(l.reduce(lambda a, b: a + b))    # 100
+
+# 通过下标/切片访问
+print(l[0])     # 10
+print(l[1:3])   # [20, 30]
+```
+
+### `@box` 装饰器
+
+```python
+from vools.functional import box
 
 @box
 def get_user():
-    return {"name": "Alice", "age": 30}
+    return {"username": "alice", "score": [10, 20, 30]}
 
-result = get_user().name.upper()
-# 结果: "ALICE"
+result = get_user()
+# result 是 Box 包装的 dict，可访问 items() / keys() / ._1 / ._2 等
+print(result._1)          # alice（第一个键对应的值）
+print(result._2)          # [10, 20, 30]
 ```
 
-### 参数说明
+> 注意：`Box` 并不像 `dataclass` / `SimpleNamespace` 那样直接把字典键当成对象属性使用（例如 `data.name` 不工作）。需要按键或 `_1` / `_2` 等数字索引读取。
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `func` | Callable | 要包装的函数 |
-| `cover` | bool | 是否覆盖已存在的属性，默认 `True` |
+---
 
-### 返回值
+## 7. `g` 函数 — 从字符串生成函数
 
-返回一个包装后的函数，其返回值会被自动包装成 `Box` 对象。
+`g(expr)` 支持多种写法，按顺序识别：标准 `lambda ...`、箭头函数 `a, b => ...`、下划线占位符表达式。
 
-### 示例代码
+### 箭头函数格式
 
 ```python
-from vools.functional.box import box
+from vools.functional import g
 
-@box
-def calculate():
-    return {"value": 42}
+f = g("x, y => x + y")
+assert f(3, 4) == 7
 
-result = calculate().value * 2
-print(result)  # 84
+f = g("x => x ** 2 + 1")
+assert f(5) == 26
 ```
 
-## Box 类
-
-### 基本用法
-
-`Box` 类是一个通用包装器，允许以属性访问的方式访问字典的键。
+### 下划线占位符
 
 ```python
-from vools.functional.box import Box
+# 每个独立的 _ 按顺序对应一个参数
+f = g("_ + 2 * _")
+assert f(3, 4) == 11
 
-data = Box({"name": "Bob", "age": 25})
-print(data.name)  # "Bob"
-print(data.age)   # 25
+# 使用 _1 / _2 / ... 显式指定参数位置
+f = g("_1 + _2 * 2")
+assert f(3, 4) == 11
 ```
 
-### 核心方法
-
-#### `run(func, *args, **kwargs)`
-
-执行函数并可选地展开包装的值作为参数。
+### 标准 lambda 写法
 
 ```python
-box = Box([1, 2, 3])
-result = box.run(sum)
-print(result)  # 6
+f = g("lambda x: x + 1")
+assert f(5) == 6
 ```
 
-#### `copy()`
-
-创建一个浅拷贝。
+### 无参函数 / 常值
 
 ```python
-original = Box({"a": 1})
-copied = original.copy()
+f = g("42")
+assert f() == 42
 ```
 
-### 属性访问
+### 多语句
 
-`Box` 支持通过 `.` 操作符访问属性：
+以分号分隔的多条语句，最后一条为返回值：
 
 ```python
-data = Box({"user": {"name": "Charlie"}})
-print(data.user.name)  # "Charlie"
+f = g("x => sq = x * x; sq + 1")
+assert f(3) == 10
 ```
 
-### 边界情况
+---
+
+## 8. `iif` 函数 — 条件表达式 / 模式匹配
+
+`iif` 提供两种形态：
+- 三目式：`iif(cond, true_val, false_val)`
+- 链式匹配：通过 `ConditionBuilder(value).case(...)` / `.when(...)` / `.otherwise(...)` 构造
+
+### 基础条件表达式
 
 ```python
-# 访问不存在的属性返回 None
-data = Box({})
-print(data.nonexistent)  # None
+from vools.functional import iif
 
-# 包装 None 值
-data = Box(None)
-print(data.value)  # None
+assert iif(True, "yes", "no") == "yes"
+assert iif(False, "yes", "no") == "no"
 ```
 
-## g 函数
+### 可调用条件 — 无 data 参数
 
-### 基本用法
-
-`g` 函数是一个通用函数生成器，支持多种表达式格式。
+当条件是可调用对象时，`true_body` / `false_body` 也可以是可调用或普通值：
 
 ```python
-from vools.functional.arrow_func import g
-
-# lambda 表达式格式
-f1 = g("x, y => x + y")
-print(f1(3, 4))  # 7
-
-# 下划线占位符格式
-f2 = g("_ + 2 * _")
-print(f2(3, 4))  # 11
-
-# 带索引的下划线格式
-f3 = g("_1 + _2")
-print(f3(3, 4))  # 7
-
-# 标准 lambda 表达式
-f4 = g("lambda x: x + 1")
-print(f4(5))  # 6
-```
-
-### 参数说明
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `expr` | str | 字符串表达式 |
-| `env` | Dict | 执行环境变量字典，可选 |
-
-### 支持的表达式格式
-
-1. **箭头函数格式**: `x, y => x + y`
-2. **下划线占位符**: `_ + 2 * _`
-3. **索引下划线**: `_1 + _2`
-4. **标准 lambda**: `lambda x: x + 1`
-5. **三元表达式**: `_ > 0 ? _ : -_`
-
-### 返回值
-
-返回生成的函数对象。
-
-### 示例代码
-
-```python
-from vools.functional.arrow_func import g
-
-# 复杂表达式
-f = g("_1 ** 2 + _2 ** 2")
-print(f(3, 4))  # 25
-
-# 使用环境变量
-env = {"PI": 3.14}
-f = g("_ * PI", env)
-print(f(2))  # 6.28
-
-# 无参数函数
-f = g("3 + 5")
-print(f())  # 8
-```
-
-## iif 函数
-
-### 基本用法
-
-`iif` 函数提供条件表达式支持，类似 Excel 的 `IF` 函数。
-
-```python
-from vools.functional.iif import iif
-
-# 基本条件判断
-result = iif(True, "yes", "no")
-print(result)  # "yes"
-
-result = iif(False, "yes", "no")
-print(result)  # "no"
-```
-
-### 参数说明
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `base` | Any | 条件值或表达式 |
-| `true_body` | Any | 条件为真时的返回值 |
-| `false_body` | Any | 条件为假时的返回值 |
-| `comp` | str | 比较运算符，默认 `'=='` |
-| `cases` | Iterable | 案例列表 |
-| `whens` | Iterable | 条件列表 |
-| `supp` | bool | 是否支持补充运算符，默认 `True` |
-
-### 返回值
-
-根据条件返回 `true_body` 或 `false_body`，或返回一个 `ConditionBuilder` 对象。
-
-### 使用 ConditionBuilder
-
-```python
-from vools.functional.iif import iif
-
-# 使用链式调用
-result = iif(5).when(lambda x: x > 10, "big").otherwise("small")
-print(result())  # "small"
-
-# 使用 case 方法
-result = iif(3).case(1, "one").case(2, "two").case(3, "three").otherwise("other")
-print(result())  # "three"
-
-# 使用 whens 参数
-result = iif(15, whens=[(lambda x: x > 10, "big"), (lambda x: x <= 10, "small")])
-print(result)  # "big"
-```
-
-### 支持的运算符
-
-| 运算符 | 说明 |
-|--------|------|
-| `==`, `=` | 等于 |
-| `!=` | 不等于 |
-| `>` | 大于 |
-| `<` | 小于 |
-| `>=` | 大于等于 |
-| `<=` | 小于等于 |
-| `in` | 包含 |
-| `not in` | 不包含 |
-| `is` | 身份判断 |
-| `is not` | 非身份判断 |
-
-### 示例代码
-
-```python
-from vools.functional.iif import iif
-
-# 可调用条件
 result = iif(lambda: len([1, 2, 3]) > 2, "long", "short")
-print(result)  # "long"
-
-# 表达式模式
-result = iif("5 > 3", true_body="yes", false_body="no", supp=True)
-print(result)  # "yes"
-
-# None 条件被视为 False
-result = iif(None, "yes", "no")
-print(result)  # "no"
+assert result == "long"
 ```
+
+### 链式匹配
+
+```python
+from vools.functional import iif, ConditionBuilder
+
+value = 3
+
+# .case(值, 结果) — 相等比较
+r = ConditionBuilder(value).case(1, "one").case(2, "two").case(3, "three").otherwise("other")
+assert r() == "three"
+
+# .when(条件, 结果) — 条件可以是 lambda 或表达式
+r = ConditionBuilder(value).when(lambda x: x > 10, "big").otherwise("small")
+assert r() == "small"
+
+# 当 otherwise 未被调用且没有任何条件成立时，返回 None
+r = ConditionBuilder(100).case(1, "one").case(2, "two")
+assert r() is None
+
+# 使用 data 参数：条件表达式对 data 求值
+r = iif(lambda v: v > 10, "big", "small", data=15)
+assert r == "big"
+```
+
+> 注意：链式调用通过 `()` 触发最终求值。
+
+---
+
+## 9. `Result` 类型与 `safe` 装饰器
+
+### `Result` / `Success` / `Failure`
+
+`Result` 是一个"成功/失败"二选一的容器。成功时持有结果值，失败时持有异常对象。
+
+```python
+from vools.functional import Result, Success, Failure
+
+# 构造
+ok = Result.success(42)
+bad = Result.failure(ValueError("非法输入"))
+
+assert ok.is_success is True
+assert bad.is_failure is True
+
+# map — 只对成功值转换
+assert ok.map(lambda x: x * 2).unwrap() == 84
+assert bad.map(lambda x: x * 2).is_failure is True
+
+# 解包
+assert ok.unwrap() == 42
+assert ok.unwrap_or(0) == 42
+assert bad.unwrap_or(0) == 0
+
+# bind — 以 Result 为返回值的链式组合
+step = ok.bind(lambda v: Result.success(v + 1))
+assert step.unwrap() == 43
+
+# 便捷子类
+s = Success(10)
+f = Failure(ValueError("bad"))
+assert s.is_success and f.is_failure
+```
+
+### `@safe` 装饰器 — 把异常转换为 `Result`
+
+```python
+from vools.functional import safe
+
+@safe
+def divide(a, b):
+    return a / b
+
+r1 = divide(10, 2)
+assert r1.is_success and r1.unwrap() == 5
+
+r2 = divide(1, 0)
+assert r2.is_failure
+assert isinstance(r2.unwrap_or(0), int)        # 0
+```
+
+使用 `@safe` 可以将任意可能抛出异常的函数转换为"返回 `Result`"的安全版本，避免 `try/except` 层层嵌套。
