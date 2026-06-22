@@ -7,7 +7,7 @@ vools - Python 函数式编程工具集
 import importlib
 from typing import Any
 
-__version__ = "0.1.18"
+__version__ = "0.1.19"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
@@ -195,15 +195,6 @@ _lazy_modules = {
     'ReplaySubject': '.reactive',
     'AsyncSubject': '.reactive',
     'ops': '.reactive',
-
-    # 录制回放模块
-    'recorder': '.recorder',
-    'Recorder': '.recorder',
-    'Player': '.recorder',
-    'Parser': '.recorder',
-    'Action': '.recorder',
-    'Recording': '.recorder',
-    'ActionType': '.recorder',
 
     # 编码模块
     'encoding': '.encoding',
@@ -517,8 +508,6 @@ _common_names = [
 
     # 响应式模块
     'reactive', 'Observable', 'Subject', 'BehaviorSubject', 'ReplaySubject', 'AsyncSubject', 'ops',
-    # 录制回放模块
-    'recorder', 'Recorder', 'Player', 'Parser', 'Action', 'Recording', 'ActionType',
 ]
 
 for name in __all__:
