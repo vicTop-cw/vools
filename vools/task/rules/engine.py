@@ -23,7 +23,7 @@ from enum import Enum
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from functools import wraps
 
-from vools.functional import Result
+from vools.functional import Result, safe
 from .rule import Rule, RuleSet
 
 
@@ -75,7 +75,7 @@ def rule(
             return Rule(
                 name=rule_name,
                 condition=condition,
-                action=Result.safe(f) if not callable(getattr(f, '__wrapped__', None)) else f,
+                action=safe(f) if not callable(getattr(f, '__wrapped__', None)) else f,
                 priority=priority,
                 metadata=rule_metadata,
             )
@@ -218,13 +218,13 @@ class RuleEngine:
     async def evaluate_async(self, context: Dict[str, Any]) -> Result:
         """
         异步执行所有规则
-
+        
         使用 asyncio 包装 ThreadPoolExecutor，
         非阻塞方式执行所有规则。
-
+        
         Args:
             context: 执行上下文
-
+        
         Returns:
             Result: 同 evaluate()
         """
@@ -235,15 +235,20 @@ class RuleEngine:
         results: List = []
 
         with self._create_executor() as executor:
-            futures = {}
+            # 创建 Future 到名称的映射
+            future_to_name = {}
             for rule_obj in sorted_rules:
                 future = loop.run_in_executor(executor, rule_obj.evaluate, context)
-                futures[future] = rule_obj.name
+                future_to_name[future] = rule_obj.name
 
-            for coro in asyncio.as_completed(futures):
-                name = futures[coro]
+            # 等待所有 Future 完成
+            done, _ = await asyncio.wait(list(future_to_name.keys()))
+
+            # 收集结果
+            for future in done:
+                name = future_to_name[future]
                 try:
-                    result = await coro
+                    result = future.result()
                 except Exception as e:
                     result = Result.failure(e)
                 results.append((name, result))
@@ -261,7 +266,7 @@ class RuleEngine:
 
         return Result.success(ordered)
 
-    @classmethod
+
 
     def do(self, f=print, pre_f=None, sub_f=None):
         """Apply a function for side effects, return self.
@@ -281,6 +286,8 @@ class RuleEngine:
         if sub_f:
             sub_f(rs)
         return self
+    
+    @classmethod
     def from_json(
         cls,
         json_path: str,
