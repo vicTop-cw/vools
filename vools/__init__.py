@@ -279,6 +279,11 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
+def __dir__() -> list:
+    """返回所有可用的导出名称"""
+    return sorted(set(globals().keys()) | set(__all__))
+
+
 __all__ = [
     '__version__',
     '__author__',
@@ -469,51 +474,6 @@ __all__ = [
     'VText',
     'VDate',
 ]
-
-_common_names = [
-    'VoolsBase', 'VoolsError', 'SafeEvalError', 'ConfigurationError',
-    'CacheError', 'ValidationError', 'ImportError',
-    'ConfigManager', 'DatabaseConfig', 'CacheConfig', 'AppConfig',
-    'config', 'ConfigManager',
-    'memorize', 'once', 'persist', 'lazy', 'repeat', 'retry', 'rerun',
-    'overload', 'OverloadManager', 'OverloadMode', 'reset_registry',
-    'Priority', 'AllowSyncName', 'Strict', 'Ambiguous',
-    'overcurry', 'overloads',
-    '_', '_1', '_2', '_3', 'g', 'iif', 'ConditionBuilder', 'LazyProperty',
-    'Box', 'box', 'Seq',
-    'P', 'X', 'Y', 'Ops', 'O', 'calltype',
-    'safe_eval',
-    'vicTools', 'vicDate', 'vicText', 'vicList',
-    # 编码模块
-    'encoding', 'Encoder', 'Decoder', 'CodecRegistry',
-    'encodable', 'decodable',
-    'b64encode', 'b64decode', 'urlencode', 'urldecode',
-    'to_bytes', 'to_str',
-    'gzip_compress', 'gzip_decompress', 'zlib_compress', 'zlib_decompress',
-    'lzma_compress', 'lzma_decompress', 'compress', 'decompress',
-    'json_dumps', 'json_loads', 'pickle_dumps', 'pickle_loads',
-    'serialize', 'deserialize',
-    # 加密模块
-    'crypto', 'Encryptor', 'Decryptor', 'CryptoRegistry',
-    'encryptable', 'decryptable',
-    'md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512',
-    'hmac_md5', 'hmac_sha1', 'hmac_sha256',
-    'generate_key', 'generate_token',
-    # 任务模块
-    'task', 'TaskQueue', 'WorkerPool', 'ThreadPool', 'TaskStatus', 'Task', 'batch_execute',
-    'DagScheduler', 'DagValidationError', 'Rule', 'RuleEngine', 'RuleSet', 'RuleStatus', 'rule',
-
-    # V 类
-    'VList', 'VText', 'VDate',
-
-    # 响应式模块
-    'reactive', 'Observable', 'Subject', 'BehaviorSubject', 'ReplaySubject', 'AsyncSubject', 'ops',
-]
-
-for name in __all__:
-    if name not in globals() and name not in _common_names and not name.startswith('__'):
-        globals()[name] = None
-
 
 if __name__ == '__main__':
     print(f"vools version: {__version__}")

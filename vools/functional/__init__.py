@@ -27,11 +27,8 @@ from .arrow_func import arrow_func, g
 # 导入 iif
 from .iif import iif, ConditionBuilder, LazyProperty
 
-# 导入 placeholder
+# 导入 placeholder（含 _1.._20 等动态占位符）
 from .placeholder import *
-
-# 导入 Y
-from .placeholder_impl import X,Y
 
 # 导入 box
 from .box import box, Box, setattr_box
@@ -253,26 +250,24 @@ class Ops:
     @staticmethod
     @Pipe
     def take(iterable, n):
-        """取前 n 个元素"""
-        return list(itertools.islice(iterable, n))
+        """取前 n 个元素（惰性）"""
+        return itertools.islice(iterable, n)
     
     @staticmethod
     @Pipe
     def drop(iterable, n):
-        """丢弃前 n 个元素"""
-        return list(itertools.islice(iterable, n, None))
+        """丢弃前 n 个元素（惰性）"""
+        return itertools.islice(iterable, n, None)
     
     @staticmethod
     @Pipe
     def distinct(iterable):
-        """去重"""
+        """去重（惰性）"""
         seen = set()
-        result = []
         for item in iterable:
             if item not in seen:
                 seen.add(item)
-                result.append(item)
-        return result
+                yield item
     
     @staticmethod
     @Pipe

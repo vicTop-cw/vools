@@ -148,6 +148,44 @@ class Result(Generic[T, E]):
         if self.is_success:
             return self
         return fn(self._value)
+
+    def get_or(self, default: T) -> T:
+        """获取值或默认值，同 unwrap_or。
+
+        Args:
+            default: 失败时返回的默认值
+
+        Returns:
+            成功值或默认值
+        """
+        return self._value if self.is_success else default
+
+    def get_or_raise(self, exception: Exception) -> T:
+        """获取值或抛出异常。
+
+        Args:
+            exception: 失败时抛出的异常
+
+        Returns:
+            成功值
+
+        Raises:
+            exception: 失败时抛出指定异常
+        """
+        if self.is_failure:
+            raise exception
+        return self._value
+
+    def flat_map(self, fn: Callable[[T], 'Result[R, E]']) -> 'Result[R, E]':
+        """扁平化映射，同 bind。
+
+        Args:
+            fn: 接收成功值并返回新 Result 的函数
+
+        Returns:
+            新的 Result 对象
+        """
+        return self.bind(fn)
     
     def __repr__(self) -> str:
         if self.is_success:
@@ -196,49 +234,11 @@ class Success(Result[T, E]):
     
     def __init__(self, value: T):
         super().__init__(value, is_success=True)
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function (no return expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
-
 
 
 class Failure(Result[T, E]):
     """失败结果的便捷子类"""
     
-
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def __init__(self, error: E):
         super().__init__(error, is_success=False)
 

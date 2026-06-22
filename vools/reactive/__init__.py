@@ -82,38 +82,41 @@ from .operators.stats_operators import (
     clamp, explode, flatten,
 )
 
-from .monitoring.clipboard import (
-    ClipChangeType, ClipData,
-    ClipboardDispatcher, ClipSubject, ClipObserver,
-    from_clipboard, write_to_clipboard,
-)
-
-from .monitoring.file_watcher import (
-    FileChangeType, FileData,
-    FileSubject, FileObserver, FileDispatcher,
-    from_filesystem, write_to_filesystem,
-)
-
-from .monitoring.folder_watcher import (
-    FolderChangeType, FolderData,
-    FolderSubject, FolderObserver, FolderDispatcher,
-    from_foldersystem, write_to_foldersystem,
-)
-
-from .monitoring.keyboard import (
-    KeyEventType, KeyModifier, KeyData,
-    KeyboardDispatcher, KeySubject, KeyObserver,
-    from_keyboard, write_to_keyboard,
-)
-
-from .monitoring.mouse import (
-    MouseEventType, MouseData,
-    MouseDispatcher, MouseSubject, MouseObserver,
-    from_mouse, write_to_mouse,
-)
+# ── Monitoring 模块条件导入 ──
+MONITORING_AVAILABLE = False
+try:
+    from .monitoring.clipboard import (
+        ClipChangeType, ClipData,
+        ClipboardDispatcher, ClipSubject, ClipObserver,
+        from_clipboard, write_to_clipboard,
+    )
+    from .monitoring.file_watcher import (
+        FileChangeType, FileData,
+        FileSubject, FileObserver, FileDispatcher,
+        from_filesystem, write_to_filesystem,
+    )
+    from .monitoring.folder_watcher import (
+        FolderChangeType, FolderData,
+        FolderSubject, FolderObserver, FolderDispatcher,
+        from_foldersystem, write_to_foldersystem,
+    )
+    from .monitoring.keyboard import (
+        KeyEventType, KeyModifier, KeyData,
+        KeyboardDispatcher, KeySubject, KeyObserver,
+        from_keyboard, write_to_keyboard,
+    )
+    from .monitoring.mouse import (
+        MouseEventType, MouseData,
+        MouseDispatcher, MouseSubject, MouseObserver,
+        from_mouse, write_to_mouse,
+    )
+    MONITORING_AVAILABLE = True
+except ImportError:
+    pass
 
 __all__ = [
-    'Observable', 'Observer', 'Subscription', 'DefaultObserver', 'of', 'from_iterable',
+    'MONITORING_AVAILABLE',
+    'ops',
     'Subject', 'BehaviorSubject', 'ReplaySubject', 'AsyncSubject', 'PublishSubject',
     'subject', 'behavior_subject', 'replay_subject', 'async_subject', 'publish_subject',
     'Scheduler', 'ImmediateScheduler', 'CurrentThreadScheduler', 'AsyncIOScheduler',
