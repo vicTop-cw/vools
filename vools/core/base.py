@@ -60,6 +60,7 @@ class VoolsBase:
         if sub_f:
             sub_f(rs)
         return self
+    
     def update(self, **kwargs):
         """更新对象属性"""
         for key, value in kwargs.items():

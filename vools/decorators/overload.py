@@ -2,30 +2,30 @@
 函数重载装饰器模块
 
 提供基于模式标志的函数重载系统，支持：
-- 优先级模式 (Priority)：按 priority 属性排序匹配
-- 非同名注册 (AllowSyncName)：函数名可与原始函数不同
-- 严格类型检查 (Strict)：按类型注解精确匹配
-- 模糊匹配 (Ambiguous)：多个候选时选第一个而非报错
-- 注册模式：默认不修改原函数 (export_mode=None)
+- 优先级模式 (Priority)：按 priority 属性排序匹配，允许多个候选
+- 非同名注册 (AllowSyncName)：允许函数名与原始函数不同（需配合 Priority）
+- 严格类型检查 (Strict)：按参数类型注解精确匹配
+- 模糊匹配 (Ambiguous)：多个候选时取第一个，而非报错
+- 注册模式：export_mode 控制 register 的返回值（默认返回管理器支持链式）
 
 示例:
     >>> @overload
     ... def add(a, b):
     ...     return a + b
     ...
-    >>> @add.register(export_mode='parent')
+    >>> @add.register          # 返回管理器，支持链式
     ... def add_int(a: int, b: int):
     ...     return a + b
     ...
-    >>> add(1, 2)          # 3 (匹配 add_int)
-    >>> add("a", "b")      # "ab" (匹配 add)
-    >>> add_int(1, 2)      # 3 (add_int 是 OverloadManager，走重载匹配)
+    >>> add(1, 2)              # 3
+    >>> add("a", "b")          # "ab"
 """
 
 import inspect
 import types
+import pickle
 from functools import wraps
-from typing import Any, Callable, Optional, List, Tuple, Union, Dict, Set, TYPE_CHECKING
+from typing import Any, Callable, Optional, List, Tuple, Union, Dict
 from enum import IntFlag
 
 from vools.cache.sigcache import get_signature
@@ -35,26 +35,9 @@ try:
 except ImportError:
     def is_curried(func):
         return False
+
     class Curried:
         pass
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self for chaining.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function applied before f
-                sub_f: Post-processing function (no return expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
 
 
 __all__ = [
@@ -73,39 +56,19 @@ __all__ = [
 # =============================================================================
 
 class OverloadMode(IntFlag):
-    """重载模式标志"""
-    Priority = 1 << 0       # 优先级模式：按 priority 属性排序
-    AllowSyncName = 1 << 1  # 允许非同名函数注册
-    Strict = 1 << 2          # 严格类型检查
-    Ambiguous = 1 << 3       # 允许模糊匹配（多个候选时选第一个）
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function (no return expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
+    """重载模式标志。"""
+    Priority = 1 << 0           # 优先级模式：按 priority 属性排序匹配
+    AllowSyncName = 1 << 1      # 允许非同名函数注册（需配合 Priority）
+    Strict = 1 << 2              # 严格类型检查
+    Ambiguous = 1 << 3           # 允许多个候选匹配（取第一个，非报错）
 
 
-
-# 别名
+# 简写别名
 Priority = OverloadMode.Priority
 AllowSyncName = OverloadMode.AllowSyncName
 Strict = OverloadMode.Strict
 Ambiguous = OverloadMode.Ambiguous
 
-# 默认模式
 _DEFAULT_MODE = Priority | Strict | AllowSyncName
 
 
@@ -113,59 +76,67 @@ _DEFAULT_MODE = Priority | Strict | AllowSyncName
 # 导出模式常量
 # =============================================================================
 
-ParentMode = 'parent'        # 返回管理器（继承父级模式）
-ExportAsFunction = None      # 不改变原函数，返回原函数
-ExportAsManager = 'manager'  # 返回新管理器
+ParentMode = 'parent'            # 返回新管理器（继承父级模式）
+ExportAsFunction = None          # 返回原函数（不创建新管理器）
+ExportAsManager = 'manager'      # 返回新管理器（等同于 ParentMode 语义）
 
 
 # =============================================================================
-# 注册表管理
+# 注册表（便于跨作用域复用；同时用于测试隔离）
 # =============================================================================
 
-# 注册表：(module, scope, func_name) -> OverloadManager
 _registry: Dict[Tuple[str, str, str], 'OverloadManager'] = {}
 
 
-def _get_registry_key(func_name: str, scope: str, module: str) -> Tuple[str, str, str]:
-    """获取注册表键"""
-    return (module, scope, func_name)
-
-
 def _get_scope_from_qualname(qualname: str) -> str:
-    """从 qualname 获取作用域（类名或空字符串）"""
     return qualname.rpartition('.')[0]
 
 
-def reset_registry():
-    """重置全局注册表（用于测试隔离）"""
-    global _registry
+def reset_registry() -> None:
+    """清空全局注册表（用于测试隔离）。"""
     _registry.clear()
 
 
 # =============================================================================
-# 检查函数工厂
+# 模式验证
+# =============================================================================
+
+def _validate_mode(mode: 'OverloadMode') -> None:
+    """验证模式组合是否合法。
+
+    规则:
+        - AllowSyncName 只能在 Priority 模式下使用
+        - Strict + Ambiguous 非 Priority 不禁止（但通常配合 Priority 使用更有意义）
+    """
+    if not (mode & OverloadMode.Priority) and (mode & OverloadMode.AllowSyncName):
+        raise ValueError("AllowSyncName 只能在 Priority 模式下使用")
+
+
+# =============================================================================
+# 检查函数工厂：基于参数数量 / 类型
 # =============================================================================
 
 def _create_count_check(func: Callable) -> Callable:
-    """创建基于参数数量的检查函数"""
-    if is_curried(func):
-        if hasattr(func, 'func'):
-            func = func.func
+    """基于参数数量的检查函数（无副作用）。"""
+    if is_curried(func) and hasattr(func, 'func'):
+        func = func.func
 
     sig = get_signature(func)
     params = sig.parameters
 
-    # 计算必需参数数量
-    min_args = sum(1 for p in params.values()
-                   if p.default == p.empty
-                   and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD))
-
-    # 处理可变参数
-    has_var_args = any(p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-                       for p in params.values())
-    max_args = float('inf') if has_var_args else len(params)
+    min_args = sum(
+        1 for p in params.values()
+        if p.default == p.empty
+        and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    )
+    has_var = any(
+        p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        for p in params.values()
+    )
+    max_args = float('inf') if has_var else len(params)
 
     def count_check(args, kwargs):
+        # 仅判断调用参数数量是否在函数签名的允许范围内
         arg_count = len(args) + len(kwargs)
         return min_args <= arg_count <= max_args
 
@@ -173,13 +144,12 @@ def _create_count_check(func: Callable) -> Callable:
 
 
 def _create_strict_check(func: Callable) -> Callable:
-    """创建严格的类型检查函数"""
-    if is_curried(func):
-        if hasattr(func, 'func'):
-            func = func.func
+    """基于类型注解的严格检查函数。"""
+    if is_curried(func) and hasattr(func, 'func'):
+        func = func.func
 
     sig = get_signature(func)
-    type_hints = func.__annotations__
+    annotations = func.__annotations__
     params = sig.parameters
 
     def strict_check(args, kwargs):
@@ -187,38 +157,36 @@ def _create_strict_check(func: Callable) -> Callable:
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
         except TypeError as e:
-            return False, f"参数不匹配: {str(e)}"
+            return False, f"参数不匹配: {e}"
 
         errors = []
         for name, value in bound.arguments.items():
-            if name in type_hints:
-                expected_type = type_hints[name]
+            if name in annotations:
+                expected = annotations[name]
                 param = params[name]
 
-                # 处理可变位置参数 (*args)
                 if param.kind == inspect.Parameter.VAR_POSITIONAL:
                     for i, item in enumerate(value):
-                        if not isinstance(item, expected_type):
+                        if not isinstance(item, expected):
                             errors.append(
-                                f"位置参数 #{i} (属于*{name}) 类型错误: "
-                                f"期望 {expected_type.__name__}, 实际 {type(item).__name__}"
+                                f"位置参数 #{i} (*{name}) 类型错误: "
+                                f"期望 {getattr(expected, '__name__', str(expected))}, "
+                                f"实际 {type(item).__name__}"
                             )
-
-                # 处理可变关键字参数 (**kwargs)
                 elif param.kind == inspect.Parameter.VAR_KEYWORD:
-                    for key, item in value.items():
-                        if not isinstance(item, expected_type):
+                    for k, item in value.items():
+                        if not isinstance(item, expected):
                             errors.append(
-                                f"关键字参数 '{key}' (属于**{name}) 类型错误: "
-                                f"期望 {expected_type.__name__}, 实际 {type(item).__name__}"
+                                f"关键字参数 '{k}' (**{name}) 类型错误: "
+                                f"期望 {getattr(expected, '__name__', str(expected))}, "
+                                f"实际 {type(item).__name__}"
                             )
-
-                # 处理普通参数
                 else:
-                    if not isinstance(value, expected_type):
+                    if not isinstance(value, expected):
                         errors.append(
-                            f"参数 '{name}' 类型错误: "
-                            f"期望 {expected_type.__name__}, 实际 {type(value).__name__}"
+                            f"'{name}' 类型错误: "
+                            f"期望 {getattr(expected, '__name__', str(expected))}, "
+                            f"实际 {type(value).__name__}"
                         )
 
         if errors:
@@ -234,315 +202,240 @@ def _create_strict_check(func: Callable) -> Callable:
 
 class OverloadManager:
     """
-    重载管理器
+    重载管理器。
 
-    存储函数列表，按模式和优先级进行匹配。
+    负责存储注册的函数列表，并根据当前 mode 和调用参数匹配最合适的函数。
 
     属性:
-        mode: 重载模式标志
-        overloads: 已注册的重载函数列表 (check, func, priority, reg_index, func_name)
-        main_func: 主函数
-        export_mode: 导出模式
+        mode (OverloadMode): 重载模式
+        overloads: [(check, func, priority, reg_index, func_name), ...]
+        main_func (Callable): 主函数
+        export_mode: 本管理器的默认导出模式（用于 register 未显式传入时）
+        parent (Optional[OverloadManager]): 父管理器（若存在）
     """
 
-    def __init__(self, func: Optional[Callable] = None,
-                 mode: OverloadMode = OverloadMode(0),
+    def __init__(self,
+                 func: Optional[Callable] = None,
+                 mode: OverloadMode = _DEFAULT_MODE,
                  priority: int = 0,
-                 export_mode: Optional[OverloadMode] = None):
-        """
-        初始化重载管理器
+                 export_mode=None,
+                 parent: Optional['OverloadManager'] = None) -> None:
 
-        Args:
-            func: 要注册的主函数
-            mode: 重载模式
-            priority: 主函数的优先级
-            export_mode: 导出模式
-        """
         self.mode = mode
         self.overloads: List[Tuple[Callable, Callable, int, int, str]] = []
         self.main_func: Optional[Callable] = func
         self.export_mode = export_mode
+        self.parent = parent
         self.counter = 0
 
-        # 获取函数信息
-        if func:
+        if func is not None:
             self.func_name = func.__name__
             self.module = func.__module__
             self.qualname = func.__qualname__
             self.scope = _get_scope_from_qualname(self.qualname)
-            self.key = _get_registry_key(self.func_name, self.scope, self.module)
+            self._key = (self.module, self.scope, self.func_name)
 
             # 验证模式组合
-            self._validate_mode()
+            _validate_mode(self.mode)
 
-            # 注册主函数
+            # 注册主函数到自身重载列表
             self._register_function(func, priority=priority)
 
-    def _validate_mode(self) -> None:
-        """验证模式组合的合法性"""
-        mode = self.mode
+            # 写入注册表（仅主管理器；子管理器不注册）
+            if parent is None:
+                _registry[self._key] = self
 
-        # 非优先级模式不允许 AllowSyncName
-        if not (mode & OverloadMode.Priority) and (mode & OverloadMode.AllowSyncName):
-            raise ValueError(
-                "AllowSyncName 只能在 Priority 模式下使用"
-            )
+    # ------------------------------------------------------------------
+    # 注册逻辑
+    # ------------------------------------------------------------------
 
     def _get_check_func(self, func: Callable) -> Callable:
-        """获取检查函数"""
         if self.mode & OverloadMode.Strict:
             return _create_strict_check(func)
-        else:
-            return _create_count_check(func)
+        return _create_count_check(func)
 
-    def register(self, func: Optional[Callable] = None,
-                 priority: Optional[int] = None,
-                 export_mode=None) -> Union[Callable, 'OverloadManager', 'NewOverloadManager']:
-        """
-        注册重载函数
-
-        Args:
-            func: 要注册的函数
-            priority: 优先级（仅在 Priority 模式下有效）
-            export_mode: 导出模式
-                         - None: 不改变原函数，返回原函数
-                         - ParentMode: 返回管理器（继承父级模式）
-                         - ExportAsManager: 返回新管理器
-                         - OverloadMode 值: 使用该模式作为新管理器的模式
-
-        Returns:
-            decorator / OverloadManager / NewOverloadManager
-        """
-        # 使用传入的 export_mode 或继承父级
-        eff_export_mode = export_mode if export_mode is not None else self.export_mode
-
-        # 如果不允许链式注册，返回原函数
-        if hasattr(self, '_allow_chain_register') and not self._allow_chain_register:
-            if func is None:
-                def decorator(f):
-                    return f
-                return decorator
-            return func
-
-        def _create_manager(f, mode, export_mode=None):
-            """创建新管理器"""
-            new_priority = priority if priority is not None else 0
-
-            # 优先级模式下，如果新管理器需要 AllowSyncName，主管理器也必须支持
-            if mode & OverloadMode.AllowSyncName and not (self.mode & OverloadMode.Priority):
-                raise ValueError(
-                    f"函数 '{self.func_name}' 不支持 AllowSyncName "
-                    f"（需要 Priority 模式）"
-                )
-
-            new_manager = NewOverloadManager(
-                func=f,
-                mode=mode,
-                priority=new_priority,
-                parent=self,
-                export_mode=export_mode
-            )
-            return new_manager
-
-        def _handle_func(f):
-            # 始终将函数注册到当前管理器的重载列表
-            eff_priority = priority if priority is not None else 0
-            self._register_function(f, priority=eff_priority)
-
-            # None 或 ExportAsFunction：不改变原函数
-            if eff_export_mode is None:
-                return f
-
-            # ParentMode：返回管理器（继承父级模式）
-            if eff_export_mode is ParentMode:
-                if isinstance(self.mode, OverloadMode) and self.mode & OverloadMode.Priority:
-                    manager = _create_manager(f, self.mode, export_mode=ParentMode)
-                    # ParentMode 允许链式注册
-                    return manager
-                else:
-                    return f
-
-            # ExportAsManager：返回新管理器
-            if eff_export_mode is ExportAsManager:
-                manager = _create_manager(f, self.mode, export_mode=ExportAsManager)
-                # ExportAsManager 允许链式注册
-                return manager
-
-            # OverloadMode 值：使用该模式
-            if isinstance(eff_export_mode, OverloadMode):
-                manager = _create_manager(f, eff_export_mode, export_mode=eff_export_mode)
-                if eff_export_mode & OverloadMode.Priority:
-                    manager._allow_chain_register = False
-                return manager
-
-            # 默认：不改变原函数
-            return f
-
-        if func is None:
-            def decorator(f):
-                return _handle_func(f)
-            return decorator
-
-        return _handle_func(func)
-
-    def _register_function(self, func: Callable, priority: Optional[int] = None) -> None:
-        """内部注册函数"""
-        # 优先级模式检查：非同名函数需要 AllowSyncName
+    def _register_function(self,
+                           func: Callable,
+                           priority: Optional[int] = None) -> None:
+        """内部注册：检查 + 加入重载列表。"""
+        # Priority + AllowSyncName 检查
         if self.mode & OverloadMode.Priority:
-            if func.__name__ != self.func_name and not (self.mode & OverloadMode.AllowSyncName):
+            if (func.__name__ != self.func_name
+                    and not (self.mode & OverloadMode.AllowSyncName)):
                 raise ValueError(
                     f"非同名函数 '{func.__name__}' 不能注册到 '{self.func_name}' "
                     f"（需要 AllowSyncName 模式）"
                 )
-
-        # 非优先级模式检查：必须同名
-        if not (self.mode & OverloadMode.Priority):
+        else:
+            # 非 Priority 模式必须同名
             if func.__name__ != self.func_name:
                 raise ValueError(
                     f"非同名函数 '{func.__name__}' 不能注册到 '{self.func_name}' "
-                    f"（非优先级模式必须同名）"
+                    f"（非 Priority 模式必须同名）"
                 )
 
-        # 设置默认优先级
         if priority is None:
             priority = 0
 
-        # 创建检查函数
         check = self._get_check_func(func)
-
-        # 记录注册顺序
         reg_index = self.counter
         self.counter += 1
         self.overloads.append((check, func, priority, reg_index, func.__name__))
 
+    # ------------------------------------------------------------------
+    # register 公共 API（支持装饰器用法 + 链式注册）
+    # ------------------------------------------------------------------
+
+    def register(self,
+                 func: Optional[Callable] = None,
+                 *,
+                 priority: Optional[int] = None,
+                 export_mode=None) -> Union[Callable, 'OverloadManager']:
+        """注册重载函数。
+
+        参数:
+            func: 要注册的函数；若为 None 则返回装饰器
+            priority: 优先级（默认 0；在 Priority 模式下生效）
+            export_mode: 决定 register 调用的返回值
+                - None (默认)：返回原函数，不改变原函数
+                - ParentMode / ExportAsManager：返回新管理器（继承父级模式）
+                - OverloadMode 值：以指定模式创建新管理器
+
+        返回:
+            原函数 / 管理器 —— 取决于 export_mode
+        """
+        eff_export_mode = export_mode if export_mode is not None else self.export_mode
+
+        def _handle(f: Callable):
+            eff_priority = priority if priority is not None else 0
+            self._register_function(f, priority=eff_priority)
+
+            # 默认：不改变原函数，返回 f
+            if eff_export_mode is None or eff_export_mode is ExportAsFunction:
+                return f
+
+            # ParentMode / ExportAsManager：创建子管理器并返回
+            if eff_export_mode is ParentMode or eff_export_mode is ExportAsManager:
+                return self._spawn_manager(f, self.mode, eff_priority, eff_export_mode)
+
+            # OverloadMode 值：以指定模式创建子管理器
+            if isinstance(eff_export_mode, OverloadMode):
+                return self._spawn_manager(f, eff_export_mode, eff_priority, eff_export_mode)
+
+            # 兜底：返回原函数
+            return f
+
+        if func is None:
+            def decorator(f: Callable):
+                return _handle(f)
+            return decorator
+
+        return _handle(func)
+
+    # ------------------------------------------------------------------
+    # 描述符支持：类方法
+    # ------------------------------------------------------------------
+
+    def _spawn_manager(self, f: Callable, mode: OverloadMode,
+                         priority: int, export_mode) -> 'OverloadManager':
+        """创建子管理器。复制当前管理器的现有重载函数。
+        使新管理器拥有父级的所有候选函数。"""
+        new_manager = OverloadManager(
+            func=f,
+            mode=mode,
+            priority=priority,
+            export_mode=export_mode,
+            parent=self,
+        )
+        # 把父管理器已有的重载函数也注册进去（主函数已经在初始化时注册了，所以跳过同名函数）
+        # 注意：主函数 f 已经在 __init__ 中注册过了
+        # 我们需要把父级的其他函数也加进来，使新管理器也能调用父级的函数
+        for _, existing_func, existing_priority, existing_index, existing_name in self.overloads:
+            # 避免重复注册主函数
+            if existing_func is f:
+                continue
+            # 注意：注册检查基于新的 mode 可能跟父级 mode 可能有冲突
+            # 为避免模式冲突导致报错，直接跳过冲突函数
+            try:
+                new_manager._register_function(existing_func, priority=existing_priority)
+            except ValueError:
+                    pass
+        return new_manager
+
     def __get__(self, instance, owner):
-        """描述符协议，支持类方法绑定"""
         if instance is None:
             return self
         return types.MethodType(self, instance)
 
+    # ------------------------------------------------------------------
+    # 调用入口
+    # ------------------------------------------------------------------
+
     def __call__(self, *args, **kwargs) -> Any:
-        """执行重载函数调用"""
-        candidates = []
+        """根据 mode 匹配候选函数并执行。"""
+        has_priority = bool(self.mode & OverloadMode.Priority)
+        is_strict = bool(self.mode & OverloadMode.Strict)
+        allow_ambiguous = bool(self.mode & OverloadMode.Ambiguous)
 
-        # 按优先级排序
-        sorted_overloads = sorted(self.overloads, key=lambda x: (-x[2], x[3]))
+        # 优先级模式下按 (-priority, reg_index) 排序；否则保持注册顺序
+        if has_priority:
+            ordered = sorted(self.overloads, key=lambda x: (-x[2], x[3]))
+        else:
+            ordered = list(self.overloads)
 
-        for check, func, _, _, func_name in sorted_overloads:
-            try:
-                if self.mode & OverloadMode.Strict:
-                    is_valid, error_msg = check(args, kwargs)
-                    if is_valid:
-                        candidates.append((func, error_msg))
-                else:
-                    # 普通模式：直接尝试调用
-                    result = func(*args, **kwargs)
+        candidates: List[Tuple[Callable, Optional[str]]] = []
+
+        for check, func, _, _, _ in ordered:
+            if is_strict:
+                # 严格模式：check 返回 (ok, error_msg)
+                is_valid, msg = check(args, kwargs)
+                if is_valid:
+                    candidates.append((func, msg))
+            else:
+                # 非严格模式：用参数数量检查（无副作用）
+                if check(args, kwargs):
                     candidates.append((func, None))
-            except (TypeError, ValueError) as e:
-                continue
 
-        # 处理候选函数
-        if len(candidates) == 0:
+        if not candidates:
             raise TypeError(f"没有找到匹配的重载函数")
 
-        if len(candidates) > 1:
-            if self.mode & OverloadMode.Ambiguous:
-                # 允许模糊：执行第一个
-                return candidates[0][0](*args, **kwargs)
-            else:
-                # 不允许模糊：报错
-                raise TypeError(f"模糊调用: 多个函数匹配")
-        else:
-            return candidates[0][0](*args, **kwargs)
+        if len(candidates) > 1 and not allow_ambiguous:
+            names = ", ".join(f.__name__ for f, _ in candidates)
+            raise TypeError(f"模糊调用: 多个函数匹配 ({names})")
 
+        return candidates[0][0](*args, **kwargs)
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
-    def is_overload_manager(self) -> bool:
-        """检查是否是 OverloadManager"""
-        return True
-
-
-class NewOverloadManager(OverloadManager):
-    """
-    新建的重载管理器（从 register 返回）
-
-    继承父管理器的模式和导出行为
-    """
-
-    def __init__(self, func: Callable, mode: OverloadMode, priority: int,
-                 parent: OverloadManager, export_mode=None):
-        self.parent = parent
-        self.func_name = func.__name__
-        self.module = func.__module__
-        self.qualname = func.__qualname__
-        self.scope = _get_scope_from_qualname(self.qualname)
-        self.key = _get_registry_key(self.func_name, self.scope, self.module)
-
-        # 新管理器的模式
-        self.mode = mode
-        self.overloads: List[Tuple[Callable, Callable, int, int, str]] = []
-        self.main_func: Optional[Callable] = func
-        self.export_mode = export_mode
-        self.counter = 0
-        self._allow_chain_register = True  # 是否允许链式注册
-
-        # 验证模式
-        self._validate_mode()
-
-        # 注册主函数
-        self._register_function(func, priority=priority)
-
-    # ---- serialization support ----
+    # ------------------------------------------------------------------
+    # 序列化
+    # ------------------------------------------------------------------
 
     def __getstate__(self):
-        """Return serialization state (exclude check functions)"""
-        import pickle as _pickle
+        """序列化时剔除 check 函数（闭包不可 pickled）。"""
         serializable = []
         for _, func, priority, reg_index, func_name in self.overloads:
             try:
-                # Verify the function is pickleable
-                _pickle.dumps(func)
+                pickle.dumps(func)
                 serializable.append((None, func, priority, reg_index, func_name))
-            except (_pickle.PicklingError, AttributeError, TypeError):
-                # Function is not pickleable (e.g. name shadowed by manager)
+            except (pickle.PicklingError, AttributeError, TypeError):
                 pass
         return {
             'mode': self.mode,
             'overloads': serializable,
             'main_func': self.main_func,
             'export_mode': self.export_mode,
-            'func_name': self.func_name,
-            'module': self.module,
-            'qualname': self.qualname,
-            'scope': self.scope,
-            'key': self.key,
+            'func_name': getattr(self, 'func_name', None),
+            'module': getattr(self, 'module', None),
+            'qualname': getattr(self, 'qualname', None),
+            'scope': getattr(self, 'scope', None),
             'counter': self.counter,
-            '_allow_chain_register': self._allow_chain_register,
+            'parent': None,   # 反序列化时父级丢失
         }
 
     def __setstate__(self, state):
-        """Restore from serialization state"""
         self.mode = state['mode']
-        raw_overloads = state.get('overloads', [])
+        raw = state.get('overloads', [])
         self.overloads = []
-        for _, func, priority, reg_index, func_name in raw_overloads:
+        for _, func, priority, reg_index, func_name in raw:
             check = self._get_check_func(func)
             self.overloads.append((check, func, priority, reg_index, func_name))
         self.main_func = state['main_func']
@@ -551,42 +444,19 @@ class NewOverloadManager(OverloadManager):
         self.module = state['module']
         self.qualname = state['qualname']
         self.scope = state['scope']
-        self.key = state['key']
         self.counter = state['counter']
-        self._allow_chain_register = state.get('_allow_chain_register', True)
         self.parent = None
 
-    def _validate_mode(self) -> None:
-        """验证模式组合的合法性"""
-        mode = self.mode
+    # ------------------------------------------------------------------
+    # 辅助
+    # ------------------------------------------------------------------
 
-        if not (mode & OverloadMode.AllowSyncName):
-            raise ValueError(
-                "NewOverloadManager 必须启用 AllowSyncName"
-            )
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function (no return expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
-
+    def is_overload_manager(self) -> bool:
+        return True
 
 
 # =============================================================================
-# overload 装饰器
+# overload 装饰器入口
 # =============================================================================
 
 def overload(func: Optional[Callable] = None,
@@ -595,144 +465,84 @@ def overload(func: Optional[Callable] = None,
              priority: int = 0,
              export_mode=None) -> Union[OverloadManager, Callable]:
     """
-    高效的重载装饰器，支持多种模式组合
+    函数重载装饰器，支持多种模式组合。
 
-    Args:
-        func: 主函数（可选，不填时返回装饰器）
-        mode: 重载模式标志组合，默认 Priority | Strict | AllowSyncName
-        priority: 主函数的优先级
-        export_mode: 导出模式
+    支持无括号用法：
+        @overload
+        def add(a, b): ...
 
-    Returns:
+    也支持带参数用法：
+        @overload(mode=Priority | Strict)
+        def add(a, b): ...
+
+    参数:
+        func: 被装饰的函数（若不传，返回装饰器）
+        mode: 重载模式，默认 Priority | Strict | AllowSyncName
+        priority: 主函数优先级
+        export_mode: register 的默认返回策略（默认 None → 返回管理器）
+
+    返回:
         OverloadManager 实例
-
-    模式组合:
-        - Priority: 优先级模式
-        - AllowSyncName: 允许非同名函数
-        - Strict: 严格类型检查
-        - Ambiguous: 允许模糊
-
-    示例:
-        >>> @overload
-        ... def add(a, b):
-        ...     return a + b
-
-        >>> @overload(mode=Priority | Strict | Ambiguous)
-        ... def add(a, b):
-        ...     return a + b
     """
     if func is None:
         def decorator(f: Callable) -> OverloadManager:
-            _validate_mode_global(mode)
-            manager = OverloadManager(
+            _validate_mode(mode)
+            return OverloadManager(
                 func=f,
                 mode=mode,
                 priority=priority,
-                export_mode=export_mode
+                export_mode=export_mode,
             )
-            return manager
         return decorator
 
-    # 直接装饰函数
-    _validate_mode_global(mode)
+    _validate_mode(mode)
     return OverloadManager(
         func=func,
         mode=mode,
         priority=priority,
-        export_mode=export_mode
+        export_mode=export_mode,
     )
 
 
-def _validate_mode_global(mode: OverloadMode) -> None:
-    """验证模式组合的合法性"""
-    if not (mode & OverloadMode.Priority) and (mode & OverloadMode.AllowSyncName):
-        raise ValueError(
-            "AllowSyncName 只能在 Priority 模式下使用"
-        )
-
-
 # =============================================================================
-# 严格类型检查装饰器（独立使用）
+# strict 独立装饰器
 # =============================================================================
 
-class StrictMode:
-    """strict 装饰器的辅助类"""
-    def __init__(self, func: Optional[Callable] = None, *, enabled: bool = True):
-        if func is None:
-            self._enabled = enabled
-        else:
-            self._enabled = enabled
-            self.func = func
-
-
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
-    def __call__(self, *args, **kwargs):
-        if self._enabled:
-            return _strict_wrapper(self.func)(*args, **kwargs)
-        return self.func(*args, **kwargs)
-
-
-def _strict_wrapper(func: Callable) -> Callable:
-    """严格类型检查包装器"""
-    sig = get_signature(func)
-    annotations = func.__annotations__
-
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        bound = sig.bind(*args, **kwargs)
-        bound.apply_defaults()
-
-        for name, value in bound.arguments.items():
-            if name in annotations:
-                expected_type = annotations[name]
-                if not isinstance(value, expected_type):
-                    raise TypeError(
-                        f"参数 '{name}' 应为 {expected_type.__name__} 类型，"
-                        f"实际传入 {type(value).__name__} 类型"
-                    )
-
-        return func(*args, **kwargs)
-    return wrapper
-
-
-def strict(func: Optional[Callable] = None, *, enabled: bool = True) -> Union[Callable, StrictMode]:
+def strict(func: Optional[Callable] = None, *, enabled: bool = True) -> Callable:
     """
-    严格类型检查装饰器
-
-    Args:
-        func: 要包装的函数
-        enabled: 是否启用检查（默认 True）
-
-    Returns:
-        包装后的函数 或 StrictMode 实例
+    严格类型检查装饰器（独立于 overload 使用）。
 
     示例:
         >>> @strict
         ... def add(a: int, b: int) -> int:
         ...     return a + b
-        >>> add(1, 2)      # 3
-        >>> add(1, "2")    # TypeError
+        >>> add(1, 2)
+        3
+        >>> add(1, "2")       # TypeError
     """
+    def _wrap(f: Callable) -> Callable:
+        sig = get_signature(f)
+        annotations = f.__annotations__
+
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            if not enabled:
+                return f(*args, **kwargs)
+            bound = sig.bind(*args, **kwargs)
+            bound.apply_defaults()
+            for name, value in bound.arguments.items():
+                if name in annotations:
+                    expected = annotations[name]
+                    if not isinstance(value, expected):
+                        raise TypeError(
+                            f"参数 '{name}' 应为 "
+                            f"{getattr(expected, '__name__', str(expected))}, "
+                            f"实际 {type(value).__name__}"
+                        )
+            return f(*args, **kwargs)
+
+        return wrapper
+
     if func is None:
-        def decorator(f: Callable) -> Callable:
-            return _strict_wrapper(f)
-        return decorator
-    else:
-        return _strict_wrapper(func)
+        return lambda f: _wrap(f)
+    return _wrap(func)

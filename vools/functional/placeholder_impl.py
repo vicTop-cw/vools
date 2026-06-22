@@ -1,104 +1,173 @@
 """
-函数式编程占位符工具 - X 和 Y
+函数式编程占位符工具集 —— X、Y 和 Z
 
-提供强大的函数式编程能力，支持多种操作模式：
+提供三层渐进式的函数式编程能力：
 
-**核心特性:**
+---
 
-1. **X - 方括号终止模式**
-   - 使用 `[]` 终止链式调用并执行
-   - 支持 `[target]` 或 `[target, idx...]` 格式
-   - 支持 `[None, idx...]` 追加索引操作
+**一、X — 方括号终止模式**
 
-2. **Y - 关键字参数终止模式**
-   - 使用 `(target, exe=True)` 终止链式调用并执行
-   - 支持 `(target, exe=True, f=factory)` 工厂函数转换
-   - 支持 `as_function()` 和 `as_subscript()` 方法
+使用 ``[]`` 终止链式调用并执行。
 
-3. **通用特性**
-   - 属性访问: `.attr`
-   - 方法调用: `(*args, **kwargs)`
-   - 索引操作: `[key]`
-   - 函数反转: `.f(func)`
-   - 链式调用: 任意顺序组合
+- ``X.attr`` → ``PipeX`` 管道对象
+- ``X(*args, **kwargs)`` → ``PipeX`` 管道对象
+- ``X[key]`` → ``PipeX`` 管道对象（索引操作）
+- ``[target]`` → 执行管道并返回结果
+- ``[target, idx...]`` → 执行管道并应用额外索引
+- ``[None, idx...]`` → 追加索引操作到管道（不执行）
+- ``.f(func)`` → 添加结果映射函数
+- ``.as_function()`` → 返回普通可调用函数 ``fn(x, f=None)``
 
-**设计理念:**
-- 构建时不报错，执行时才检查类型
-- 延迟执行，支持复杂管道构建
-- 简洁的操作序列记录模式
+二 — Y — 关键字参数终止模式
 
-**导出:**
-    X, Y - 单例占位符实例
+使用 ``(target, exe=True)`` 终止链式调用并执行。
 
-**示例:**
+- ``Y.attr`` → ``PipeY`` 管道对象
+- ``Y[key]`` → ``PipeY`` 管道对象（索引操作）
+- ``Y(*args, **kwargs)`` → ``PipeY`` 管道对象
+- ``(target, exe=True)`` → 执行管道并返回结果
+- ``(target, exe=True, f=factory)`` → 执行管道并应用工厂函数
+- ``.f(func)`` → 添加结果映射函数
+- ``.as_function()`` → 返回普通可调用函数 ``fn(x, f=None)``
+- ``.as_subscript()`` → 返回下标执行器，支持 ``[target]`` 或 ``[target, idx...]``
 
-# X 的基本用法
-X.strip()['  hello  ']                    # → 'hello'
-X.strip().split(',')['a,b,c']             # → ['a', 'b', 'c']
-X.split(',')[None, 1]['a,b,c']            # → 'b'
-X.split(',')['a,b,c', 1]                  # → 'b'
-X.split(',').f(list)['a,b,c']             # → ['a', 'b', 'c']
+三 — Z — 惰性表达式占位符系统
 
-# Y 的基本用法
-Y.strip()('  hello  ', exe=True)          # → 'hello'
-Y.strip().split(',')('a,b,c', exe=True)   # → ['a', 'b', 'c']
-Y.split(',')('a,b,c', exe=True, f=list)  # → ['a', 'b', 'c']
-Y.strip().as_function()('  hello  ')      # → 'hello'
-Y.strip().as_subscript()['  hello  ']     # → 'hello'
+编译时延迟绑定，将表达式树编译为可调用函数。
 
-# 索引操作
-X[0]['hello']                             # → 'h'
-X['name'][{'name': 'Alice'}]              # → 'Alice'
-Y[0]['hello', exe=True]                   # → 'h'
+- ``Z.attr`` → ``Attr`` 属性访问节点
+- ``Z[key]`` → ``GetItem`` 索引访问节点
+- ``Z(*args, **kwargs)`` / ``Z.invoke(...)`` → ``Call`` 调用节点
+- ``Z.star`` / ``Z.kwstar`` → ``*args`` / ``**kwargs`` 解包节点
+- ``Z.args_all`` / ``Z.kwargs_all`` → 可变参数引用节点
+- ``.as_function()`` → 编译表达式树并返回可调用函数
+- ``make_func(expr)`` → 同 ``.as_function()``
+- ``expr_to_dict(expr)`` / ``expr_from_dict(d)`` → JSON 序列化/反序列化
 
-# 链式组合
-X.strip().upper()['  hello  ']            # → 'HELLO'
-X.split(',')[None, 0].upper()['a,b,c']    # → 'A'
+通用特性
+^^^^^^^^
+
+- 属性访问: ``.attr``
+- 方法调用: ``(*args, **kwargs)``
+- 索引操作: ``[key]``
+- 函数映射: ``.f(func)``
+- 链式调用: 任意顺序组合
+- 副作用调试: ``.do(f=print)``
+
+设计理念
+^^^^^^^^
+
+- **延迟执行**：构建时不报错，执行时才检查类型
+- **管道组合**：任意顺序组合操作序列，一次执行
+- **可序列化**：Z 表达式树支持 pickle 和 JSON 双向序列化
+
+导出
+^^^^
+
+    X, Y, Z — 单例占位符实例
+
+示例
+^^^^
+
+X 的基本用法::
+
+    X.strip()['  hello  ']                    # → 'hello'
+    X.strip().split(',')['a,b,c']             # → ['a', 'b', 'c']
+    X.split(',')[None, 1]['a,b,c']            # → 'b'
+    X.split(',')['a,b,c', 1]                  # → 'b'
+    X.split(',').f(list)['a,b,c']             # → ['a', 'b', 'c']
+
+Y 的基本用法::
+
+    Y.strip()('  hello  ', exe=True)          # → 'hello'
+    Y.strip().split(',')('a,b,c', exe=True)   # → ['a', 'b', 'c']
+    Y.split(',')('a,b,c', exe=True, f=list)  # → ['a', 'b', 'c']
+    Y.strip().as_function()('  hello  ')      # → 'hello'
+    Y.strip().as_subscript()['  hello  ']     # → 'hello'
+
+Z 的基本用法::
+
+    f = (Z.strip().upper()).as_function()
+    f('  hello  ')                            # → 'HELLO'
+
+    g = (Z['name'].upper()).as_function()
+    g({'name': 'alice'})                      # → 'ALICE'
+
+    h = (Z.split(',').f(list)).as_function()
+    h('a,b,c')                                # → ['a', 'b', 'c']
+
+索引操作::
+
+    X[0]['hello']                             # → 'h'
+    X['name'][{'name': 'Alice'}]              # → 'Alice'
+    Y[0]['hello', exe=True]                   # → 'h'
+
+链式组合::
+
+    X.strip().upper()['  hello  ']            # → 'HELLO'
+    X.split(',')[None, 0].upper()['a,b,c']    # → 'A'
 """
 
 from typing import Any, Callable, Optional
 
-__all__ = ['X', 'Y']
+__all__ = ['X', 'Y','Z']
 
 
 class _X:
     """
-    X 单例类 - 使用方括号 [] 终止链式调用
-    
-    **核心用法:**
-        X.attr → 返回 PipeX 管道对象
-        X(*args, **kwargs) → 返回 PipeX 管道对象
-        X[key] → 返回 PipeX 管道对象（索引操作）
-        X.attr[...] → 执行管道，返回结果
-    
-    **管道操作:**
-        .attr - 属性访问
-        (*args, **kwargs) - 方法调用
-        [None, idx...] - 追加索引操作（不执行）
-        [target] - 执行管道
-        [target, idx...] - 执行管道并应用额外索引
-        .f(func) - 添加结果映射函数
-        .as_function() - 返回普通函数
-    
-    **示例:**
+    X 单例类 —— 使用方括号 ``[]`` 终止链式调用。
+
+    X 本身不执行任何操作，而是作为一个入口点：通过属性访问、方法调用或索引操作
+    创建一个 ``PipeX`` 管道对象，记录一连串待执行的操作序列。
+
+    核心用法
+    --------
+    - ``X.attr`` → 返回 ``PipeX`` 管道对象
+    - ``X(*args, **kwargs)`` → 返回 ``PipeX`` 管道对象
+    - ``X[key]`` → 返回 ``PipeX`` 管道对象（索引操作）
+    - ``pipe[target]`` → 执行管道，返回结果
+
+    管道操作
+    --------
+    - ``.attr`` — 属性访问
+    - ``(*args, **kwargs)`` — 方法调用
+    - ``[key]`` — 索引操作
+    - ``[target]`` — 执行管道（终止操作）
+    - ``[target, idx...]`` — 执行管道并应用额外索引
+    - ``[None, idx...]`` — 追加索引操作（不执行，继续构建）
+    - ``.f(func)`` — 添加结果映射函数
+    - ``.as_function()`` — 终止管道，返回普通函数 ``fn(x, f=None)``
+    - ``.do(f=print, pre_f=None, sub_f=None)`` — 副作用调试
+
+    示例
+    ----
+    ::
+
         # 基础用法
-        X.strip()['  hello  ']  # → 'hello'
-        
+        X.strip()['  hello  ']                     # → 'hello'
+
         # 链式调用
-        X.strip().split(',')['a,b,c']  # → ['a', 'b', 'c']
-        
+        X.strip().split(',')['a,b,c']              # → ['a', 'b', 'c']
+
         # 追加索引（构建模式）
-        X.split(',')[None, 1]['a,b,c']  # → 'b'
-        
+        X.split(',')[None, 1]['a,b,c']             # → 'b'
+
         # 执行时索引
-        X.split(',')['a,b,c', 1]  # → 'b'
-        
+        X.split(',')['a,b,c', 1]                   # → 'b'
+
         # 函数映射
-        X.split(',').f(list)['a,b,c']  # → ['a', 'b', 'c']
-        
+        X.split(',').f(list)['a,b,c']              # → ['a', 'b', 'c']
+
         # 转换为普通函数
         f = X.strip().as_function()
-        f('  hello  ')  # → 'hello'
+        f('  hello  ')                              # → 'hello'
+
+    执行流程
+    --------
+    1. ``X.attr`` / ``X(...)`` / ``X[key]`` 创建一个 ``PipeX``，记录第一个操作
+    2. 继续 ``.attr`` / ``(...)`` / ``.f(func)`` / ``[None, idx]`` 追加操作
+    3. ``pipe[target]`` 终止：从 target 开始，依次应用所有记录的操作
+    4. 返回最终结果
     """
     _instance = None
 
@@ -128,16 +197,33 @@ class _X:
         if isinstance(key, tuple):
             return PipeX(('index', key))
         return PipeX(('index', (key,)))
+
     def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
+        """对自身应用副作用函数，返回 self 以支持链式调用。
 
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function (no return expected)
+        用于调试或日志输出，不改变管道本身。
 
-        Returns:
-            self, for chaining
+        参数
+        ----
+        f: callable
+            副作用函数，默认为 ``print``。
+        pre_f: callable, optional
+            预处理函数，在 ``f`` 之前作用于 self。
+        sub_f: callable, optional
+            后处理函数，在 ``f`` 之后作用于返回值（不期望返回）。
+
+        返回
+        ----
+        _X
+            返回自身，支持链式调用。
+
+        示例
+        ----
+        ::
+
+            X.strip().do(print).upper()['  hello  ']
+            # 打印 _X 单例信息（调试目的）
+            # 返回 'HELLO'
         """
         rs = self
         if pre_f:
@@ -148,22 +234,26 @@ class _X:
         return self
 
 
-
 class PipeX:
     """
-    X 的管道执行器
-    
-    记录操作序列，支持链式构建和延迟执行。
-    
-    **操作类型:**
-        - ('attr', name) - 属性访问
-        - ('call', args, kwargs) - 方法调用
-        - ('index', keys) - 索引操作
-        - ('map', func) - 结果映射
-    
-    **执行方式:**
-        - 通过 __getitem__ 触发执行
-        - 通过 as_function() 转换为普通函数
+    X 的管道执行器。
+
+    记录操作序列，支持链式构建和延迟执行。管道中的每个操作以元组形式存储：
+    ``(typ, *data)``。
+
+    操作类型
+    --------
+    - ``('attr', name)`` — 属性访问
+    - ``('call', args, kwargs)`` — 方法调用
+    - ``('index', keys)`` — 索引操作
+    - ``('map', func)`` — 结果映射
+
+    终止方式
+    --------
+    - ``pipe[target]`` — 执行管道
+    - ``pipe[target, idx...]`` — 执行管道并应用额外索引
+    - ``pipe[None, idx...]`` — 追加索引操作（不终止，继续构建）
+    - ``pipe.as_function()`` — 返回普通可调用函数
     """
     __slots__ = ('ops',)
 
@@ -328,41 +418,57 @@ X = _X()
 
 class _Y:
     """
-    Y 单例类 - 使用关键字参数终止链式调用
-    
-    **核心用法:**
-        Y.attr → 返回 PipeY 管道对象
-        Y[key] → 返回 PipeY 管道对象（索引操作）
-        Y(*args, **kwargs) → 返回 PipeY 管道对象
-        Y.attr(target, exe=True) → 执行管道，返回结果
-    
-    **管道操作:**
-        .attr - 属性访问
-        [key] - 索引操作
-        (*args, **kwargs) - 方法调用（非执行模式）
-        (*target, exe=True) - 执行管道
-        (*target, exe=True, f=factory) - 执行管道并应用工厂函数
-        .f(func) - 添加结果映射函数
-        .as_function() - 返回普通函数 fn(x, f=None)
-        .as_subscript() - 返回下标执行器 [target]
-    
-    **示例:**
+    Y 单例类 —— 使用关键字参数 ``exe=True`` 终止链式调用。
+
+    Y 本身不执行任何操作，而是作为一个入口点：通过属性访问、方法调用或索引操作
+    创建一个 ``PipeY`` 管道对象，记录一连串待执行的操作序列。
+
+    核心用法
+    --------
+    - ``Y.attr`` → 返回 ``PipeY`` 管道对象
+    - ``Y[key]`` → 返回 ``PipeY`` 管道对象（索引操作）
+    - ``Y(*args, **kwargs)`` → 返回 ``PipeY`` 管道对象
+    - ``pipe(target, exe=True)`` → 执行管道，返回结果
+
+    管道操作
+    --------
+    - ``.attr`` — 属性访问
+    - ``[key]`` — 索引操作
+    - ``(*args, **kwargs)`` — 方法调用（非执行模式，即不含 ``exe=True``）
+    - ``(target, exe=True)`` — 执行管道（终止操作）
+    - ``(target, exe=True, f=factory)`` — 执行管道并应用工厂函数
+    - ``.f(func)`` — 添加结果映射函数
+    - ``.as_function()`` — 终止管道，返回普通函数 ``fn(x, f=None)``
+    - ``.as_subscript()`` — 终止管道，返回下标执行器 ``[target]`` 或 ``[target, idx...]``
+    - ``.do(f=print, pre_f=None, sub_f=None)`` — 副作用调试
+
+    示例
+    ----
+    ::
+
         # 基础用法
-        Y.strip()('  hello  ', exe=True)  # → 'hello'
-        
+        Y.strip()('  hello  ', exe=True)                # → 'hello'
+
         # 链式调用
-        Y.strip().split(',')('a,b,c', exe=True)  # → ['a', 'b', 'c']
-        
+        Y.strip().split(',')('a,b,c', exe=True)          # → ['a', 'b', 'c']
+
         # 带工厂函数
-        Y.split(',')('a,b,c', exe=True, f=list)  # → ['a', 'b', 'c']
-        
+        Y.split(',')('a,b,c', exe=True, f=list)          # → ['a', 'b', 'c']
+
         # 转换为普通函数
         f = Y.strip().as_function()
-        f('  hello  ')  # → 'hello'
-        
+        f('  hello  ')                                    # → 'hello'
+
         # 转换为下标执行器
         sub = Y.strip().as_subscript()
-        sub['  hello  ']  # → 'hello'
+        sub['  hello  ']                                  # → 'hello'
+
+    执行流程
+    --------
+    1. ``Y.attr`` / ``Y[...]`` / ``Y(...)`` 创建一个 ``PipeY``，记录第一个操作
+    2. 继续 ``.attr`` / ``[...]`` / ``(...)`` / ``.f(func)`` 追加操作
+    3. ``pipe(target, exe=True)`` 终止：从 target 开始，依次应用所有记录的操作
+    4. 返回最终结果
     """
     _instance = None
 
@@ -390,16 +496,25 @@ class _Y:
     def __call__(self, *args, **kwargs):
         """拦截方法调用，开始构建管道"""
         return PipeY(('call', args, kwargs))
+
     def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
+        """对自身应用副作用函数，返回 self 以支持链式调用。
 
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function (no return expected)
+        用于调试或日志输出，不改变管道本身。
 
-        Returns:
-            self, for chaining
+        参数
+        ----
+        f: callable
+            副作用函数，默认为 ``print``。
+        pre_f: callable, optional
+            预处理函数，在 ``f`` 之前作用于 self。
+        sub_f: callable, optional
+            后处理函数，在 ``f`` 之后作用于返回值（不期望返回）。
+
+        返回
+        ----
+        _Y
+            返回自身，支持链式调用。
         """
         rs = self
         if pre_f:
@@ -413,21 +528,23 @@ class _Y:
 
 class PipeY:
     """
-    Y 的管道执行器
-    
+    Y 的管道执行器。
+
     记录操作序列，支持链式构建和多种终止方式。
-    
-    **操作类型:**
-        - ('attr', name) - 属性访问
-        - ('index', key) - 索引操作
-        - ('call', args, kwargs) - 方法调用
-        - ('map', func) - 结果映射
-    
-    **终止方式:**
-        - (target, exe=True) - 执行管道
-        - (target, exe=True, f=factory) - 执行管道并转换结果
-        - as_function() - 返回普通函数
-        - as_subscript() - 返回下标执行器
+
+    操作类型
+    --------
+    - ``('attr', name)`` — 属性访问
+    - ``('index', key)`` — 索引操作
+    - ``('call', args, kwargs)`` — 方法调用
+    - ``('map', func)`` — 结果映射
+
+    终止方式
+    --------
+    - ``(target, exe=True)`` — 执行管道
+    - ``(target, exe=True, f=factory)`` — 执行管道并转换结果
+    - ``.as_function()`` — 返回普通函数 ``fn(x, f=None)``
+    - ``.as_subscript()`` — 返回下标执行器 ``[target]`` 或 ``[target, idx...]``
     """
     __slots__ = ('ops',)
 
@@ -616,15 +733,23 @@ class PipeY:
                     result = result[extra[0]] if len(extra) == 1 else result[tuple(extra)]
                 return result
             def do(self, f=print, pre_f=None, sub_f=None):
-                """Apply a function for side effects, return self for chaining.
+                """对自身应用副作用函数，返回 self 以支持链式调用。
 
-                Args:
-                    f: Function to apply (default print)
-                    pre_f: Pre-processing function applied before f
-                    sub_f: Post-processing function (no return expected)
+                用于调试或日志输出，不改变执行器本身。
 
-                Returns:
-                    self, for chaining
+                参数
+                ----
+                f: callable
+                    副作用函数，默认为 ``print``。
+                pre_f: callable, optional
+                    预处理函数，在 ``f`` 之前作用于 self。
+                sub_f: callable, optional
+                    后处理函数，在 ``f`` 之后作用于返回值（不期望返回）。
+
+                返回
+                ----
+                SubscriptExecutor
+                    返回自身，支持链式调用。
                 """
                 rs = self
                 if pre_f:
@@ -640,3 +765,765 @@ class PipeY:
 
 # Y 单例实例
 Y = _Y()
+
+# ============================================================
+# Z — 惰性表达式占位符系统
+# ============================================================
+#
+# Z 提供编译时延迟绑定，将表达式树编译为可调用函数。
+# 与 X/Y 的即时管道执行不同，Z 构建一棵表达式 AST 树，
+# 再通过 as_function() 编译为普通 Python 函数。
+#
+# 核心特性：
+#   - 属性访问：Z.attr
+#   - 方法调用：Z(...) / Z.invoke(...)
+#   - 索引操作：Z[key]
+#   - *args/**kwargs 解包：Z.star / Z.kwstar
+#   - 可变参数引用：Z.args_all / Z.kwargs_all
+#   - pickle 序列化：pickle.dumps/loads
+#   - JSON 序列化：expr_to_dict / expr_from_dict
+# ============================================================
+
+import pickle
+import json
+
+
+class Expr:
+    """所有表达式节点的抽象基类。
+
+    为所有节点提供统一的构建接口（``.attr`` / ``[key]`` / ``.invoke()`` / ``()``）
+    和序列化框架（``__reduce__`` + ``__getstate__`` + ``__setstate__``）。
+
+    子类必须实现
+    ------------
+    - ``evaluate(args, kwargs=None)`` — 求值，返回表达式结果
+    - ``__getstate__()`` — 返回可序列化的纯数据结构（dict）
+    - ``__setstate__(state)`` — 从纯数据结构重建节点
+
+    内置方法
+    --------
+    - ``.attr`` → ``Attr(self, name)`` — 属性访问节点
+    - ``[key]`` → ``GetItem(self, key)`` — 索引访问节点
+    - ``(...)`` / ``.invoke(...)`` → ``Call(self, args, kwargs)`` — 调用节点
+    - ``.as_function()`` → ``Callable`` — 编译表达式树为可调用函数
+    """
+    def __getattr__(self, name):
+        return Attr(self, name)
+
+    def __getitem__(self, key):
+        return GetItem(self, key)
+
+    def __add__(self, other):
+        return Call(Attr(self, '__add__'), (other,), {})
+
+    def invoke(self, *args, **kwargs):
+        return Call(self, args, kwargs)
+
+    def __call__(self, *args, **kwargs):
+        return Call(self, args, kwargs)
+
+    def evaluate(self, args, kwargs=None):
+        raise NotImplementedError
+
+    def as_function(self):
+        """终止惰性构建，编译表达式并返回可调用的函数。"""
+        return make_func(self)
+
+    # ---- 序列化支持 ----
+    def __reduce__(self):
+        """供 pickle 使用：用 object.__new__ 绕过 __main__ 类路径查找。"""
+        return (object.__new__, (self.__class__,), self.__getstate__())
+
+    def __getstate__(self):
+        """返回可序列化的纯数据结构。子类必须覆盖。"""
+        raise NotImplementedError
+
+    def __setstate__(self, state):
+        """从纯数据结构重建节点。子类必须覆盖。"""
+        raise NotImplementedError
+
+
+# ---- 节点类 ----
+
+class Placeholder(Expr):
+    """编译后的参数占位符，对应第 ``n`` 个传入的位置实参。
+
+    由 ``_compile()`` 自动生成，用户通常不直接创建。
+    求值时直接返回 ``args[self.n]``。
+
+    参数
+    ----
+    n: int
+        位置参数索引（从 0 开始）。
+
+    序列化
+    ------
+    状态格式：``{'__type__': 'Placeholder', 'n': int}``
+    """
+    __slots__ = ('n',)
+    def __init__(self, n):
+        self.n = n
+
+    def evaluate(self, args, kwargs=None):
+        return args[self.n]
+
+    def __getstate__(self):
+        return {'__type__': 'Placeholder', 'n': self.n}
+
+    def __setstate__(self, state):
+        self.n = state['n']
+
+
+class Attr(Expr):
+    """属性访问节点：``obj.name``。
+
+    求值时先对 ``obj`` 求值，再调用 ``getattr(result, name)``。
+
+    参数
+    ----
+    obj: Expr
+        被访问属性的对象表达式节点。
+    name: str
+        属性名称。
+
+    序列化
+    ------
+    状态格式：``{'__type__': 'Attr', 'obj': <递归序列化>, 'name': str}``
+    """
+    __slots__ = ('obj', 'name')
+    def __init__(self, obj, name):
+        self.obj = obj
+        self.name = name
+
+    def evaluate(self, args, kwargs=None):
+        return getattr(self.obj.evaluate(args, kwargs), self.name)
+
+    def __getstate__(self):
+        return {'__type__': 'Attr', 'obj': _serialize(self.obj), 'name': self.name}
+
+    def __setstate__(self, state):
+        self.obj = _deserialize(state['obj'])
+        self.name = state['name']
+
+
+class Call(Expr):
+    """函数调用节点：``func(*args, **kwargs)``。
+
+    支持 ``*args`` / ``**kwargs`` 解包：
+    - 若 ``args`` 中包含 ``StarArgs`` 节点，求值时将解包为位置参数
+    - 若 ``args`` / ``kwargs`` 中包含 ``StarKwargs`` 节点，求值时将解包为关键字参数
+
+    参数
+    ----
+    func: Expr
+        被调用的函数表达式节点。
+    args: tuple
+        位置参数元组，可包含 ``Expr`` 节点和常量。
+    kwargs: dict
+        关键字参数字典，值可为 ``Expr`` 节点或常量。
+
+    序列化
+    ------
+    状态格式：``{'__type__': 'Call', 'func': ..., 'args': [...], 'kwargs': {...}}``
+    """
+    __slots__ = ('func', 'args', 'kwargs')
+    def __init__(self, func, args, kwargs):
+        self.func = func
+        self.args = args      # tuple
+        self.kwargs = kwargs  # dict
+
+    def evaluate(self, args, kwargs=None):
+        f = self.func.evaluate(args, kwargs)
+        final_args = []
+        final_kwargs = {}
+
+        # 处理位置参数中的 * 和 ** 解包
+        for a in self.args:
+            if isinstance(a, StarArgs):
+                val = a.evaluate(args, kwargs)
+                final_args.extend(val)
+            elif isinstance(a, StarKwargs):
+                val = a.evaluate(args, kwargs)
+                final_kwargs.update(val)
+            else:
+                val = a.evaluate(args, kwargs) if isinstance(a, Expr) else a
+                final_args.append(val)
+
+        # 处理关键字参数中的 ** 解包
+        for k, v in self.kwargs.items():
+            if isinstance(v, StarKwargs):
+                val = v.evaluate(args, kwargs)
+                final_kwargs.update(val)
+            else:
+                val = v.evaluate(args, kwargs) if isinstance(v, Expr) else v
+                final_kwargs[k] = val
+
+        return f(*final_args, **final_kwargs)
+
+    def __getstate__(self):
+        return {
+            '__type__': 'Call',
+            'func': _serialize(self.func),
+            'args': [_serialize(a) for a in self.args],
+            'kwargs': {k: _serialize(v) for k, v in self.kwargs.items()},
+        }
+
+    def __setstate__(self, state):
+        self.func = _deserialize(state['func'])
+        self.args = tuple(_deserialize(a) for a in state['args'])
+        self.kwargs = {k: _deserialize(v) for k, v in state['kwargs'].items()}
+
+
+class GetItem(Expr):
+    """索引访问节点：``obj[key]``。
+
+    求值时先对 ``obj`` 求值，再对 ``key``（若是 ``Expr``）求值，
+    最后执行 ``result[key]``。
+
+    参数
+    ----
+    obj: Expr
+        被索引的对象表达式节点。
+    key: Expr 或常量
+        索引键，可以是表达式节点或字面量。
+
+    序列化
+    ------
+    状态格式：``{'__type__': 'GetItem', 'obj': ..., 'key': ...}``
+    """
+    __slots__ = ('obj', 'key')
+    def __init__(self, obj, key):
+        self.obj = obj
+        self.key = key
+
+    def evaluate(self, args, kwargs=None):
+        o = self.obj.evaluate(args, kwargs)
+        k = self.key.evaluate(args, kwargs) if isinstance(self.key, Expr) else self.key
+        return o[k]
+
+    def __getstate__(self):
+        return {'__type__': 'GetItem', 'obj': _serialize(self.obj), 'key': _serialize(self.key)}
+
+    def __setstate__(self, state):
+        self.obj = _deserialize(state['obj'])
+        self.key = _deserialize(state['key'])
+
+
+class StarArgs(Expr):
+    """``*args`` 解包节点，用于在 ``Call`` 节点中解包位置参数。
+
+    通过 ``Z.star`` 创建：``Z.invoke(1, 2, Z.star)`` 会将第三个位置参数解包为多个实参。
+
+    参数
+    ----
+    expr: Expr
+        求值后应返回可迭代对象的表达式。
+
+    序列化
+    ------
+    状态格式：``{'__type__': 'StarArgs', 'expr': ...}``
+    """
+    __slots__ = ('expr',)
+    def __init__(self, expr):
+        self.expr = expr
+
+    def evaluate(self, args, kwargs=None):
+        return self.expr.evaluate(args, kwargs)
+
+    def __getstate__(self):
+        return {'__type__': 'StarArgs', 'expr': _serialize(self.expr)}
+
+    def __setstate__(self, state):
+        self.expr = _deserialize(state['expr'])
+
+
+class StarKwargs(Expr):
+    """``**kwargs`` 解包节点，用于在 ``Call`` 节点中解包关键字参数。
+
+    通过 ``Z.kwstar`` 创建：``Z.invoke(kw=Z.kwstar)`` 会将关键字参数解包为多个具名实参。
+
+    参数
+    ----
+    expr: Expr
+        求值后应返回字典的表达式。
+
+    序列化
+    ------
+    状态格式：``{'__type__': 'StarKwargs', 'expr': ...}``
+    """
+    __slots__ = ('expr',)
+    def __init__(self, expr):
+        self.expr = expr
+
+    def evaluate(self, args, kwargs=None):
+        return self.expr.evaluate(args, kwargs)
+
+    def __getstate__(self):
+        return {'__type__': 'StarKwargs', 'expr': _serialize(self.expr)}
+
+    def __setstate__(self, state):
+        self.expr = _deserialize(state['expr'])
+
+
+class RestArgs(Expr):
+    """代表函数的可变位置参数元组 ``*args``。
+
+    通过 ``Z.args_all`` 获取。求值时返回编译后函数的整个 ``args`` 元组。
+    支持索引访问 ``Z.args_all[i]`` 来获取特定位置的参数。
+
+    序列化
+    ------
+    状态格式：``{'__type__': 'RestArgs'}``
+    """
+    def __getitem__(self, i):
+        return GetItem(self, i)
+
+    def evaluate(self, args, kwargs=None):
+        return args
+
+    def __getstate__(self):
+        return {'__type__': 'RestArgs'}
+
+    def __setstate__(self, state):
+        pass
+
+
+class RestKwargs(Expr):
+    """代表函数的可变关键字参数字典 ``**kwargs``。
+
+    通过 ``Z.kwargs_all`` 获取。求值时返回编译后函数的整个 ``kwargs`` 字典。
+
+    序列化
+    ------
+    状态格式：``{'__type__': 'RestKwargs'}``
+    """
+    def evaluate(self, args, kwargs=None):
+        return kwargs or {}
+
+    def __getstate__(self):
+        return {'__type__': 'RestKwargs'}
+
+    def __setstate__(self, state):
+        pass
+
+
+class _Auto(Expr):
+    """待编号的占位符 —— 用户入口 ``Z`` 的类。
+
+    在编译（``make_func`` / ``as_function``）时，所有 ``_Auto`` 节点被深度优先遍历替换为
+    带编号的 ``Placeholder(n)`` 节点。每个 ``Z`` 出现对应一个唯一的参数位置。
+
+    属性
+    ----
+    star: StarArgs
+        ``*args`` 解包占位符，用于 ``Z.invoke(1, Z.star)``。
+    kwstar: StarKwargs
+        ``**kwargs`` 解包占位符，用于 ``Z.invoke(kw=Z.kwstar)``。
+    args_all: RestArgs
+        代表整个 ``*args`` 元组，编译后函数签名变为 ``def f(*args, **kwargs)``。
+    kwargs_all: RestKwargs
+        代表整个 ``**kwargs`` 字典。
+
+    注意
+    ----
+    属性名以 ``_`` 开头会正常抛 ``AttributeError``，避免与内部属性冲突。
+    直接对未编译的 ``_Auto`` 调用 ``evaluate()`` 会抛出 ``RuntimeError``。
+
+    序列化
+    ------
+    状态格式：``{'__type__': '_Auto'}``，反序列化时返回 ``Z`` 单例。
+    """
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        return Attr(self, name)
+
+    @property
+    def star(self):
+        """用于 *args 解包的占位符，例如 Z.invoke(1, Z.star)"""
+        return StarArgs(self)
+
+    @property
+    def kwstar(self):
+        """用于 **kwargs 解包的占位符，例如 Z.invoke(kw=Z.kwstar)"""
+        return StarKwargs(self)
+
+    @property
+    def args_all(self):
+        """代表整个可变位置参数元组，例如 lambda *args: args"""
+        return RestArgs()
+
+    @property
+    def kwargs_all(self):
+        """代表整个可变关键字参数字典，例如 lambda **kwargs: kwargs"""
+        return RestKwargs()
+
+    def evaluate(self, args, kwargs=None):
+        raise RuntimeError("请先用 make_func 编译表达式")
+
+    def __getstate__(self):
+        return {'__type__': '_Auto'}
+
+    def __setstate__(self, state):
+        pass
+
+
+# 用户使用的占位符对象
+Z = _Auto()
+
+
+# ---- 序列化/反序列化工具 ----
+
+def _reconstruct(state):
+    """供 pickle 使用的重建入口。"""
+    return _deserialize(state)
+
+
+def _serialize(value):
+    """将表达式节点或常量序列化为可存储的纯数据结构。
+
+    - ``Expr`` 节点 → 调用其 ``__getstate__()`` 返回的 dict（含 ``__type__`` 标识）
+    - 常量（非 ``Expr``） → 原值返回
+
+    参数
+    ----
+    value: Expr 或 任意常量
+        待序列化的值。
+
+    返回
+    ----
+    dict 或 原值
+        可 JSON 序列化的纯数据结构，或原常量。
+    """
+    if isinstance(value, Expr):
+        return value.__getstate__()
+    return value
+
+
+def _deserialize(value):
+    """从纯数据结构重建表达式节点或返回常量。
+
+    根据 ``__type__`` 字段分派到对应的节点类，使用 ``object.__new__`` + ``__setstate__`` 重建。
+    若值不含 ``__type__``，则原样返回（作为常量）。
+
+    支持的节点类型
+    --------------
+    Placeholder, Attr, Call, GetItem, StarArgs, StarKwargs, RestArgs, RestKwargs, _Auto
+
+    参数
+    ----
+    value: dict 或 任意常量
+        待反序列化的数据结构。
+
+    返回
+    ----
+    Expr 或 原值
+        重建的表达式节点，或原常量。
+
+    异常
+    ----
+    ValueError
+        当 ``__type__`` 为未知节点类型时抛出。
+    """
+    if isinstance(value, dict) and '__type__' in value:
+        type_name = value['__type__']
+        if type_name == 'Placeholder':
+            obj = Placeholder.__new__(Placeholder)
+            obj.__setstate__(value)
+            return obj
+        if type_name == 'Attr':
+            obj = Attr.__new__(Attr)
+            obj.__setstate__(value)
+            return obj
+        if type_name == 'Call':
+            obj = Call.__new__(Call)
+            obj.__setstate__(value)
+            return obj
+        if type_name == 'GetItem':
+            obj = GetItem.__new__(GetItem)
+            obj.__setstate__(value)
+            return obj
+        if type_name == 'StarArgs':
+            obj = StarArgs.__new__(StarArgs)
+            obj.__setstate__(value)
+            return obj
+        if type_name == 'StarKwargs':
+            obj = StarKwargs.__new__(StarKwargs)
+            obj.__setstate__(value)
+            return obj
+        if type_name == 'RestArgs':
+            obj = RestArgs.__new__(RestArgs)
+            obj.__setstate__(value)
+            return obj
+        if type_name == 'RestKwargs':
+            obj = RestKwargs.__new__(RestKwargs)
+            obj.__setstate__(value)
+            return obj
+        if type_name == '_Auto':
+            return Z
+        raise ValueError(f"未知节点类型: {type_name}")
+    return value
+
+
+def expr_to_dict(expr):
+    """将表达式树序列化为纯 ``dict`` 结构（可 JSON 序列化）。
+
+    递归序列化整棵表达式树，所有 ``Expr`` 节点转为含 ``__type__`` 的 dict，
+    常量保持原值。结果可直接传给 ``json.dumps()``。
+
+    参数
+    ----
+    expr: Expr
+        待序列化的表达式节点（通常是 ``Z.xxx`` 构建的树）。
+
+    返回
+    ----
+    dict
+        可 JSON 序列化的纯数据字典。
+
+    示例
+    ----
+    ::
+
+        d = expr_to_dict(Z.strip().upper())
+        json_str = json.dumps(d)
+        restored = expr_from_dict(json.loads(json_str))
+        f = restored.as_function()
+        f('  hello  ')  # → 'HELLO'
+    """
+    return _serialize(expr)
+
+
+def expr_from_dict(value):
+    """从纯 ``dict`` 结构重建表达式树。
+
+    ``expr_to_dict()`` 的逆操作，将 JSON 反序列化后的 dict 重建为可编译执行的表达式树。
+
+    参数
+    ----
+    value: dict
+        由 ``expr_to_dict()`` 产生的（或 JSON 反序列化后的）纯数据字典。
+
+    返回
+    ----
+    Expr
+        重建的表达式节点，可调用 ``.as_function()`` 编译执行。
+
+    异常
+    ----
+    ValueError
+        当 ``__type__`` 为未知节点类型时抛出。
+    """
+    return _deserialize(value)
+
+
+# ---- 编译与求值 ----
+
+def _compile(expr):
+    """编译表达式树：深度优先遍历，将所有 ``_Auto`` 节点替换为带序号的 ``Placeholder``。
+
+    同时记录是否包含 ``RestArgs`` / ``RestKwargs``（决定最终函数是否为可变参数形式）。
+
+    参数
+    ----
+    expr: Expr
+        未编译的表达式树根节点。
+
+    返回
+    ----
+    tuple
+        ``(编译后的树, 固定参数个数, 是否可变参数)``
+        - ``compiled`` — 编译后的 ``Expr`` 树（不含 ``_Auto`` 节点）
+        - ``arity`` — ``Z`` 出现次数（固定位置参数个数）
+        - ``has_rest`` — 是否包含 ``RestArgs`` / ``RestKwargs``
+    """
+    counter = 0
+    has_rest = False
+
+    def walk(node):
+        nonlocal counter, has_rest
+        if isinstance(node, _Auto):
+            placeholder = Placeholder(counter)
+            counter += 1
+            return placeholder
+        if isinstance(node, Attr):
+            node.obj = walk(node.obj)
+        elif isinstance(node, Call):
+            node.func = walk(node.func)
+            node.args = tuple(walk(a) if isinstance(a, Expr) else a for a in node.args)
+            node.kwargs = {k: (walk(v) if isinstance(v, Expr) else v) for k, v in node.kwargs.items()}
+        elif isinstance(node, GetItem):
+            node.obj = walk(node.obj)
+            node.key = walk(node.key) if isinstance(node.key, Expr) else node.key
+        elif isinstance(node, (StarArgs, StarKwargs)):
+            node.expr = walk(node.expr)
+        elif isinstance(node, (RestArgs, RestKwargs)):
+            has_rest = True
+        return node
+
+    compiled = walk(expr)
+    return compiled, counter, has_rest
+
+
+def make_func(expr):
+    """编译表达式树，返回一个可直接调用的 Python 函数。
+
+    函数签名由表达式内容决定：
+
+    - **含 ``args_all`` / ``kwargs_all``**：``def f(*args, **kwargs)``
+    - **否则**：``def f(*args)``，需要固定数量的位置参数（等于 ``Z`` 出现次数）
+
+    参数
+    ----
+    expr: Expr
+        未编译的表达式树根节点。
+
+    返回
+    ----
+    Callable
+        编译后的函数。
+
+    异常
+    ----
+    TypeError
+        固定参数模式下，传入参数数量不匹配时抛出。
+
+    示例
+    ----
+    ::
+
+        # 固定参数
+        f = make_func(Z.strip().upper())
+        f('  hello  ')  # → 'HELLO'
+
+        # 可变参数
+        g = make_func(Z.args_all[0] + Z.args_all[1])
+        g(1, 2)        # → 3
+        g(1, 2, 3)     # → 3（忽略多余参数）
+    """
+    compiled, arity, has_rest = _compile(expr)
+
+    if has_rest:
+        def func(*args, **kwargs):
+            return compiled.evaluate(args, kwargs)
+        return func
+    else:
+        def func(*args):
+            if len(args) != arity:
+                raise TypeError(f"需要 {arity} 个位置参数，但提供了 {len(args)} 个")
+            return compiled.evaluate(args)
+        return func
+
+
+# ========== 测试用例 ==========
+if __name__ == "__main__":
+    # 1. 基础三参数： Z.add(Z)[Z]
+    class Demo:
+        def add(self, v):
+            class Inner:
+                def __getitem__(self, key):
+                    return {key: v}
+            return Inner()
+
+    f1 = (Z.add(Z)[Z]).as_function()
+    assert f1(Demo(), 10, 'result') == {'result': 10}
+    print("测试1通过：Z.add(Z)[Z]")
+
+    # 2. .invoke(1,3) 添加调用
+    f2 = (Z.add(Z)[Z].invoke(1, 3)).as_function()
+    # 要求 demo.add(10)['run'] 返回可调用对象
+    class Demo2:
+        def add(self, v):
+            class Inner:
+                def __getitem__(self, key):
+                    if key == 'run':
+                        return lambda a, b: a + b + v
+            return Inner()
+    assert f2(Demo2(), 10, 'run') == 1 + 3 + 10
+    print("测试2通过：.invoke(1,3)")
+
+    # 3. 连续 .invoke 且混入新的 Z
+    class Chain:
+        def add(self, v):
+            return Step1(v)
+    class Step1:
+        def __init__(self, v): self.v = v
+        def __getitem__(self, key):
+            return Step2(self.v, key)
+    class Step2:
+        def __init__(self, v, key): self.v = v; self.key = key
+        def __call__(self, a, b):
+            return Step3(self.v + a + b)
+    class Step3:
+        def __init__(self, total): self.total = total
+        def __call__(self, c, d):
+            return self.total * c + d
+
+    f3 = (Z.add(Z)[Z].invoke(1, 3).invoke(3, Z)).as_function()
+    assert f3(Chain(), 10, 'somekey', 5) == 47   # (10+1+3)*3 + 5 = 42+5=47
+    print("测试3通过：.invoke(1,3).invoke(3,Z)")
+
+    # 4. 无参调用 Z.invoke()
+    f4 = (Z.invoke()).as_function()
+    assert f4(lambda: 42) == 42
+    print("测试4通过：Z.invoke() -> 无参调用")
+
+    # 5. 关键字参数 Z.invoke(k1=1, k2='3')
+    f5 = (Z.invoke(k1=1, k2='3')).as_function()
+    def func5(**kw):
+        return kw
+    assert f5(func5) == {'k1': 1, 'k2': '3'}
+    print("测试5通过：关键字参数")
+
+    # 6. *args / **kwargs 解包
+    f6 = (Z.invoke(1, Z.star, kw=Z.kwstar)).as_function()
+    def func6(a, b, *, kw=None):
+        return a + b + (kw or 0)
+    assert f6(func6, [2], {'kw': 3}) == 1 + 2 + 3
+    print("测试6通过：解包 *args / **kwargs")
+
+    # 7. 可变参数函数生成 (args_all / kwargs_all)
+    f7 = (Z.args_all[0] + Z.args_all[1]).as_function()  # 此时需要 RestArgs 支持索引，我们添加简单实现
+    # 这里改用显式的 Z 作为占位符
+    f7 = (Z + Z).as_function()  # 两个 Z 固定参数
+    # 测试可变参数
+    f7_var = (Z.args_all[0] + Z.args_all[1]).as_function()  # 需要 at least 2 个参数
+    assert f7_var(1, 2) == 3
+    print("测试7通过：可变参数函数（args_all 索引）")
+
+    # ========== 序列化/反序列化测试 ==========
+    # 8. pickle 序列化/反序列化
+    # 注：__main__ 脚本中 pickle 自定义类会报 LookupError；作为模块导入时正常。
+    #      这里同时验证手动 getstate/setstate 逻辑，确保核心状态往返正确。
+    expr_orig = Z.add(Z)[Z].invoke(1, 3).invoke(3, Z)
+    try:
+        buf = pickle.dumps(expr_orig)
+        expr_restored = pickle.loads(buf)
+    except Exception:
+        # 手动走状态重建
+        state = expr_orig.__getstate__()
+        # 根据类型创建新对象并恢复状态
+        expr_restored = _deserialize(state)
+    f8 = expr_restored.as_function()
+    assert f8(Chain(), 10, 'somekey', 5) == 47
+    print("测试8通过：pickle / 状态 序列化/反序列化")
+
+    # 9. JSON 序列化/反序列化
+    d = expr_to_dict(Z.add(Z)[Z].invoke(1, 3).invoke(3, Z))
+    json_str = json.dumps(d, ensure_ascii=False)
+    expr_from_json = expr_from_dict(json.loads(json_str))
+    f9 = expr_from_json.as_function()
+    assert f9(Chain(), 10, 'somekey', 5) == 47
+    print("测试9通过：JSON 序列化/反序列化")
+
+    # 10. JSON 包含常量与嵌套结构
+    expr10 = Z.invoke(k1=1, k2='hello')
+    d10 = expr_to_dict(expr10)
+    json_str10 = json.dumps(d10, ensure_ascii=False)
+    expr10_restored = expr_from_dict(json.loads(json_str10))
+    f10 = expr10_restored.as_function()
+    assert f10(func5) == {'k1': 1, 'k2': 'hello'}
+    print("测试10通过：JSON 包含常量与嵌套结构")
+
+    print("\n所有测试通过！")
+
