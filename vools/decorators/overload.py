@@ -363,6 +363,15 @@ class OverloadManager:
         return new_manager
 
     def __get__(self, instance, owner):
+        """描述符协议：支持类方法绑定。
+
+        参数:
+            instance: 类实例（None 表示类访问）
+            owner: 类本身
+
+        返回:
+            类访问时返回管理器；实例访问时返回绑定方法
+        """
         if instance is None:
             return self
         return types.MethodType(self, instance)
@@ -432,6 +441,11 @@ class OverloadManager:
         }
 
     def __setstate__(self, state):
+        """反序列化：从 state 恢复管理器状态，重建 check 函数。
+
+        参数:
+            state: __getstate__ 返回的字典
+        """
         self.mode = state['mode']
         raw = state.get('overloads', [])
         self.overloads = []

@@ -347,6 +347,19 @@ class Stuff:
     # 参数验证
     # ------------------------------------------------------------------
     def _validate_providers_keys(self, providers, sep=','):
+        """验证关键字参数名称列表是否合法。
+
+        参数:
+            providers: 参数名称列表/字符串
+            sep: 字符串分隔符
+
+        返回:
+            清理后的参数名称列表
+
+        异常:
+            TypeError: providers 类型不合法
+            ValueError: providers 为空或包含已绑定参数名
+        """
         if providers is None:
             return []
         if not isinstance(providers, (list, tuple, str)):
@@ -367,6 +380,20 @@ class Stuff:
         return providers
 
     def _validate_providers(self, providers_pos, providers, sep=','):
+        """验证位置参数和关键字参数的组合是否合法。
+
+        参数:
+            providers_pos: 位置参数个数
+            providers: 关键字参数名称列表/字符串
+            sep: 字符串分隔符
+
+        返回:
+            {'pos': OrderedDict, 'keys': OrderedDict} 结构
+
+        异常:
+            TypeError: providers_pos 类型不合法
+            ValueError: providers_pos 超出剩余参数槽位
+        """
         if not isinstance(providers_pos, int):
             raise TypeError("providers_pos 参数必须是整数")
         if providers_pos < 0:
@@ -664,6 +691,22 @@ class Stuff:
     # 主调用入口
     # ------------------------------------------------------------------
     def __call__(self, *args, **kwargs):
+        """调用 Stuff 实例：填充参数或触发执行。
+
+        - 无参数调用 ()：触发目标函数执行
+        - 有参数调用：返回新的 Stuff 实例（绑定新参数）
+
+        参数:
+            *args: 位置参数（可包含 Stuff 实例）
+            **kwargs: 关键字参数（可包含 Stuff 实例）
+
+        返回:
+            无参数调用：目标函数执行结果
+            有参数调用：新的 Stuff 实例
+
+        异常:
+            StuffExecutionError: 执行过程中发生错误
+        """
         try:
             if not args and not kwargs:
                 return self._evalate()
