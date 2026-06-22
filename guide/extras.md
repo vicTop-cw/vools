@@ -1,135 +1,119 @@
-# vools 编码、加密与 Result 类型
+# vools 编码、加密与序列化（v0.1.18）
 
-编码模块（encoding）、加密模块（crypto）和 Result 类型提供了数据转换和安全处理工具。
+`vools.encoding` / `vools.crypto` / `vools.serialize` 提供了数据转换、哈希、序列化等工具。
+
+> Python 3.9+ 支持
 
 ---
 
-## 编码模块
+## 1. 编码模块
 
-### 基本用法
+### 便捷函数
 
 ```python
 from vools import (
-    Encoder, Decoder, CodecRegistry,
     b64encode, b64decode,
     urlencode, urldecode,
     json_dumps, json_loads,
     gzip_compress, gzip_decompress,
-    serialize, deserialize
 )
 
-# Base64 编码
-encoded = b64encode('hello')
-print(encoded)  # base64 编码结果
-assert b64decode(encoded) == 'hello'
+# Base64
+encoded = b64encode("hello")
+print(encoded)
+assert b64decode(encoded) == "hello"
 
 # URL 编码
-encoded_url = urlencode('hello world')
-assert urldecode(encoded_url) == 'hello world'
+u = urlencode("hello world")
+print(u)                       # hello+world 或 hello%20world
+assert urldecode(u) == "hello world"
 
-# JSON 序列化
-data = {'key': 'value', 'number': 42}
-json_str = json_dumps(data)
-assert json_loads(json_str) == data
+# JSON
+data = {"key": "value", "number": 42}
+s = json_dumps(data)
+assert json_loads(s) == data
 
-# 链式调用
-result = Encoder('hello').base64().json().data
+# Gzip
+compressed = gzip_compress("a" * 1000)
+decompressed = gzip_decompress(compressed)
+print(len(compressed), len(decompressed))
 ```
 
-### 自定义编码器
+### Encoder / Decoder 链式调用
 
 ```python
-# 注册自定义编码器
-from vools import encodable, decodable
+from vools import Encoder, Decoder
 
-@encodable('yaml')
-def mock_yaml_encode(data):
-    if isinstance(data, dict):
-        return '\n'.join(f"{k}: {v}" for k, v in data.items())
-    return str(data)
+result = Encoder("hello").base64().json().data
+print(result)
 
-@decodable('yaml')  
-def mock_yaml_decode(data):
-    result = {}
-    for line in data.strip().split('\n'):
-        if ':' in line:
-            key, value = line.split(':', 1)
-            result[key.strip()] = value.strip()
-    return result
-
-# 使用自定义编码器
-yaml_result = Encoder({'key': 'value'}).encode('yaml').data
-print(yaml_result)  # 'key: value'
-
-yaml_decoded = Decoder('key: value').decode('yaml').data
-print(yaml_decoded)  # {'key': 'value'}
-
-# 通用接口
-serialized = serialize({'a': 1}, format='yaml')
-deserialized = deserialize('a: 1', format='yaml')
+decoded = Decoder(result).json().base64().data
+print(decoded)                 # "hello"
 ```
 
-### CodecRegistry 功能
+### CodecRegistry
 
 ```python
-# 检查支持的格式
+from vools import CodecRegistry
+
+# 查看支持的格式
 print(CodecRegistry.supported_formats())
 
-# 格式检查
-assert CodecRegistry.is_format_supported('json') == True
-assert CodecRegistry.is_format_supported('yaml') == True
-assert CodecRegistry.is_format_supported('unknown') == False
+# 检查某个格式是否支持
+assert CodecRegistry.is_format_supported("json") is True
 
-# 注销格式
-CodecRegistry.unregister_format('yaml')
-assert CodecRegistry.is_format_supported('yaml') == False
+# 注册自定义格式
+CodecRegistry.register_codec(
+    "custom_reverse",
+    lambda data: data[::-1] if isinstance(data, str) else str(data)[::-1],
+    lambda data: data[::-1],
+)
 
-# 重新注册
-CodecRegistry.register_codec('yaml', mock_yaml_encode, mock_yaml_decode)
+from vools import Encoder, Decoder
+assert Encoder("hello").encode("custom_reverse").data == "olleh"
+assert Decoder("olleh").decode("custom_reverse").data == "hello"
+
+# 注销
+CodecRegistry.unregister_format("custom_reverse")
 ```
 
-## 加密模块
+---
 
-vools 提供统一的加密接口，支持多种哈希算法和自定义扩展。
+## 2. 加密模块
 
 ### Hash 函数
 
 ```python
 from vools import md5, sha1, sha256, sha512
 
-test_data = 'hello world'
-
-print(md5(test_data))    # 32 位十六进制
-print(sha1(test_data))   # 40 位十六进制
-print(sha256(test_data)) # 64 位十六进制
-print(sha512(test_data)) # 128 位十六进制
+text = "hello world"
+print(md5(text))       # 5eb63bbbe01eeed093cb22bb8f5acdc3
+print(sha1(text))      # 2aae6c35c94fcfb415dbe95f4089b8ce92ee5591
+print(sha256(text))    # b94d27b9934d3e08a52e52d7da7dabfac484e57f608193ecff...
+print(sha512(text))
 ```
 
-### HMAC 函数
+### HMAC
 
 ```python
 from vools import hmac_md5, hmac_sha256
 
-key = 'my_secret_key'
+key = "my_secret_key"
+data = "hello world"
 
-result = hmac_md5(test_data, key)
-print(result)  # HMAC-MD5 结果
-
-result = hmac_sha256(test_data, key)
-print(result)  # HMAC-SHA256 结果
+print(hmac_md5(data, key))
+print(hmac_sha256(data, key))
 ```
 
-### Encryptor 类
+### Encryptor 链式调用
 
 ```python
 from vools import Encryptor
 
-# 链式调用
-result = Encryptor('hello').sha256().data
+result = Encryptor("hello").sha256().data
 print(result)
 
-# HMAC
-result = Encryptor('data').hmac_sha256(key='secret').data
+result = Encryptor("data").hmac_sha256(key="secret").data
 print(result)
 ```
 
@@ -138,112 +122,114 @@ print(result)
 ```python
 from vools import generate_key, generate_token
 
-# 生成密钥
-key_32 = generate_key(32)  # 32 字节 = 64 个十六进制字符
-print(key_32)
+# generate_key 返回指定长度的十六进制字符串（每字节 2 个十六进制字符）
+key_32 = generate_key(32)
+print(key_32)            # 长度 64
 
-key_16 = generate_key(16)  # 16 字节 = 32 个十六进制字符
-print(key_16)
+key_16 = generate_key(16)
+print(key_16)            # 长度 32
 
-# 生成令牌（URL-safe base64）
+# generate_token 返回 URL-safe base64 编码的令牌
 token = generate_token(32)
-print(token)  # 43 个字符
+print(token)
 ```
 
-### 自定义加密器
+### CryptoRegistry
 
 ```python
-from vools import encryptable, decryptable, CryptoRegistry
+from vools import CryptoRegistry, encryptable, decryptable
 
-@encryptable('custom_xor')
-def xor_encrypt(data, key='secret'):
-    if isinstance(data, str):
-        data = data.encode('utf-8')
-    if isinstance(key, str):
-        key = key.encode('utf-8')
-    result = bytearray()
-    for i, byte in enumerate(data):
-        result.append(byte ^ key[i % len(key)])
-    return bytes(result).hex()
-
-@decryptable('custom_xor')
-def xor_decrypt(data, key='secret'):
-    if isinstance(key, str):
-        key = key.encode('utf-8')
-    data_bytes = bytes.fromhex(data)
-    result = bytearray()
-    for i, byte in enumerate(data_bytes):
-        result.append(byte ^ key[i % len(key)])
-    return result.decode('utf-8')
-
-# 使用自定义加密器
-encrypted = xor_encrypt('hello world', key='key')
-decrypted = xor_decrypt(encrypted, key='key')
-assert decrypted == 'hello world'
-
-# 使用 Encryptor 类
-result = Encryptor('test').encrypt('custom_xor', key='key').data
-print(result)
-```
-
-### CryptoRegistry 功能
-
-```python
-# 检查支持的算法
 print(CryptoRegistry.supported_algorithms())
+# ['md5', 'sha1', 'sha256', 'sha512', 'hmac_md5', 'hmac_sha256', ...]
 
-# 算法检查
-assert CryptoRegistry.is_algorithm_supported('sha256') == True
-assert CryptoRegistry.is_algorithm_supported('custom_xor') == True
+# 注册自定义算法
+@encryptable("custom_xor")
+def xor_encrypt(data, key="secret"):
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    if isinstance(key, str):
+        key = key.encode("utf-8")
+    out = bytearray()
+    for i, byte in enumerate(data):
+        out.append(byte ^ key[i % len(key)])
+    return bytes(out).hex()
 
-# 注销算法
-CryptoRegistry.unregister_algorithm('custom_xor')
+@decryptable("custom_xor")
+def xor_decrypt(data, key="secret"):
+    if isinstance(key, str):
+        key = key.encode("utf-8")
+    raw = bytes.fromhex(data)
+    out = bytearray()
+    for i, byte in enumerate(raw):
+        out.append(byte ^ key[i % len(key)])
+    return out.decode("utf-8")
 
-# 重新注册
-CryptoRegistry.register_crypto('custom_xor', xor_encrypt, xor_decrypt)
+# 使用 Encryptor / Decryptor
+enc = Encryptor("hello").encrypt("custom_xor", key="key").data
+print(enc)
+
+# 注销
+CryptoRegistry.unregister_algorithm("custom_xor")
 ```
 
-## Result 类型与 safe 装饰器
+---
 
-vools 提供函数式编程的错误处理支持。
+## 3. 序列化模块
 
-### Result 类型
+`vools.serialize` 提供可跨进程存储的数据序列化支持，含 `JSON`、`msgpack`、`pickle` 多种实现。
+
+### 基本用法
 
 ```python
-from vools.functional import Result, Success, Failure, success, failure
+from vools import serialize
+from vools.serialize import dumps, loads, dumps_hex, loads_hex
 
-# 创建 Result
-r1 = Result.success(42)
-r2 = Result.failure(ValueError('test error'))
+data = {"a": 1, "b": [2, 3], "c": "hello"}
 
-# 检查状态
-print(r1.is_success)  # True
-print(r2.is_failure)  # True
+# JSON 序列化
+buf = dumps(data, format="json")
+restored = loads(buf, format="json")
+assert restored == data
 
-# 映射操作
-result = r1.map(lambda x: x * 2)
-print(result)  # Success(84)
+# pickle 序列化
+buf = dumps(data, format="pickle")
+restored = loads(buf, format="pickle")
+assert restored == data
 
-# 获取值
-print(r1.unwrap())      # 42
-print(r2.unwrap_or(0))  # 0
+# hex 编码的序列化（便于嵌入文本/日志）
+hex_buf = dumps_hex(data, format="json")
+print(hex_buf)
+restored = loads_hex(hex_buf, format="json")
+assert restored == data
 ```
 
-### safe 装饰器
+### Serializer 类
 
 ```python
-from vools.functional import safe
+from vools.serialize import Serializer
 
-@safe
-def divide(a, b):
-    return a / b
-
-# 成功情况
-result = divide(10, 2)
-print(result)  # Success(5.0)
-
-# 失败情况
-result = divide(10, 0)
-print(result)  # Failure(ZeroDivisionError(...))
+s = Serializer()
+buf = s.dumps({"a": 1, "b": 2}, format="json")
+print(s.loads(buf, format="json"))
 ```
 
+---
+
+## 4. 导入位置速查
+
+| 名称 | 导入位置 | 说明 |
+|------|----------|------|
+| `Encoder` / `Decoder` | `from vools import Encoder, Decoder` | 链式编码/解码 |
+| `CodecRegistry` | `from vools import CodecRegistry` | 编码格式注册中心 |
+| `b64encode` / `b64decode` | `from vools import b64encode, b64decode` | Base64 |
+| `urlencode` / `urldecode` | `from vools import urlencode, urldecode` | URL 编码 |
+| `json_dumps` / `json_loads` | `from vools import json_dumps, json_loads` | JSON 便捷函数 |
+| `gzip_compress` / `gzip_decompress` | `from vools import gzip_compress, gzip_decompress` | Gzip 压缩 |
+| `Encryptor` | `from vools import Encryptor` | 链式加密/哈希 |
+| `CryptoRegistry` | `from vools import CryptoRegistry` | 加密算法注册中心 |
+| `md5` / `sha1` / `sha256` / `sha512` | `from vools import md5, sha1, sha256, sha512` | 哈希 |
+| `hmac_md5` / `hmac_sha256` | `from vools import hmac_md5, hmac_sha256` | HMAC |
+| `generate_key` / `generate_token` | `from vools import generate_key, generate_token` | 密钥/令牌生成 |
+| `Serializer` | `from vools.serialize import Serializer` | 统一序列化入口 |
+| `dumps` / `loads` | `from vools.serialize import dumps, loads` | 便捷序列化函数 |
+| `dumps_hex` / `loads_hex` | `from vools.serialize import dumps_hex, loads_hex` | hex 编码序列化 |

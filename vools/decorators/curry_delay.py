@@ -9,14 +9,32 @@
 
 from inspect import signature, Parameter
 from functools import wraps, lru_cache
+from typing import TypeVar, Callable, Optional, Any, Dict, Tuple, List, Union
 
 from .lazy import lazy, is_lazy
 
 __all__ = ['delay_curry', 'DelayCurried', 'is_lazy', 'lazy']
 
+T = TypeVar('T')
+F = TypeVar('F', bound=Callable[..., Any])
+
 
 @lru_cache(maxsize=512)
-def _get_delay_func_info(func):
+def _get_delay_func_info(func: Callable[..., Any]) -> Dict[str, Any]:
+    """获取函数的签名信息并缓存结果。
+    
+    Args:
+        func: 要分析的函数对象
+        
+    Returns:
+        包含函数签名信息的字典，包含以下键：
+        - sig: 函数签名对象
+        - params: 参数字典
+        - required_params: 必需参数名列表
+        - has_var_keyword: 是否有 **kwargs
+        - has_var_positional: 是否有 *args
+        - max_args_count: 最大参数数量
+    """
     sig = signature(func)
     params = sig.parameters
     required_params = [
@@ -41,11 +59,32 @@ def _get_delay_func_info(func):
 
 
 class DelayCurried:
+    """延迟柯里化包装器，支持延迟参数绑定和执行。
+    
+    DelayCurried 将函数包装为可延迟执行的柯里化版本，允许在绑定
+    全部或部分参数后延迟执行函数。
+    
+    Attributes:
+        func: 原始函数对象
+        sig: 函数签名
+        bound_args: 已绑定的参数字典
+        _is_ready: 是否已准备好执行
+        required_params: 必需参数列表
+        max_args_count: 最大参数数量
+        _bound_providers: 已绑定的提供者函数
+        _has_var_keyword: 是否有 **kwargs
+        _has_var_positional: 是否有 *args
+    """
     __slots__ = ('func', 'sig', 'bound_args', '_is_ready', 'required_params', 
                  'max_args_count', '_bound_providers', '_has_var_keyword', '_has_var_positional',
                  '_module', '_name', '_doc', '_annotations')
     
-    def __init__(self, func):
+    def __init__(self, func: Callable[..., Any]) -> None:
+        """初始化 DelayCurried 包装器。
+        
+        Args:
+            func: 要包装的原始函数
+        """
         self.func = func
         object.__setattr__(self, '_module', func.__module__)
         object.__setattr__(self, '_name', func.__name__)
@@ -64,31 +103,45 @@ class DelayCurried:
         self._bound_providers = {}
     
     @property
-    def has_var_keyword(self):
+    def has_var_keyword(self) -> bool:
+        """检查函数是否接受 **kwargs 可变关键字参数。"""
         return self._has_var_keyword
     
     @property
-    def has_var_positional(self):
+    def has_var_positional(self) -> bool:
+        """检查函数是否接受 *args 可变位置参数。"""
         return self._has_var_positional
     
     @property
-    def __module__(self):
+    def __module__(self) -> str:
+        """返回函数所属模块的名称。"""
         return self._module
     
     @property
-    def __name__(self):
+    def __name__(self) -> str:
+        """返回函数的名称。"""
         return self._name
     
     @property
-    def __doc__(self):
+    def __doc__(self) -> Optional[str]:
+        """返回函数的文档字符串。"""
         return self._doc
     
     @property
-    def __annotations__(self):
+    def __annotations__(self) -> Dict[str, Any]:
+        """返回函数的类型注解字典。"""
         return self._annotations
     
     @staticmethod
-    def resolve_value(value):
+    def resolve_value(value: Any) -> Any:
+        """递归解析延迟值。
+        
+        Args:
+            value: 要解析的值，可以是 DelayCurried、lazy 对象、列表、元组或字典
+            
+        Returns:
+            解析后的值
+        """
         if isinstance(value, DelayCurried) and value.is_ready:
             return DelayCurried.resolve_value(value())
         if is_lazy(value):
@@ -102,11 +155,21 @@ class DelayCurried:
         return value
     
     @property
-    def if_full(self):
+    def if_full(self) -> bool:
+        """检查是否已绑定所有参数。"""
         return len(self.bound_args) == self.max_args_count
         
-    def fill_by_mutil(self, *funcs, provider: str = None):
-        def merge_func():
+    def fill_by_mutil(self, *funcs: Callable[[], Any], provider: Optional[str] = None) -> "DelayCurried":
+        """通过多个函数批量填充参数提供者。
+        
+        Args:
+            *funcs: 多个延迟执行的工厂函数
+            provider: 可选的提供者名称
+            
+        Returns:
+            返回 self 以支持链式调用
+        """
+        def merge_func() -> Tuple[Any, ...]:
             return tuple(DelayCurried.resolve_value(func) for func in funcs)
         lazy_merge = lazy(merge_func)
         if provider is None:
@@ -114,7 +177,20 @@ class DelayCurried:
         else:
             return self.__call__(**{provider: lazy_merge})
 
-    def _validate_providers(self, providers, sep=","):
+    def _validate_providers(self, providers: Union[List[str], Tuple[str, ...], str], sep: str = ",") -> List[str]:
+        """验证提供者参数的有效性。
+        
+        Args:
+            providers: 提供者名称，可以是列表、元组或逗号分隔的字符串
+            sep: 当 providers 为字符串时的分隔符
+            
+        Returns:
+            验证通过的提供者名称列表
+            
+        Raises:
+            TypeError: providers 参数类型不正确
+            ValueError: providers 为空或包含无效参数名
+        """
         if not isinstance(providers, (list, tuple, str)):
             raise TypeError("providers参数必须是列表或元组或字符串")
         if isinstance(providers, str):
@@ -133,13 +209,37 @@ class DelayCurried:
                     raise ValueError(f"参数 {p} 不存在于函数签名中")
         return providers
 
-    def bound_providers(self):
+    def bound_providers(self) -> Dict[str, Tuple[Callable[[], Any], Any]]:
+        """返回已绑定的提供者字典。
+        
+        Returns:
+            提供者名称到 (原始函数, 延迟值) 元组的映射
+        """
         return self._bound_providers
     
-    def _bind_provider(self, provider, value):
+    def _bind_provider(self, provider: str, value: Tuple[Callable[[], Any], Any]) -> None:
+        """绑定一个参数提供者。
+        
+        Args:
+            provider: 提供者名称
+            value: (原始函数, 延迟值) 元组
+        """
         self._bound_providers[provider] = value
 
-    def fill(self, func, providers=None, result_is_dict=False, sep=","):
+    def fill(self, func: Union[Callable[..., Any], Dict[str, Any], List[Any], Tuple[Any, ...]], 
+             providers: Optional[Union[List[str], Tuple[str, ...], str]] = None, 
+             result_is_dict: bool = False, sep: str = ",") -> "DelayCurried":
+        """填充函数或直接绑定参数。
+        
+        Args:
+            func: 要填充的函数，或者直接是要绑定的参数字典/列表/元组
+            providers: 提供者名称列表
+            result_is_dict: 是否将函数结果作为字典处理
+            sep: 当 providers 为字符串时的分隔符
+            
+        Returns:
+            返回 self 以支持链式调用
+        """
         if not callable(func):
             if isinstance(func, dict):
                 return self.__call__(**func)
@@ -170,26 +270,53 @@ class DelayCurried:
         
         return self.__call__(**dct)
         
-    def __hash__(self):
+    def __hash__(self) -> int:
+        """返回对象的哈希值。"""
         return hash((self.func, 
                      frozenset(self.bound_args.items()) if self.bound_args else None,
                      frozenset(self._bound_providers.items()) if self._bound_providers else None
                      ))
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
+        """检查与另一个 DelayCurried 对象是否相等。"""
         return isinstance(other, DelayCurried) and self.func == other.func and \
                self.bound_args == other.bound_args and self._bound_providers == other._bound_providers
 
-    def __ne__(self, other):
+    def __ne__(self, other: object) -> bool:
+        """检查与另一个 DelayCurried 对象是否不相等。"""
         return not self.__eq__(other)
 
-    def register(self, func=None, providers=None, result_is_dict=False, sep=",", return_curried=False):
+    def register(self, func: Optional[Callable[..., Any]] = None, 
+                 providers: Optional[Union[List[str], Tuple[str, ...], str]] = None, 
+                 result_is_dict: bool = False, sep: str = ",", 
+                 return_curried: bool = False) -> Union[Callable[[F], F], F, "DelayCurried"]:
+        """注册函数或提供者。
+        
+        Args:
+            func: 要注册的函数，如果为 None 则返回装饰器
+            providers: 提供者名称列表
+            result_is_dict: 函数结果是否为字典
+            sep: 当 providers 为字符串时的分隔符
+            return_curried: 是否返回柯里化后的函数
+            
+        Returns:
+            如果 func 为 None 返回装饰器，否则返回函数或 DelayCurried
+        """
         if func is None:
             return lambda f: self.register(f, providers, result_is_dict, sep, return_curried)
         _ = self.fill(func, providers, result_is_dict, sep) if providers is not None else self.__call__(func)
         return delay_curry(func) if return_curried else func
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Union["DelayCurried", Any]:
+        """绑定参数并返回结果或继续柯里化。
+        
+        Args:
+            *args: 位置参数
+            **kwargs: 关键字参数
+            
+        Returns:
+            如果参数已满且可执行则返回执行结果，否则返回延迟柯里化对象
+        """
         args_len = len(args)
         kwargs_len = len(kwargs)
         
@@ -253,8 +380,9 @@ class DelayCurried:
 
         return self
     
-    def _execute(self):
-        def resolve_value(value):
+    def _execute(self) -> Any:
+        """执行函数并返回结果。"""
+        def resolve_value(value: Any) -> Any:
             if isinstance(value, DelayCurried) and value.is_ready:
                 return resolve_value(value())
             if is_lazy(value):
@@ -299,13 +427,31 @@ class DelayCurried:
         return self.func(*pos_args, **kw_args)
 
     @property
-    def is_ready(self):
+    def is_ready(self) -> bool:
+        """检查是否所有必需参数都已绑定。"""
         return self._is_ready
 
 
-def delay_curry(func):
+def delay_curry(func: F) -> F:
+    """延迟柯里化装饰器。
+    
+    将函数装饰为延迟柯里化版本，支持延迟绑定参数和延迟执行。
+    
+    Args:
+        func: 要装饰的原始函数
+        
+    Returns:
+        装饰后的延迟柯里化函数
+        
+    示例:
+        @delay_curry
+        def add(a, b, c):
+            return a + b + c
+        
+        result = add(1)(2)(3)  # 返回 6
+    """
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Union["DelayCurried", Any]:
         return DelayCurried(func)(*args, **kwargs)
     
-    return wrapper
+    return wrapper  # type: ignore

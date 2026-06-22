@@ -1,5 +1,6 @@
 """
-keyboard - Keyboard input monitoring and simulation.
+vools/reactive/monitoring/keyboard.py
+仅支持 Windows 平台。
 """
 from __future__ import annotations
 
@@ -170,6 +171,20 @@ def _make_key_signature(key_code: int, is_press: bool) -> Tuple[int, bool]:
 
 @dataclass
 class KeyData:
+    """键盘事件数据。
+
+    字段:
+        key_code: 按键代码（虚拟键码）
+        key_name: 按键名称（如 "A", "SPACE", "ENTER"）
+        is_press: 是否为按下事件（True=按下，False=释放）
+        modifiers: 修饰键状态（KeyModifier 组合）
+        event_type: 事件类型（KeyEventType）
+        timestamp: 事件时间戳
+        sequence: 全局序号（单调递增）
+        window_title: 当时焦点窗口标题
+        tags: 用户自定义标签
+        metadata: 扩展元信息
+    """
     key_code: int = 0
     key_name: str = ""
     is_press: bool = True
@@ -1026,6 +1041,17 @@ class KeyboardDispatcher:
 
 
 class KeySubject(MonitorSubject):
+    """键盘事件主题（Subject），继承 MonitorSubject。
+
+    内部持有 KeyboardDispatcher，提供键盘事件流。
+
+    方法:
+        press(key): 模拟按下按键
+        release(key): 模拟释放按键
+        tap(key): 模拟一次按键（按下+释放）
+        type_text(text): 模拟输入文本
+        hotkey(*keys): 模拟组合键
+    """
     def __init__(
         self,
         *,
@@ -1035,6 +1061,15 @@ class KeySubject(MonitorSubject):
         tags: Tuple[str, ...] = (),
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """初始化键盘监控主题。
+
+        Args:
+            backend: 后端类型，"auto" | "win32" | "polling"
+            filter_self: 是否过滤自模拟的键盘事件
+            interval: 轮询间隔（秒）
+            tags: 默认附加的标签
+            metadata: 默认元数据
+        """
         self._backend = backend
         self._filter_self = filter_self
         self._interval = interval

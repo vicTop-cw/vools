@@ -82,6 +82,7 @@ from inspect import isclass, signature, Parameter, ismethod
 from functools import wraps, lru_cache, cached_property
 from collections.abc import Iterable
 from collections import OrderedDict
+from typing import Callable, Any, Optional, Union, List, Tuple, Dict
 
 from ..decorators import curry, memorize
 from ..decorators.trd import vic_execute
@@ -231,7 +232,21 @@ class Stuff:
     逐步提供参数，最终通过 () 无参调用触发目标函数执行。
     """
 
-    def __init__(self, func, cur=None, bound_stuffs=None, config=None):
+    def __init__(
+        self,
+        func: Callable[..., Any],
+        cur: Optional[Any] = None,
+        bound_stuffs: Optional[Dict[int, 'Stuff']] = None,
+        config: Optional[StuffConfig] = None
+    ) -> None:
+        """初始化 Stuff 实例。
+
+        Args:
+            func: 要包装的函数或类
+            cur: 可选的 curried 函数
+            bound_stuffs: 已绑定的 Stuff 实例字典
+            config: Stuff 配置
+        """
         self.main_func = func
         self.config = config or _DEFAULT_CONFIG
         if cur is None:
@@ -413,9 +428,14 @@ class Stuff:
     # ------------------------------------------------------------------
     # 核心填充方法（内部使用）
     # ------------------------------------------------------------------
-    def _fill(self, func, providers_pos=0, providers=None, sep=','):
-        """
-        注册一个提供者函数，并将其结果按位置或关键字填充到目标函数。
+    def _fill(
+        self,
+        func: Union['Stuff', Callable[..., Any], Any],
+        providers_pos: int = 0,
+        providers: Optional[Union[List[str], Tuple[str, ...], str]] = None,
+        sep: str = ','
+    ) -> 'Stuff':
+        """注册一个提供者函数，并将其结果按位置或关键字填充到目标函数。
 
         参数:
             func: 提供者函数（Stuff 实例 / 无参函数 / 任意值）
@@ -451,9 +471,12 @@ class Stuff:
         self.curried = self.curried(*args, **kws)
         return self
 
-    def _fill_multi(self, *funcs, name=None):
-        """
-        注册多个提供者，把它们的返回值聚合为同一参数或一组位置参数。
+    def _fill_multi(
+        self,
+        *funcs: Union['Stuff', Callable[..., Any], Any],
+        name: Optional[str] = None
+    ) -> 'Stuff':
+        """注册多个提供者，把它们的返回值聚合为同一参数或一组位置参数。
 
         参数:
             *funcs: 多个提供者（Stuff / 无参函数 / 任意值）

@@ -338,18 +338,25 @@ class MonitorObserver(Observer[T], Generic[T, E]):
 
 
 class SimpleMonitorSubject(MonitorSubject[T, D]):
-    """
-    最简单的 MonitorSubject 实现 —— 传入 dispatcher_factory 即可。
+    """最简单的 MonitorSubject 实现 —— 传入 dispatcher_factory 即可。
 
     用法：
         SimpleMonitorSubject(
             dispatcher_factory=lambda: MyDispatcher(...),
         )
+
+    Attributes:
+        _factory: 创建 Dispatcher 的工厂函数
     """
 
     __slots__ = ("_factory",)
 
     def __init__(self, dispatcher_factory: Callable[[], D]) -> None:
+        """初始化简易 MonitorSubject。
+
+        Args:
+            dispatcher_factory: 返回 Dispatcher 实例的工厂函数
+        """
         super().__init__()
         self._factory = dispatcher_factory
         # 立即创建并连接（保持与旧版 API 一致：实例化后即可 subscribe）

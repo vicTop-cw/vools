@@ -19,17 +19,28 @@
     6
 """
 
-from inspect import signature, Parameter, isfunction, isclass
-from typing import get_type_hints, Any
+from inspect import signature, Parameter, isfunction, isclass, Signature
+from typing import get_type_hints, Any, Callable, Dict, Optional, TypeVar, Union, Tuple
+
 from functools import lru_cache
 
 __all__ = ['curry', 'Curried', 'CurryDescriptor', 'is_curried', 'CurryExecutionError']
+
+F = TypeVar('F', bound=Callable[..., Any])
 
 is_curried = lambda x: isinstance(x, (Curried, CurryDescriptor))
 
 
 @lru_cache(maxsize=512)
-def _get_cached_signature(func):
+def _get_cached_signature(func: Callable[..., Any]) -> Signature:
+    """获取函数的签名并缓存结果。
+    
+    Args:
+        func: 要获取签名的函数
+        
+    Returns:
+        函数的签名对象
+    """
     try:
         return signature(func)
     except (ValueError, TypeError):
@@ -52,7 +63,15 @@ def _get_cached_signature(func):
 
 
 @lru_cache(maxsize=512)
-def _get_cached_type_hints(func):
+def _get_cached_type_hints(func: Callable[..., Any]) -> Dict[str, Any]:
+    """获取函数的类型注解并缓存结果。
+    
+    Args:
+        func: 要获取类型注解的函数
+        
+    Returns:
+        类型注解字典
+    """
     try:
         return get_type_hints(func)
     except (TypeError, AttributeError, NameError):
@@ -60,7 +79,15 @@ def _get_cached_type_hints(func):
 
 
 @lru_cache(maxsize=512)
-def _get_func_info(func):
+def _get_func_info(func: Callable[..., Any]) -> Dict[str, Any]:
+    """获取函数的完整信息并缓存。
+    
+    Args:
+        func: 要获取信息的函数
+        
+    Returns:
+        包含函数签名、参数、类型注解等信息的字典
+    """
     f = func.__init__ if isclass(func) and hasattr(func, '__init__') else func
     sig = _get_cached_signature(f)
     params = sig.parameters
@@ -80,17 +107,18 @@ def _get_func_info(func):
 
 
 class CurryExecutionError(Exception):
-    pass
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
-
+    """柯里化执行异常，当函数执行失败时抛出。"""
+    def do(self, f: Callable[..., Any] = print, pre_f: Optional[Callable[..., Any]] = None, 
+            sub_f: Optional[Callable[..., Any]] = None) -> "CurryExecutionError":
+        """应用函数进行副作用处理，返回 self 以支持链式调用。
+        
         Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function (no return expected)
-
+            f: 要应用的函数（默认 print）
+            pre_f: 在 f 之前应用的预处理函数
+            sub_f: 在 f 之后应用的后处理函数
+            
         Returns:
-            self, for chaining
+            self，用于链式调用
         """
         rs = self
         if pre_f:
@@ -103,9 +131,30 @@ class CurryExecutionError(Exception):
 
 
 class CurryDescriptor:
+    """柯里化描述符，用于描述可柯里化函数的元数据。
+    
+    CurryDescriptor 是函数的包装器，记录函数是否被柯里化以及相关属性。
+    
+    Attributes:
+        func: 原始函数
+        is_strict: 是否严格模式
+        delaied: 是否延迟执行
+        pre_attrs: 预绑定属性
+    """
     __slots__ = ('func', 'is_strict', 'delaied', '_name', '_doc', 'pre_attrs')
     
-    def __init__(self, func, is_strict, delaied, **pre_attrs):
+    def __init__(self, func: Callable[..., Any], is_strict: bool, delaied: bool, **pre_attrs: Any) -> None:
+        """初始化 CurryDescriptor。
+        
+        Args:
+            func: 要包装的函数
+            is_strict: 是否严格模式（进行类型检查）
+            delaied: 是否延迟执行
+            **pre_attrs: 预绑定的属性
+            
+        Raises:
+            TypeError: 当 func 已被柯里化或不可调用时
+        """
         if is_curried(func):
             raise TypeError("Cannot curry a curried function")
         if not callable(func):
@@ -128,7 +177,7 @@ class CurryDescriptor:
             **pre_attrs
         }
 
-    def __str__(self):
+    def __str__(self) -> str:
         bound_args = self.pre_attrs.get('bound_args', {})
         sig = self.pre_attrs.get('sig', '()')
         return f"""<CurryDescriptor {self.func.__name__}{bound_args}  
@@ -138,22 +187,34 @@ class CurryDescriptor:
             protofunc= {self.func.__name__}{sig}>
         """
     
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
             
     @property
-    def __name__(self):
+    def __name__(self) -> str:
+        """返回函数的名称。"""
         return self._name
 
     @__name__.setter
-    def __name__(self, v):
+    def __name__(self, v: str) -> None:
+        """设置函数的名称。"""
         self._name = v
     
     @property
-    def __doc__(self):
+    def __doc__(self) -> Optional[str]:
+        """返回函数的文档字符串。"""
         return self._doc
     
-    def __get__(self, instance, owner):
+    def __get__(self, instance: Any, owner: type) -> Union["Curried", "CurryDescriptor"]:
+        """获取描述符值。
+        
+        Args:
+            instance: 实例对象（如果通过类访问则为 None）
+            owner: 所属类
+            
+        Returns:
+            如果 instance 为 None 返回 Curried，否则返回绑定后的 Curried
+        """
         if instance is None:
             return Curried(self.func, is_strict=self.is_strict, delaied=self.delaied, **self.pre_attrs)
         bound_func = self.func.__get__(instance, owner)
@@ -165,15 +226,39 @@ class CurryDescriptor:
             pre_attrs['params'] = {k: v for k, v in params.items() if k != 'self'}
         return Curried(bound_func, is_strict=self.is_strict, delaied=self.delaied, **pre_attrs)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """调用柯里化函数。"""
         return Curried(self.func, is_strict=self.is_strict, delaied=self.delaied, **self.pre_attrs)(*args, **kwargs)
 
 
 class Curried:
+    """柯里化函数包装器，支持部分参数绑定和延迟执行。
+    
+    Curried 将函数包装为可分步调用的形式，允许部分绑定参数。
+    
+    Attributes:
+        func: 原始函数
+        bound_args: 已绑定的参数字典
+        is_strict: 是否严格模式
+        delaied: 是否延迟执行
+    """
     __slots__ = ('func', 'bound_args', 'is_strict', 'delaied', '_name', '_doc',
                  '_isclass', 'f', 'sig', 'params', 'type_hints', 'required_args')
 
-    def __init__(self, func, bound_args=None, is_strict=False, delaied=False, **pre_attrs):
+    def __init__(self, func: Callable[..., Any], bound_args: Optional[Dict[str, Any]] = None, 
+                 is_strict: bool = False, delaied: bool = False, **pre_attrs: Any) -> None:
+        """初始化 Curried 包装器。
+        
+        Args:
+            func: 要包装的函数
+            bound_args: 初始绑定的参数字典
+            is_strict: 是否严格模式（进行类型检查）
+            delaied: 是否延迟执行
+            **pre_attrs: 预绑定的属性
+            
+        Raises:
+            TypeError: 当 func 已被柯里化或不可调用时
+        """
         if is_curried(func):
             raise TypeError("Cannot curry a curried function")
         if not callable(func):
@@ -203,7 +288,7 @@ class Curried:
             self.required_args = func_info['required_args']
             self.f = func_info['f']
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"""<Curried {self.func.__name__}{self.bound_args}  
             is_ready= {self.is_ready} , is_full={self.is_full}>
             is_strict= {self.is_strict} , delaied= {self.delaied}
@@ -211,15 +296,17 @@ class Curried:
             protofunc= {self.func.__name__}{self.sig}>
         """
     
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
     
     @property
-    def isclass(self):
+    def isclass(self) -> bool:
+        """返回 func 是否为类。"""
         return self._isclass
     
     @property    
-    def is_ready(self):
+    def is_ready(self) -> bool:
+        """检查是否所有必需参数都已绑定。"""
         required = self.required_args
         bound = self.bound_args
         for name in required:
@@ -228,7 +315,8 @@ class Curried:
         return True
     
     @property
-    def is_full(self):
+    def is_full(self) -> bool:
+        """检查是否所有参数都已绑定（包括可选参数）。"""
         bounds = self.bound_args
         for name, param in self.params.items():
             if param.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD):
@@ -238,41 +326,76 @@ class Curried:
         return True
 
     @property
-    def __name__(self):
+    def __name__(self) -> str:
+        """返回函数的名称。"""
         return self._name
 
     @__name__.setter
-    def __name__(self, v):
+    def __name__(self, v: str) -> None:
+        """设置函数的名称。"""
         self._name = v
     
     @property
-    def __doc__(self):
+    def __doc__(self) -> Optional[str]:
+        """返回函数的文档字符串。"""
         return self._doc
     
-    def _check_type(self, name: str, value: Any):
+    def _check_type(self, name: str, value: Any) -> None:
+        """检查参数类型是否符合类型注解。
+        
+        Args:
+            name: 参数名
+            value: 参数值
+            
+        Raises:
+            TypeError: 当类型不匹配时
+        """
         type_hints = self.type_hints
         if name in type_hints:
             expected_type = type_hints[name]
             if not isinstance(value, expected_type):
                 raise TypeError(f"Argument '{name}' expects type {expected_type}, got {type(value)}")
 
-    def _check_return_type(self, result: Any):
+    def _check_return_type(self, result: Any) -> None:
+        """检查返回值类型是否符合类型注解。
+        
+        Args:
+            result: 返回值
+            
+        Raises:
+            TypeError: 当返回值类型不匹配时
+        """
         type_hints = self.type_hints
         if 'return' in type_hints:
             expected_type = type_hints['return']
             if not isinstance(result, expected_type):
                 raise TypeError(f"Return value expects type {expected_type}, got {type(result)}")
         
-    def __hash__(self):
+    def __hash__(self) -> int:
+        """返回对象的哈希值。"""
         return hash((self.func, frozenset(self.bound_args.items()) if self.bound_args else None))
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
+        """检查与另一个 Curried 对象是否相等。"""
         return isinstance(other, Curried) and self.func == other.func and self.bound_args == other.bound_args
 
-    def __ne__(self, other):
+    def __ne__(self, other: object) -> bool:
+        """检查与另一个 Curried 对象是否不相等。"""
         return not self.__eq__(other)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Union["Curried", Any]:
+        """调用柯里化函数，绑定参数并返回结果或新的 Curried。
+        
+        Args:
+            *args: 位置参数
+            **kwargs: 关键字参数
+            
+        Returns:
+            如果参数已满且可执行则返回执行结果，否则返回新的 Curried
+            
+        Raises:
+            TypeError: 参数绑定或执行失败时
+        """
         try:
             current_bound = self.bound_args
             new_bindings = {}
@@ -388,7 +511,18 @@ class Curried:
             raise CurryExecutionError(f"Failed to curry {self.func.__name__}: {e}") from e
 
 
-def _curry(func=None, *, is_strict=False, delaied=False):
+def _curry(func: Optional[Callable[..., Any]] = None, *, is_strict: bool = False, 
+           delaied: bool = False) -> Union[Callable[[F], Union["Curried", "CurryDescriptor"]], "Curried", "CurryDescriptor"]:
+    """内部柯里化函数。
+    
+    Args:
+        func: 要柯里化的函数，如果为 None 返回装饰器
+        is_strict: 是否严格模式
+        delaied: 是否延迟执行
+        
+    Returns:
+        如果 func 为 None 返回装饰器，否则返回柯里化后的函数或描述符
+    """
     if func is None:
         return lambda f: curry(f, is_strict=is_strict, delaied=delaied)
     if isfunction(func) and '.' in func.__qualname__ and not isinstance(func, (classmethod, staticmethod)):
@@ -396,7 +530,25 @@ def _curry(func=None, *, is_strict=False, delaied=False):
     return Curried(func, is_strict=is_strict, delaied=delaied)
 
 
-def curry(func=None, *args, **kwargs):
+def curry(func: Optional[F] = None, *args: Any, **kwargs: Any) -> Union[F, Callable[[F], F], "Curried", "CurryDescriptor"]:
+    """柯里化装饰器，将函数转换为可分步调用的形式。
+    
+    Args:
+        func: 要柯里化的函数，如果为 None 返回装饰器
+        *args: 初始位置参数
+        **kwargs: 初始关键字参数，可包含 is_strict 和 delaied
+        
+    Returns:
+        如果 func 为 None 返回装饰器，否则返回柯里化后的函数
+        
+    示例:
+        @curry
+        def add(a, b, c):
+            return a + b + c
+        
+        add(1)(2)(3)  # 返回 6
+        add(1, 2)(3)  # 返回 6
+    """
     curry.__doc__ = _curry.__doc__
     is_strict = kwargs.pop('is_strict', False)
     delaied = kwargs.pop('delaied', False)

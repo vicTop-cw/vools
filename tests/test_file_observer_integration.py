@@ -1,4 +1,5 @@
-"""
+"""FileObserver integration tests (Windows only).
+
 FileObserver å ?FileSubject é  æ  æµ è¯ 
 
 æµ è¯ æ ¹æ¡ :
@@ -13,6 +14,10 @@ import json
 import tempfile
 import subprocess
 from datetime import datetime
+
+import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
 
 
 def log_event(log_file, event_type, **data):

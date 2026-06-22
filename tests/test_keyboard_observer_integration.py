@@ -1,9 +1,14 @@
+"""KeyboardObserver integration tests (Windows only)."""
 import os
 import sys
 import json
 import time
 import multiprocessing
 import psutil
+
+import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
 from datetime import datetime
 from typing import Dict, List, Callable
 

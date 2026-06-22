@@ -7,6 +7,7 @@
 """
 
 from .utils import *
+from .vdate_class import VDate
 from .dates_format import *
 
 __all__ = [
@@ -24,6 +25,9 @@ __all__ = [
     'parse_date_string',
     'get_date_range',
     'simplify_date_ranges',
+
+    # 从 vdate_class 导出
+    'VDate',
 
     # 从 dates_format 导出
     'DateProcessor',

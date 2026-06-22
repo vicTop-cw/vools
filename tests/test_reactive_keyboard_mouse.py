@@ -1,8 +1,10 @@
-"""keyboard_mouse 模块单元测试。"""
+"""Keyboard/mouse reactive tests (Windows-only integration tests)."""
 import pickle
 import sys
 
 import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
 
 from vools.reactive.monitoring.keyboard import (
     KeyEventType,

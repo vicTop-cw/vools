@@ -1,4 +1,5 @@
-"""
+"""KeyObserver integration tests (Windows only).
+
 KeyObserver å ?KeySubject é  æ  æµ è¯
 
 æµ è¯ æ ¹æ¡ :
@@ -14,6 +15,10 @@ import subprocess
 import psutil
 from datetime import datetime
 from typing import Dict, List, Any, Tuple
+
+import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
 
 # æ·»å  é¡¹ç ®æ ¹ç ®å½ å °è·¯å¾
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
