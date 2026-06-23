@@ -45,6 +45,10 @@ serialize = [
     "msgpack>=1.0",
     "orjson>=3.9",
 ]
+nim = [
+    # 编译 Nim 加速模块需要这些依赖
+    # 不会强制安装，DLL 不存在时自动回退 Python
+]
 
 [project.scripts]
 vools = "vools.__main__:main"
@@ -62,7 +66,7 @@ packages = ["vools"]
 version = { attr = "vools.__version__" }
 
 [tool.setuptools.package-data]
-"vools" = ["config.template.py", "*.md"]
+"vools" = ["config.template.py", "*.md", "lib/*.dll", "lib/*.so"]
 
 # ============ pytest ============
 [tool.pytest.ini_options]

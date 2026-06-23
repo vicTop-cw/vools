@@ -1,0 +1,27 @@
+{
+  "cacheVersion": "D20240927T193831",
+  "outputFile": "e:\\IDEProjects\\AI\\vools\\nim_core\\test_minimal.dll",
+  "outputLastModificationTime": "",
+  "compile": [],
+  "link": [
+    "e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@psystem@sexceptions.nim.c.o",
+    "e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@pstd@sprivate@sdigitsutils.nim.c.o",
+    "e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@psystem@sdollars.nim.c.o",
+    "e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@pstd@ssyncio.nim.c.o",
+    "e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@psystem.nim.c.o",
+    "e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@mtest_minimal.nim.c.o"
+  ],
+  "linkcmd": "gcc.exe   -shared -o e:\\IDEProjects\\AI\\vools\\nim_core\\test_minimal.dll e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@psystem@sexceptions.nim.c.o e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@pstd@sprivate@sdigitsutils.nim.c.o e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@psystem@sdollars.nim.c.o e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@pstd@ssyncio.nim.c.o e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@psystem.nim.c.o e:\\IDEProjects\\AI\\vools\\nim_core\\nimcache\\@mtest_minimal.nim.c.o   -Wl,--export-all  -Wl,-Bstatic -lpthread",
+  "extraCmds": [],
+  "configFiles": [
+    "E:\\Dowloads\\nim-2.2.10_x64\\nim-2.2.10\\config\\nim.cfg",
+    "E:\\Dowloads\\nim-2.2.10_x64\\nim-2.2.10\\config\\config.nims"
+  ],
+  "stdinInput": false,
+  "projectIsCmd": false,
+  "cmdInput": "",
+  "currentDir": "E:\\IDEProjects\\AI\\vools\\nim_core",
+  "cmdline": "",
+  "depfiles": [],
+  "nimexe": ""
+}
