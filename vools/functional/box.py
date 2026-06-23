@@ -1,6 +1,5 @@
-from functools import partial, reduce
+from functools import partial, reduce, wraps as _wraps
 from collections.abc import Iterable
-from wrapt import decorator as wdeco, ObjectProxy as AOP
 from .arrow_func import g
 from datetime import datetime
 from typing import Any, Callable, Optional, Union, TypeVar, List
@@ -8,6 +7,98 @@ from typing import Any, Callable, Optional, Union, TypeVar, List
 __all__ = ['box', 'Box', 'setattr_box']
 
 R = TypeVar('R')
+
+
+class _ObjectProxy:
+    """Simple ObjectProxy implementation for Python 3.6+ compatibility.
+    
+    Wraps an object and delegates most operations to the wrapped object.
+    """
+    def __init__(self, wrapped):
+        object.__setattr__(self, '__wrapped__', wrapped)
+    
+    def __getattr__(self, name):
+        return getattr(self.__wrapped__, name)
+    
+    def __setattr__(self, name, value):
+        setattr(self.__wrapped__, name, value)
+    
+    def __delattr__(self, name):
+        delattr(self.__wrapped__, name)
+    
+    def __repr__(self):
+        return repr(self.__wrapped__)
+    
+    def __str__(self):
+        return str(self.__wrapped__)
+    
+    def __bytes__(self):
+        return bytes(self.__wrapped__)
+    
+    def __hash__(self):
+        return hash(self.__wrapped__)
+    
+    def __bool__(self):
+        return bool(self.__wrapped__)
+    
+    def __eq__(self, other):
+        if isinstance(other, _ObjectProxy):
+            return self.__wrapped__ == other.__wrapped__
+        return self.__wrapped__ == other
+    
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    
+    def __lt__(self, other):
+        if isinstance(other, _ObjectProxy):
+            return self.__wrapped__ < other.__wrapped__
+        return self.__wrapped__ < other
+    
+    def __le__(self, other):
+        if isinstance(other, _ObjectProxy):
+            return self.__wrapped__ <= other.__wrapped__
+        return self.__wrapped__ <= other
+    
+    def __gt__(self, other):
+        if isinstance(other, _ObjectProxy):
+            return self.__wrapped__ > other.__wrapped__
+        return self.__wrapped__ > other
+    
+    def __ge__(self, other):
+        if isinstance(other, _ObjectProxy):
+            return self.__wrapped__ >= other.__wrapped__
+        return self.__wrapped__ >= other
+    
+    def __call__(self, *args, **kwargs):
+        return self.__wrapped__(*args, **kwargs)
+    
+    def __len__(self):
+        return len(self.__wrapped__)
+    
+    def __iter__(self):
+        return iter(self.__wrapped__)
+    
+    def __contains__(self, item):
+        return item in self.__wrapped__
+    
+    def __getitem__(self, key):
+        return self.__wrapped__[key]
+    
+    def __setitem__(self, key, value):
+        self.__wrapped__[key] = value
+    
+    def __delitem__(self, key):
+        del self.__wrapped__[key]
+    
+    def __enter__(self):
+        return self.__wrapped__.__enter__()
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self.__wrapped__.__exit__(exc_type, exc_val, exc_tb)
+
+
+# 用别名保持与原代码的接口一致
+AOP = _ObjectProxy
 
 
 _RETURN_TYPE_RESTRICTED_METHODS = {
@@ -72,51 +163,62 @@ def box(func: Optional[Callable[..., R]] = None, *, signature_from: Optional[Cal
     Returns:
         装饰后的函数或直接返回 Box 对象
     """
-    if func is None:
-        return lambda f: box(f, signature_from=signature_from)
-    @wdeco
-    def _box(wrapped, instance, args, kwargs):
-        def _nobox(obj):
-            if isinstance(obj, Box):
-                return obj.__wrapped__
+    def _box(wrapped):
+        @_wraps(wrapped)
+        def wrapper(*args, **kwargs):
+            def _nobox(obj):
+                if isinstance(obj, Box):
+                    return obj.__wrapped__
+                else:
+                    return obj
+            args = list(map(_nobox, args))
+            kwargs = {k: _nobox(v) for k, v in kwargs.items()}
+            rs = wrapped(*args, **kwargs)
+            if rs is None:
+                # 当被装饰的函数返回 None 时，返回包装它的 Box 实例以支持链式调用
+                # 注意：通过 __wrapped__ 找到创建它的 Box 实例
+                for frame_info in range(len(args)):
+                    if isinstance(args[frame_info], Box):
+                        return args[frame_info]
+                if hasattr(wrapper, '__wrapped__') and isinstance(wrapper.__wrapped__, Box):
+                    return wrapper.__wrapped__
+                return None
+            if isinstance(rs, Box):
+                return rs
+            
+            # 延迟导入避免循环导入
+            from ..data.vlist import VList as vicList
+            from ..datetime.vdate_class import VDate as vicDate
+            from ..data.vtext import VText as vicText
+            
+            # 使用对应的 vic 类包装返回值
+            if isinstance(rs, str):
+                return Box(vicText(rs))
+            elif isinstance(rs, list):
+                return Box(vicList(rs))
+            elif isinstance(rs, datetime):
+                return Box(vicDate(rs))
+            elif isinstance(rs, (tuple, set)):
+                return Box(vicList(rs))
+            elif isinstance(rs, (int, float, bool, bytes, bytearray, slice, complex, type, object)):
+                return Box(rs)
+            elif isinstance(rs, Iterable) and not isinstance(rs, (str, bytes)):
+                return Box(vicList(list(rs)))
             else:
-                return obj
-        args = list(map(_nobox, args))
-        kwargs = {k: _nobox(v) for k, v in kwargs.items()}
-        rs = wrapped(*args, **kwargs)
-        if rs is None:
-            return instance
-        if isinstance(rs, Box):
-            return rs
-        
-        # 延迟导入避免循环导入
-        from ..data.vlist import VList as vicList
-        from ..datetime.vdate_class import VDate as vicDate
-        from ..data.vtext import VText as vicText
-        
-        # 使用对应的 vic 类包装返回值
-        if isinstance(rs, str):
-            return Box(vicText(rs))
-        elif isinstance(rs, list):
-            return Box(vicList(rs))
-        elif isinstance(rs, datetime):
-            return Box(vicDate(rs))
-        elif isinstance(rs, (tuple, set)):
-            return Box(vicList(rs))
-        elif isinstance(rs, (int, float, bool, bytes, bytearray, slice, complex, type, object)):
-            return Box(rs)
-        elif isinstance(rs, Iterable) and not isinstance(rs, (str, bytes)):
-            return Box(vicList(list(rs)))
-        else:
-            return Box(rs)
+                return Box(rs)
+        return wrapper
 
-    if signature_from is not None:
-        try:
-            from functools import update_wrapper
-            update_wrapper(_box, signature_from)
-        except ValueError:
-            pass
-    return _box(func)
+    if func is None:
+        return _box
+    else:
+        wrapped = _box(func)
+        if signature_from is not None:
+            try:
+                from functools import update_wrapper
+                update_wrapper(wrapped, signature_from)
+            except ValueError:
+                pass
+        return wrapped
 
 
 @box

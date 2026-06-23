@@ -2,8 +2,7 @@
 vools-reactive Observable Core
 """
 
-from __future__ import annotations
-from typing import TypeVar, Callable, Optional, Any, Generic, Iterator, AsyncIterator
+from typing import TypeVar, Callable, Optional, Any, Generic, Iterator, AsyncIterator, Union, Iterable
 from abc import ABC, abstractmethod
 import asyncio
 import sys
@@ -226,7 +225,7 @@ class PipeBuilder(Generic[T]):
             self._operators.append(other)
         return self
     
-    def __call__(self, *operators: Callable) -> PipeBuilder[T] | Subscription:
+    def __call__(self, *operators: Callable) -> Union[PipeBuilder[T], Subscription]:
         """支持 pipe(f1, f2, f3) 调用方式"""
         for op in operators:
             if callable(op):

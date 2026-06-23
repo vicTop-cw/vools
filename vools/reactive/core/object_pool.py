@@ -2,10 +2,9 @@
 对象池化模块 - 减少频繁创建与销毁开销
 """
 
-from __future__ import annotations
 import threading
 import time
-from typing import Type, Optional, Callable, Any
+from typing import Type, Optional, Callable, Any, Union, Iterable
 __all__ = ['ObjectPool', 'PooledObject', 'get_pool', 'clear_all_pools', 'pooled_acquire', 'pooled_release']
 
 

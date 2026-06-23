@@ -7,8 +7,7 @@ vools-reactive Operators
 - 支持管道操作
 """
 
-from __future__ import annotations
-from typing import TypeVar, Callable, Optional, Any, Generic, List, Dict, Set, Tuple
+from typing import TypeVar, Callable, Optional, Any, Generic, List, Dict, Set, Tuple, Union, Iterable
 import asyncio
 import time as _time
 import inspect

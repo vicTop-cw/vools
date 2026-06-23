@@ -16,8 +16,6 @@ Linux 下使用 inotify_init / inotify_add_watch + epoll（纯 ctypes）；
 其它平台回落到 polling 后端。
 """
 
-from __future__ import annotations
-
 import base64
 import ctypes
 import hashlib
@@ -44,6 +42,7 @@ from typing import (
     Optional,
     Tuple,
     TypeVar,
+    Union,
 )
 
 from ..core.subject import Subject
@@ -118,10 +117,10 @@ class FileData:
     """
 
     path: str
-    old_path: str | None
+    old_path: Optional[str]
     change_type: FileChangeType
     is_directory: bool
-    size: int | None
+    size: Optional[int]
     timestamp: datetime
     sequence: int
     tags: List[str]
@@ -132,12 +131,12 @@ class FileData:
     def now(
         cls,
         path: str,
-        old_path: str | None = None,
+        old_path: Optional[str] = None,
         change_type: FileChangeType = FileChangeType.MODIFIED,
         is_directory: bool = False,
-        size: int | None = None,
+        size: Optional[int] = None,
         tags: Iterable[str] = (),
-        metadata: Dict[str, Any] | None = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> "FileData":
         return cls(
             path=path,
@@ -291,9 +290,9 @@ class _Win32WatchBackend:
 
     def __init__(
         self,
-        on_change: Callable[[str, str | None, FileChangeType, bool], None],
-        paths: Iterable[str] | None = None,
-        change_types: Iterable[FileChangeType] | None = None,
+        on_change: Callable[[str, Optional[str], FileChangeType, bool], None],
+        paths: Optional[Iterable[str]] = None,
+        change_types: Optional[Iterable[FileChangeType]] = None,
         interval: float = 0.2,
     ) -> None:
         self._on_change = on_change
@@ -591,9 +590,9 @@ class _MacWatchBackend:
 
     def __init__(
         self,
-        on_change: Callable[[str, str | None, FileChangeType, bool], None],
-        paths: Iterable[str] | None = None,
-        change_types: Iterable[FileChangeType] | None = None,
+        on_change: Callable[[str, Optional[str], FileChangeType, bool], None],
+        paths: Optional[Iterable[str]] = None,
+        change_types: Optional[Iterable[FileChangeType]] = None,
         interval: float = 0.2,
     ) -> None:
         self._on_change = on_change
@@ -665,9 +664,9 @@ class _InotifyWatchBackend:
 
     def __init__(
         self,
-        on_change: Callable[[str, str | None, FileChangeType, bool], None],
-        paths: Iterable[str] | None = None,
-        change_types: Iterable[FileChangeType] | None = None,
+        on_change: Callable[[str, Optional[str], FileChangeType, bool], None],
+        paths: Optional[Iterable[str]] = None,
+        change_types: Optional[Iterable[FileChangeType]] = None,
         interval: float = 0.2,
     ) -> None:
         self._on_change = on_change
@@ -902,9 +901,9 @@ class _PollingWatchBackend:
 
     def __init__(
         self,
-        on_change: Callable[[str, str | None, FileChangeType, bool], None],
-        paths: Iterable[str] | None = None,
-        change_types: Iterable[FileChangeType] | None = None,
+        on_change: Callable[[str, Optional[str], FileChangeType, bool], None],
+        paths: Optional[Iterable[str]] = None,
+        change_types: Optional[Iterable[FileChangeType]] = None,
         interval: float = 0.5,
     ) -> None:
         self._on_change = on_change
@@ -1093,9 +1092,9 @@ class FileDispatcher:
     def __init__(
         self,
         *,
-        paths: Iterable[str] | None = None,
+        paths: Optional[Iterable[str]] = None,
         backend: str = "auto",
-        change_types: Iterable[FileChangeType] | None = None,
+        change_types: Optional[Iterable[FileChangeType]] = None,
         tags: Iterable[str] = (),
         interval: float = 0.5,
         filter_self: bool = True,
@@ -1256,7 +1255,7 @@ class FileDispatcher:
     def _dispatch_once(
         self,
         path: str,
-        old_path: str | None,
+        old_path: Optional[str],
         change_type: FileChangeType,
         is_directory: bool,
     ) -> None:
@@ -1267,7 +1266,7 @@ class FileDispatcher:
             return
 
         try:
-            size: int | None = None
+            size: Optional[int] = None
             if not is_directory and os.path.exists(path):
                 try:
                     size = os.path.getsize(path)
@@ -1306,9 +1305,9 @@ class FileDispatcher:
 
 def from_filesystem(
     *,
-    paths: Iterable[str] | None = None,
+    paths: Optional[Iterable[str]] = None,
     backend: str = "auto",
-    change_types: Iterable[FileChangeType] | None = None,
+    change_types: Optional[Iterable[FileChangeType]] = None,
     tags: Iterable[str] = (),
     interval: float = 0.5,
     auto_start: bool = True,
@@ -1351,7 +1350,7 @@ def write_to_filesystem(
             def on_next(item: Any) -> None:
                 try:
                     path: str = ""
-                    content: str | bytes = ""
+                    content: Union[str, bytes] = ""
                     ct: FileChangeType = FileChangeType.MODIFIED
                     tags: List[str] = []
                     meta: Dict[str, Any] = {}

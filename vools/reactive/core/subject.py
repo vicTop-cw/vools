@@ -4,8 +4,7 @@ vools-reactive Subject
 Subject 是一种特殊的 Observable，既可以作为 Observable 也可以作为 Observer。
 """
 
-from __future__ import annotations
-from typing import TypeVar, Callable, Optional, Any, Set, Generic
+from typing import TypeVar, Callable, Optional, Any, Set, Generic, Union, Iterable
 
 from .observable import Subscription, DefaultObserver, Observable, PipeDescriptor
 
