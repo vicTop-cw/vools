@@ -15,8 +15,6 @@ vools-reactive MonitorSubject & MonitorObserver - 监控模块的抽象基类
     下游可通过 subject.lifecycle.subscribe(...) 或 MonitorObserver 的 on_start/on_stop 订阅。
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 from abc import ABC, abstractmethod
@@ -29,6 +27,7 @@ from typing import (
     Set,
     Tuple,
     TypeVar,
+    Union,
 )
 
 from ..core.observable import DefaultObserver, Observable, Observer, Subscription
@@ -174,7 +173,7 @@ class MonitorObserver(Observer[T], Generic[T, E]):
 
     子类需要实现：
         _event_type_of(value: T) -> E          # 从事件中提取枚举类型
-        _handler_for(event_type: E) -> Callable[[T], Any] | None   # 根据类型取回调
+        _handler_for(event_type: E) -> Optional[Callable[[T], Any]]   # 根据类型取回调
 
     参数：
         on_any              # 所有事件统一回调（在类型路由之前触发）

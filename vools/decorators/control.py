@@ -14,51 +14,6 @@ from typing import Any, Callable, Iterator, Union, Optional, Type, Tuple, TypeVa
 from functools import wraps
 import inspect
 
-# 可选导入 wrapt
-try:
-    import wrapt
-    @wrapt.decorator
-    def merge_params(wrapped, instance, args, kwargs):
-        """
-        支持函数和类方法的参数收集装饰器
-        """
-        # 获取原始函数
-        if hasattr(wrapped, '__func__'):
-            original_func = wrapped.__func__
-        else:
-            original_func = wrapped
-        
-        # 获取函数签名
-        sig = ins.signature(original_func)
-        
-        # 绑定参数
-        bound_args = sig.bind(*args, **kwargs)
-        bound_args.apply_defaults()
-        
-        # 构建参数字典
-        params = {}
-        
-        for param_name, param_value in bound_args.arguments.items():
-            param = sig.parameters[param_name]
-            
-            if param.kind == param.VAR_KEYWORD:
-                params.update(param_value)
-            elif param.kind == param.VAR_POSITIONAL:
-                params[param_name] = param_value
-            else:
-                params[param_name] = param_value
-        
-        # 设置到函数属性
-        original_func.params = params
-        
-        return wrapped(*args, **kwargs)
-
-
-    WRAPT_AVAILABLE = True
-except ImportError:
-    WRAPT_AVAILABLE = False
-    merge_params = None
-
 # ============================================================================
 # excepts - 异常处理装饰器
 # ============================================================================
@@ -228,7 +183,7 @@ def ignore(*args):
     return decorator
 
 
-__all__ = ['repeat', 'retry', 'rerun', 'merge_params', 'excepts', 'suppress', 'ignore']
+__all__ = ['repeat', 'retry', 'rerun', 'excepts', 'suppress', 'ignore']
 
 # 定义可调用类型变量
 F = TypeVar('F', bound=Callable[..., Any])
@@ -521,29 +476,26 @@ def _rerun_decorator(
     time_out: int = 300
 ):
     """内部函数：创建 rerun 装饰器"""
-    if WRAPT_AVAILABLE:
-        @wrapt.decorator
-        def wrapper(wrapped, instance, args, kwargs):
-            thread_local = threading.local()
-            
-            if not hasattr(thread_local, 'start_time'):
-                thread_local.start_time = time.monotonic()
-                thread_local.attempt_count = 0
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.monotonic()
+            attempt_count = 0
             
             while True:
-                thread_local.attempt_count += 1
+                attempt_count += 1
                 attempt_start = time.monotonic()
                 
                 try:
-                    result = wrapped(*args, **kwargs)
+                    result = func(*args, **kwargs)
                     
                     if until(result):
                         return result
                         
-                    elapsed = time.monotonic() - thread_local.start_time
+                    elapsed = time.monotonic() - start_time
                     if elapsed > time_out:
                         raise TimeoutError(
-                            f"Function {wrapped.__name__} timed out after {time_out}s"
+                            f"Function {func.__name__} timed out after {time_out}s"
                         )
                     
                     execution_time = time.monotonic() - attempt_start
@@ -553,57 +505,17 @@ def _rerun_decorator(
                         time.sleep(wait_time)
                         
                 except Exception as e:
-                    elapsed = time.monotonic() - thread_local.start_time
+                    elapsed = time.monotonic() - start_time
                     if elapsed > time_out:
                         raise TimeoutError(
-                            f"Function {wrapped.__name__} timed out after {time_out}s"
+                            f"Function {func.__name__} timed out after {time_out}s"
                         ) from e
                     
                     time.sleep(interval)
         
         return wrapper
-    else:
-        # wrapt 不可用时使用普通装饰器
-        def decorator(func):
-            @wraps(func)
-            def wrapper(*args, **kwargs):
-                start_time = time.monotonic()
-                attempt_count = 0
-                
-                while True:
-                    attempt_count += 1
-                    attempt_start = time.monotonic()
-                    
-                    try:
-                        result = func(*args, **kwargs)
-                        
-                        if until(result):
-                            return result
-                            
-                        elapsed = time.monotonic() - start_time
-                        if elapsed > time_out:
-                            raise TimeoutError(
-                                f"Function {func.__name__} timed out after {time_out}s"
-                            )
-                        
-                        execution_time = time.monotonic() - attempt_start
-                        wait_time = max(0, interval - execution_time)
-                        
-                        if wait_time > 0:
-                            time.sleep(wait_time)
-                            
-                    except Exception as e:
-                        elapsed = time.monotonic() - start_time
-                        if elapsed > time_out:
-                            raise TimeoutError(
-                                f"Function {func.__name__} timed out after {time_out}s"
-                            ) from e
-                        
-                        time.sleep(interval)
-            
-            return wrapper
-        
-        return decorator
+    
+    return decorator
 
 
 # ============================================================================

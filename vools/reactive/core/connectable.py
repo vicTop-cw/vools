@@ -5,8 +5,7 @@ Connectable Observable 是一种特殊的 Observable，只有在调用 connect()
 支持多播、共享和重播功能。
 """
 
-from __future__ import annotations
-from typing import TypeVar, Callable, Optional, Any, Generic, List, Dict, Set, Tuple, TYPE_CHECKING
+from typing import TypeVar, Callable, Optional, Any, Generic, List, Dict, Set, Tuple, TYPE_CHECKING, Union, Iterable
 import time
 
 if TYPE_CHECKING:

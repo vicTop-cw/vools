@@ -30,13 +30,11 @@ vools.cache - 函数签名缓存工具
     - 提供 clear_cache() 用于测试和热重载场景
 """
 
-from __future__ import annotations
-
 import builtins
 import inspect
 import logging
 from collections import OrderedDict
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 log = logging.getLogger("vools.cache")
 
@@ -239,7 +237,7 @@ def clear_cache() -> None:
     _CACHE_MISSES = 0
 
 
-def cache_info() -> dict[str, Any]:
+def cache_info() -> Dict[str, Any]:
     """返回缓存统计信息。
 
     返回:
@@ -299,7 +297,7 @@ def _set_cache(key: int, sig: inspect.Signature, *, overwrite: bool = False) -> 
 # 预加载: 常见内置函数签名
 # ====================================================================
 
-_BUILTIN_SIGS: dict[str, inspect.Signature] = {}
+_BUILTIN_SIGS: Dict[str, inspect.Signature] = {}
 """预定义的内置函数签名表，key=函数名，value=Signature。"""
 
 

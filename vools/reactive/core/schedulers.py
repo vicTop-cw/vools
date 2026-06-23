@@ -10,8 +10,7 @@ vools-reactive Schedulers
 - NewThreadScheduler: 新线程
 """
 
-from __future__ import annotations
-from typing import TypeVar, Callable, Optional, Any, Generic
+from typing import TypeVar, Callable, Optional, Any, Generic, Union, Iterable
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future

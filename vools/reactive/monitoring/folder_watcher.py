@@ -16,8 +16,6 @@
     其他平台: polling 保底路径
 """
 
-from __future__ import annotations
-
 import base64
 import ctypes
 import hashlib
@@ -44,6 +42,7 @@ from typing import (
     Optional,
     Tuple,
     TypeVar,
+    Union,
 )
 
 from ..core.subject import Subject
@@ -118,10 +117,10 @@ class FolderData:
     """
 
     path: str
-    old_path: str | None
+    old_path: Optional[str]
     change_type: FolderChangeType
-    file_count: int | None
-    child_folder_count: int | None
+    file_count: Optional[int]
+    child_folder_count: Optional[int]
     timestamp: datetime
     sequence: int
     tags: List[str]
@@ -132,12 +131,12 @@ class FolderData:
     def now(
         cls,
         path: str,
-        old_path: str | None = None,
+        old_path: Optional[str] = None,
         change_type: FolderChangeType = FolderChangeType.FOLDER_CONTENT,
-        file_count: int | None = None,
-        child_folder_count: int | None = None,
+        file_count: Optional[int] = None,
+        child_folder_count: Optional[int] = None,
         tags: Iterable[str] = (),
-        metadata: Dict[str, Any] | None = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> "FolderData":
         return cls(
             path=path,
@@ -287,9 +286,9 @@ class _Win32WatchBackend:
 
     def __init__(
         self,
-        on_change: Callable[[str, str | None, FolderChangeType, bool], None],
-        paths: Iterable[str] | None = None,
-        change_types: Iterable[FolderChangeType] | None = None,
+        on_change: Callable[[str, Optional[str], FolderChangeType, bool], None],
+        paths: Optional[Iterable[str]] = None,
+        change_types: Optional[Iterable[FolderChangeType]] = None,
         interval: float = 0.2,
     ) -> None:
         self._on_change = on_change
@@ -611,9 +610,9 @@ class _MacWatchBackend:
 
     def __init__(
         self,
-        on_change: Callable[[str, str | None, FolderChangeType, bool], None],
-        paths: Iterable[str] | None = None,
-        change_types: Iterable[FolderChangeType] | None = None,
+        on_change: Callable[[str, Optional[str], FolderChangeType, bool], None],
+        paths: Optional[Iterable[str]] = None,
+        change_types: Optional[Iterable[FolderChangeType]] = None,
         interval: float = 0.2,
     ) -> None:
         self._on_change = on_change
@@ -684,9 +683,9 @@ class _InotifyWatchBackend:
 
     def __init__(
         self,
-        on_change: Callable[[str, str | None, FolderChangeType, bool], None],
-        paths: Iterable[str] | None = None,
-        change_types: Iterable[FolderChangeType] | None = None,
+        on_change: Callable[[str, Optional[str], FolderChangeType, bool], None],
+        paths: Optional[Iterable[str]] = None,
+        change_types: Optional[Iterable[FolderChangeType]] = None,
         interval: float = 0.2,
     ) -> None:
         self._on_change = on_change
@@ -929,9 +928,9 @@ class _PollingWatchBackend:
 
     def __init__(
         self,
-        on_change: Callable[[str, str | None, FolderChangeType, bool], None],
-        paths: Iterable[str] | None = None,
-        change_types: Iterable[FolderChangeType] | None = None,
+        on_change: Callable[[str, Optional[str], FolderChangeType, bool], None],
+        paths: Optional[Iterable[str]] = None,
+        change_types: Optional[Iterable[FolderChangeType]] = None,
         interval: float = 0.5,
     ) -> None:
         self._on_change = on_change
@@ -1097,9 +1096,9 @@ class FolderDispatcher:
     def __init__(
         self,
         *,
-        paths: Iterable[str] | None = None,
+        paths: Optional[Iterable[str]] = None,
         backend: str = "auto",
-        change_types: Iterable[FolderChangeType] | None = None,
+        change_types: Optional[Iterable[FolderChangeType]] = None,
         tags: Iterable[str] = (),
         interval: float = 0.5,
         filter_self: bool = False,
@@ -1254,7 +1253,7 @@ class FolderDispatcher:
     def _dispatch_once(
         self,
         path: str,
-        old_path: str | None,
+        old_path: Optional[str],
         change_type: FolderChangeType,
         is_directory: bool,
     ) -> None:
@@ -1295,9 +1294,9 @@ class FolderDispatcher:
 
 def from_foldersystem(
     *,
-    paths: Iterable[str] | None = None,
+    paths: Optional[Iterable[str]] = None,
     backend: str = "auto",
-    change_types: Iterable[FolderChangeType] | None = None,
+    change_types: Optional[Iterable[FolderChangeType]] = None,
     tags: Iterable[str] = (),
     interval: float = 0.5,
     auto_start: bool = True,
@@ -1340,7 +1339,7 @@ def write_to_foldersystem(
             def on_next(item: Any) -> None:
                 try:
                     path: str = ""
-                    content: str | bytes = ""
+                    content: Union[str, bytes] = ""
                     ct: FolderChangeType = FolderChangeType.FOLDER_CONTENT
                     tags: List[str] = []
                     meta: Dict[str, Any] = {}

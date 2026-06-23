@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """监控类 Subject 抽象基类 —— 统一 start/stop 生命周期管理。"""
-from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Generic, List, Optional, Set, Tuple
+from typing import Any, Dict, Generic, List, Optional, Set, Tuple, Union
 
 from ..core.subject import Subject
 __all__ = ['MonitorSubject']

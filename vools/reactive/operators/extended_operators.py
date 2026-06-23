@@ -4,8 +4,7 @@ vools-reactive 扩展操作符
 补全 Rx 规范中的所有操作符，并添加创新功能。
 """
 
-from __future__ import annotations
-from typing import TypeVar, Callable, Optional, Any, Generic, List, Dict, Set, Tuple
+from typing import TypeVar, Callable, Optional, Any, Generic, List, Dict, Set, Tuple, Union, Iterable
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor

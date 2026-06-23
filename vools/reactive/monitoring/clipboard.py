@@ -18,8 +18,6 @@ GetMessageW 消息循环），纯标准库实现，不依赖任何第三方包�
 其它平台回落到 threading.Event.wait(interval) 路径。
 """
 
-from __future__ import annotations
-
 import base64
 import ctypes
 import hashlib
@@ -46,6 +44,7 @@ from typing import (
     Optional,
     Tuple,
     TypeVar,
+    Union,
 )
 
 from ..core.observable import Observable
@@ -121,7 +120,7 @@ class ClipData:
         sequence:       全局序号（单调递增）
     """
 
-    content: str | bytes | None
+    content: Optional[Union[str, bytes]]
     files: List[str]
     change_type: ClipChangeType
     tags: List[str]
@@ -133,11 +132,11 @@ class ClipData:
     @classmethod
     def now(
         cls,
-        content: str | bytes | None = None,
-        files: Iterable[str] | None = None,
+        content: Optional[Union[str, bytes]] = None,
+        files: Optional[Iterable[str]] = None,
         change_type: ClipChangeType = ClipChangeType.TEXT,
         tags: Iterable[str] = (),
-        metadata: Dict[str, Any] | None = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> "ClipData":
         return cls(
             content=content,
@@ -389,7 +388,7 @@ class _ClipboardReader:
                 log.debug("RegisterClipboardFormatW 失败: %s", e)
 
     # --- 读取 ---
-    def read(self) -> Tuple[ClipChangeType, str | bytes | None, List[str], Dict[str, Any]]:
+    def read(self) -> Tuple[ClipChangeType, Optional[Union[str, bytes]], List[str], Dict[str, Any]]:
         try:
             if self._is_win:
                 return self._read_win()
@@ -398,7 +397,7 @@ class _ClipboardReader:
             log.debug("_ClipboardReader.read 异常: %s", e)
             return ClipChangeType.OTHER, None, [], {"error": repr(e)}
 
-    def _read_win(self) -> Tuple[ClipChangeType, str | bytes | None, List[str], Dict[str, Any]]:
+    def _read_win(self) -> Tuple[ClipChangeType, Optional[Union[str, bytes]], List[str], Dict[str, Any]]:
         for attempt in range(10):
             if not _user32.OpenClipboard(None):
                 time.sleep(0.05 * (attempt + 1))
@@ -501,7 +500,7 @@ class _ClipboardReader:
                     pass
         return ClipChangeType.OTHER, None, [], {"error": "OpenClipboard 重试失败"}
 
-    def _read_tk(self) -> Tuple[ClipChangeType, str | bytes | None, List[str], Dict[str, Any]]:
+    def _read_tk(self) -> Tuple[ClipChangeType, Optional[Union[str, bytes]], List[str], Dict[str, Any]]:
         root = self._tk()
         if root is None:
             return ClipChangeType.OTHER, None, [], {"error": "tk 不可用"}
@@ -529,8 +528,8 @@ class _ClipboardReader:
     # --- 写入 ---
     def write(
         self,
-        content: str | bytes | None = None,
-        files: Iterable[str] | None = None,
+        content: Optional[Union[str, bytes]] = None,
+        files: Optional[Iterable[str]] = None,
         change_type: Optional[ClipChangeType] = None,
     ) -> None:
         files = list(files or []) if files else []
@@ -1067,7 +1066,7 @@ class _PollingBackend:
 # ====================================================================
 
 
-def _stable_hash(content: str | bytes | None) -> Optional[str]:
+def _stable_hash(content: Optional[Union[str, bytes]]) -> Optional[str]:
     """计算内容的稳定 hash（用于签名去重）。"""
     if content is None:
         return None
@@ -1082,7 +1081,7 @@ def _stable_hash(content: str | bytes | None) -> Optional[str]:
 
 def _make_signature(
     change_type: ClipChangeType,
-    content: str | bytes | None,
+    content: Optional[Union[str, bytes]],
     files: Iterable[str],
 ) -> Tuple[int, Optional[str], int, Tuple[str, ...]]:
     file_tuple = tuple(files or ())
@@ -1154,14 +1153,14 @@ class ClipboardDispatcher:
     def __init__(
         self,
         *,
-        on_change_data: Callable[[], ClipData] | None = None,
+        on_change_data: Optional[Callable[[], ClipData]] = None,
         interval: float = 0.2,
-        change_types: Iterable[ClipChangeType] | None = None,
+        change_types: Optional[Iterable[ClipChangeType]] = None,
         tags: Iterable[str] = (),
         backend: str = "auto",
         filter_self: bool = True,
-        self_filter: Callable[[ClipData], bool] | None = None,
-        self_source: str | None = None,
+        self_filter: Optional[Callable[[ClipData], bool]] = None,
+        self_source: Optional[str] = None,
         self_signature_capacity: int = 32,
         signature_ttl: float = 1.0,
     ) -> None:
@@ -1361,13 +1360,13 @@ class ClipboardDispatcher:
     # ---- 标准写回 ----------------------------------------------------
     def set_clipboard(
         self,
-        content: str | bytes | None = None,
-        files: Iterable[str] | None = None,
+        content: Optional[Union[str, bytes]] = None,
+        files: Optional[Iterable[str]] = None,
         change_type: Optional[ClipChangeType] = None,
         *,
-        source: str | None = None,
+        source: Optional[str] = None,
         tags: Iterable[str] = (),
-        metadata: Dict[str, Any] | None = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> ClipData:
         """把内容写回系统剪贴板，登记为"自己写回"避免死循环。
 
@@ -1424,12 +1423,12 @@ def from_clipboard(
     *,
     interval: float = 0.2,
     backend: str = "auto",
-    on_change_data: Callable[[], ClipData] | None = None,
-    change_types: Iterable[ClipChangeType] | None = None,
+    on_change_data: Optional[Callable[[], ClipData]] = None,
+    change_types: Optional[Iterable[ClipChangeType]] = None,
     tags: Iterable[str] = (),
     auto_start: bool = True,
     filter_self: bool = True,
-    self_source: str | None = None,
+    self_source: Optional[str] = None,
     signature_ttl: float = 1.0,
 ) -> Tuple[Any, ClipboardDispatcher]:
     """顶层工厂函数：返回 (Observable[ClipData], Dispatcher) 二元组。
@@ -1454,7 +1453,7 @@ def from_clipboard(
 
 def write_to_clipboard(
     dispatcher: ClipboardDispatcher,
-    source: str | None = None,
+    source: Optional[str] = None,
 ) -> Callable[[Observable[Any]], Observable[ClipData]]:
     """响应式操作符：把上游每一项写回剪贴板，并把构造的 ClipData 继续下发。
 
@@ -1470,7 +1469,7 @@ def write_to_clipboard(
         def subscribe(observer: Any) -> Any:
             def on_next(item: Any) -> None:
                 try:
-                    content: str | bytes | None = None
+                    content: Optional[Union[str, bytes]] = None
                     files: Optional[List[str]] = None
                     ct: Optional[ClipChangeType] = None
                     tags: List[str] = []

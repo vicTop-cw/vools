@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """监控类 Observer 抽象基类 —— 统一事件类型路由分发逻辑。"""
-from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from ..core.observable import Observer
 __all__ = ['MonitorObserver']

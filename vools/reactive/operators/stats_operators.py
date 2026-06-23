@@ -4,8 +4,7 @@ vools-reactive 统计聚合扩展算子
 提供统计聚合、滚动窗口、累积变换等数据分析操作符
 """
 
-from __future__ import annotations
-from typing import TypeVar, Callable, Optional, Any, List, Tuple
+from typing import TypeVar, Callable, Optional, Any, List, Tuple, Union, Iterable, Dict, Set
 import statistics
 import heapq
 import operator as op
@@ -707,15 +706,15 @@ def fill_none(default_value: T) -> Callable[[Observable[Optional[T]]], Observabl
     return operator
 
 
-def abs_op() -> Callable[[Observable[int | float]], Observable[float]]:
+def abs_op() -> Callable[[Observable[Union[int, float]]], Observable[float]]:
     """绝对值
     
     Returns:
         操作符函数
     """
-    def operator(source: Observable[int | float]) -> Observable[float]:
+    def operator(source: Observable[Union[int, float]]) -> Observable[float]:
         def subscribe(observer: Observer[float]) -> Subscription:
-            def on_next(value: int | float) -> None:
+            def on_next(value: Union[int, float]) -> None:
                 observer.on_next(op.abs(value))
             
             return source.subscribe(
@@ -729,7 +728,7 @@ def abs_op() -> Callable[[Observable[int | float]], Observable[float]]:
     return operator
 
 
-def clamp(min_val: float, max_val: float) -> Callable[[Observable[int | float]], Observable[float]]:
+def clamp(min_val: float, max_val: float) -> Callable[[Observable[Union[int, float]]], Observable[float]]:
     """值域限制
     
     Args:
@@ -739,9 +738,9 @@ def clamp(min_val: float, max_val: float) -> Callable[[Observable[int | float]],
     Returns:
         操作符函数
     """
-    def operator(source: Observable[int | float]) -> Observable[float]:
+    def operator(source: Observable[Union[int, float]]) -> Observable[float]:
         def subscribe(observer: Observer[float]) -> Subscription:
-            def on_next(value: int | float) -> None:
+            def on_next(value: Union[int, float]) -> None:
                 observer.on_next(max(min_val, min(max_val, value)))
             
             return source.subscribe(
