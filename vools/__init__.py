@@ -247,6 +247,32 @@ _lazy_modules = {
 DATA_AVAILABLE = True
 OOP_AVAILABLE = True
 DATETIME_AVAILABLE = True
+
+# ============================================================================
+# Nim 加速状态 - 自动回退，纯 Python 环境仍可工作
+# ============================================================================
+
+try:
+    from . import _nim_loader
+    from . import _nim_crypto
+    from . import _nim_encoding
+    from . import _nim_seq
+    from . import _nim_datetime
+    from . import _nim_curried
+    NIM_CRYPTO_AVAILABLE = _nim_crypto.is_nim_available() if hasattr(_nim_crypto, 'is_nim_available') else False
+    NIM_ENCODING_AVAILABLE = _nim_encoding.is_nim_encoding_available() if hasattr(_nim_encoding, 'is_nim_encoding_available') else False
+    NIM_SEQ_AVAILABLE = _nim_seq.is_nim_seq_available() if hasattr(_nim_seq, 'is_nim_seq_available') else False
+    NIM_DATETIME_AVAILABLE = _nim_datetime.is_nim_datetime_available() if hasattr(_nim_datetime, 'is_nim_datetime_available') else False
+    NIM_CURRIED_AVAILABLE = _nim_curried.is_nim_curried_available() if hasattr(_nim_curried, 'is_nim_curried_available') else False
+    NIM_AVAILABLE = any([NIM_CRYPTO_AVAILABLE, NIM_ENCODING_AVAILABLE, NIM_SEQ_AVAILABLE,
+                          NIM_DATETIME_AVAILABLE, NIM_CURRIED_AVAILABLE])
+except Exception:
+    NIM_AVAILABLE = False
+    NIM_CRYPTO_AVAILABLE = False
+    NIM_ENCODING_AVAILABLE = False
+    NIM_SEQ_AVAILABLE = False
+    NIM_DATETIME_AVAILABLE = False
+    NIM_CURRIED_AVAILABLE = False
 VIC_AVAILABLE = True
 
 
