@@ -41,6 +41,18 @@ class _ObjectProxy:
     def __bool__(self):
         return bool(self.__wrapped__)
     
+    def __int__(self):
+        return int(self.__wrapped__)
+    
+    def __float__(self):
+        return float(self.__wrapped__)
+    
+    def __complex__(self):
+        return complex(self.__wrapped__)
+    
+    def __index__(self):
+        return self.__wrapped__.__index__() if hasattr(self.__wrapped__, '__index__') else int(self.__wrapped__)
+    
     def __eq__(self, other):
         if isinstance(other, _ObjectProxy):
             return self.__wrapped__ == other.__wrapped__
@@ -436,44 +448,43 @@ class Box(AOP):
         cls = type(self)
         return cls(self.__wrapped__.copy())
 
-    @box
-    def map(self, func: Callable[[Any], Any]) -> List[Any]:
+    def map(self, func: Callable[[Any], Any]) -> 'Box':
         """对 Box 内的可迭代对象执行 map 操作。
         
         Args:
             func: 映射函数，应用于每个元素
             
         Returns:
-            映射结果列表
+            映射结果的 Box 包装
             
         Raises:
             TypeError: 当 __wrapped__ 不是可迭代对象时
         """
         base = self.__wrapped__
         if isinstance(base, Iterable) and not isinstance(base, (str, bytes)):
-            return [func(item) for item in base]
+            result = [func(item) for item in base]
+            return Box(result)
         raise TypeError("map 操作只适用于可迭代对象")
 
-    @box
-    def filter(self, func: Callable[[Any], bool]) -> List[Any]:
+    def filter(self, func: Callable[[Any], bool]) -> 'Box':
         """对 Box 内的可迭代对象执行过滤操作。
         
         Args:
             func: 过滤函数，返回 True 保留元素，False 丢弃元素
             
         Returns:
-            过滤后的列表
+            过滤结果的 Box 包装
             
         Raises:
             TypeError: 当 __wrapped__ 不是可迭代对象时
         """
         base = self.__wrapped__
         if isinstance(base, Iterable) and not isinstance(base, (str, bytes)):
-            return [item for item in base if func(item)]
+            result = [item for item in base if func(item)]
+            return Box(result)
         raise TypeError("filter 操作只适用于可迭代对象")
 
-    @box
-    def reduce(self, func: Callable[[Any, Any], Any], initial: Optional[Any] = None) -> Any:
+    def reduce(self, func: Callable[[Any, Any], Any], initial: Optional[Any] = None) -> 'Box':
         """对 Box 内的可迭代对象执行归约操作。
         
         Args:
@@ -481,17 +492,17 @@ class Box(AOP):
             initial: 可选的初始值
             
         Returns:
-            归约结果
+            归约结果的 Box 包装
             
         Raises:
             TypeError: 当 __wrapped__ 不是可迭代对象时
         """
         base = self.__wrapped__
         if isinstance(base, Iterable) and not isinstance(base, (str, bytes)):
-            return reduce(func, base, initial) if initial is not None else reduce(func, base)
+            result = reduce(func, base, initial) if initial is not None else reduce(func, base)
+            return Box(result)
         raise TypeError("reduce 操作只适用于可迭代对象")
 
-    @box
     def run(self, func: Union[Callable[..., Any], str] = print, *args: Any, **kwargs: Any) -> Any:
         """执行函数并返回结果，支持多种调用模式。
         
@@ -501,12 +512,12 @@ class Box(AOP):
             **kwargs: 额外的关键字参数
             
         Keyword Args:
-            nobox: bool, 是否传递 Box 本身而非 __wrapped__ 给 func
+            nobox: bool, 是否返回原始值（不包装为 Box）
             unpack: str, 解包模式，"*" 解包可迭代对象，"**" 解包字典
             rerun: bool, 是否对每个元素执行函数
             
         Returns:
-            函数执行结果
+            函数执行结果（默认包装为 Box，nobox=True 时返回原始值）
             
         Raises:
             TypeError: 当 func 参数类型错误时
@@ -516,21 +527,24 @@ class Box(AOP):
         if not callable(func):
             raise TypeError(f"func 参数类型错误,只接受类型(callable)")
         nobox = kwargs.pop('nobox', False)
-        arg0 = self if nobox else self.__wrapped__
+        arg0 = self.__wrapped__
         unpack = kwargs.pop('unpack', "")
         rerun = kwargs.pop('rerun', False)
         if unpack == "*":
             if not isinstance(arg0, Iterable):
                 raise TypeError(f"object of type '{type(arg0).__name__}' has no len()")
-            return [func(arg, *args, **kwargs) for arg in arg0] if rerun else func(*arg0, *args, **kwargs)
+            result = [func(arg, *args, **kwargs) for arg in arg0] if rerun else func(*arg0, *args, **kwargs)
         elif unpack == "**":
             if not isinstance(arg0, dict):
                 raise TypeError(f"object of type '{type(arg0).__name__}' has no len()")
-            return {k: func(v, *args, **kwargs) for k, v in arg0.items()} if rerun else func(*args, **arg0, **kwargs)
+            result = {k: func(v, *args, **kwargs) for k, v in arg0.items()} if rerun else func(*args, **arg0, **kwargs)
         else:
-            return func(arg0, *args, **kwargs)
+            result = func(arg0, *args, **kwargs)
+        
+        if nobox:
+            return result
+        return Box(result)
 
-    @box
     def __dir__(self) -> List[str]:
         """返回 Box 对象的目录列表。
         
@@ -637,9 +651,13 @@ def setattr_box(func: Callable[..., Any], attr_name: str, cover: bool = True) ->
     if not cover and hasattr(Box, attr_name):
         raise AttributeError(f"Box类已存在属性 '{attr_name}'")
 
-    @box
     def wrapped_func(self, *args, **kwargs):
-        return func(self, *args, **kwargs)
+        result = func(self, *args, **kwargs)
+        if result is None:
+            return self
+        if isinstance(result, Box):
+            return result
+        return Box(result)
 
     setattr(Box, attr_name, wrapped_func)
     return True

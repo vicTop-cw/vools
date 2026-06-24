@@ -147,23 +147,23 @@ proc l2normImpl[T: SomeNumber](arr: openArray[T]): float =
 # C 边界 - 显式导出
 # ============================================================
 
-proc cur_sum_int*(data: cstring): cstring {.exportc: "cur_sum_int".} =
+proc cur_sum_int*(data: cstring): cstring {.exportc: "cur_sum_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   result = $sumImpl[int](arr)
 
-proc cur_mean_int*(data: cstring): cstring {.exportc: "cur_mean_int".} =
+proc cur_mean_int*(data: cstring): cstring {.exportc: "cur_mean_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   result = formatFloat(meanImpl[int](arr), precision = -1)
 
-proc cur_min_int*(data: cstring): cstring {.exportc: "cur_min_int".} =
+proc cur_min_int*(data: cstring): cstring {.exportc: "cur_min_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   if arr.len == 0: result = "0" else: result = $minImpl[int](arr)
 
-proc cur_max_int*(data: cstring): cstring {.exportc: "cur_max_int".} =
+proc cur_max_int*(data: cstring): cstring {.exportc: "cur_max_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   if arr.len == 0: result = "0" else: result = $maxImpl[int](arr)
 
-proc cur_minmax_int*(data: cstring): cstring {.exportc: "cur_minmax_int".} =
+proc cur_minmax_int*(data: cstring): cstring {.exportc: "cur_minmax_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   if arr.len == 0:
     result = ","
@@ -171,53 +171,53 @@ proc cur_minmax_int*(data: cstring): cstring {.exportc: "cur_minmax_int".} =
     let mm = minMaxImpl[int](arr)
     result = $mm.mn & "," & $mm.mx
 
-proc cur_stddev_int*(data: cstring): cstring {.exportc: "cur_stddev_int".} =
+proc cur_stddev_int*(data: cstring): cstring {.exportc: "cur_stddev_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   result = formatFloat(stddevImpl[int](arr), precision = -1)
 
-proc cur_variance_int*(data: cstring): cstring {.exportc: "cur_variance_int".} =
+proc cur_variance_int*(data: cstring): cstring {.exportc: "cur_variance_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   result = formatFloat(varianceImpl[int](arr), precision = -1)
 
-proc cur_median_int*(data: cstring): cstring {.exportc: "cur_median_int".} =
+proc cur_median_int*(data: cstring): cstring {.exportc: "cur_median_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   result = formatFloat(medianImpl[int](arr), precision = -1)
 
-proc cur_dot_int*(a: cstring; b: cstring): cstring {.exportc: "cur_dot_int".} =
+proc cur_dot_int*(a: cstring; b: cstring): cstring {.exportc: "cur_dot_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arrA = parseCsvInts($a)
   let arrB = parseCsvInts($b)
   result = $dotImpl[int](arrA, arrB)
 
-proc cur_l2norm_int*(data: cstring): cstring {.exportc: "cur_l2norm_int".} =
+proc cur_l2norm_int*(data: cstring): cstring {.exportc: "cur_l2norm_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   result = formatFloat(l2normImpl[int](arr), precision = -1)
 
-proc cur_distinct_int*(data: cstring): cstring {.exportc: "cur_distinct_int".} =
+proc cur_distinct_int*(data: cstring): cstring {.exportc: "cur_distinct_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   result = distinctImpl[int](arr).mapIt($it).join(",").cstring
 
-proc cur_count_int*(data: cstring; v: cint): cstring {.exportc: "cur_count_int".} =
+proc cur_count_int*(data: cstring; v: cint): cstring {.exportc: "cur_count_int", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvInts($data)
   result = $countImpl[int](arr, int(v))
 
 # float 系列
-proc cur_sum_float*(data: cstring): cstring {.exportc: "cur_sum_float".} =
+proc cur_sum_float*(data: cstring): cstring {.exportc: "cur_sum_float", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvFloats($data)
   result = $sumImpl[float](arr)
 
-proc cur_mean_float*(data: cstring): cstring {.exportc: "cur_mean_float".} =
+proc cur_mean_float*(data: cstring): cstring {.exportc: "cur_mean_float", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvFloats($data)
   result = formatFloat(meanImpl[float](arr), precision = -1)
 
-proc cur_min_float*(data: cstring): cstring {.exportc: "cur_min_float".} =
+proc cur_min_float*(data: cstring): cstring {.exportc: "cur_min_float", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvFloats($data)
   if arr.len == 0: result = "0.0" else: result = $minImpl[float](arr)
 
-proc cur_max_float*(data: cstring): cstring {.exportc: "cur_max_float".} =
+proc cur_max_float*(data: cstring): cstring {.exportc: "cur_max_float", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvFloats($data)
   if arr.len == 0: result = "0.0" else: result = $maxImpl[float](arr)
 
-proc cur_minmax_float*(data: cstring): cstring {.exportc: "cur_minmax_float".} =
+proc cur_minmax_float*(data: cstring): cstring {.exportc: "cur_minmax_float", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvFloats($data)
   if arr.len == 0:
     result = ","
@@ -225,49 +225,49 @@ proc cur_minmax_float*(data: cstring): cstring {.exportc: "cur_minmax_float".} =
     let mm = minMaxImpl[float](arr)
     result = $mm.mn & "," & $mm.mx
 
-proc cur_stddev_float*(data: cstring): cstring {.exportc: "cur_stddev_float".} =
+proc cur_stddev_float*(data: cstring): cstring {.exportc: "cur_stddev_float", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvFloats($data)
   result = formatFloat(stddevImpl[float](arr), precision = -1)
 
-proc cur_variance_float*(data: cstring): cstring {.exportc: "cur_variance_float".} =
+proc cur_variance_float*(data: cstring): cstring {.exportc: "cur_variance_float", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvFloats($data)
   result = formatFloat(varianceImpl[float](arr), precision = -1)
 
-proc cur_median_float*(data: cstring): cstring {.exportc: "cur_median_float".} =
+proc cur_median_float*(data: cstring): cstring {.exportc: "cur_median_float", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvFloats($data)
   result = formatFloat(medianImpl[float](arr), precision = -1)
 
-proc cur_dot_float*(a: cstring; b: cstring): cstring {.exportc: "cur_dot_float".} =
+proc cur_dot_float*(a: cstring; b: cstring): cstring {.exportc: "cur_dot_float", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arrA = parseCsvFloats($a)
   let arrB = parseCsvFloats($b)
   result = $dotImpl[float](arrA, arrB)
 
-proc cur_l2norm_float*(data: cstring): cstring {.exportc: "cur_l2norm_float".} =
+proc cur_l2norm_float*(data: cstring): cstring {.exportc: "cur_l2norm_float", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let arr = parseCsvFloats($data)
   result = formatFloat(l2normImpl[float](arr), precision = -1)
 
 # string 集合操作
-proc cur_distinct_string*(data: cstring): cstring {.exportc: "cur_distinct_string".} =
+proc cur_distinct_string*(data: cstring): cstring {.exportc: "cur_distinct_string", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let s = $data
   if s.len == 0: return "".cstring
   result = distinctImpl[string](s.split(',')).join(",").cstring
 
-proc cur_union_string*(a: cstring; b: cstring): cstring {.exportc: "cur_union_string".} =
+proc cur_union_string*(a: cstring; b: cstring): cstring {.exportc: "cur_union_string", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let sa = ($a).split(',')
   let sb = ($b).split(',')
   result = unionImpl[string](sa, sb).join(",").cstring
 
-proc cur_intersect_string*(a: cstring; b: cstring): cstring {.exportc: "cur_intersect_string".} =
+proc cur_intersect_string*(a: cstring; b: cstring): cstring {.exportc: "cur_intersect_string", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let sa = ($a).split(',')
   let sb = ($b).split(',')
   result = intersectImpl[string](sa, sb).join(",").cstring
 
-proc cur_diff_string*(a: cstring; b: cstring): cstring {.exportc: "cur_diff_string".} =
+proc cur_diff_string*(a: cstring; b: cstring): cstring {.exportc: "cur_diff_string", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let sa = ($a).split(',')
   let sb = ($b).split(',')
   result = diffImpl[string](sa, sb).join(",").cstring
 
-proc cur_count_string*(data: cstring; target: cstring): cstring {.exportc: "cur_count_string".} =
+proc cur_count_string*(data: cstring; target: cstring): cstring {.exportc: "cur_count_string", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let items = ($data).split(',')
   let t = $target
   result = $countImpl[string](items, t)

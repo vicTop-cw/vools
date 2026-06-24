@@ -173,6 +173,10 @@ def rself(cls: Type) -> Type:
     original_init = cls.__dict__.get('__init__')
     original_new = cls.__dict__.get('__new__')
 
+    # Python 3.6 兼容：staticmethod 对象不能直接调用，需要取 __func__
+    if isinstance(original_new, staticmethod):
+        original_new = original_new.__func__
+
     # 不可变类型列表，这些类型需要特殊的 __new__ 处理
     _IMMUTABLE_TYPES = (str, int, float, bool, tuple, bytes, frozenset)
 

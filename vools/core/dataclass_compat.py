@@ -107,6 +107,9 @@ else:
             default_factory: 默认值工厂
             **kwargs: 其他参数（如 compare=False, repr=True）
         """
+        # dataclasses → attrs 参数映射
+        if 'compare' in kwargs:
+            kwargs['eq'] = kwargs.pop('compare')
         if default_factory is not MISSING:
             return attrib(factory=default_factory, **kwargs)
         if default is not MISSING:

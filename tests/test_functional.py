@@ -150,17 +150,18 @@ def test_box_datetime():
     
     # 测试日期时间包装
     dt = Box(datetime.now())
-    assert isinstance(dt.strftime('%Y%m%d'), str)
+    assert isinstance(dt.strftime('%Y%m%d'), Box)
+    assert str(dt.strftime('%Y%m%d')) == dt.strftime('%Y%m%d').__wrapped__
     print("[OK] 日期时间包装测试通过")
     
     # 测试获取星期
     week = dt.get_week(weekday=1)
-    assert isinstance(week, str)
+    assert isinstance(week, Box)
     print("[OK] 获取星期测试通过")
     
     # 测试获取月份
     month = dt.get_month()
-    assert isinstance(month, str)
+    assert isinstance(month, Box)
     print("[OK] 获取月份测试通过")
 
 

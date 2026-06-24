@@ -32,7 +32,7 @@ __all__ = ['DagScheduler']
 import time
 import logging
 import threading
-from typing import Set, Dict, List, Optional, Literal, Callable, Any
+from typing import Set, Dict, List, Optional, Callable, Any
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, Future
 
@@ -60,7 +60,7 @@ class DagScheduler:
     def __init__(
         self,
         queue: TaskQueue,
-        mode: Literal["thread", "process"] = "thread",
+        mode: str = "thread",
         max_workers: int = 4,
         poll_interval: float = 0.5,
         propagate_failure: bool = True,

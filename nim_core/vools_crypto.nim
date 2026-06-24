@@ -54,7 +54,7 @@ const SHA256_K: array[64, uint32] = [
 # MD5
 # ============================================================
 
-proc md5_hash*(data: cstring; len: cint): cstring {.exportc: "md5_hash".} =
+proc md5_hash*(data: cstring; len: cint): cstring {.exportc: "md5_hash", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let n = int(len)
   if n == 0:
     result = "d41d8cd98f00b204e9800998ecf8427e"
@@ -193,7 +193,7 @@ proc md5_hash*(data: cstring; len: cint): cstring {.exportc: "md5_hash".} =
 # SHA1
 # ============================================================
 
-proc sha1_hash*(data: cstring; len: cint): cstring {.exportc: "sha1_hash".} =
+proc sha1_hash*(data: cstring; len: cint): cstring {.exportc: "sha1_hash", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let n = int(len)
   if n == 0:
     result = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
@@ -269,7 +269,7 @@ proc sha1_hash*(data: cstring; len: cint): cstring {.exportc: "sha1_hash".} =
 # SHA256 - Reference implementation
 # ============================================================
 
-proc sha256_hash*(data: cstring; len: cint): cstring {.exportc: "sha256_hash".} =
+proc sha256_hash*(data: cstring; len: cint): cstring {.exportc: "sha256_hash", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let n = int(len)
   if n == 0:
     result = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -358,7 +358,7 @@ proc sha256_hash*(data: cstring; len: cint): cstring {.exportc: "sha256_hash".} 
 # HMAC-SHA256
 # ============================================================
 
-proc hmac_sha256*(data: cstring; datalen: cint; key: cstring; keylen: cint): cstring {.exportc: "hmac_sha256".} =
+proc hmac_sha256*(data: cstring; datalen: cint; key: cstring; keylen: cint): cstring {.exportc: "hmac_sha256", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let dl = int(datalen)
   let kl = int(keylen)
 
@@ -405,7 +405,7 @@ proc hmac_sha256*(data: cstring; datalen: cint; key: cstring; keylen: cint): cst
 # HMAC-MD5
 # ============================================================
 
-proc hmac_md5*(data: cstring; datalen: cint; key: cstring; keylen: cint): cstring {.exportc: "hmac_md5".} =
+proc hmac_md5*(data: cstring; datalen: cint; key: cstring; keylen: cint): cstring {.exportc: "hmac_md5", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let dl = int(datalen)
   let kl = int(keylen)
 

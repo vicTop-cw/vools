@@ -70,7 +70,7 @@ proc rleDecompress(data: openArray[byte]): seq[byte] =
 # Base64
 # ============================================================
 
-proc base64_encode*(data: cstring; len: cint): cstring {.exportc: "base64_encode".} =
+proc base64_encode*(data: cstring; len: cint): cstring {.exportc: "base64_encode", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let bytes = cstrToBytes(data, len)
   if bytes.len == 0:
     result = ""
@@ -81,14 +81,14 @@ proc base64_encode*(data: cstring; len: cint): cstring {.exportc: "base64_encode
     setLen(enc, enc.len - 1)
   result = enc
 
-proc base64_decode*(data: cstring; len: cint): cstring {.exportc: "base64_decode".} =
+proc base64_decode*(data: cstring; len: cint): cstring {.exportc: "base64_decode", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let s = cstrToString(data, len)
   if s.len == 0:
     result = ""
     return
   result = decode(s)
 
-proc base64_decode_len*(data: cstring; len: cint): cint {.exportc: "base64_decode_len".} =
+proc base64_decode_len*(data: cstring; len: cint): cint {.exportc: "base64_decode_len", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let s = cstrToString(data, len)
   if s.len == 0:
     result = 0
@@ -99,7 +99,7 @@ proc base64_decode_len*(data: cstring; len: cint): cint {.exportc: "base64_decod
 # Zlib (RLE + base64, for Python-side zlib use base64 output)
 # ============================================================
 
-proc zlib_compress*(data: cstring; len: cint; level: cint): cstring {.exportc: "zlib_compress".} =
+proc zlib_compress*(data: cstring; len: cint; level: cint): cstring {.exportc: "zlib_compress", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let bytes = cstrToBytes(data, len)
   if bytes.len == 0:
     result = ""
@@ -110,7 +110,7 @@ proc zlib_compress*(data: cstring; len: cint; level: cint): cstring {.exportc: "
     setLen(enc, enc.len - 1)
   result = enc
 
-proc zlib_decompress*(data: cstring; len: cint): cstring {.exportc: "zlib_decompress".} =
+proc zlib_decompress*(data: cstring; len: cint): cstring {.exportc: "zlib_decompress", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let s = cstrToString(data, len)
   if s.len == 0:
     result = ""
@@ -122,7 +122,7 @@ proc zlib_decompress*(data: cstring; len: cint): cstring {.exportc: "zlib_decomp
   for i, b in decompressed:
     result[i] = chr(int(b))
 
-proc zlib_decompress_len*(data: cstring; len: cint): cint {.exportc: "zlib_decompress_len".} =
+proc zlib_decompress_len*(data: cstring; len: cint): cint {.exportc: "zlib_decompress_len", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let s = cstrToString(data, len)
   if s.len == 0:
     result = 0
@@ -136,7 +136,7 @@ proc zlib_decompress_len*(data: cstring; len: cint): cint {.exportc: "zlib_decom
 # GZip (same as zlib, RLE fallback)
 # ============================================================
 
-proc gzip_compress*(data: cstring; len: cint; level: cint): cstring {.exportc: "gzip_compress".} =
+proc gzip_compress*(data: cstring; len: cint; level: cint): cstring {.exportc: "gzip_compress", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let bytes = cstrToBytes(data, len)
   if bytes.len == 0:
     result = ""
@@ -147,7 +147,7 @@ proc gzip_compress*(data: cstring; len: cint; level: cint): cstring {.exportc: "
     setLen(enc, enc.len - 1)
   result = enc
 
-proc gzip_decompress*(data: cstring; len: cint): cstring {.exportc: "gzip_decompress".} =
+proc gzip_decompress*(data: cstring; len: cint): cstring {.exportc: "gzip_decompress", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let s = cstrToString(data, len)
   if s.len == 0:
     result = ""
@@ -159,7 +159,7 @@ proc gzip_decompress*(data: cstring; len: cint): cstring {.exportc: "gzip_decomp
   for i, b in decompressed:
     result[i] = chr(int(b))
 
-proc gzip_decompress_len*(data: cstring; len: cint): cint {.exportc: "gzip_decompress_len".} =
+proc gzip_decompress_len*(data: cstring; len: cint): cint {.exportc: "gzip_decompress_len", codegenDecl: "__attribute__((visibility(\"default\"))) $# $#$#".} =
   let s = cstrToString(data, len)
   if s.len == 0:
     result = 0

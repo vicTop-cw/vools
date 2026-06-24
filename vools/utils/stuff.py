@@ -79,7 +79,19 @@ Stuff 延迟调用执行框架
 
 import inspect
 from inspect import isclass, signature, Parameter, ismethod
-from functools import wraps, lru_cache, cached_property
+from functools import wraps, lru_cache
+try:
+    from functools import cached_property
+except ImportError:
+    class cached_property(object):
+        def __init__(self, func):
+            self.func = func
+            self.__doc__ = getattr(func, '__doc__')
+        def __get__(self, instance, cls):
+            if instance is None:
+                return self
+            value = instance.__dict__[self.func.__name__] = self.func(instance)
+            return value
 from collections.abc import Iterable
 from collections import OrderedDict
 from typing import Callable, Any, Optional, Union, List, Tuple, Dict

@@ -18,7 +18,7 @@ __all__ = ['RuleEngine', 'rule', 'RuleStatus']
 
 import json
 import importlib
-from typing import Callable, Any, Dict, Optional, List, Union, Literal
+from typing import Callable, Any, Dict, Optional, List, Union
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from functools import wraps
@@ -131,7 +131,7 @@ class RuleEngine:
 
     def __init__(
         self,
-        mode: Literal["thread", "process"] = "thread",
+        mode: str = "thread",
         max_workers: int = 4,
     ):
         self._rules: List[Rule] = []
@@ -292,7 +292,7 @@ class RuleEngine:
         cls,
         json_path: str,
         *,
-        mode: Optional[Literal["thread", "process"]] = None,
+        mode: Optional[str] = None,
         max_workers: Optional[int] = None,
     ) -> 'RuleEngine':
         """

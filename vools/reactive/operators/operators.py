@@ -23,6 +23,10 @@ from ..core.subject import Subject
 
 T = TypeVar('T')
 R = TypeVar('R')
+K = TypeVar('K')
+V = TypeVar('V')
+U = TypeVar('U')
+S = TypeVar('S')
 
 
 def _parse_expr(expr: str, **env):

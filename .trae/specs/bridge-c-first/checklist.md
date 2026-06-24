@@ -1,0 +1,27 @@
+# vools.bridge C 优先架构 - 验证检查清单
+
+- [x] Checkpoint 1: core/loader.py 通用共享库加载器工作正常
+- [x] Checkpoint 2: core/types.py 类型映射正确（int/float/bool/str/bytes）
+- [x] Checkpoint 3: Windows 上能正确加载 .dll
+- [x] Checkpoint 4: Linux 上能正确加载 .so
+- [x] Checkpoint 5: 库缓存机制工作正常
+- [x] Checkpoint 6: C 桥接模块（bridge/c/）能正常加载 C DLL
+- [x] Checkpoint 7: @c_dll 装饰器工作正常
+- [x] Checkpoint 8: call_func() 便捷函数工作正常
+- [x] Checkpoint 9: Nim 桥接模块复用 core 基础设施
+- [x] Checkpoint 10: @nim 装饰器能正确编译并运行 Nim 代码
+- [x] Checkpoint 11: 编译缓存机制工作正常（相同代码不重复编译）
+- [x] Checkpoint 12: 递归函数能正常工作
+- [x] Checkpoint 13: @bridge_function 通用装饰器工作正常
+- [x] Checkpoint 14: @bridge_module 模块级装饰器工作正常
+- [x] Checkpoint 15: fallback 回退机制工作正常
+- [x] Checkpoint 16: 异步模式（async_mode=True）工作正常
+- [x] Checkpoint 17: 编译器不存在时不崩溃，使用 fallback
+- [x] Checkpoint 18: 编译错误时有清晰的错误信息
+- [x] Checkpoint 19: import vools.bridge 成功
+- [x] Checkpoint 20: import vools.bridge.c 成功
+- [x] Checkpoint 21: import vools.bridge.nim 成功
+- [x] Checkpoint 22: 旧的 vools API（md5、sha256 等）仍然可用
+- [x] Checkpoint 23: 其他语言占位目录（rust/cpp/csharp）能正常 import
+- [x] Checkpoint 24: Windows 端所有测试通过
+- [x] Checkpoint 25: Linux/WSL 端所有测试通过

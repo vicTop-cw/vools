@@ -49,6 +49,24 @@ nim = [
     # 编译 Nim 加速模块需要这些依赖
     # 不会强制安装，DLL 不存在时自动回退 Python
 ]
+freebasic = [
+    # 编译 FreeBASIC 加速模块需要这些依赖
+    # 不会强制安装，fbc64 不在 PATH 时 fbc 装饰器调用将抛错
+]
+mojo = [
+    # 编译 Mojo 加速模块需要这些依赖
+    # 不会强制安装，mojo 不在 PATH 时 @mojo 装饰器调用将抛错
+    # 需在 WSL Linux 内安装 Modular Mojo 1.0b1（curl https://get.modular.com | sh -）
+]
+rust = [
+    # 编译 Rust 加速模块需要这些依赖
+    # 不会强制安装，cargo 不在 PATH 时 @rust 装饰器调用将抛错
+]
+cli = [
+    "typer>=0.12.0",
+    "typing-extensions>=4.0.0",
+    "fire>=0.5.0",
+]
 
 [project.scripts]
 vools = "vools.__main__:main"
@@ -58,19 +76,41 @@ vools = "vools.__main__:main"
 "Repository" = "https://github.com/vicTop-cw/vools"
 "Issues" = "https://github.com/vicTop-cw/vools/issues"
 
-# ============ setuptools: 明确指定要打包的目录，避免污染 ============
-[tool.setuptools]
-packages = ["vools"]
+# ============ setuptools: 自动发现所有包 ============
+[tool.setuptools.packages.find]
+include = ["vools*"]
+exclude = ["vools.__pycache__", "vools.*.__pycache__"]
 
 [tool.setuptools.dynamic]
 version = { attr = "vools.__version__" }
 
 [tool.setuptools.package-data]
-"vools" = ["config.template.py", "*.md", "lib/*.dll", "lib/*.so"]
+"vools" = ["config.template.py", "*.md", "lib/*.dll", "lib/linux/*.so"]
 
 # ============ pytest ============
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 默认只运行根级测试（失败/未归档的测试）
+# 通过的测试已归档到子目录：core/data/datetime/decorators/functional/reactive/curried/oop/bridge/serialize/task/other
+# 如需运行全部归档测试，使用: pytest tests/core/ 或 pytest tests/reactive/
+ignore = [
+    "tests/core",
+    "tests/data",
+    "tests/datetime",
+    "tests/decorators",
+    "tests/functional",
+    "tests/reactive",
+    "tests/curried",
+    "tests/oop",
+    "tests/bridge",
+    "tests/serialize",
+    "tests/task",
+    "tests/other",
+    "tests/monitoring",
+    "tests/__rust__",
+    "tests/__persist__",
+    "tests/__pycache__",
+]
 addopts = "--tb=short -q"
 markers = [
     "integration: 标记集成测试（依赖外部资源，如剪贴板、文件系统、键鼠）",
