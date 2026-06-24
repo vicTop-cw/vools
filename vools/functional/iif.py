@@ -23,7 +23,7 @@
 import inspect as ins
 from collections.abc import Iterable
 from functools import wraps, lru_cache
-from typing import Any, Callable, Optional, Union, List, Dict, Tuple, overload, Literal
+from typing import Any, Callable, Optional, Union, List, Dict, Tuple, overload
 from ..security.safe_eval import safe_lambda, SafeEvalError
 
 __all__ = ["LazyProperty", "ConditionBuilder", "iif"]
@@ -320,7 +320,7 @@ class ConditionBuilder:
                 self.case(case_item[0], case_item[1])
         return self
 
-    def when(self, value: Any, result: Any, logic: Optional[Literal['and', 'or']] = None) -> "ConditionBuilder":
+    def when(self, value: Any, result: Any, logic: Optional[str] = None) -> "ConditionBuilder":
         """添加条件分支，支持逻辑组合（'and' / 'or'）。"""
         if self._chain_locked:
             raise RuntimeError("链式调用已被 otherwise() 终止，无法继续添加条件")

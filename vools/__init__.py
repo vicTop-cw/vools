@@ -7,7 +7,7 @@ vools - Python 函数式编程工具集
 import importlib
 from typing import Any
 
-__version__ = "0.1.20"
+__version__ = "0.2.1"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
@@ -249,30 +249,43 @@ OOP_AVAILABLE = True
 DATETIME_AVAILABLE = True
 
 # ============================================================================
-# Nim 加速状态 - 自动回退，纯 Python 环境仍可工作
+# Bridge 跨语言桥接子包
 # ============================================================================
 
 try:
-    from . import _nim_loader
-    from . import _nim_crypto
-    from . import _nim_encoding
-    from . import _nim_seq
-    from . import _nim_datetime
-    from . import _nim_curried
-    NIM_CRYPTO_AVAILABLE = _nim_crypto.is_nim_available() if hasattr(_nim_crypto, 'is_nim_available') else False
-    NIM_ENCODING_AVAILABLE = _nim_encoding.is_nim_encoding_available() if hasattr(_nim_encoding, 'is_nim_encoding_available') else False
-    NIM_SEQ_AVAILABLE = _nim_seq.is_nim_seq_available() if hasattr(_nim_seq, 'is_nim_seq_available') else False
-    NIM_DATETIME_AVAILABLE = _nim_datetime.is_nim_datetime_available() if hasattr(_nim_datetime, 'is_nim_datetime_available') else False
-    NIM_CURRIED_AVAILABLE = _nim_curried.is_nim_curried_available() if hasattr(_nim_curried, 'is_nim_curried_available') else False
-    NIM_AVAILABLE = any([NIM_CRYPTO_AVAILABLE, NIM_ENCODING_AVAILABLE, NIM_SEQ_AVAILABLE,
-                          NIM_DATETIME_AVAILABLE, NIM_CURRIED_AVAILABLE])
+    from . import bridge
+    BRIDGE_AVAILABLE = True
 except Exception:
-    NIM_AVAILABLE = False
-    NIM_CRYPTO_AVAILABLE = False
-    NIM_ENCODING_AVAILABLE = False
-    NIM_SEQ_AVAILABLE = False
-    NIM_DATETIME_AVAILABLE = False
-    NIM_CURRIED_AVAILABLE = False
+    BRIDGE_AVAILABLE = False
+
+# ============================================================================
+# Nim 加速状态 - 自动回退，纯 Python 环境仍可工作
+# ============================================================================
+
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', category=DeprecationWarning)
+    try:
+        from . import _nim_loader
+        from . import _nim_crypto
+        from . import _nim_encoding
+        from . import _nim_seq
+        from . import _nim_datetime
+        from . import _nim_curried
+        NIM_CRYPTO_AVAILABLE = _nim_crypto.is_nim_available() if hasattr(_nim_crypto, 'is_nim_available') else False
+        NIM_ENCODING_AVAILABLE = _nim_encoding.is_nim_encoding_available() if hasattr(_nim_encoding, 'is_nim_encoding_available') else False
+        NIM_SEQ_AVAILABLE = _nim_seq.is_nim_seq_available() if hasattr(_nim_seq, 'is_nim_seq_available') else False
+        NIM_DATETIME_AVAILABLE = _nim_datetime.is_nim_datetime_available() if hasattr(_nim_datetime, 'is_nim_datetime_available') else False
+        NIM_CURRIED_AVAILABLE = _nim_curried.is_nim_curried_available() if hasattr(_nim_curried, 'is_nim_curried_available') else False
+        NIM_AVAILABLE = any([NIM_CRYPTO_AVAILABLE, NIM_ENCODING_AVAILABLE, NIM_SEQ_AVAILABLE,
+                              NIM_DATETIME_AVAILABLE, NIM_CURRIED_AVAILABLE])
+    except Exception:
+        NIM_AVAILABLE = False
+        NIM_CRYPTO_AVAILABLE = False
+        NIM_ENCODING_AVAILABLE = False
+        NIM_SEQ_AVAILABLE = False
+        NIM_DATETIME_AVAILABLE = False
+        NIM_CURRIED_AVAILABLE = False
 VIC_AVAILABLE = True
 
 
@@ -500,6 +513,44 @@ __all__ = [
     'VText',
     'VDate',
 ]
+
+# Python 3.6 兼容：模块级 __getattr__ 和 __dir__ 是 3.7+ 才有的
+# 在 3.6 中需要主动导入所有延迟加载的名称
+import sys as _sys
+if _sys.version_info < (3, 7):
+    for _name in _lazy_modules:
+        if _name not in globals():
+            try:
+                _module_path = _lazy_modules[_name]
+                _module = importlib.import_module(_module_path, package='vools')
+                if hasattr(_module, _name):
+                    globals()[_name] = getattr(_module, _name)
+                else:
+                    globals()[_name] = _module
+            except Exception:
+                pass
+    # VList, VText, VDate
+    for _vname in ('VList', 'VText', 'VDate'):
+        if _vname not in globals():
+            try:
+                if _vname == 'VList':
+                    from .data.vlist import VList as _v
+                    globals()['VList'] = _v
+                elif _vname == 'VText':
+                    from .data.vtext import VText as _v
+                    globals()['VText'] = _v
+                elif _vname == 'VDate':
+                    from .datetime.vdate_class import VDate as _v
+                    globals()['VDate'] = _v
+            except Exception:
+                pass
+    # vicTools, vicDate, vicText, vicList
+    try:
+        _load_vic()
+        for _vk, _vv in _vic_classes.items():
+            globals()[_vk] = _vv
+    except Exception:
+        pass
 
 if __name__ == '__main__':
     print(f"vools version: {__version__}")

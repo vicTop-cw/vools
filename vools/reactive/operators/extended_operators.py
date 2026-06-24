@@ -8,6 +8,7 @@ from typing import TypeVar, Callable, Optional, Any, Generic, List, Dict, Set, T
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
+from ..core.observable import Observable, Observer, Subscription
 __all__ = ['T', 'K', 'V', 'U', 'from_range', 'from_callable', 'from_future', 'start', 'sample', 'skip_last', 'take_last', 'throttle_latest', 'ignore_elements', 'to_map', 'to_set', 'observe_on', 'subscribe_on', 'do_on_next', 'do_on_error', 'do_on_completed', 'time_interval', 'flat_map_latest', 'window', 'amb', 'switch', 'ConnectableObservable', 'backpressure_buffer', 'backpressure_drop', 'backpressure_error', 'backpressure_latest', 'retry_with_backoff', 'circuit_breaker', 'debounce_evolution', 'cache', 'parallel']
 
 T = TypeVar('T')

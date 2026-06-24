@@ -16,6 +16,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 import time
 
+from ...utils.asyncio_compat import get_running_loop
 from .observable import Observable, Observer, Subscription
 __all__ = ['T', 'Scheduler', 'ImmediateScheduler', 'CurrentThreadScheduler', 'AsyncIOScheduler', 'ThreadPoolScheduler', 'NewThreadScheduler', 'immediate', 'current_thread', 'asyncio_scheduler', 'immediate_scheduler', 'current_thread_scheduler', 'asyncio_scheduler', 'thread_pool_scheduler', 'new_thread_scheduler']
 
@@ -151,7 +152,7 @@ class AsyncIOScheduler(Scheduler):
             self._loop = loop
         else:
             try:
-                self._loop = asyncio.get_running_loop()
+                self._loop = get_running_loop()
             except RuntimeError:
                 self._loop = asyncio.new_event_loop()
     

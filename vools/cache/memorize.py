@@ -19,7 +19,7 @@ class TimedCache:
     """带过期时间和大小限制的缓存（线程安全）"""
     
     def __init__(self, max_size: int = 1000):
-        self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._cache = OrderedDict()  # type: ignore
         self._max_size = max_size
         self._lock = threading.Lock()
 

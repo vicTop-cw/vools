@@ -17,6 +17,16 @@ import time
 import inspect
 from vools.cache.sigcache import get_signature
 
+if not hasattr(itertools, 'pairwise'):
+    def _pairwise(iterable):
+        a, b = itertools.tee(iterable)
+        try:
+            next(b)
+        except StopIteration:
+            pass
+        return zip(a, b)
+    itertools.pairwise = _pairwise
+
 from ..data import Seq, NONE
 from ..decorators import curry
 from .arrow_func import g

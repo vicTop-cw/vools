@@ -427,7 +427,7 @@ class VList(Seq, metaclass=ListLikeMeta):
         temp = self._run(func)
         return VList(temp) if isinstance(temp, Iterable) else temp
 
-    def flat_map(self, func: Union[Callable[[Any], Iterable[Any]], str]) -> 'VList':
+    def flat_map(self, func: Union[Callable[[Any], IterType[Any]], str]) -> 'VList':
         """扁平化映射操作，将每个元素映射为一个可迭代对象并合并。
 
         Args:
@@ -456,7 +456,7 @@ class VList(Seq, metaclass=ListLikeMeta):
                     result.append(mapped)
             return VList(result)
 
-    def flatmap(self, func: Union[Callable[[Any], Iterable[Any]], str]) -> 'VList':
+    def flatmap(self, func: Union[Callable[[Any], IterType[Any]], str]) -> 'VList':
         """flat_map 的别名。
 
         Args:
@@ -900,7 +900,7 @@ class VList(Seq, metaclass=ListLikeMeta):
         g = itertools.groupby(temp)
         return next(g, True) and not next(g, False)
 
-    def quantify(self, pred: Union[Callable[[Any], bool], str] = bool, quan: Callable[[Iterable[int]], int] = sum) -> int:
+    def quantify(self, pred: Union[Callable[[Any], bool], str] = bool, quan: Callable[[IterType[int]], int] = sum) -> int:
         """统计满足条件的元素数量。
 
         Args:
@@ -937,7 +937,7 @@ class VList(Seq, metaclass=ListLikeMeta):
         Returns:
             列表类型
         """
-        return list[item]
+        return List[item]
 
     # ─── 序列化支持 ───
 

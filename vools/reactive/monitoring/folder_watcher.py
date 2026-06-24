@@ -30,7 +30,7 @@ import threading
 import time
 from collections import deque
 from ctypes import wintypes as wt
-from dataclasses import dataclass
+from vools.core.dataclass_compat import dataclass
 from datetime import datetime
 from enum import IntEnum
 from typing import (

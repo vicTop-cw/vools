@@ -15,6 +15,7 @@
 - **任务调度**: TaskQueue、WorkerPool、DAG 调度器
 - **序列化**: 支持 JSON、MsgPack、Pickle 等多种格式
 - **编码/加密**: Base64、URL 编码、哈希函数
+- **多语言桥接**: 支持 27 种编程语言（Lua、Rust、Go、Java、Kotlin、Swift、Dart、MoonBit 等），统一装饰器接口
 
 ## 安装
 
@@ -32,12 +33,12 @@ pip install .
 
 ### 环境要求
 
-- Python 3.9+
+- Python 3.6+
 
 ### 依赖
 
-- `wrapt >= 1.14`
-- `attrs >= 22.1`
+- `attrs >= 22.1` (Python < 3.7 时需要，用于 dataclass 兼容)
+- `contextvars` (Python < 3.7 时需要)
 
 ## 快速开始
 
@@ -138,6 +139,20 @@ print(result)  # [4, 8]
 
 ```
 vools/
+├── api/             # CLI 命令行接口
+├── bridge/          # 多语言桥接（27种语言）
+│   ├── core/        # 桥接核心（类型、签名缓存、装饰器）
+│   ├── lua/         # Lua 桥接
+│   ├── rust/        # Rust 桥接
+│   ├── go/          # Go 桥接
+│   ├── java/        # Java 桥接
+│   ├── kotlin/      # Kotlin 桥接
+│   ├── swift/       # Swift 桥接
+│   ├── dart/        # Dart 桥接
+│   ├── moonbit/     # MoonBit 桥接
+│   ├── c/           # C 桥接
+│   ├── cpp/         # C++ 桥接
+│   └── ...          # 更多语言
 ├── cache/           # 缓存装饰器
 │   ├── memorize     # 时间缓存
 │   ├── once         # 单次执行
@@ -172,6 +187,8 @@ vools/
 ├── recorder/        # 录制回放
 ├── security/        # 安全模块
 ├── serialize/       # 序列化
+├── sql/             # SQL 工具
+├── sys/             # 系统工具
 ├── task/           # 任务调度
 └── utils/          # 通用工具
 ```

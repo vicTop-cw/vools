@@ -12,7 +12,7 @@ import logging
 import pickle
 import sys
 import time
-from dataclasses import dataclass, field, asdict
+from vools.core.dataclass_compat import dataclass, field, asdict
 from enum import IntEnum, IntFlag
 from typing import (
     Any, Callable, Dict, List, Optional, Tuple,

@@ -41,7 +41,7 @@ log = logging.getLogger("vools.cache")
 _MAX_CACHE_SIZE = 4096
 """缓存最大条目数，超过时淘汰最久未使用的条目 (LRU)。"""
 
-_SIG_CACHE: OrderedDict[int, inspect.Signature] = OrderedDict()
+_SIG_CACHE = OrderedDict()  # type: ignore
 """全局签名缓存 {id(func): Signature}，OrderedDict 实现 LRU。"""
 
 _CACHE_HITS = 0
