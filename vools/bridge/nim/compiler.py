@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.nim.compiler - Nim 异步动态编译装饰器
 
 使用方式：
@@ -24,9 +24,9 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
 
-from vools.bridge.core.types import CTypeMapper
-from vools.bridge.manager import manager, setup_runtime as _setup_lang_runtime
-from vools.bridge._base import LangBridge, FunctionSpec, FunctionParser
+from ..core.types import CTypeMapper
+from ..manager import manager, setup_runtime as _setup_lang_runtime
+from .._base import LangBridge, FunctionSpec, FunctionParser
 
 # 平台判断
 _IS_WINDOWS = platform.system() == 'Windows'

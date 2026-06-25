@@ -10,13 +10,14 @@ vools 自动化发布模块
 """
 
 from .release import ReleaseManager
-from .config import load_config, save_config, get_current_version, increment_version, update_version
+from .config import load_config, save_config, get_current_version
+from .publishing import get_pypi_latest_version, compare_versions
 
 __all__ = [
     'ReleaseManager',
     'load_config',
     'save_config',
     'get_current_version',
-    'increment_version',
-    'update_version',
+    'get_pypi_latest_version',
+    'compare_versions',
 ]

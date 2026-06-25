@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.java.loader - Py4J JVM Gateway 加载器
 
 管理 Py4J JavaGateway 的启动、连接和销毁，
@@ -16,7 +16,7 @@ import threading
 import logging
 from typing import Optional, Any, Coroutine
 
-from vools.bridge.manager import get_helper
+from ..manager import get_helper
 
 logger = logging.getLogger(__name__)
 

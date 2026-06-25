@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.cangjie.compiler - 仓颉动态编译装饰器
 
 使用方式::
@@ -51,8 +51,8 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
 
-from vools.bridge.manager import get_helper
-from vools.bridge._base import LangBridge, FunctionSpec, FunctionParser
+from ..manager import get_helper
+from .._base import LangBridge, FunctionSpec, FunctionParser
 from .types import (
     get_cj_type,
     infer_cj_argtypes,

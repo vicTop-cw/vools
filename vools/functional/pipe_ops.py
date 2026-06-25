@@ -15,7 +15,7 @@ import re
 import math
 import time
 import inspect
-from vools.cache.sigcache import get_signature
+from ..cache.sigcache import get_signature
 
 if not hasattr(itertools, 'pairwise'):
     def _pairwise(iterable):

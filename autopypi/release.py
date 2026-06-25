@@ -1,6 +1,7 @@
+import sys
 from pathlib import Path
 
-from .config import load_config, get_current_version, increment_version, update_version
+from .config import load_config, get_current_version
 from .logger import setup_logger, log_step, log_separator
 from .environment import (
     check_python_version,
@@ -12,7 +13,6 @@ from .environment import (
 )
 from .packaging import build_package, check_package, verify_package
 from .versioning import (
-    create_changelog,
     git_add_all,
     git_commit,
     git_create_tag,
@@ -20,7 +20,7 @@ from .versioning import (
     git_push_tag,
     get_git_status,
 )
-from .publishing import publish_to_pypi
+from .publishing import publish_to_pypi, get_pypi_latest_version, compare_versions
 
 
 class ReleaseError(Exception):
@@ -29,14 +29,20 @@ class ReleaseError(Exception):
 
 
 class ReleaseManager:
-    """发布管理器"""
+    """发布管理器（纯检查模式）
+
+    设计原则：
+    - 不自动修改源文件版本号
+    - 不自动创建 changelog 空文件
+    - 只做检查：PyPI 最新版本 < 当前版本，且 changelog 有对应版本 md 文件
+    - 不符合条件就不发布
+    """
     
     def __init__(self, config=None):
         self.config = config or load_config()
         self.logger = setup_logger(self.config)
         self.project_root = Path(__file__).parent.parent
         self.current_version = None
-        self.new_version = None
     
     def confirm_action(self, message):
         """交互式确认操作"""
@@ -57,7 +63,7 @@ class ReleaseManager:
         log_step(self.logger, msg, "success")
         
         log_step(self.logger, "检查核心依赖", "running")
-        missing = check_dependencies(["fabric", "twine", "build"])
+        missing = check_dependencies(["twine", "build"])
         if missing:
             log_step(self.logger, f"缺少依赖: {', '.join(missing)}", "warning")
             log_step(self.logger, "尝试安装依赖...", "running")
@@ -85,32 +91,59 @@ class ReleaseManager:
         
         return True
     
-    def prepare_release(self, bump_level="patch"):
-        """准备发布"""
-        log_step(self.logger, "获取当前版本", "running")
-        self.current_version = get_current_version(self.project_root / self.config["project"]["version_file"])
+    def check_preconditions(self, test=False):
+        """发布前置检查（核心：不改代码，只做检查）
+
+        检查项：
+        1. 读取当前版本号
+        2. 查询 PyPI 最新版本号，确认当前版本 > PyPI 最新版本
+        3. 检查 changelog 目录下是否有对应版本的 md 文件
+        """
+        log_step(self.logger, "读取当前版本号", "running")
+        self.current_version = get_current_version(
+            self.project_root / self.config["project"]["version_file"]
+        )
         if not self.current_version:
-            log_step(self.logger, "无法获取当前版本", "error")
+            log_step(self.logger, "无法获取当前版本号", "error")
             return False
         log_step(self.logger, f"当前版本: {self.current_version}", "success")
         
-        log_step(self.logger, f"计算新版本 ({bump_level})", "running")
-        self.new_version = increment_version(self.current_version, bump_level)
-        log_step(self.logger, f"新版本: {self.new_version}", "success")
+        log_step(self.logger, "查询 PyPI 最新版本", "running")
+        pypi_version = get_pypi_latest_version(
+            self.config["project"]["name"], test=test
+        )
+        if pypi_version is None:
+            log_step(self.logger, "无法查询 PyPI 版本（可能是首次发布或网络问题），跳过版本比较", "warning")
+        else:
+            log_step(self.logger, f"PyPI 最新版本: {pypi_version}", "success")
+            cmp = compare_versions(self.current_version, pypi_version)
+            if cmp is None:
+                log_step(self.logger, "版本号格式无法比较", "error")
+                return False
+            if cmp <= 0:
+                log_step(
+                    self.logger,
+                    f"当前版本 ({self.current_version}) 不大于 PyPI 最新版本 ({pypi_version})，不发布",
+                    "error"
+                )
+                return False
+            log_step(
+                self.logger,
+                f"版本号检查通过: {self.current_version} > {pypi_version}",
+                "success"
+            )
         
-        if not self.confirm_action(f"确认升级版本: {self.current_version} -> {self.new_version}"):
-            log_step(self.logger, "用户取消操作", "error")
-            return False
-        
-        log_step(self.logger, "更新版本文件", "running")
-        update_version(self.new_version, self.project_root / self.config["project"]["version_file"])
-        log_step(self.logger, "版本文件已更新", "success")
-        
-        log_step(self.logger, "创建更新日志", "running")
+        log_step(self.logger, "检查 changelog 文件", "running")
         changelog_dir = self.project_root / self.config["project"]["changelog_dir"]
-        changelog_dir.mkdir(exist_ok=True)
-        changelog_path = create_changelog(self.new_version, changelog_dir)
-        log_step(self.logger, f"更新日志已创建: {changelog_path}", "success")
+        changelog_path = changelog_dir / f"v{self.current_version}.md"
+        if not changelog_path.exists():
+            log_step(
+                self.logger,
+                f"changelog 文件不存在: {changelog_path}",
+                "error"
+            )
+            return False
+        log_step(self.logger, f"changelog 文件存在: {changelog_path.name}", "success")
         
         return True
     
@@ -144,7 +177,7 @@ class ReleaseManager:
         log_step(self.logger, "构建成功", "success")
         
         log_step(self.logger, "检查构建产物", "running")
-        package_info = check_package(self.project_root, self.config, self.new_version)
+        package_info = check_package(self.project_root, self.config, self.current_version)
         if not package_info["success"]:
             log_step(self.logger, f"缺少构建产物: {package_info['missing']}", "error")
             return False
@@ -174,7 +207,7 @@ class ReleaseManager:
             log_step(self.logger, "变更已添加", "success")
             
             log_step(self.logger, "提交变更", "running")
-            message = f"Release v{self.new_version}"
+            message = f"Release v{self.current_version}"
             result = git_commit(self.project_root, message)
             if not result["success"]:
                 log_step(self.logger, f"Git commit 失败: {result['stderr']}", "error")
@@ -182,11 +215,11 @@ class ReleaseManager:
             log_step(self.logger, "变更已提交", "success")
             
             log_step(self.logger, "创建版本标签", "running")
-            result = git_create_tag(self.project_root, self.new_version)
+            result = git_create_tag(self.project_root, self.current_version)
             if not result["success"]:
                 log_step(self.logger, f"创建标签失败: {result['stderr']}", "error")
                 return False
-            log_step(self.logger, f"标签 v{self.new_version} 已创建", "success")
+            log_step(self.logger, f"标签 v{self.current_version} 已创建", "success")
         
         return True
     
@@ -197,8 +230,8 @@ class ReleaseManager:
         if not result["success"]:
             log_step(self.logger, f"发布失败: {result['stderr']}", "error")
             return False
-        log_step(self.logger, f"发布成功！版本: {self.new_version}", "success")
-        log_step(self.logger, f"查看: https://pypi.org/project/{self.config['project']['name']}/{self.new_version}/", "success")
+        log_step(self.logger, f"发布成功！版本: {self.current_version}", "success")
+        log_step(self.logger, f"查看: https://pypi.org/project/{self.config['project']['name']}/{self.current_version}/", "success")
         
         return True
     
@@ -220,16 +253,26 @@ class ReleaseManager:
             log_step(self.logger, "代码推送成功", "success")
         
         log_step(self.logger, "推送标签到 GitHub", "running")
-        result = git_push_tag(self.project_root, self.config["git"]["remote_name"], self.new_version)
+        result = git_push_tag(self.project_root, self.config["git"]["remote_name"], self.current_version)
         if not result["success"]:
             log_step(self.logger, f"推送标签失败: {result['stderr']}", "error")
             return False
-        log_step(self.logger, f"标签 v{self.new_version} 推送成功", "success")
+        log_step(self.logger, f"标签 v{self.current_version} 推送成功", "success")
         
         return True
     
-    def release(self, bump_level="patch", test=False, skip_tests=False):
-        """完整发布流程"""
+    def release(self, test=False, skip_tests=False):
+        """完整发布流程（纯检查模式）
+
+        流程：
+        1. 环境检查
+        2. 前置检查（版本号 > PyPI最新、changelog存在）
+        3. 运行测试（可选）
+        4. 构建包
+        5. 版本控制（git commit + tag）
+        6. 发布到 PyPI
+        7. 推送到 GitHub
+        """
         log_separator(self.logger)
         self.logger.info(f"🚀 开始发布流程 - {self.config['project']['name']}")
         log_separator(self.logger)
@@ -241,8 +284,8 @@ class ReleaseManager:
             if skip_tests:
                 self.config["testing"]["run_tests"] = False
             
-            if not self.prepare_release(bump_level):
-                raise ReleaseError("准备发布失败")
+            if not self.check_preconditions(test=test):
+                raise ReleaseError("前置检查失败，不发布")
             
             if not self.run_tests():
                 raise ReleaseError("测试失败")
@@ -253,7 +296,7 @@ class ReleaseManager:
             if not self.version_control():
                 raise ReleaseError("版本控制失败")
             
-            if not self.confirm_action(f"确认发布 v{self.new_version} 到 PyPI？"):
+            if not self.confirm_action(f"确认发布 v{self.current_version} 到 PyPI？"):
                 raise ReleaseError("用户取消发布")
             
             if not self.publish(test):
@@ -263,7 +306,7 @@ class ReleaseManager:
                 log_step(self.logger, "GitHub 推送失败，但包已发布", "warning")
             
             log_separator(self.logger)
-            self.logger.info(f"🎉 发布完成！版本 {self.new_version} 已成功发布")
+            self.logger.info(f"🎉 发布完成！版本 {self.current_version} 已成功发布")
             log_separator(self.logger)
             
             return True

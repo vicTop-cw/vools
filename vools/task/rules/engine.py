@@ -23,7 +23,7 @@ from enum import Enum
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from functools import wraps
 
-from vools.functional import Result, safe
+from ...functional import Result, safe
 from .rule import Rule, RuleSet
 
 

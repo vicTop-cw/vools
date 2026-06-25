@@ -58,8 +58,8 @@ from typing import (
     Callable, Dict, List, Optional, Any, Union,
     get_type_hints,
 )
-from vools.core.dataclass_compat import dataclass, field
-from vools.core.asyncio_compat import run as asyncio_run
+from ..core.dataclass_compat import dataclass, field
+from ..core.asyncio_compat import run as asyncio_run
 
 
 # ============================================================================

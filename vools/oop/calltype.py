@@ -2,7 +2,7 @@ import enum
 import inspect
 import types
 import functools
-from vools.cache.sigcache import get_signature
+from ..cache.sigcache import get_signature
 
 __all__ = ['CallableType','get_callable_type','create_fake']
 

@@ -28,7 +28,7 @@ from functools import wraps
 from typing import Any, Callable, Optional, List, Tuple, Union, Dict
 from enum import IntFlag
 
-from vools.cache.sigcache import get_signature
+from ..cache.sigcache import get_signature
 
 try:
     from .curry_core import is_curried, Curried

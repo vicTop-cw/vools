@@ -9,7 +9,7 @@ vools.bridge.r.loader - R 环境加载器
 import platform
 import subprocess
 
-from vools.bridge.manager import get_helper
+from ..manager import get_helper
 from .compiler import r_compiler_available, _check_jsonlite_available, _IS_WINDOWS, _safe_subprocess_run
 
 # 使用 manager 的编译器辅助

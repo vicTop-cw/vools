@@ -9,7 +9,7 @@ import importlib
 from typing import Any, Dict
 
 from .context import get_protocol, get_current_serializer
-from vools.core.datetime_compat import datetime_fromisoformat, date_fromisoformat
+from ..core.datetime_compat import datetime_fromisoformat, date_fromisoformat
 __all__ = ['vools_preprocess', 'vools_default', 'vools_object_hook', 'post_process_orjson', 'post_process_msgpack']
 
 

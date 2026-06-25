@@ -6,7 +6,7 @@ vools.sql.core.config - SQL 方言配置
 
 from typing import Dict
 
-from vools.core.dataclass_compat import dataclass, field
+from ...core.dataclass_compat import dataclass, field
 
 
 @dataclass

@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.csharp.compiler - C# 动态编译器
 
 提供 @csharp 装饰器，支持：
@@ -23,8 +23,8 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
 
-from vools.bridge.manager import get_helper
-from vools.bridge._base import LangBridge, FunctionSpec
+from ..manager import get_helper
+from .._base import LangBridge, FunctionSpec
 from .types import get_cs_type, get_cs_ctype, infer_cs_argtypes, PY_TO_CS_TYPE, CS_TO_CTYPES
 from .templates import generate_cs_method, generate_cs_class, generate_csproj
 

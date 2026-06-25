@@ -9,7 +9,7 @@ vools.bridge.mojo.loader - 预编译 Mojo 共享库加载器
 import ctypes
 import os
 
-from vools.bridge.core.loader import load_library
+from ..core.loader import load_library
 
 _MOJO_LIBS = {}
 

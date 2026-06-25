@@ -6,7 +6,7 @@ vools.bridge.freebasic.loader - 预编译 FreeBASIC 库加载器
 """
 
 import ctypes
-from vools.bridge.core.loader import load_library
+from ..core.loader import load_library
 
 _FBC_LIBS = {}
 

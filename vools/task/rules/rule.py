@@ -10,9 +10,8 @@ Rule 数据模型 - 不可变、可组合的纯函数式规则定义
 __all__ = ['Rule', 'RuleSet']
 
 from typing import Callable, Any, Dict, Optional, List
-from vools.core.dataclass_compat import dataclass, field
-
-from vools.functional import Result
+from ...core.dataclass_compat import dataclass, field
+from ...functional import Result
 
 
 @dataclass(frozen=True)

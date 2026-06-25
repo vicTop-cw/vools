@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.scala.compiler - Scala 源码编译支持
 
 使用 scala-cli 或 scalac 编译 Scala 源码为 JAR 文件，
@@ -24,7 +24,7 @@ from typing import Optional, List, Any
 import shutil
 import inspect
 
-from vools.bridge._base import LangBridge, FunctionSpec
+from .._base import LangBridge, FunctionSpec
 
 logger = logging.getLogger(__name__)
 

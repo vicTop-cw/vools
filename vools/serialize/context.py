@@ -6,7 +6,7 @@ Serializer.dumps/loads 在调用后端前设置上下文，调用后重置。
 """
 
 import contextvars
-from vools.core import dataclass
+from ..core import dataclass
 from typing import Optional, Any
 __all__ = ['SerializeContext', 'get_context', 'get_protocol', 'set_context', 'reset_context', 'get_current_serializer']
 

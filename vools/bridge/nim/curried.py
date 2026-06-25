@@ -3,7 +3,7 @@ vools.bridge.nim.curried - Nim 函数式函数桥接
 """
 
 from ._loader import get_nim_lib
-from vools.bridge.core.serialization import csv_serialize, csv_deserialize
+from ..core.serialization import csv_serialize, csv_deserialize
 
 _nim_lib = get_nim_lib('vools_curried')
 

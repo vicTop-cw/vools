@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.cpp - C++ 语言桥接模块
 
 提供 C++ 动态编译和 DLL 调用支持，包括：
@@ -36,10 +36,10 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
 
-from vools.bridge.core.loader import load_from_path, SharedLibrary
-from vools.bridge.core.types import CTypeMapper
-from vools.bridge.manager import manager, setup_runtime as _setup_lang_runtime
-from vools.bridge._base import LangBridge, FunctionSpec, FunctionParser
+from ..core.loader import load_from_path, SharedLibrary
+from ..core.types import CTypeMapper
+from ..manager import manager, setup_runtime as _setup_lang_runtime
+from .._base import LangBridge, FunctionSpec, FunctionParser
 
 # 平台判断
 _IS_WINDOWS = platform.system() == 'Windows'

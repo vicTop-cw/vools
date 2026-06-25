@@ -44,7 +44,7 @@ import ctypes
 import threading
 import json
 from typing import Dict, List, Optional, Callable, Any
-from vools.core.dataclass_compat import dataclass, field, asdict
+from ..core.dataclass_compat import dataclass, field, asdict
 
 # 平台判断
 _IS_WINDOWS = platform.system() == 'Windows'

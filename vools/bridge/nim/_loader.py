@@ -5,7 +5,7 @@ vools.bridge.nim._loader - Nim 库加载器
 """
 
 import ctypes
-from vools.bridge.core.loader import load_library, is_available
+from ..core.loader import load_library, is_available
 
 _NIM_LIBS = {}
 

@@ -8,7 +8,7 @@ import ctypes
 import os
 import sys
 
-from vools.bridge.core.loader import _LIB_DIR, _IS_WINDOWS
+from ..bridge.core.loader import _LIB_DIR, _IS_WINDOWS
 
 
 # 已知的 Nim DLL 及其函数映射
