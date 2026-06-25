@@ -12,6 +12,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vools.bridge.freebasic import FbcBridge
+from vools.core.asyncio_compat import run as asyncio_run
 
 
 def test_overwrite_mode():
@@ -304,7 +305,7 @@ def test_async_only_code():
         code = await async_func(42)
         return code
 
-    code = asyncio.run(run_test())
+    code = asyncio_run(run_test())
     print(f"异步返回代码（前 200 字符）:\n{code[:200]}")
 
     assert isinstance(code, str), "应该返回字符串"
@@ -333,7 +334,7 @@ def test_async_only_code_with_file():
             result = await async_file_func(6)
             return result
 
-        result = asyncio.run(run_test())
+        result = asyncio_run(run_test())
         print(f"返回值: {result}")
         assert result == temp_path, "应该返回文件路径"
 

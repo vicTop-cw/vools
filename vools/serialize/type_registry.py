@@ -23,6 +23,8 @@ import enum
 import fractions
 import pathlib
 from typing import Any, Callable, Dict, Optional, Tuple
+
+from vools.core.datetime_compat import datetime_fromisoformat, date_fromisoformat, time_fromisoformat
 __all__ = ['register_type', 'get_type_handler', 'get_type_deserializer']
 
 
@@ -91,7 +93,7 @@ def _serialize_datetime(obj: datetime.datetime) -> Dict[str, Any]:
 
 
 def _deserialize_datetime(state: Dict[str, Any]) -> datetime.datetime:
-    dt = datetime.datetime.fromisoformat(state['iso'])
+    dt = datetime_fromisoformat(state['iso'])
     # 时区信息简单还原：如果 tz 是 UTC 则设置 UTC，否则保持原样
     tz_str = state.get('tz')
     if tz_str and tz_str != 'None':
@@ -106,7 +108,7 @@ def _serialize_date(obj: datetime.date) -> Dict[str, Any]:
 
 
 def _deserialize_date(state: Dict[str, Any]) -> datetime.date:
-    return datetime.date.fromisoformat(state['iso'])
+    return date_fromisoformat(state['iso'])
 
 
 def _serialize_time(obj: datetime.time) -> Dict[str, Any]:
@@ -117,7 +119,7 @@ def _serialize_time(obj: datetime.time) -> Dict[str, Any]:
 
 
 def _deserialize_time(state: Dict[str, Any]) -> datetime.time:
-    t = datetime.time.fromisoformat(state['iso'])
+    t = time_fromisoformat(state['iso'])
     tz_str = state.get('tz')
     if tz_str and tz_str != 'None':
         import datetime as _dt

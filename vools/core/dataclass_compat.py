@@ -11,7 +11,7 @@ dataclass 兼容层 — 统一处理 Python 不同版本的 dataclass 导入
 - is_dataclass(obj)         → 判断
 """
 
-__all__ = ['dataclass', 'field', 'asdict', 'is_dataclass', 'MISSING']
+__all__ = ['dataclass', 'field', 'asdict', 'is_dataclass', 'MISSING', 'FrozenInstanceError']
 
 from typing import Any, Dict, Callable, TypeVar, Optional
 import sys
@@ -31,6 +31,7 @@ if _HAS_DATACLASSES:
     from dataclasses import asdict as _std_asdict
     from dataclasses import is_dataclass as _std_is_dataclass
     from dataclasses import MISSING as _std_MISSING
+    from dataclasses import FrozenInstanceError as _std_FrozenInstanceError
 
     def dataclass(cls: Optional[_T] = None, **kwargs) -> _T:
         """dataclass 装饰器（标准库模式）"""
@@ -42,12 +43,14 @@ if _HAS_DATACLASSES:
     asdict = _std_asdict
     is_dataclass = _std_is_dataclass
     MISSING = _std_MISSING
+    FrozenInstanceError = _std_FrozenInstanceError
 
 else:
     # ── attrs 降级模式 ──
     try:
         from attr import attrs, attrib, asdict as _attr_asdict
         from attr import has as _attr_has
+        from attr.exceptions import FrozenInstanceError as _attr_FrozenInstanceError
     except ImportError:
         msg = (
             "Python < 3.7 detected but 'attrs' package is not installed. "
@@ -92,11 +95,19 @@ else:
         - order: bool      → 忽略（attrs 不支持自动排序）
         """
         frozen = kwargs.pop('frozen', False)
+
+        def _wrap(c):
+            wrapped = attrs(c, frozen=frozen, auto_attribs=True)
+            # 兼容 __post_init__: attrs 用 __attrs_post_init__
+            if hasattr(wrapped, '__post_init__') and not hasattr(wrapped, '__attrs_post_init__'):
+                wrapped.__attrs_post_init__ = wrapped.__post_init__
+            return wrapped
+
         # attrs 的 frozen 默认是 False，等价
         if cls is not None:
-            return attrs(cls, frozen=frozen, auto_attribs=True)
+            return _wrap(cls)
         # 带参装饰器模式: @dataclass(frozen=True)
-        return lambda c: attrs(c, frozen=frozen, auto_attribs=True)
+        return _wrap
 
     def field(*, default=MISSING, default_factory=MISSING, **kwargs) -> Any:
         """
@@ -123,3 +134,5 @@ else:
     def is_dataclass(obj) -> bool:
         """判断是否为 dataclass/attrs 实例"""
         return _attr_has(obj)
+
+    FrozenInstanceError = _attr_FrozenInstanceError

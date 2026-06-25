@@ -20,7 +20,7 @@ import os
 import json
 import tempfile
 from typing import Dict, Any, List, Callable
-from dataclasses import FrozenInstanceError
+from vools.core.dataclass_compat import FrozenInstanceError
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

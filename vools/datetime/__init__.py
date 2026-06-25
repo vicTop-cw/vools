@@ -41,3 +41,11 @@ def __getattr__(name):
         from ..datetime.vdate_class import VDate as vicDate
         return vicDate
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+import sys as _sys
+if _sys.version_info < (3, 7):
+    try:
+        from .vdate_class import VDate as vicDate
+    except Exception:
+        pass
