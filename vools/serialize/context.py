@@ -3,9 +3,11 @@
 
 提供 contextvars.ContextVar 机制，让 __getstate__ 方法感知当前序列化协议。
 Serializer.dumps/loads 在调用后端前设置上下文，调用后重置。
+
+注意：Python 3.6 使用兼容实现，不是 async-safe 的。
 """
 
-import contextvars
+from vools.core.contextvars_compat import ContextVar
 from ..core import dataclass
 from typing import Optional, Any
 __all__ = ['SerializeContext', 'get_context', 'get_protocol', 'set_context', 'reset_context', 'get_current_serializer']
@@ -18,10 +20,8 @@ class SerializeContext:
     serializer: Optional[Any] = None  # Serializer 实例引用（用于 handler 回退）
 
 
-# 使用 contextvars 保证 async-safe
-_ctx: contextvars.ContextVar[Optional[SerializeContext]] = contextvars.ContextVar(
-    'vools_serialize_ctx', default=None
-)
+# 使用 ContextVar 保证线程内上下文隔离
+_ctx = ContextVar('vools_serialize_ctx', default=None)
 
 
 def get_context() -> Optional[SerializeContext]:

@@ -52,7 +52,7 @@ def from_range(start: int, stop: int = None, step: int = 1) -> Callable:
         except Exception as e:
             observer.on_error(e)
         
-        from .observable import Subscription
+        from ..core.observable import Subscription
         return Subscription(lambda: None)
     
     return Observable(subscribe)
@@ -176,7 +176,7 @@ def sample(period: float) -> Callable:
                     task[0].cancel()
                 source_sub.unsubscribe()
             
-            from .observable import Subscription
+            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -306,7 +306,7 @@ def throttle_latest(period: float) -> Callable:
                     task[0].cancel()
                 source_sub.unsubscribe()
             
-            from .observable import Subscription
+            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -457,7 +457,7 @@ def subscribe_on(scheduler) -> Callable:
             
             scheduler.schedule(subscribe_inner)
             
-            from .observable import Subscription
+            from ..core.observable import Subscription
             return Subscription(lambda: None)
         
         return Observable(subscribe)
@@ -636,7 +636,7 @@ def flat_map_latest(fn: Callable[[T], Observable]) -> Callable:
                     inner_sub[0].unsubscribe()
                 source_sub.unsubscribe()
             
-            from .observable import Subscription
+            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -735,7 +735,7 @@ def amb() -> Callable:
                 if winner_sub[0]:
                     winner_sub[0].unsubscribe()
             
-            from .observable import Subscription
+            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -784,7 +784,7 @@ def switch() -> Callable:
                     inner_sub[0].unsubscribe()
                 source_sub.unsubscribe()
             
-            from .observable import Subscription
+            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -800,7 +800,7 @@ class ConnectableObservable(Generic[T]):
     __slots__ = ('_source', '_subject', '_connection', '_ref_count')
     
     def __init__(self, source, subject=None):
-        from .subject import Subject
+        from ..core.subject import Subject
         self._source = source
         self._subject = subject or Subject()
         self._connection = None
@@ -818,7 +818,7 @@ class ConnectableObservable(Generic[T]):
             connection = [None]
             subject = None
             
-            from .subject import Subject
+            from ..core.subject import Subject
             
             def get_subject():
                 nonlocal subject
@@ -843,7 +843,7 @@ class ConnectableObservable(Generic[T]):
                             connection[0] = None
                         subject = None
                 
-                from .observable import Subscription
+                from ..core.observable import Subscription
                 return Subscription(unsubscribe)
             
             from ..core.observable import Observable
@@ -856,7 +856,7 @@ class ConnectableObservable(Generic[T]):
         def operator(source):
             subject = None
             
-            from .subject import Subject
+            from ..core.subject import Subject
             
             def subscribe(observer):
                 nonlocal subject
@@ -1248,7 +1248,7 @@ def cache(duration: float = None, max_size: int = None) -> Callable:
                 if sub in subscriptions:
                     subscriptions.remove(sub)
             
-            from .observable import Subscription
+            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -1325,7 +1325,7 @@ def parallel(max_concurrent: int = 4) -> Callable:
                 executor.shutdown(wait=False)
                 source_sub.unsubscribe()
             
-            from .observable import Subscription
+            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)

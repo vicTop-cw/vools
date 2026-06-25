@@ -32,7 +32,7 @@ import time
 import tkinter as tk
 from collections import deque
 from ctypes import wintypes as wt
-from ....core.dataclass_compat import dataclass
+from ...core.dataclass_compat import dataclass
 from datetime import datetime
 from enum import IntEnum
 from typing import (
