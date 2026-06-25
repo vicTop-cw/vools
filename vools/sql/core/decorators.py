@@ -8,6 +8,7 @@ vools.sql.core.decorators - SQL 装饰器
 import functools
 import inspect
 import typing
+import sys
 
 from .types import SqlTypeMapper
 from .result import ResultSet, Row
@@ -15,6 +16,19 @@ from .result import ResultSet, Row
 
 _FUNC_NAME_ATTR = '_sql_func_name'
 _SQL_INFO_ATTR = '_sql_info'
+
+# Python 3.6 兼容：typing.get_origin/get_args 是 3.8+ 才有的
+if sys.version_info >= (3, 8):
+    _get_origin = typing.get_origin
+    _get_args = typing.get_args
+else:
+    def _get_origin(tp):
+        """获取类型的 origin（兼容 Python 3.6）"""
+        return getattr(tp, '__origin__', None)
+    
+    def _get_args(tp):
+        """获取类型的 args（兼容 Python 3.6）"""
+        return getattr(tp, '__args__', None)
 
 
 def _get_signature_info(func):
@@ -125,8 +139,8 @@ def _convert_result(result, return_type):
     if not isinstance(result, ResultSet):
         return SqlTypeMapper.convert_result(result, return_type)
 
-    origin = typing.get_origin(return_type)
-    args = typing.get_args(return_type)
+    origin = _get_origin(return_type)
+    args = _get_args(return_type)
 
     if return_type is list or origin is list:
         return result.to_list()

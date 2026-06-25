@@ -24,7 +24,7 @@ import subprocess
 import shutil
 import json
 from typing import Dict, List, Optional, Tuple, Any
-from ...core.dataclass_compat import dataclass, field, asdict
+from ..core.dataclass_compat import dataclass, field, asdict
 
 _IS_WINDOWS = platform.system() == 'Windows'
 _IS_LINUX = platform.system() == 'Linux'

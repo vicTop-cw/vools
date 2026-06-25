@@ -36,7 +36,7 @@ import json
 import importlib
 from typing import Dict, List, Optional, Type, Any
 
-from ...core.dataclass_compat import asdict
+from ..core.dataclass_compat import asdict
 
 from .core.config import DialectConfig
 from .core.dialect import Dialect

@@ -2073,7 +2073,7 @@ def lazy_flat_map(lazy_fn: Callable[[T], Any] = None, **kwargs) -> Callable[[Obs
 def seq_bridge(seq_op: Callable) -> Callable[[Observable[T]], Observable[Any]]:
     """Seq 操作桥接器"""
     def operator(source: Observable[T]) -> Observable[Any]:
-        from ..data import Seq
+        from ...data import Seq
         
         def subscribe(observer: Observer[Any]) -> Subscription:
             buf = []
