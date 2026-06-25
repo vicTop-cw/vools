@@ -1,4 +1,4 @@
-﻿"""vools.bridge.swift.compiler - Swift 编译器与桥接实现
+"""vools.bridge.swift.compiler - Swift 编译器与桥接实现
 
 使用 swift 解释器直接运行 .swift 文件，通过 JSON 在 stdin/stdout 传递参数。
 支持 WSL 环境（Windows 上通过 wsl 命令调用）。
@@ -14,7 +14,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
-from vools.bridge._base import LangBridge, FunctionSpec
+from .._base import LangBridge, FunctionSpec
 from .types import PY_TO_SWIFT_TYPE, get_swift_type
 
 _IS_WINDOWS = os.name == 'nt'

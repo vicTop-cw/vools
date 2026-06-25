@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.typescript.compiler - TypeScript/JavaScript 语言桥接编译器实现
 
 提供 TypeScriptBridge 类，继承 LangBridge 抽象基类，实现 TypeScript 特定的
@@ -17,7 +17,7 @@ import inspect
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, Future
-from vools.core.dataclass_compat import dataclass
+from ...core.dataclass_compat import dataclass
 
 from .._base import LangBridge, FunctionSpec, FunctionParser
 

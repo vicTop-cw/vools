@@ -17,7 +17,7 @@ B = TypeVar('B')
 C = TypeVar('C')
 
 # 从 vools.curried 导入共享函数（使用别名映射命名差异）
-from vools.curried import (
+from ..curried import (
     map as curried_map,
     filter as curried_filter,
     reduce as curried_reduce,
@@ -33,7 +33,7 @@ from vools.curried import (
 )
 
 # pipe 从 vools.curried 导入（同名）
-from vools.curried import pipe
+from ..curried import pipe
 
 # ============================================================================
 # decorators 独有的 curried 函数

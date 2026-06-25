@@ -11,7 +11,7 @@ import logging
 import pickle
 import sys
 import time
-from vools.core.dataclass_compat import dataclass, field, asdict
+from ....core.dataclass_compat import dataclass, field, asdict
 from enum import IntEnum
 from typing import (
     Any, Callable, Dict, List, Optional, Tuple,
@@ -804,7 +804,7 @@ class MouseDispatcher:
         tags: Tuple[str, ...] = (),
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        from vools.reactive.core.subject import Subject
+        from ...core.subject import Subject
         self._backend_name: str = ""
         self._backend: Optional[_BaseBackend] = None
         self._filter_self = bool(filter_self)
@@ -1260,7 +1260,7 @@ class _WriteMouseOperator:
                 elif et in ("scroll", "SCROLL"):
                     self._dispatcher.scroll(item.get("delta", 1))
 
-        from vools.reactive import operators as _ops
+        from ..reactive import operators as _ops
         return source.pipe(
             _ops.map(lambda x: (on_next(x) or x))
         )

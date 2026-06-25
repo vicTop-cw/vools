@@ -145,7 +145,7 @@ from .predicate import (
     isinstance_,
     issubclass_,
 )
-from vools.decorators.control import (
+from ..decorators.control import (
     excepts,
     silent,
     suppress,

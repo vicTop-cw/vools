@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.probe - 跨语言编译环境探测工具
 
 提供一键检测本机/WSL/远程主机上已安装的编程语言编译器/运行时，
@@ -24,7 +24,7 @@ import subprocess
 import shutil
 import json
 from typing import Dict, List, Optional, Tuple, Any
-from vools.core.dataclass_compat import dataclass, field, asdict
+from ...core.dataclass_compat import dataclass, field, asdict
 
 _IS_WINDOWS = platform.system() == 'Windows'
 _IS_LINUX = platform.system() == 'Linux'

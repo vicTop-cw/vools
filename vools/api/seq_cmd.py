@@ -11,7 +11,7 @@ from typing import Optional, List, Callable
 import typer
 from typing_extensions import Annotated
 
-from vools.data import Seq
+from ..data import Seq
 
 seq_app = typer.Typer(help="Seq 序列操作命令")
 

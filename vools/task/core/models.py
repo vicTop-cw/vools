@@ -9,8 +9,8 @@ from typing import Optional, Any, Dict, Set
 from datetime import datetime
 import json
 
-from vools.core.dataclass_compat import dataclass, field
-from vools.core.datetime_compat import datetime_fromisoformat
+from ...core.dataclass_compat import dataclass, field
+from ...core.datetime_compat import datetime_fromisoformat
 
 
 class DagValidationError(Exception):

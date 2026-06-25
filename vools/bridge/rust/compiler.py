@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.rust.compiler - Rust 编译器封装
 
 提供 Cargo 项目创建、编译、缓存管理等功能。
@@ -14,8 +14,8 @@ import platform
 from typing import Dict, Optional, List, Any
 from pathlib import Path
 
-from vools.bridge.manager import get_helper
-from vools.bridge._base import LangBridge, FunctionSpec, FunctionParser
+from ..manager import get_helper
+from .._base import LangBridge, FunctionSpec, FunctionParser
 from .templates import generate_lib_code, generate_cargo_toml
 from .types import RustTypeMapper, infer_ctypes_types, convert_args
 

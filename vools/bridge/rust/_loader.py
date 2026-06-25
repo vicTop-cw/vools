@@ -8,7 +8,7 @@ import os
 import ctypes
 from typing import Optional
 
-from vools.bridge.core.loader import SharedLibrary, load_from_path
+from ..core.loader import SharedLibrary, load_from_path
 
 
 def load_rust_dll(dll_path: str) -> Optional[SharedLibrary]:

@@ -1,4 +1,4 @@
-﻿'''
+'''
 vools.bridge.freebasic.compiler - FreeBASIC 动态编译装饰器
 
 使用方式::
@@ -58,8 +58,8 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any, List, Callable, Optional
 
-from vools.bridge.manager import get_helper
-from vools.bridge._base import LangBridge, FunctionSpec, FunctionParser
+from ..manager import get_helper
+from .._base import LangBridge, FunctionSpec, FunctionParser
 from .types import (
     PY_TO_FB_TYPE,
     get_fb_type,

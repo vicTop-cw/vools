@@ -14,7 +14,7 @@ import inspect
 import threading as _threading
 import builtins
 
-from vools.core.asyncio_compat import create_task as _asyncio_create_task
+from ...core.asyncio_compat import create_task as _asyncio_create_task
 from ...decorators import curry, lazy
 from ...functional.placeholder import _
 from ...functional.pipe_ops import P

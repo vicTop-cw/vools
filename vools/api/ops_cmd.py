@@ -11,7 +11,7 @@ from typing import Optional, List, Callable
 import typer
 from typing_extensions import Annotated
 
-from vools.functional import Ops, O
+from ..functional import Ops, O
 
 ops_app = typer.Typer(help="Ops 管道操作命令")
 

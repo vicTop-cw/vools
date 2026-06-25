@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.sys.env_cmd - 环境探测子命令
 
 提供 --path, --python, --nim 选项。
@@ -80,7 +80,7 @@ class EnvCommands:
             print("错误: nim 编译器未找到")
         
         # 检查 Nim 库目录
-        from vools.bridge.core.loader import _LIB_DIR
+        from ..bridge.core.loader import _LIB_DIR
         print(f"\nNim 库目录: {_LIB_DIR}")
         
         if os.path.exists(_LIB_DIR):

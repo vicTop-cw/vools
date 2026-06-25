@@ -359,4 +359,4 @@ def with_logging(logger=None):
 # Result 类型
 # ============================================================================
 
-from vools.functional.result import Result
+from ...functional.result import Result

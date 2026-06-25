@@ -36,9 +36,9 @@ from typing import Set, Dict, List, Optional, Callable, Any
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, Future
 
-from vools.functional import Result
-from vools.task import TaskQueue, TaskStatus
-from vools.task.core.models import Task
+from ...functional import Result
+from ...task import TaskQueue, TaskStatus
+from ..core.models import Task
 
 logger = logging.getLogger(__name__)
 

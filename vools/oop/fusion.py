@@ -181,7 +181,7 @@ def _copy_methods_from_parents(FusedClass: Type, parent_classes: Tuple[Type, ...
 def _apply_rself_if_available(cls: Type) -> Type:
     """尝试为类应用 @rself 装饰器"""
     try:
-        from vools.decorators.rself import rself as rself_decorator
+        from ..decorators.rself import rself as rself_decorator
         return rself_decorator(cls)
     except (ImportError, TypeError):
         pass

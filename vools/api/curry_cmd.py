@@ -10,7 +10,7 @@ from typing import Optional, List, Callable
 import typer
 from typing_extensions import Annotated
 
-from vools.decorators import curry
+from ..decorators import curry
 
 curry_app = typer.Typer(help="Curry 柯里化命令")
 

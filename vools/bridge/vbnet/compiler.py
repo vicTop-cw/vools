@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.vbnet.compiler - VB.NET 动态编译器
 
 提供 @vbnet 装饰器，支持：
@@ -22,8 +22,8 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any, Optional
 
-from vools.bridge.manager import get_helper
-from vools.bridge._base import LangBridge, FunctionSpec
+from ..manager import get_helper
+from .._base import LangBridge, FunctionSpec
 from .types import get_vb_type, get_vb_ctype, infer_vb_argtypes, PY_TO_VB_TYPE, VB_TO_CTYPES
 from .templates import generate_vb_method, generate_vb_class, generate_vbproj
 

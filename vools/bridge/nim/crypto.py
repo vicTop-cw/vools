@@ -6,7 +6,7 @@ import hashlib
 import hmac as _py_hmac
 
 from ._loader import get_nim_lib
-from vools.bridge.core.serialization import csv_deserialize
+from ..core.serialization import csv_deserialize
 
 _nim_lib = get_nim_lib('vools_crypto')
 

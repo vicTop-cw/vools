@@ -24,7 +24,7 @@ import fractions
 import pathlib
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from vools.core.datetime_compat import datetime_fromisoformat, date_fromisoformat, time_fromisoformat
+from ..core.datetime_compat import datetime_fromisoformat, date_fromisoformat, time_fromisoformat
 __all__ = ['register_type', 'get_type_handler', 'get_type_deserializer']
 
 

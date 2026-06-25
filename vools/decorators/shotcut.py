@@ -28,7 +28,7 @@ __all__ = [
 import functools
 import inspect
 import threading
-from vools.cache.sigcache import get_signature
+from ..cache.sigcache import get_signature
 import time
 import warnings
 from typing import Any, Callable, Optional, Tuple, TypeVar, Union
