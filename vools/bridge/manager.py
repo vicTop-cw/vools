@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.manager - 跨语言桥接统一管理器
 
 提供各种外部语言编译器和运行时环境的统一配置、管理和查询。
@@ -97,6 +97,8 @@ class LanguageConfig:
             self.library_suffix = '.so'
         elif _IS_MACOS and self.library_suffix == '':
             self.library_suffix = '.dylib'
+
+    __attrs_post_init__ = __post_init__
 
 
 @dataclass

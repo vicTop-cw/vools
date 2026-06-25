@@ -10,6 +10,7 @@ from datetime import datetime
 import json
 
 from vools.core.dataclass_compat import dataclass, field
+from vools.core.datetime_compat import datetime_fromisoformat
 
 
 class DagValidationError(Exception):
@@ -116,10 +117,10 @@ class Task:
             error_message=data.get("error_message"),
             result=json.loads(data.get("result")) if data.get("result") else None,
             dependencies=set(json.loads(data.get("dependencies", "[]"))),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
-            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else None,
-            started_at=datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None,
-            completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
+            created_at=datetime_fromisoformat(data["created_at"]) if data.get("created_at") else None,
+            updated_at=datetime_fromisoformat(data["updated_at"]) if data.get("updated_at") else None,
+            started_at=datetime_fromisoformat(data["started_at"]) if data.get("started_at") else None,
+            completed_at=datetime_fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
             worker_id=data.get("worker_id"),
-            lease_timeout=datetime.fromisoformat(data["lease_timeout"]) if data.get("lease_timeout") else None,
+            lease_timeout=datetime_fromisoformat(data["lease_timeout"]) if data.get("lease_timeout") else None,
         )

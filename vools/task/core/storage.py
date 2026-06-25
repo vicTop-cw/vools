@@ -145,23 +145,31 @@ class TaskStorage:
                 AND lease_timeout < ?
             """, (now,))
 
-            # 原子领取可用任务
-            cursor = conn.execute("""
+            # 领取可用任务（兼容旧版 SQLite，不使用 RETURNING）
+            # 先查 id，再更新，再查询完整行（在事务内保证原子性）
+            row_cursor = conn.execute("""
+                SELECT id FROM tasks
+                WHERE status = 'PENDING'
+                ORDER BY priority DESC, created_at ASC
+                LIMIT 1
+            """)
+            row = row_cursor.fetchone()
+            if not row:
+                return None
+            task_id = row[0]
+
+            conn.execute("""
                 UPDATE tasks
                 SET status = 'RUNNING',
                     worker_id = ?,
                     lease_timeout = ?,
                     started_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = (
-                    SELECT id FROM tasks
-                    WHERE status = 'PENDING'
-                    ORDER BY priority DESC, created_at ASC
-                    LIMIT 1
-                )
-                RETURNING *
-            """, (worker_id, lease_timeout))
+                WHERE id = ?
+            """, (worker_id, lease_timeout, task_id))
 
+            # 重新查询更新后的行
+            cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
             row = cursor.fetchone()
             if row:
                 return self._row_to_task(row)

@@ -17,7 +17,7 @@ import shutil
 from typing import Optional, Any, Dict, List
 
 from vools.bridge._base import LangBridge, FunctionSpec
-from vools.utils.asyncio_compat import run as asyncio_run
+from vools.core.asyncio_compat import run as asyncio_run
 from .types import PY_TO_ZIG_TYPE, ZIG_TO_CTYPES, get_zig_type, get_zig_ctype
 
 

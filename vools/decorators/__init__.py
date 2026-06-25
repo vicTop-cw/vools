@@ -180,3 +180,11 @@ def __getattr__(name):
         from ..oop.method_extend import extend
         return extend
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+import sys as _sys
+if _sys.version_info < (3, 7):
+    try:
+        from ..oop.method_extend import extend
+    except Exception:
+        pass

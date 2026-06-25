@@ -7,7 +7,7 @@ vools - Python 函数式编程工具集
 import importlib
 from typing import Any
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 

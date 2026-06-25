@@ -14,6 +14,7 @@ import inspect
 import threading as _threading
 import builtins
 
+from vools.core.asyncio_compat import create_task as _asyncio_create_task
 from ...decorators import curry, lazy
 from ...functional.placeholder import _
 from ...functional.pipe_ops import P
@@ -2982,7 +2983,7 @@ def circuit_breaker(threshold: int = 5, reset_timeout: float = 60.0) -> Callable
                 failure_count[0] += 1
                 if failure_count[0] >= threshold:
                     is_open[0] = True
-                    task[0] = asyncio.create_task(asyncio.sleep(reset_timeout))
+                    task[0] = _asyncio_create_task(asyncio.sleep(reset_timeout))
                     task[0].add_done_callback(lambda _: reset())
                 observer.on_error(err)
             
@@ -3149,7 +3150,7 @@ def parallel(max_concurrent: int = 4) -> Callable[[Observable[T]], Observable[T]
             
             def on_next(value):
                 if asyncio.iscoroutine(value):
-                    future = asyncio.create_task(value)
+                    future = _asyncio_create_task(value)
                 else:
                     future = executor.submit(lambda: value)
                 pending.append((value, future))

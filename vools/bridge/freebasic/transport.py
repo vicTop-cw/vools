@@ -11,11 +11,16 @@ vools.bridge.freebasic.transport - 免序列化 Transport 抽象
 - 本模块让 list 直接以 POINTER(c_long) 形式传入，跳过 CSV 中转
 """
 
-from typing import Any, Tuple, Protocol
+from typing import Any, Tuple
 
 import ctypes
 
 from .types import FB_TO_CTYPES, is_array_type
+
+try:
+    from typing import Protocol
+except ImportError:
+    Protocol = object
 
 
 class Transport(object):

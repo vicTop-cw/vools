@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge._base - 跨语言桥接抽象接口 (Lang Bridge)
 
 定义统一的 Lang 接口规范，所有语言桥接模块必须实现此接口。
@@ -59,7 +59,7 @@ from typing import (
     get_type_hints,
 )
 from vools.core.dataclass_compat import dataclass, field
-from vools.utils.asyncio_compat import run as asyncio_run
+from vools.core.asyncio_compat import run as asyncio_run
 
 
 # ============================================================================

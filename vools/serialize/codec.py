@@ -9,6 +9,7 @@ import importlib
 from typing import Any, Dict
 
 from .context import get_protocol, get_current_serializer
+from vools.core.datetime_compat import datetime_fromisoformat, date_fromisoformat
 __all__ = ['vools_preprocess', 'vools_default', 'vools_object_hook', 'post_process_orjson', 'post_process_msgpack']
 
 
@@ -39,10 +40,11 @@ def vools_preprocess(obj: Any) -> Any:
         }
 
     # 2. 检查是否是内置子类且有自定义 __getstate__（排除 object 默认实现）
+    _object_has_getstate = hasattr(object, '__getstate__')
     if (isinstance(obj, _NATIVE_BASE_TYPES)
             and obj_type not in _NATIVE_BASE_TYPES
             and hasattr(obj_type, '__getstate__')
-            and obj_type.__getstate__ is not object.__getstate__):
+            and (not _object_has_getstate or obj_type.__getstate__ is not object.__getstate__)):
 
         state = obj.__getstate__()
         if state is None:
@@ -97,7 +99,10 @@ def vools_default(obj: Any) -> Any:
         }
 
     # 2. 检查对象是否自身支持自定义 __getstate__（排除 object 默认实现）
-    if hasattr(obj_type, '__getstate__') and obj_type.__getstate__ is not object.__getstate__:
+    _object_has_getstate = hasattr(object, '__getstate__')
+    if hasattr(obj_type, '__getstate__') and (
+        not _object_has_getstate or obj_type.__getstate__ is not object.__getstate__
+    ):
         # 调用对象的 __getstate__ 获取状态
         state = obj.__getstate__()
         if state is None:
@@ -281,14 +286,14 @@ def _new_builtin_subclass(cls, base_value: Any, state: Dict[str, Any]) -> Any:
     if issubclass(cls, datetime.datetime):
         fmt = state.get('fmt', '%Y-%m-%d')
         try:
-            dt = datetime.datetime.fromisoformat(base_value)
+            dt = datetime_fromisoformat(base_value)
             return cls(dt, fmt=fmt) if fmt != '%Y-%m-%d' else cls(dt)
         except (ValueError, TypeError):
             return cls(datetime.datetime.now(), fmt=fmt)
 
     if issubclass(cls, datetime.date):
         try:
-            return cls(datetime.date.fromisoformat(base_value))
+            return cls(date_fromisoformat(base_value))
         except (ValueError, TypeError):
             return cls(datetime.date.today())
 

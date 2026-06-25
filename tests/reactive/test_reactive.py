@@ -11,6 +11,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vools.reactive import Observable, Subject, BehaviorSubject, ops
+from vools.core.asyncio_compat import run as asyncio_run
 
 
 def test_observable_basic():
@@ -290,7 +291,7 @@ def test_interval():
         with Observable.interval(0.1).pipe(ops.take(3)).subscribe(on_next=lambda x: result.append(x)) as sub:
             await asyncio.sleep(0.5)
     
-    asyncio.run(test())
+    asyncio_run(test())
     assert result == [0, 1, 2], f"Expected [0,1,2], got {result}"
     print("[OK] interval")
 
@@ -307,7 +308,7 @@ def test_debounce_throttle():
         obs.pipe(ops.debounce(0.1)).subscribe(on_next=lambda x: result.append(x))
         await asyncio.sleep(0.2)
     
-    asyncio.run(test_debounce())
+    asyncio_run(test_debounce())
     assert result == [3], f"Expected [3], got {result}"
     print("[OK] debounce")
     
@@ -317,7 +318,7 @@ def test_debounce_throttle():
         obs.pipe(ops.throttle_first(0.1)).subscribe(on_next=lambda x: result.append(x))
         await asyncio.sleep(0.2)
     
-    asyncio.run(test_throttle())
+    asyncio_run(test_throttle())
     assert result == [1], f"Expected [1], got {result}"
     print("[OK] throttle_first")
 

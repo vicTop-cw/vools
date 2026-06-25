@@ -80,6 +80,15 @@ class SafeExpressionEvaluator:
         if isinstance(node, ast.Constant):
             return node.value
 
+        elif hasattr(ast, 'Num') and isinstance(node, ast.Num):
+            return node.n
+
+        elif hasattr(ast, 'Str') and isinstance(node, ast.Str):
+            return node.s
+
+        elif hasattr(ast, 'NameConstant') and isinstance(node, ast.NameConstant):
+            return node.value
+
         elif isinstance(node, ast.Name):
             if node.id in self.allowed_vars:
                 return self.allowed_vars[node.id]

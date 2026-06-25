@@ -172,8 +172,9 @@ def test_observable_defer():
 def test_observable_from_future():
     """from_future 从已完成的 future 取值"""
     import asyncio
+    from vools.core.asyncio_compat import get_running_loop as _get_running_loop
     try:
-        loop = asyncio.get_running_loop()
+        loop = _get_running_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

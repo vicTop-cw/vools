@@ -8,6 +8,7 @@ from typing import TypeVar, Callable, Optional, Any, Generic, List, Dict, Set, T
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
+from vools.core.asyncio_compat import create_task as _asyncio_create_task
 from ..core.observable import Observable, Observer, Subscription
 __all__ = ['T', 'K', 'V', 'U', 'from_range', 'from_callable', 'from_future', 'start', 'sample', 'skip_last', 'take_last', 'throttle_latest', 'ignore_elements', 'to_map', 'to_set', 'observe_on', 'subscribe_on', 'do_on_next', 'do_on_error', 'do_on_completed', 'time_interval', 'flat_map_latest', 'window', 'amb', 'switch', 'ConnectableObservable', 'backpressure_buffer', 'backpressure_drop', 'backpressure_error', 'backpressure_latest', 'retry_with_backoff', 'circuit_breaker', 'debounce_evolution', 'cache', 'parallel']
 
@@ -166,7 +167,7 @@ def sample(period: float) -> Callable:
                 observer.on_completed()
             
             source_sub = source.subscribe(on_next=on_next, on_error=on_error, on_completed=on_completed)
-            task[0] = asyncio.create_task(emit_sample())
+            task[0] = _asyncio_create_task(emit_sample())
             
             def unsubscribe():
                 nonlocal is_closed
@@ -296,7 +297,7 @@ def throttle_latest(period: float) -> Callable:
                 observer.on_completed()
             
             source_sub = source.subscribe(on_next=on_next, on_error=on_error, on_completed=on_completed)
-            task[0] = asyncio.create_task(emit_latest())
+            task[0] = _asyncio_create_task(emit_latest())
             
             def unsubscribe():
                 nonlocal is_closed
@@ -1056,7 +1057,7 @@ def retry_with_backoff(max_retries: int = None, initial_delay: float = 1.0, max_
                     task[0] = sub
                 
                 if max_retries is None or retry_count[0] < max_retries:
-                    task[0] = asyncio.create_task(retry())
+                    task[0] = _asyncio_create_task(retry())
                 else:
                     observer.on_completed()
             
@@ -1120,7 +1121,7 @@ def circuit_breaker(threshold: int = 5, reset_timeout: float = 60.0) -> Callable
                 failure_count[0] += 1
                 if failure_count[0] >= threshold:
                     is_open[0] = True
-                    task[0] = asyncio.create_task(asyncio.sleep(reset_timeout))
+                    task[0] = _asyncio_create_task(asyncio.sleep(reset_timeout))
                     task[0].add_done_callback(lambda _: reset())
                 observer.on_error(err)
             
@@ -1171,7 +1172,7 @@ def debounce_evolution(due_time: float, estimator: Callable[[T], float] = None) 
                 if estimator:
                     current_due_time[0] = estimator(value)
                 last_value[0] = value
-                task[0] = asyncio.create_task(emit())
+                task[0] = _asyncio_create_task(emit())
             
             def on_completed():
                 nonlocal is_closed
@@ -1295,7 +1296,7 @@ def parallel(max_concurrent: int = 4) -> Callable:
             
             def on_next(value):
                 if asyncio.iscoroutine(value):
-                    future = asyncio.create_task(value)
+                    future = _asyncio_create_task(value)
                 else:
                     future = executor.submit(lambda: value)
                 pending.append((value, future))

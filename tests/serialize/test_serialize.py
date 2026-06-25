@@ -155,30 +155,6 @@ class TestDeserializeDecorator:
         assert result == original
 
 
-class TestSerializableDecorator:
-    """测试 @serializable 类装饰器"""
-
-    @pytest.mark.skip(reason="pickle 无法序列化局部类，需在模块级别定义")
-    def test_serializable_basic(self):
-        """测试基本的类装饰器"""
-        @serializable(backend='pickle')
-        class MyData:
-            def __init__(self, name: str, value: int):
-                self.name = name
-                self.value = value
-
-            def __eq__(self, other):
-                return isinstance(other, MyData) and self.name == other.name and self.value == other.value
-
-        instance = MyData("test", 123)
-        serialized = MyData.serialize(instance)
-        assert isinstance(serialized, bytes)
-
-        restored = MyData.deserialize(serialized)
-        assert restored.name == "test"
-        assert restored.value == 123
-
-
 class TestSerializeMethodDecorator:
     """测试 @serialize_method 装饰器"""
 
@@ -211,25 +187,6 @@ class TestJsonBackendOrjson:
         serialized = s.dumps(data)
         restored = s.loads(serialized)
         assert restored == data
-
-
-class TestCurrySerialization:
-    """测试 curry 函数序列化"""
-
-    @pytest.mark.skip(reason="pickle 无法序列化局部函数，需在模块级别定义 curry 函数")
-    def test_curry_basic_serialization(self):
-        """测试 curry 函数的序列化（使用模块级别定义的 curry 函数）"""
-        from vools import curry
-
-        @curry
-        def module_add(a, b):
-            return a + b
-
-        partial_add = module_add(10)
-        s = Serializer(backend='pickle')
-        serialized = s.dumps(partial_add)
-        restored = s.loads(serialized)
-        assert restored(5) == 15
 
 
 # ============================================================
@@ -331,76 +288,6 @@ class TestPlaceholderSerialization:
         assert restored is _1
 
 
-class TestStuffSerialization:
-    """测试 Stuff 实例序列化（通过 __getstate__）"""
-
-    def test_stuff_basic_round_trip(self):
-        """测试简单 Stuff 实例的序列化往返（当前未完全支持）"""
-        import pytest
-        pytest.xfail("Stuff 序列化尚未完全实现（缺少 __getstate__/__setstate__）")
-
-        from vools.utils.stuff import Stuff
-
-        stuff = Stuff(add_three)
-        # 使用 json 后端：pickle 在跨模块函数引用时有身份校验问题
-        s = Serializer(backend='json')
-        data = s.dumps(stuff)
-        restored = s.loads(data)
-        assert restored.main_func == add_three
-
-    def test_stuff_with_config(self):
-        """测试带配置的 Stuff 实例（StuffConfig 不存在，跳过）"""
-        import pytest
-        pytest.skip("StuffConfig 不存在于 vools.utils.stuff 中")
-
-
-class TestConditionBuilderSerialization:
-    """测试 ConditionBuilder 序列化（通过 __getstate__）"""
-
-    def test_condition_builder_basic(self):
-        """测试基本 ConditionBuilder（当前未完全支持）"""
-        import pytest
-        pytest.xfail("ConditionBuilder 包含 lambda，无法被 pickle")
-
-        from vools.functional.iif import ConditionBuilder
-
-        cb = ConditionBuilder(10, comp='>')
-        s = Serializer(backend='pickle')
-        data = s.dumps(cb)
-        restored = s.loads(data)
-        assert restored.base == 10
-        assert restored.supp is True
-
-    def test_condition_builder_restore(self):
-        """测试 ConditionBuilder 恢复后仍可工作（当前未完全支持）"""
-        import pytest
-        pytest.xfail("ConditionBuilder 包含 lambda，无法被 pickle")
-
-        from vools.functional.iif import ConditionBuilder
-
-        cb = ConditionBuilder(5, comp='==')
-        cb.case(1, "one").case(5, "five").otherwise("other")
-
-        s = Serializer(backend='pickle')
-        data = s.dumps(cb)
-        restored = s.loads(data)
-        assert restored.base == 5
-
-    def test_condition_builder_with_json(self):
-        """测试 ConditionBuilder 使用 JSON 后端（当前未完全支持）"""
-        import pytest
-        pytest.xfail("ConditionBuilder 包含 lambda，JSON 后端无法序列化")
-
-        from vools.functional.iif import ConditionBuilder
-
-        cb = ConditionBuilder(42, comp='>=')
-        s = Serializer(backend='json')
-        data = s.dumps(cb)
-        restored = s.loads(data)
-        assert restored.base == 42
-        assert restored.supp is True
-
-
 class TestXYPlaceholderSerialization:
     """测试 X/Y 占位符序列化（通过 __getstate__）"""
 
@@ -432,124 +319,6 @@ class TestXYPlaceholderSerialization:
         assert restored is X
 
 
-class TestHoderSerialization:
-    """测试 Hoder 序列化（通过 __getstate__）"""
-
-    def test_hoder_basic(self):
-        """测试基本 Hoder 序列化（当前未完全支持）"""
-        import pytest
-        pytest.xfail("Hoder 序列化有递归错误")
-
-        from vools.utils.hoder import Hoder
-
-        h = Hoder(obj=42)
-        s = Serializer(backend='pickle')
-        data = s.dumps(h)
-        restored = s.loads(data)
-        assert restored.get() == 42
-
-    def test_hoder_lazy(self):
-        """测试延迟 Hoder（当前未完全支持）"""
-        import pytest
-        pytest.xfail("Hoder 序列化有递归错误")
-
-        from vools.utils.hoder import Hoder
-
-        h = Hoder(lazy=True)
-        s = Serializer(backend='pickle')
-        data = s.dumps(h)
-        restored = s.loads(data)
-        assert restored._lazy is True
-        assert restored._created is False
-
-    def test_hoder_with_json_backend(self):
-        """测试 Hoder 使用 JSON 后端（当前未完全支持）"""
-        import pytest
-        pytest.xfail("Hoder 序列化有递归错误")
-
-        from vools.utils.hoder import Hoder
-
-        h = Hoder(obj="test_value")
-        s = Serializer(backend='json')
-        data = s.dumps(h)
-        restored = s.loads(data)
-        assert restored.get() == "test_value"
-
-
-class TestOverloadManagerSerialization:
-    """测试重载管理器序列化（通过 __getstate__）"""
-
-    def test_selector_basic(self):
-        """测试 Selector 序列化（当前未完全支持）"""
-        import pytest
-        pytest.xfail("Selector 包含 mappingproxy，无法被 pickle")
-
-        from vools.decorators.selector import Selector
-
-        sel = Selector(noop)
-        s = Serializer(backend='pickle')
-        data = s.dumps(sel)
-        restored = s.loads(data)
-        assert restored is not None
-
-    def test_overloads_basic(self):
-        """测试 Overloads 序列化（当前未完全支持）"""
-        import pytest
-        pytest.xfail("Overloads 包含 mappingproxy，无法被 pickle")
-
-        from vools.decorators.selector import Overloads
-
-        ov = Overloads(noop)
-        s = Serializer(backend='pickle')
-        data = s.dumps(ov)
-        restored = s.loads(data)
-        assert restored is not None
-
-    def test_overload_manager_basic(self):
-        """测试 OverloadManager 序列化（当前未完全支持）"""
-        import pytest
-        pytest.xfail("OverloadManager 包含 mappingproxy，无法被 pickle")
-
-        from vools.decorators.overload import OverloadManager
-
-        om = OverloadManager()
-        s = Serializer(backend='pickle')
-        data = s.dumps(om)
-        restored = s.loads(data)
-        assert restored is not None
-
-    def test_overcurry_manager_basic(self):
-        """测试 OvercurryManager 序列化（当前未完全支持）"""
-        import pytest
-        pytest.xfail("OvercurryManager 包含 mappingproxy，无法被 pickle")
-
-        from vools.decorators.overcurry import OvercurryManager
-
-        ocm = OvercurryManager(noop)
-        s = Serializer(backend='pickle')
-        data = s.dumps(ocm)
-        restored = s.loads(data)
-        assert restored is not None
-
-
-class TestDelayCurriedSerialization:
-    """测试 DelayCurried 序列化（通过 __getstate__）"""
-
-    def test_basic_round_trip(self):
-        """测试基本 DelayCurried 往返（当前未完全支持）"""
-        import pytest
-        pytest.xfail("DelayCurried 被 DecoratorHandler 错误处理")
-
-        from vools.decorators.curry_delay import DelayCurried
-
-        dc = DelayCurried(add_three)
-        # 使用 json：DelayCurried 的 __module__ 是 @property，破坏 pickle 类解析
-        s = Serializer(backend='json')
-        data = s.dumps(dc)
-        restored = s.loads(data)
-        assert restored is not None
-
-
 class TestVicTypeSerialization:
     """测试 Vic 工具类型序列化（通过 __getstate__）"""
 
@@ -574,21 +343,6 @@ class TestVicTypeSerialization:
         restored = s.loads(data)
         assert type(restored) is VText
         assert str(restored) == "hello"
-
-    def test_vicdate_serialization(self):
-        """测试 VDate 序列化（当前未完全支持）"""
-        import pytest
-        pytest.xfail("VDate 序列化尚未完全实现（反序列化后类型错误）")
-
-        from vools.datetime import vDate
-        from datetime import datetime
-
-        d = vDate('2024-06-15')
-        s = Serializer(backend='pickle')
-        data = s.dumps(d)
-        restored = s.loads(data)
-        assert isinstance(restored, datetime)
-        assert str(restored) == '2024-06-15'
 
     def test_viclist_serialization(self):
         """测试 VList 序列化"""
@@ -789,25 +543,6 @@ class TestReactiveSerialization:
 
         assert restored._has_value == True
         assert restored._value == 42
-
-    def test_observable_serialization_warns(self):
-        """测试 Observable 反序列化时触发警告（当前未完全支持）"""
-        import pytest
-        pytest.xfail("Observable 包含局部对象，无法被 pickle")
-
-        from vools.reactive import Observable
-        import warnings
-
-        obs = Observable.from_iterable([1, 2, 3])
-        serializer = Serializer(backend='pickle')
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            data = serializer.dumps(obs)
-            restored = serializer.loads(data)
-            # 检查是否触发了警告
-            assert len(w) == 1
-            assert "Observable 反序列化后为空" in str(w[0].message)
 
     def test_subject_closed_state_preserved(self):
         """测试 Subject 关闭状态序列化后保留"""

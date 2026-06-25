@@ -19,6 +19,7 @@ vools.bridge.core.sigcache - Bridge 子包签名缓存机制
 
 import inspect
 import logging
+import weakref
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Optional, List
 
@@ -32,6 +33,7 @@ class BridgeSigCache:
     """Bridge 签名缓存类，每种语言桥接可以有自己的缓存实例。
 
     使用 OrderedDict 实现 LRU 淘汰策略，按语言命名空间隔离缓存。
+    使用 weakref 跟踪函数对象生命周期，避免 id 复用导致的缓存错误命中。
 
     Attributes:
         lang: 语言名称，用于标识缓存命名空间。
@@ -51,8 +53,60 @@ class BridgeSigCache:
         self._annotations_cache: OrderedDict = OrderedDict()
         self._body_cache: OrderedDict = OrderedDict()
         self._spec_cache: OrderedDict = OrderedDict()
+        self._weak_refs: Dict[int, weakref.ref] = {}
         self._hits = 0
         self._misses = 0
+
+    def _on_object_dead(self, ref: weakref.ref) -> None:
+        """弱引用回调：当被引用的函数对象被回收时，清理对应缓存。
+
+        Args:
+            ref: 已失效的弱引用对象。
+        """
+        dead_id = None
+        for obj_id, r in list(self._weak_refs.items()):
+            if r is ref:
+                dead_id = obj_id
+                break
+        if dead_id is not None:
+            self._weak_refs.pop(dead_id, None)
+            self._sig_cache.pop(dead_id, None)
+            self._annotations_cache.pop(dead_id, None)
+            for key in list(self._body_cache.keys()):
+                if isinstance(key, tuple) and key[0] == dead_id:
+                    self._body_cache.pop(key, None)
+            for key in list(self._spec_cache.keys()):
+                if isinstance(key, tuple) and key[0] == dead_id:
+                    self._spec_cache.pop(key, None)
+
+    def _register_weakref(self, func: Callable) -> None:
+        """注册函数对象的弱引用，用于检测对象回收。
+
+        Args:
+            func: 要跟踪的函数对象。
+        """
+        obj_id = id(func)
+        if obj_id not in self._weak_refs:
+            try:
+                ref = weakref.ref(func, self._on_object_dead)
+                self._weak_refs[obj_id] = ref
+            except TypeError:
+                pass
+
+    def _is_valid(self, func: Callable, obj_id: int) -> bool:
+        """检查缓存键对应的对象是否仍然有效。
+
+        Args:
+            func: 当前函数对象（用于验证）。
+            obj_id: 缓存键（id）。
+
+        Returns:
+            True 如果缓存有效，False 如果已失效。
+        """
+        if obj_id not in self._weak_refs:
+            return False
+        ref = self._weak_refs[obj_id]
+        return ref() is func
 
     def _cache_get(self, cache: OrderedDict, key: int) -> Any:
         """从 OrderedDict 缓存中获取值并更新 LRU 顺序。
@@ -100,13 +154,13 @@ class BridgeSigCache:
             inspect.Signature 对象。
         """
         key = id(func)
-        try:
+        if key in self._sig_cache and self._is_valid(func, key):
             return self._cache_get(self._sig_cache, key)
-        except KeyError:
-            self._misses += 1
-            sig = inspect.signature(func)
-            self._cache_set(self._sig_cache, key, sig)
-            return sig
+        self._misses += 1
+        self._register_weakref(func)
+        sig = inspect.signature(func)
+        self._cache_set(self._sig_cache, key, sig)
+        return sig
 
     def has_signature(self, func: Callable[..., Any]) -> bool:
         """检查函数签名是否已缓存。
@@ -117,7 +171,8 @@ class BridgeSigCache:
         Returns:
             True 如果已缓存，否则 False。
         """
-        return id(func) in self._sig_cache
+        key = id(func)
+        return key in self._sig_cache and self._is_valid(func, key)
 
     # ------------------------------------------------------------------
     # 类型注解缓存
@@ -137,16 +192,16 @@ class BridgeSigCache:
         from typing import get_type_hints
 
         key = id(func)
-        try:
+        if key in self._annotations_cache and self._is_valid(func, key):
             return self._cache_get(self._annotations_cache, key)
-        except KeyError:
-            self._misses += 1
-            try:
-                annotations = get_type_hints(func)
-            except Exception:
-                annotations = getattr(func, '__annotations__', {}) or {}
-            self._cache_set(self._annotations_cache, key, annotations)
-            return annotations
+        self._misses += 1
+        self._register_weakref(func)
+        try:
+            annotations = get_type_hints(func)
+        except Exception:
+            annotations = getattr(func, '__annotations__', {}) or {}
+        self._cache_set(self._annotations_cache, key, annotations)
+        return annotations
 
     def has_annotations(self, func: Callable[..., Any]) -> bool:
         """检查函数类型注解是否已缓存。
@@ -157,7 +212,8 @@ class BridgeSigCache:
         Returns:
             True 如果已缓存，否则 False。
         """
-        return id(func) in self._annotations_cache
+        key = id(func)
+        return key in self._annotations_cache and self._is_valid(func, key)
 
     # ------------------------------------------------------------------
     # 函数体缓存
@@ -182,13 +238,13 @@ class BridgeSigCache:
 
         cache_key = (id(func), _hash_args(args, kwargs))
 
-        try:
+        if cache_key in self._body_cache and self._is_valid(func, id(func)):
             return self._cache_get(self._body_cache, cache_key)
-        except KeyError:
-            self._misses += 1
-            body = _extract_body(func, args, kwargs)
-            self._cache_set(self._body_cache, cache_key, body)
-            return body
+        self._misses += 1
+        self._register_weakref(func)
+        body = _extract_body(func, args, kwargs)
+        self._cache_set(self._body_cache, cache_key, body)
+        return body
 
     def has_body(self, func: Callable[..., Any], args: tuple = (), kwargs: Optional[Dict[str, Any]] = None) -> bool:
         """检查函数体是否已缓存。
@@ -204,7 +260,7 @@ class BridgeSigCache:
         if kwargs is None:
             kwargs = {}
         cache_key = (id(func), _hash_args(args, kwargs))
-        return cache_key in self._body_cache
+        return cache_key in self._body_cache and self._is_valid(func, id(func))
 
     # ------------------------------------------------------------------
     # FunctionSpec 缓存
@@ -228,32 +284,32 @@ class BridgeSigCache:
 
         cache_key = (id(func), _hash_args(args, kwargs))
 
-        try:
+        if cache_key in self._spec_cache and self._is_valid(func, id(func)):
             return self._cache_get(self._spec_cache, cache_key)
-        except KeyError:
-            self._misses += 1
-            from .._base import FunctionSpec
+        self._misses += 1
+        self._register_weakref(func)
+        from .._base import FunctionSpec
 
-            name = func.__name__
-            annotations = self.get_annotations(func)
-            sig = self.get_signature(func)
+        name = func.__name__
+        annotations = self.get_annotations(func)
+        sig = self.get_signature(func)
 
-            defaults = {}
-            for param_name, param in sig.parameters.items():
-                if param.default is not inspect.Parameter.empty:
-                    defaults[param_name] = param.default
+        defaults = {}
+        for param_name, param in sig.parameters.items():
+            if param.default is not inspect.Parameter.empty:
+                defaults[param_name] = param.default
 
-            body = self.get_body(func, args, kwargs)
+        body = self.get_body(func, args, kwargs)
 
-            spec = FunctionSpec(
-                name=name,
-                annotations=annotations,
-                args=args,
-                defaults=defaults,
-                body=body,
-            )
-            self._cache_set(self._spec_cache, cache_key, spec)
-            return spec
+        spec = FunctionSpec(
+            name=name,
+            annotations=annotations,
+            args=args,
+            defaults=defaults,
+            body=body,
+        )
+        self._cache_set(self._spec_cache, cache_key, spec)
+        return spec
 
     def has_spec(self, func: Callable[..., Any], args: tuple = (), kwargs: Optional[Dict[str, Any]] = None) -> bool:
         """检查 FunctionSpec 是否已缓存。
@@ -269,7 +325,7 @@ class BridgeSigCache:
         if kwargs is None:
             kwargs = {}
         cache_key = (id(func), _hash_args(args, kwargs))
-        return cache_key in self._spec_cache
+        return cache_key in self._spec_cache and self._is_valid(func, id(func))
 
     # ------------------------------------------------------------------
     # 缓存管理

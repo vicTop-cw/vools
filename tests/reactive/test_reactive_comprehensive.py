@@ -18,6 +18,7 @@ from vools.reactive import (
     ops, schedulers
 )
 from vools.reactive.core.connectable import publish, replay, share
+from vools.core.asyncio_compat import run as asyncio_run
 
 
 class TestObservableEdgeCases:
@@ -502,7 +503,7 @@ class TestTimeOperators:
             ) as sub:
                 await asyncio.sleep(0.2)
         
-        asyncio.run(run())
+        asyncio_run(run())
         assert results == [0, 1, 2]
     
     def test_timer_single(self):
@@ -512,7 +513,7 @@ class TestTimeOperators:
             Observable.timer(0.05).subscribe(on_next=lambda x: results.append(x))
             await asyncio.sleep(0.1)
         
-        asyncio.run(run())
+        asyncio_run(run())
         assert results == [0]
     
     def test_timer_periodic(self):
@@ -524,7 +525,7 @@ class TestTimeOperators:
             ) as sub:
                 await asyncio.sleep(0.2)
         
-        asyncio.run(run())
+        asyncio_run(run())
         assert results == [0, 1, 2]
     
     def test_debounce_basic(self):
@@ -535,7 +536,7 @@ class TestTimeOperators:
             obs.pipe(ops.debounce(0.1)).subscribe(on_next=lambda x: results.append(x))
             await asyncio.sleep(0.2)
         
-        asyncio.run(run())
+        asyncio_run(run())
         assert results == [3]
     
     def test_throttle_first_basic(self):
@@ -546,7 +547,7 @@ class TestTimeOperators:
             obs.pipe(ops.throttle_first(0.1)).subscribe(on_next=lambda x: results.append(x))
             await asyncio.sleep(0.2)
         
-        asyncio.run(run())
+        asyncio_run(run())
         assert results == [1]
 
 
@@ -616,15 +617,16 @@ class TestSchedulers:
     
     def test_asyncio_scheduler(self):
         """测试AsyncIOScheduler（使用call_soon_threadsafe确保在事件循环中执行）"""
+        from vools.core.asyncio_compat import get_running_loop as _get_running_loop
         results = []
         scheduler = schedulers.AsyncIOScheduler()
         
         async def run():
-            loop = asyncio.get_running_loop()
+            loop = _get_running_loop()
             loop.call_soon_threadsafe(lambda: results.append(1))
             await asyncio.sleep(0.01)
         
-        asyncio.run(run())
+        asyncio_run(run())
         assert results == [1]
 
 
