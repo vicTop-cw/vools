@@ -20,6 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Operating System :: Microsoft :: Windows",
@@ -67,6 +68,12 @@ cli = [
     "typing-extensions>=4.0.0",
     "fire>=0.5.0",
 ]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.0",
+    "pymdown-extensions>=10.0",
+    "mkdocs-minify-plugin>=0.8",
+]
 
 [project.scripts]
 vools = "vools.__main__:main"
@@ -79,39 +86,80 @@ vools = "vools.__main__:main"
 # ============ setuptools: 自动发现所有包 ============
 [tool.setuptools.packages.find]
 include = ["vools*"]
-exclude = ["vools.__pycache__", "vools.*.__pycache__"]
+exclude = [
+    "vools.__pycache__",
+    "vools.*.__pycache__",
+    "vools.dll32._python32",
+    "vools.dll32._python32.*",
+    "vools.dll32._dlls",
+    "vools.dll32._dlls.*",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "vools.__version__" }
 
 [tool.setuptools.package-data]
-"vools" = ["config.template.py", "*.md", "lib/*.dll", "lib/linux/*.so"]
+"vools" = [
+    "config.template.py",
+    "*.md",
+    "lib/*.dll",
+    "lib/*.so",
+    "lib/windows/*.dll",
+    "lib/linux/*.so",
+    "xl/_dlls/*.dll",
+]
+"vools.dll32" = [
+    "_dlls/*.dll",
+    "_dlls/*.tlb",
+    "_dlls/*.ocx",
+    "_python32/python.exe",
+    "_python32/pythonw.exe",
+    "_python32/python3.dll",
+    "_python32/python3*.dll",
+    "_python32/python3*.pyd",
+    "_python32/python3*.zip",
+    "_python32/python3*._pth",
+    "_python32/vcruntime140.dll",
+    "_python32/sqlite3.dll",
+    "_python32/pyexpat.pyd",
+    "_python32/select.pyd",
+    "_python32/unicodedata.pyd",
+    "_python32/winsound.pyd",
+    "_python32/_asyncio.pyd",
+    "_python32/_bz2.pyd",
+    "_python32/_ctypes.pyd",
+    "_python32/_decimal.pyd",
+    "_python32/_distutils_findvs.pyd",
+    "_python32/_elementtree.pyd",
+    "_python32/_hashlib.pyd",
+    "_python32/_lzma.pyd",
+    "_python32/_msi.pyd",
+    "_python32/_multiprocessing.pyd",
+    "_python32/_overlapped.pyd",
+    "_python32/_socket.pyd",
+    "_python32/_sqlite3.pyd",
+    "_python32/_ssl.pyd",
+    "_python32/__init__.py",
+    "_python32/python32_launcher.py",
+]
+
+[tool.setuptools.exclude-package-data]
+"vools.dll32" = [
+    "_python32/Lib/**/*",
+    "_python32/Lib/*",
+    "_python32/**/__pycache__/*",
+    "_python32/**/*.pyc",
+    "_python32/**/*.pyo",
+]
 
 # ============ pytest ============
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# 默认只运行根级测试（失败/未归档的测试）
-# 通过的测试已归档到子目录：core/data/datetime/decorators/functional/reactive/curried/oop/bridge/serialize/task/other
-# 如需运行全部归档测试，使用: pytest tests/core/ 或 pytest tests/reactive/
-ignore = [
-    "tests/core",
-    "tests/data",
-    "tests/datetime",
-    "tests/decorators",
-    "tests/functional",
-    "tests/reactive",
-    "tests/curried",
-    "tests/oop",
-    "tests/bridge",
-    "tests/serialize",
-    "tests/task",
-    "tests/other",
-    "tests/monitoring",
-    "tests/__rust__",
-    "tests/__persist__",
-    "tests/__pycache__",
-]
-addopts = "--tb=short -q"
+# 默认运行纯 Python 核心测试：functional, decorators, data, curried, oop, core, serialize, task, datetime, utils, reactive（不含 monitoring）
+# 默认不运行（需要外部资源/平台特定）：bridge, dll32, xl, monitoring, reactive/monitoring, benchmarks, archive, other
+# 如需运行全部测试，使用: pytest --override-ini="addopts=--tb=short -q"
+# 如需运行特定子目录，使用: pytest tests/bridge/ 或 pytest tests/reactive/
+addopts = "--tb=short -q --ignore=tests/bridge --ignore=tests/dll32 --ignore=tests/xl --ignore=tests/monitoring --ignore=tests/reactive/monitoring --ignore=tests/benchmarks --ignore=tests/archive --ignore=tests/other --ignore=tests/__rust__ --ignore=tests/__persist__ --ignore=tests/__pycache__"
 markers = [
     "integration: 标记集成测试（依赖外部资源，如剪贴板、文件系统、键鼠）",
     "windows_only: 仅在 Windows 上可运行的测试",

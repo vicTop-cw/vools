@@ -1,0 +1,137 @@
+# vools 文档站点配置
+# MkDocs 配置文件
+
+site_name: vools - Python 函数式编程工具集
+site_description: 一个强大的 Python 函数式编程工具集，提供装饰器、函数式编程、响应式编程、多语言桥接等
+site_author: Victor
+site_url: https://vicTop-cw.github.io/vools/
+
+repo_name: vicTop-cw/vools
+repo_url: https://github.com/vicTop-cw/vools
+
+theme:
+  name: material
+  language: zh
+  palette:
+    - scheme: default
+      primary: blue
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: 切换到深色模式
+    - scheme: slate
+      primary: blue
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch
+        name: 切换到浅色模式
+  font:
+    text: 思源黑体
+    code: 思源黑体
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search:
+      lang:
+        - en
+        - ja
+        - zh
+  - minify:
+      minify_html: true
+      minify_js: true
+      minify_css: true
+      htmlmin_opts:
+        remove_comments: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format ''
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - attr_list
+  - md_in_html
+  - def_list
+  - footnotes
+
+nav:
+  - 首页: index.md
+  - 入门:
+    - 安装: getting-started/installation.md
+    - 快速开始: getting-started/quickstart.md
+  - 核心功能:
+    - 概述: core/index.md
+    - 装饰器: core/decorators.md
+    - 占位符: core/placeholder.md
+    - 函数重载: core/overload.md
+    - 柯里化: core/curry.md
+    - 缓存装饰器: core/memoize.md
+  - 函数式编程:
+    - 概述: functional/index.md
+    - 管道操作: functional/pipe.md
+    - Seq 序列: functional/seq.md
+    - Box 包装器: functional/box.md
+    - Result 类型: functional/result.md
+  - 响应式编程:
+    - 概述: reactive/index.md
+    - Observable: reactive/observable.md
+    - 操作符: reactive/operators.md
+    - 系统监控: reactive/monitoring.md
+  - 数据处理:
+    - 概述: data/index.md
+    - VList: data/vlist.md
+    - VText: data/vtext.md
+    - VDate: data/vdate.md
+  - 多语言桥接:
+    - 概述: bridge/index.md
+    - Rust 桥接: bridge/rust.md
+    - Nim 桥接: bridge/nim.md
+    - Go 桥接: bridge/go.md
+    - 其他语言: bridge/others.md
+  - SQL 工具:
+    - 概述: sql/index.md
+    - SQLite: sql/sqlite.md
+    - Spark: sql/spark.md
+  - 附录:
+    - 更新日志: appendix/changelog.md
+    - 常见问题: appendix/faq.md
+    - 性能基准: appendix/benchmark.md
+    - 平台限制: appendix/platform.md
+    - 贡献指南: appendix/contribute.md
+  - API 参考: api/reference.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/vicTop-cw/vools
+  generator: false
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+
+extra_css:
+  - stylesheets/extra.css
+
+copyright: Copyright &copy; 2024-2026 Victor
