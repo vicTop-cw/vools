@@ -1,0 +1,112 @@
+/* vools 文档站点自定义样式 */
+
+/* 代码块样式增强 */
+.highlight pre {
+    border-radius: 8px;
+    padding: 16px;
+}
+
+/* 选项卡样式 */
+.md-typeset .tabbed-code > .tabbed-labels {
+    background: #f5f5f5;
+    border-radius: 8px 8px 0 0;
+}
+
+.md-typeset .tabbed-code > .tabbed-content {
+    border-radius: 0 0 8px 8px;
+}
+
+/* 提示框样式 */
+.admonition {
+    border-radius: 8px;
+    margin: 16px 0;
+}
+
+/* 表格样式 */
+.md-typeset table:not([class]) {
+    font-size: 0.85rem;
+}
+
+.md-typeset table:not([class]) th {
+    background: #f5f5f5;
+}
+
+/* 导航栏增强 */
+.md-header {
+    background: linear-gradient(135deg, #1976D2 0%, #1565C0 100%);
+}
+
+/* 搜索框增强 */
+.md-search__input {
+    border-radius: 20px;
+}
+
+/* 侧边栏增强 */
+.md-nav__item--active > .md-nav__link {
+    font-weight: bold;
+    color: #1976D2;
+}
+
+/* 卡片样式 */
+.feature-card {
+    background: #fafafa;
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+    border: 1px solid #e0e0e0;
+}
+
+.feature-card:hover {
+    border-color: #1976D2;
+    box-shadow: 0 4px 12px rgba(25, 118, 210, 0.1);
+}
+
+/* 徽章样式 */
+.badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin: 4px;
+}
+
+.badge-success {
+    background: #4CAF50;
+    color: white;
+}
+
+.badge-info {
+    background: #2196F3;
+    color: white;
+}
+
+.badge-warning {
+    background: #FF9800;
+    color: white;
+}
+
+/* 平台标记样式 */
+.platform-windows {
+    color: #0078D4;
+}
+
+.platform-macos {
+    color: #000000;
+}
+
+.platform-linux {
+    color: #FCC624;
+}
+
+/* 代码高亮行增强 */
+.highlight .linenos {
+    user-select: none;
+}
+
+/* 响应式调整 */
+@media screen and (max-width: 768px) {
+    .feature-card {
+        padding: 16px;
+    }
+}
