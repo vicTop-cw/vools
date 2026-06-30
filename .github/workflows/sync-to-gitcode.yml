@@ -1,0 +1,20 @@
+name: Sync to GitCode
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  sync-to-gitcode:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync to GitCode
+        uses: wearerequired/git-mirror-action@v1
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.GITCODE_SSH_PRIVATE_KEY }}
+        with:
+          source-repo: "git@github.com:vicTop-cw/vools.git"
+          destination-repo: "git@gitcode.com:VictorTop/vools.git"
