@@ -33,6 +33,14 @@ class Book:
             self._handle = self._dll.xlCreateXMLBookCA()
         else:
             self._handle = self._dll.xlCreateBookCA()
+
+        # 自动注册 LibXL，解除 trial 版本限制
+        self._dll.xlBookSetKeyA(
+            self._handle,
+            _encode_str('vic'),
+            _encode_str('windows-26252f000ac1ef056ab26e64aexdg1zb')
+        )
+
         self._sheets = []
         self._formats = []
         self._fonts = []
