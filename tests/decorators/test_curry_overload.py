@@ -1,9 +1,4 @@
 """测试 curry 和 overload 装饰器"""
-
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools import curry, overload
 from vools.decorators import strict, curry as curry_decorator
 from vools.decorators.overload import (

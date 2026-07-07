@@ -55,6 +55,9 @@ from .overloads import overloads
 # rself 装饰器
 from .rself import rself
 
+# bridge 装饰器
+from .bridge_decorator import bridge, BridgeRegistry
+
 # 柯里化函数
 from .curried import (
     curried_map,
@@ -151,6 +154,10 @@ __all__ = [
 
     # rself 装饰器
     'rself',
+
+    # bridge 装饰器
+    'bridge',
+    'BridgeRegistry',
 
     # 柯里化函数
     'curried_map',

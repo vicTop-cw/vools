@@ -30,9 +30,13 @@ _IS_LINUX = _PLATFORM == 'Linux'
 _LOADED_LIBS = {}
 _LOAD_LOCK = threading.Lock()
 
-_LIB_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'lib')
-if _IS_LINUX:
-    _LIB_DIR = os.path.join(_LIB_DIR, 'linux')
+_lib_base = os.path.join(os.path.dirname(__file__), '..', '..', 'lib')
+if _IS_WINDOWS:
+    _LIB_DIR = os.path.join(_lib_base, 'windows')
+elif _IS_LINUX:
+    _LIB_DIR = os.path.join(_lib_base, 'linux')
+else:
+    _LIB_DIR = _lib_base
 _LIB_DIR = os.path.abspath(_LIB_DIR)
 
 # 初始化时设置所有语言的运行时环境
@@ -177,6 +181,8 @@ class LibraryLoader:
 
     def _find_lib(self, name):
         """查找共享库路径"""
+        if name is None:
+            return None
         if _IS_WINDOWS:
             for ext in ('.dll', '.so', '.pyd'):
                 path = os.path.join(_LIB_DIR, name + ext)

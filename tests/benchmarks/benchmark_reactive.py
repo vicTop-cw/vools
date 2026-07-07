@@ -9,9 +9,6 @@ import sys
 import os
 import time
 import asyncio
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 def test_vools_reactive():
     """测试 vools-reactive"""
     from vools.reactive import Observable, ops

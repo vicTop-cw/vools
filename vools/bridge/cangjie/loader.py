@@ -19,14 +19,14 @@ _IS_LINUX = platform.system() == 'Linux'
 # 仓颉运行时路径
 _CJ_RUNTIME_PATHS = []
 if _IS_WINDOWS:
-    # 尝试查找仓颉 SDK 路径
     cj_sdk_paths = [
-        r'E:\CangJie_Sdk\cangjie-sdk-windows-x64-1.0.0\cangjie\runtime\lib\windows_x86_64_llvm',
-        r'E:\CangJie_Sdk\cangjie-sdk-windows-x64-1.0.0\cangjie\lib',
-        r'E:\CangJie_Sdk\cangjie-sdk-windows-x64-1.0.0\cangjie\bin',
+        os.environ.get('CANGJIE_SDK_PATH'),
+        os.path.join(os.path.dirname(__file__), 'runtime', 'lib', 'windows_x86_64_llvm'),
+        os.path.join(os.path.dirname(__file__), 'runtime', 'lib'),
+        os.path.join(os.path.dirname(__file__), 'runtime', 'bin'),
     ]
     for p in cj_sdk_paths:
-        if os.path.exists(p):
+        if p and os.path.exists(p):
             _CJ_RUNTIME_PATHS.append(p)
 
 # 设置 DLL 搜索路径

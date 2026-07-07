@@ -8,9 +8,6 @@ import sys
 import os
 import asyncio
 import tempfile
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools.bridge.freebasic import FbcBridge
 from vools.core.asyncio_compat import run as asyncio_run
 

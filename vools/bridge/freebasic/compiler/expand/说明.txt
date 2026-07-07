@@ -1,0 +1,54 @@
+文件夹说明：
+
+Inc              源码库或头文件，基础部分已经引用，其它需要引用 #Include Once "文件名.inc"
+Inc/Afx          WinFBX 源码库， 基础部分已经引用，其它需要引用 #Include Once "afx/文件名.inc"
+lib/32           静态库分64位和32位，放入不同的文件夹  
+lib/64           引用 #inclib "名称" 即是 lib名称.a （注意：引用时只打中间的名称，前后FB编译器自己加的）
+                 Lib名称.a
+                 Lib名称.dll.a（Windows）
+                 名称.dll（Windows）
+                 Lib名称.so（Linux）
+                 静态库一般都是 INC 库里定义了，所以复制文件到 32 或 64 文件夹即可。
+
+=================== VFB 修改或增补内容 ==================
+lib\win32\libLZMA.a       解压与压缩库，对应函数库 LzmaDecode LzmaEncode 
+          Libcryptohash.a 字符算法库，无64位库，对应函数库 Base64 CRC32 SHA256      
+          libwim.dll.a  libxml2.a  libwinpthread.a   libpthread.a   WIM 库
+lib\win64\liblzma.a      解压与压缩库 ，对应函数库 LzmaDecode LzmaEncode     
+          libwim.dll.a  libxml2.a  libwinpthread.a   libpthread.a   WIM 库
+          
+Inc/inc                   其它自己加的头文件或源码库，包含上面 压缩库和字符算法库的头文件
+
+修改 Inc/Afx/AfxWin.inc   修改 AfxScaleX AfxScaleY  AfxUnScaleX AfxUnScaleY 函数，增加缓存，重复使用时比快百倍。
+修正 Inc/Afx/AfxWin.inc   AfxSaveFileDialog 指定窗口句柄未使用的问题，在 1080 行增加    ofn.hWndOwner         = hwndOwner 
+修正 Inc/Afx/AfxWin.inc   1205、1256行编译警告 cast(LPWSTR, RT_RCDATA)
+修正 Inc/Afx/AfxWin.inc    AfxGetFileName  ，当没有扩展名返回空字符的问题
+修正 Inc/Afx/CRegExp.inc  与帮助不符合， MatchesCount 改为：MatchCount  SUBMatchesCount 改为：SUBMatchCount  
+修正 Inc/Afx/CWebCtx.inc  无法在VFB里使用的问题（增加默认构造函数 空的 DECLARE CONSTRUCTOR  即可 ）
+修正 Inc/afx/AfxRichEdit.inc  1167行，编译警告 第3个参数类型  hResInfo = FindResourceW(hInstance, wszResourceName,cast(LPCWSTR,RT_RCDATA))
+修正 Inc/afx/AfxStr.inc 1445行 1471行 在FB编译器1.10版报错的问题。
+
+移除 对打印机调用DLL，修改以下内容（因为很少遇到需要打印机的情况。代码洁癖派要求。）
+     AfxGdiPlus.inc  23行，注销对 winspool.bi 引用，就不会加载打印相关DLL了。
+                     876行 注销函数 AfxGdipPrintHBITMAP  这是打印位图，
+     CMemBmp.inc     42、388行，注销 CMemBmp.PrintBitmap 打印位图
+修改 inc\Afx\AfxWin.inc  3064行，超过15号字开启字体反锯齿   tlfw.lfQuality = IIf(lPointSize>15,ANTIALIASED_QUALITY,DEFAULT_QUALITY)  
+                         31行，AfxMsg 函数，全部改用 cwstr 这样就支持所有类型变量。
+                         修改 AfxCreateFont 函数，支持修改默认字符集。
+                         修复 模块里需多字符处理写错的问题，修改全部字符为 CWSTR
+修改 inc\Afx\CWindow.inc 424行，窗口类名改为：VFBWindowClass
+                         75\690\1725 行 取消 RichEdit 的MSFTEDIT.DLL 每次显示和关闭窗口时加载和卸载，造成一些系统中发生崩溃现象。
+                         414行 CWindow_RegisterClass 函数，修正同个窗口用同个窗口类名也要重新注册造成失败，无法创建窗口的问题。
+                         所有WSTRING 参数改为 CWSTR，避免非中文系统无法编译出中文名窗口。
+修改 inc\Afx\CWStr.inc  支持所有数值类型输入,  新增 Cwstr 输出STRING类型函数，如 a=c.aStr  以及直接赋值给A字符  
+                        支持修改默认 字符代码页 
+                        支持Boolean 类型 
+                        修正 .utf8 属性，WCharToUTF 第3个参数为 m_BufferLen/2   
+                         修正 CWstr.Clear 里，在参数传递空字符串时，特殊情况下发生 m_pBuffer 为空，造成崩溃。加个判断解决。      
+修正 inc\Afx\AfxCOM.inc 1004行，报模糊类型的错误，改为：cws = *CPtr(WString Ptr,pVarin->pbstrVal) 
+移除 inc\Afx\CPropVar.inc 里 AfxMSG 定义
+            \CVar.inc     里 AfxMSG 定义 
+修改 inc\Afx\AfxStr.inc  修改所有参数 WString 为 Cwstr ，避免使用A字符参数时发生乱码问题。
+修改 inc\Afx\CDispInvoke.inc  修改 this.DispInvoke 里的参数，在编译器 1.9.x 下会报错。
+                                                  1200 行 Dim vArgs(1 To 16)   原是 1 to 15 错误
+            

@@ -1,11 +1,6 @@
 """
 extend.py / clone 装饰器单元测试
 """
-
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import unittest
 from vools.oop import clone
 

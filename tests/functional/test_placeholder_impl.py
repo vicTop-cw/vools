@@ -17,10 +17,6 @@ import sys
 import os
 import pickle
 import json
-
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
-
 from vools.functional.placeholder_impl import (
     Z,
     Expr, Placeholder, Attr, Call, GetItem,

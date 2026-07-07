@@ -12,10 +12,11 @@ vools.sys - 外部系统资源轻量桥接子包
     compile_cmd: 编译 CLI 子命令
     run_cmd: 运行 CLI 子命令
     env_cmd: 环境探测 CLI 子命令
+    env: get_env 系统环境变量读取（PowerShell/Shell 加速）
     fire_app: 基于 Python Fire 的 CLI 入口
 
 用法：
-    from vools.sys import exe, dll, SysCLI
+    from vools.sys import exe, dll, SysCLI, get_env
 
     # @exe 装饰器
     @exe("echo")
@@ -28,10 +29,14 @@ vools.sys - 外部系统资源轻量桥接子包
     def add(a: int, b: int) -> int:
         pass
     result = add(3, 5)
+
+    # get_env 系统环境变量读取
+    path = get_env("PATH")
 """
 
 from .fire_app import SysCLI
 from .exe import exe
 from .dll import dll
+from .env import get_env, get_env_with_default
 
-__all__ = ['SysCLI', 'exe', 'dll']
+__all__ = ['SysCLI', 'exe', 'dll', 'get_env', 'get_env_with_default']

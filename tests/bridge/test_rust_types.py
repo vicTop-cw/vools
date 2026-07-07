@@ -6,11 +6,6 @@
 
 import pytest
 import ctypes
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools.bridge.rust.types import (
     RustTypeMapper,
     get_rust_type,

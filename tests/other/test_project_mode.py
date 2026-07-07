@@ -5,10 +5,6 @@ import os
 import sys
 import tempfile
 import shutil
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
 def test_c_project_dll():
     """测试 C 项目编译为 DLL 并调用函数"""
     print("=" * 60)

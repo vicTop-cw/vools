@@ -1,0 +1,9 @@
+serverAddr = "SERVER_ADDR"
+serverPort = 7000
+
+[[proxies]]
+name = "PROXY_NAME"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = LOCAL_PORT
+remotePort = REMOTE_PORT

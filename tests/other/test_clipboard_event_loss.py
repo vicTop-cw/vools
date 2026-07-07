@@ -8,9 +8,6 @@ import tkinter as tk
 import pytest
 
 pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
-
-sys.path.insert(0, 'e:/IDEProjects/AI/vools')
-
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s.%(msecs)03d - %(message)s',

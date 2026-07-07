@@ -283,13 +283,126 @@ LANGUAGE_PROBES: Dict[str, Dict[str, Any]] = {
             'Darwin': 'xcode-select --install  # 或 brew install swift',
         },
     },
+
+    # ---------- 更多桥接子包语言 ----------
+    'moonbit': {
+        'commands': ['moon'],
+        'version_args': ['--version'],
+        'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
+        'category': '系统级',
+        'install_hint': {
+            'Windows': 'https://www.moonbitlang.cn/ 下载安装',
+            'Linux': 'https://www.moonbitlang.cn/ 下载安装',
+            'Darwin': 'https://www.moonbitlang.cn/ 下载安装',
+        },
+    },
+    'perl': {
+        'commands': ['perl'],
+        'version_args': ['--version'],
+        'version_pattern': r'v(\d+\.\d+(?:\.\d+)?)',
+        'category': '脚本',
+        'install_hint': {
+            'Windows': 'https://strawberryperl.com/ 或 ActivePerl',
+            'Linux': 'sudo apt install perl',
+            'Darwin': '系统自带，或 brew install perl',
+        },
+    },
+    'vbnet': {
+        'commands': ['vbc', 'dotnet'],
+        'version_args': ['--version'],
+        'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
+        'category': '.NET',
+        'install_hint': {
+            'Windows': '安装 .NET SDK: https://dotnet.microsoft.com/download',
+            'Linux': 'sudo apt install dotnet-sdk-8.0',
+            'Darwin': 'brew install --cask dotnet-sdk',
+        },
+    },
+    'vbscript': {
+        'commands': ['cscript', 'wscript'],
+        'version_args': ['//B'],
+        'version_pattern': r'version (\d+\.\d+)',
+        'category': '脚本',
+        'install_hint': {
+            'Windows': 'Windows 系统自带',
+            'Linux': '不支持',
+            'Darwin': '不支持',
+        },
+    },
+    'kotlin': {
+        'commands': ['kotlinc', 'kotlin'],
+        'version_args': ['-version'],
+        'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
+        'category': 'JVM',
+        'install_hint': {
+            'Windows': 'https://kotlinlang.org/docs/command-line.html',
+            'Linux': 'sudo snap install kotlin --classic',
+            'Darwin': 'brew install kotlin',
+        },
+    },
+    'zig': {
+        'commands': ['zig'],
+        'version_args': ['version'],
+        'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
+        'category': '系统级',
+        'install_hint': {
+            'Windows': 'https://ziglang.org/download/ 下载 zip 解压即可',
+            'Linux': 'snap install zig  # 或官网下载',
+            'Darwin': 'brew install zig',
+        },
+    },
+    'lua': {
+        'commands': ['luajit', 'lua'],
+        'version_args': ['-v'],
+        'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
+        'category': '脚本',
+        'install_hint': {
+            'Windows': 'https://luajit.org/download.html',
+            'Linux': 'sudo apt install luajit',
+            'Darwin': 'brew install luajit',
+        },
+    },
+    'php': {
+        'commands': ['php'],
+        'version_args': ['--version'],
+        'version_pattern': r'PHP (\d+\.\d+(?:\.\d+)?)',
+        'category': '脚本',
+        'install_hint': {
+            'Windows': 'https://windows.php.net/download/',
+            'Linux': 'sudo apt install php',
+            'Darwin': 'brew install php',
+        },
+    },
+    'powershell': {
+        'commands': ['pwsh', 'powershell'],
+        'version_args': ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'],
+        'version_pattern': r'(\d+\.\d+\.\d+)',
+        'category': '脚本',
+        'install_hint': {
+            'Windows': 'Windows 系统自带 PowerShell 5.1，PowerShell 7+: https://github.com/PowerShell/PowerShell/releases',
+            'Linux': 'https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-linux',
+            'Darwin': 'brew install powershell',
+        },
+    },
+    'shell': {
+        'commands': ['bash', 'sh', 'zsh'],
+        'version_args': ['--version'],
+        'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
+        'category': '脚本',
+        'install_hint': {
+            'Windows': '使用 WSL 或 Git Bash',
+            'Linux': '系统自带',
+            'Darwin': '系统自带',
+        },
+    },
 }
 
 # 已被 vools.bridge 子包实现覆盖的语言
-# 其他语言（typescript, kotlin, zig, lua, dart, swift, php）需先实现桥接
 BRIDGE_SUPPORTED = {
     'c', 'cpp', 'rust', 'go', 'nim', 'cangjie', 'csharp',
     'java', 'scala', 'ruby', 'julia', 'r', 'freebasic', 'mojo',
+    'typescript', 'kotlin', 'zig', 'lua', 'dart', 'swift', 'php',
+    'moonbit', 'perl', 'vbnet', 'vbscript', 'powershell', 'shell',
 }
 
 
@@ -378,11 +491,21 @@ def _probe_one(lang: str, config: Dict[str, Any], env: Optional[Dict[str, str]] 
                 result = subprocess.run(
                     [path] + version_args,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True,
                     timeout=5,
                     env=env,
                 )
-                output = (result.stdout or '') + (result.stderr or '')
+                # 尝试多种编码解码输出
+                raw_output = (result.stdout or b'') + (result.stderr or b'')
+                output = ''
+                for enc in ('utf-8', 'gbk', 'cp936', 'latin-1'):
+                    try:
+                        output = raw_output.decode(enc)
+                        break
+                    except (UnicodeDecodeError, LookupError):
+                        continue
+                if not output:
+                    output = raw_output.decode('utf-8', errors='ignore')
+
                 if output:
                     import re
                     pat = config.get('version_pattern', r'(\d+\.\d+(?:\.\d+)?)')
@@ -411,21 +534,18 @@ def _probe_one(lang: str, config: Dict[str, Any], env: Optional[Dict[str, str]] 
 
 
 def _which_in_env(cmd: str, env: Dict[str, str]) -> Optional[str]:
-    """在指定环境变量中查找命令"""
-    # 使用 which 命令在远程环境查找
+    """在指定环境变量中查找命令（跨平台）"""
+    import shutil as _shutil
+
+    # 临时修改环境变量，使用 shutil.which 查找
+    old_path = os.environ.get('PATH', '')
     try:
-        result = subprocess.run(
-            ['which', cmd],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=5,
-            env=env,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except Exception:
-        pass
-    return None
+        path_env = env.get('PATH', '')
+        if path_env:
+            os.environ['PATH'] = path_env
+        return _shutil.which(cmd)
+    finally:
+        os.environ['PATH'] = old_path
 
 
 def probe_environment(
@@ -516,11 +636,12 @@ def probe_wsl(
         check = subprocess.run(
             ['wsl', '-d', dist, '--', 'echo', 'wsl-ready'],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             timeout=10,
         )
-        if check.returncode != 0 or 'wsl-ready' not in check.stdout:
-            raise RuntimeError(f'WSL 发行版 {dist} 不可用: {check.stderr}')
+        stdout_text = check.stdout.decode('utf-8', errors='ignore')
+        if check.returncode != 0 or 'wsl-ready' not in stdout_text:
+            stderr_text = check.stderr.decode('utf-8', errors='ignore')
+            raise RuntimeError(f'WSL 发行版 {dist} 不可用: {stderr_text}')
     except Exception as e:
         report = ProbeReport(
             platform='WSL (error)',
@@ -545,20 +666,18 @@ def probe_wsl(
         info = subprocess.run(
             ['wsl', '-d', dist, '--', 'cat', '/etc/os-release'],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             timeout=5,
         )
-        os_info = info.stdout.strip().split('\n')[0] if info.returncode == 0 else 'WSL Linux'
+        os_info = info.stdout.decode('utf-8', errors='ignore').strip().split('\n')[0] if info.returncode == 0 else 'WSL Linux'
     except Exception:
         os_info = 'WSL Linux'
 
     arch_info = subprocess.run(
         ['wsl', '-d', dist, '--', 'uname', '-m'],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
         timeout=5,
     )
-    arch = arch_info.stdout.strip() or platform.machine()
+    arch = arch_info.stdout.decode('utf-8', errors='ignore').strip() or platform.machine()
 
     report = ProbeReport(
         platform=os_info,
@@ -595,11 +714,11 @@ def _probe_one_wsl(lang: str, config: Dict[str, Any], dist: str) -> LanguageStat
             check = subprocess.run(
                 ['wsl', '-d', dist, '--', 'which', cmd],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=5,
             )
-            if check.returncode == 0 and check.stdout.strip():
-                path = check.stdout.strip()
+            stdout_text = check.stdout.decode('utf-8', errors='ignore').strip()
+            if check.returncode == 0 and stdout_text:
+                path = stdout_text
                 status.path = path
                 status.command = cmd
                 # 获取版本
@@ -720,12 +839,480 @@ def save_report(report: ProbeReport, filepath: str) -> None:
 
 
 # ============================================================================
+# 增强功能：通配符路径展开、注册表搜索、WSL 自动发现
+# ============================================================================
+
+def expand_wildcard_paths(patterns: List[str]) -> List[str]:
+    """
+    展开包含通配符的路径列表
+
+    支持 * 和 ? 通配符，例如：
+    - C:\\Program Files\\Java\\jdk*\\bin
+    - /usr/lib/jvm/java*/bin
+
+    Args:
+        patterns: 路径模式列表
+
+    Returns:
+        展开后的实际路径列表
+    """
+    import glob
+    result = []
+    for pat in patterns:
+        if not pat:
+            continue
+        if '*' in pat or '?' in pat:
+            matched = glob.glob(pat)
+            result.extend([p for p in matched if os.path.isdir(p)])
+        else:
+            if os.path.isdir(pat):
+                result.append(pat)
+    return result
+
+
+# 常见安装路径（按语言分类）
+# 这些路径会在 probe_with_extra_paths 中自动搜索
+COMMON_INSTALL_PATHS: Dict[str, List[str]] = {
+    'c': [
+        r'C:\MinGW\bin',
+        r'C:\msys64\mingw64\bin',
+        r'C:\Program Files\LLVM\bin',
+        os.path.expanduser(r'~\.codearts-cpp\tools\mingw\bin'),
+        '/usr/bin',
+        '/usr/local/bin',
+    ],
+    'cpp': [
+        r'C:\MinGW\bin',
+        r'C:\msys64\mingw64\bin',
+        r'C:\Program Files\LLVM\bin',
+        os.path.expanduser(r'~\.codearts-cpp\tools\mingw\bin'),
+        '/usr/bin',
+        '/usr/local/bin',
+    ],
+    'rust': [
+        os.path.expanduser(r'~\.cargo\bin'),
+        r'C:\Program Files\Rust\.cargo\bin',
+        os.path.expanduser(r'~\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin'),
+        os.path.expanduser('~/.cargo/bin'),
+        '/usr/local/cargo/bin',
+        '/usr/bin',
+    ],
+    'go': [
+        r'C:\Go\bin',
+        r'C:\Program Files\Go\bin',
+        os.path.expanduser(r'~\go\bin'),
+        '/usr/local/go/bin',
+        '/usr/lib/go/bin',
+        os.path.expanduser('~/go/bin'),
+    ],
+    'nim': [
+        os.environ.get('NIM_PATH', ''),
+        r'C:\Program Files\Nim\bin',
+        r'C:\nim\bin',
+        os.path.expanduser(r'~\.choosenim\toolchains\stable\bin'),
+        os.path.expanduser(r'~\.codearts-cpp\tools\mingw\bin'),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', '..', 'nim', 'bin'),
+        os.path.expanduser('~/nim-2.2.10/bin'),
+        '/opt/nim/bin',
+        '/usr/local/bin',
+        '/usr/bin',
+    ],
+    'cangjie': [
+        r'C:\cangjie\bin',
+        r'C:\CangJie_Sdk\bin',
+        r'C:\Program Files\Huawei\cangjie\bin',
+        os.path.expanduser(r'~\cangjie\bin'),
+        '/opt/cangjie/bin',
+        '/usr/local/bin',
+        '/usr/bin',
+    ],
+    'java': [
+        r'C:\Program Files\Java\jdk*\bin',
+        r'C:\Program Files\Eclipse Adoptium\jdk*\bin',
+        r'C:\Program Files\Microsoft\jdk*\bin',
+        r'C:\Program Files\Zulu\zulu*\bin',
+        '/usr/lib/jvm/java*/bin',
+        '/usr/java/bin',
+        '/usr/local/java/bin',
+        '/opt/java/bin',
+    ],
+    'kotlin': [
+        r'C:\Program Files\Kotlin\bin',
+        r'C:\kotlinc\bin',
+        '/usr/bin',
+        '/usr/local/bin',
+        '/opt/kotlin/bin',
+    ],
+    'scala': [
+        r'C:\Program Files\scala\bin',
+        r'C:\Program Files (x86)\scala\bin',
+        '/usr/local/bin',
+        '/usr/bin',
+        '/opt/scala/bin',
+    ],
+    'csharp': [
+        r'C:\Program Files\dotnet',
+        r'C:\Windows\Microsoft.NET\Framework64\v4.0.30319',
+        r'C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools',
+        '/usr/share/dotnet',
+        '/usr/local/share/dotnet',
+    ],
+    'vbnet': [
+        r'C:\Program Files\dotnet',
+        r'C:\Windows\Microsoft.NET\Framework64\v4.0.30319',
+        '/usr/share/dotnet',
+    ],
+    'julia': [
+        os.path.expanduser(r'~\AppData\Local\Programs\Julia-*\bin'),
+        r'C:\Program Files\Julia-*\bin',
+        os.path.expanduser(r'~\AppData\Local\Microsoft\WindowsApps'),
+        '/home/julia/bin',
+        '/usr/local/julia/bin',
+        '/opt/julia/bin',
+        os.path.expanduser('~/julia/bin'),
+        '/usr/bin',
+    ],
+    'freebasic': [
+        r'C:\FreeBASIC',
+        r'C:\Program Files\FreeBASIC',
+        os.path.expanduser(r'~\FreeBASIC'),
+        '/usr/local/bin',
+        '/usr/bin',
+        '/opt/freebasic/bin',
+    ],
+    'r': [
+        r'C:\Program Files\R\R-*\bin\x64',
+        r'C:\Program Files\R\R-*\bin',
+        '/usr/bin',
+        '/usr/local/bin',
+        '/opt/R/bin',
+    ],
+    'mojo': [
+        os.path.expanduser(r'~\.modular\mojo\bin'),
+        os.path.expanduser('~/.modular/mojo/bin'),
+        '/opt/mojo/bin',
+        '/usr/local/bin',
+    ],
+    'python': [
+        r'C:\Python*\python.exe',
+        os.path.expanduser(r'~\AppData\Local\Programs\Python\Python*\python.exe'),
+        '/usr/bin',
+        '/usr/local/bin',
+    ],
+    'typescript': [
+        r'C:\Program Files\nodejs',
+        r'C:\Program Files (x86)\nodejs',
+        os.path.expanduser(r'~\AppData\Roaming\npm'),
+        '/usr/bin',
+        '/usr/local/bin',
+    ],
+    'dart': [
+        r'C:\Program Files\Dart\dart-sdk\bin',
+        r'C:\src\flutter\bin\cache\dart-sdk\bin',
+        '/usr/bin',
+        '/usr/lib/dart/bin',
+    ],
+    'swift': [
+        r'C:\Program Files\Swift\bin',
+        '/usr/bin',
+        '/usr/local/bin',
+        '/opt/swift/bin',
+    ],
+    'zig': [
+        r'C:\zig',
+        r'C:\Program Files\zig',
+        '/usr/bin',
+        '/usr/local/bin',
+        '/opt/zig/bin',
+    ],
+    'lua': [
+        r'C:\Program Files\Lua\bin',
+        r'C:\LuaJIT',
+        '/usr/bin',
+        '/usr/local/bin',
+    ],
+    'perl': [
+        r'C:\Strawberry\perl\bin',
+        r'C:\Perl64\bin',
+        '/usr/bin',
+        '/usr/local/bin',
+    ],
+    'php': [
+        r'C:\Program Files\PHP',
+        r'C:\php',
+        '/usr/bin',
+        '/usr/local/bin',
+    ],
+    'ruby': [
+        r'C:\Ruby*\bin',
+        r'C:\Program Files\Ruby*\bin',
+        '/usr/bin',
+        '/usr/local/bin',
+    ],
+    'moonbit': [
+        r'C:\Program Files\MoonBit\bin',
+        os.path.expanduser(r'~\.moon\bin'),
+        os.path.expanduser('~/.moon/bin'),
+        '/usr/local/bin',
+        '/opt/moonbit/bin',
+    ],
+    'powershell': [
+        r'C:\Windows\System32\WindowsPowerShell\v1.0',
+        r'C:\Program Files\PowerShell\7',
+        '/usr/bin',
+        '/usr/local/bin',
+        '/opt/microsoft/powershell/7',
+    ],
+    'vbscript': [
+        r'C:\Windows\System32',
+    ],
+    'shell': [
+        r'C:\Program Files\Git\bin',
+        r'C:\Windows\System32',
+        '/usr/bin',
+        '/usr/local/bin',
+        '/bin',
+    ],
+}
+
+
+def search_windows_registry() -> Dict[str, List[str]]:
+    """
+    从 Windows 注册表搜索编译器安装路径
+
+    搜索常见的注册表项，包括：
+    - .NET SDK
+    - Java SDK
+    - Rust (rustup)
+    - Go
+    - 等等
+
+    Returns:
+        Dict[语言名, 路径列表]
+    """
+    results = {}
+    if not _IS_WINDOWS:
+        return results
+
+    try:
+        import winreg
+    except ImportError:
+        return results
+
+    def _read_reg_values(key_path, hive=winreg.HKEY_LOCAL_MACHINE):
+        """读取注册表项的所有值"""
+        try:
+            key = winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ)
+            values = {}
+            i = 0
+            while True:
+                try:
+                    name, value, reg_type = winreg.EnumValue(key, i)
+                    values[name] = value
+                    i += 1
+                except OSError:
+                    break
+            winreg.CloseKey(key)
+            return values
+        except OSError:
+            return {}
+
+    def _enum_reg_subkeys(key_path, hive=winreg.HKEY_LOCAL_MACHINE):
+        """枚举注册表子项"""
+        try:
+            key = winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ)
+            subkeys = []
+            i = 0
+            while True:
+                try:
+                    subkey = winreg.EnumKey(key, i)
+                    subkeys.append(subkey)
+                    i += 1
+                except OSError:
+                    break
+            winreg.CloseKey(key)
+            return subkeys
+        except OSError:
+            return []
+
+    # 1. .NET SDK
+    for reg_path in [
+        r"SOFTWARE\dotnet\Setup\InstalledVersions\x64\sdk",
+        r"SOFTWARE\WOW6432Node\dotnet\Setup\InstalledVersions\x64\sdk",
+    ]:
+        vals = _read_reg_values(reg_path)
+        if vals:
+            dotnet_paths = []
+            for ver in vals:
+                install_path = vals[ver]
+                if isinstance(install_path, str) and os.path.isdir(install_path):
+                    dotnet_paths.append(install_path)
+            if dotnet_paths:
+                results.setdefault('csharp', []).extend(dotnet_paths)
+                results.setdefault('vbnet', []).extend(dotnet_paths)
+                break
+
+    # 2. Java (从各种可能的位置)
+    for java_reg_path in [
+        r"SOFTWARE\JavaSoft\JDK",
+        r"SOFTWARE\JavaSoft\Java Development Kit",
+        r"SOFTWARE\Eclipse Adoptium\JDK",
+        r"SOFTWARE\Microsoft\JDK",
+    ]:
+        versions = _enum_reg_subkeys(java_reg_path)
+        for ver in versions:
+            java_home_val = _read_reg_values(fr"{java_reg_path}\{ver}")
+            java_home = java_home_val.get('JavaHome') or java_home_val.get('installPath')
+            if java_home and isinstance(java_home, str):
+                bin_path = os.path.join(java_home, 'bin')
+                if os.path.isdir(bin_path):
+                    results.setdefault('java', []).append(bin_path)
+
+    # 3. Rust (检查 .cargo 环境变量和注册表)
+    cargo_home = os.environ.get('CARGO_HOME') or os.path.expanduser(r'~/.cargo/bin')
+    if os.path.isdir(cargo_home):
+        results.setdefault('rust', []).append(cargo_home)
+
+    # 4. Go
+    goroot = os.environ.get('GOROOT')
+    if goroot:
+        go_bin = os.path.join(goroot, 'bin')
+        if os.path.isdir(go_bin):
+            results.setdefault('go', []).append(go_bin)
+
+    return results
+
+
+def list_wsl_distributions() -> List[str]:
+    """
+    列出所有可用的 WSL 发行版
+
+    Returns:
+        发行版名称列表
+    """
+    if not _IS_WINDOWS:
+        return []
+
+    if shutil.which('wsl') is None:
+        return []
+
+    try:
+        result = subprocess.run(
+            ['wsl', '--list', '--quiet'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        # WSL 输出是 UTF-16 LE 编码
+        try:
+            output = result.stdout.decode('utf-16-le', errors='ignore')
+        except Exception:
+            output = result.stdout.decode('utf-8', errors='ignore')
+
+        distros = []
+        for line in output.strip().split('\n'):
+            line = line.strip().replace('\r', '')
+            if line and not line.startswith('Windows'):
+                distros.append(line)
+        return distros
+    except Exception:
+        return []
+
+
+def probe_all_wsl(languages: Optional[List[str]] = None) -> List[ProbeReport]:
+    """
+    探测所有可用 WSL 发行版中的环境
+
+    Args:
+        languages: 要探测的语言列表，None 表示全部
+
+    Returns:
+        各发行版的探测报告列表
+    """
+    reports = []
+    distros = list_wsl_distributions()
+    for dist in distros:
+        try:
+            report = probe_wsl(dist=dist, languages=languages)
+            reports.append(report)
+        except Exception as e:
+            pass
+    return reports
+
+
+def probe_with_extra_paths(
+    languages: Optional[List[str]] = None,
+    extra_paths: Optional[Dict[str, List[str]]] = None,
+    use_common_paths: bool = True,
+) -> ProbeReport:
+    """
+    增强版环境探测：自动展开通配符路径 + 注册表搜索 + 常见安装路径搜索
+
+    Args:
+        languages: 要探测的语言列表
+        extra_paths: 额外的搜索路径 {language: [path1, path2, ...]}
+        use_common_paths: 是否使用内置的常见安装路径
+
+    Returns:
+        ProbeReport
+    """
+    # 收集所有额外搜索路径
+    all_extra_dirs = []
+    merged_paths: Dict[str, List[str]] = {}
+
+    # 1. 内置常见安装路径
+    if use_common_paths:
+        for lang, paths in COMMON_INSTALL_PATHS.items():
+            if languages and lang not in languages:
+                continue
+            merged_paths[lang] = list(paths)
+
+    # 2. 用户提供的额外路径
+    if extra_paths:
+        for lang, paths in extra_paths.items():
+            if lang not in merged_paths:
+                merged_paths[lang] = []
+            merged_paths[lang].extend(paths)
+
+    # 3. Windows 注册表搜索
+    if _IS_WINDOWS:
+        reg_paths = search_windows_registry()
+        for lang, paths in reg_paths.items():
+            if lang not in merged_paths:
+                merged_paths[lang] = []
+            merged_paths[lang].extend(paths)
+
+    # 4. 展开并合并所有路径
+    if merged_paths:
+        for lang, paths in merged_paths.items():
+            expanded = expand_wildcard_paths(paths)
+            all_extra_dirs.extend(expanded)
+
+    # 5. 去重
+    seen = set()
+    unique_dirs = []
+    for d in all_extra_dirs:
+        if d and d not in seen:
+            seen.add(d)
+            unique_dirs.append(d)
+
+    # 6. 加入环境变量
+    all_extra_env = None
+    if unique_dirs:
+        current_path = os.environ.get('PATH', '')
+        new_path = os.pathsep.join(unique_dirs) + os.pathsep + current_path
+        all_extra_env = {'PATH': new_path}
+
+    return probe_environment(languages=languages, extra_env=all_extra_env)
+
+
+# ============================================================================
 # 模块导出
 # ============================================================================
 
 __all__ = [
     'LANGUAGE_PROBES',
     'BRIDGE_SUPPORTED',
+    'COMMON_INSTALL_PATHS',
     'LanguageStatus',
     'ProbeReport',
     'probe_environment',
@@ -733,4 +1320,10 @@ __all__ = [
     'get_available_languages',
     'print_report',
     'save_report',
+    # 增强功能
+    'expand_wildcard_paths',
+    'search_windows_registry',
+    'list_wsl_distributions',
+    'probe_all_wsl',
+    'probe_with_extra_paths',
 ]

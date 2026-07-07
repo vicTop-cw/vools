@@ -1,6 +1,4 @@
 """Test combinational/advanced operators: merge, concat, zip, combine_latest, etc."""
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import time
 from vools.reactive import Observable, ops, Subject
 

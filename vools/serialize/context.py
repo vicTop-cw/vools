@@ -7,7 +7,7 @@ Serializer.dumps/loads 在调用后端前设置上下文，调用后重置。
 注意：Python 3.6 使用兼容实现，不是 async-safe 的。
 """
 
-from vools.core.contextvars_compat import ContextVar
+from ..core.contextvars_compat import ContextVar
 from ..core import dataclass
 from typing import Optional, Any
 __all__ = ['SerializeContext', 'get_context', 'get_protocol', 'set_context', 'reset_context', 'get_current_serializer']

@@ -1,13 +1,6 @@
 """
 测试通用工具模块
 """
-
-import sys
-import os
-
-# 添加父目录到路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 before_dirs = set(dir())
 from vools import *
 after_dirs = set(dir())

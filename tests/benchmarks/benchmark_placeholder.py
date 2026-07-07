@@ -7,9 +7,6 @@ import os
 import time
 import tracemalloc
 import gc
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import vools.functional.placeholder as ph
 from vools.functional.placeholder_impl import X
 

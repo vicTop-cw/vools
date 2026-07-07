@@ -21,9 +21,6 @@ import sys
 import threading
 import time
 from enum import IntEnum
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools.reactive import (
     ClipChangeType,
     ClipData,

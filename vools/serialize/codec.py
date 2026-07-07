@@ -5,12 +5,18 @@ json/msgpack 序列化编解码器
 object_hook 函数（解码时重建对象），以及 orjson 后处理。
 """
 
+import pickle
 import importlib
 from typing import Any, Dict
 
 from .context import get_protocol, get_current_serializer
 from ..core.datetime_compat import datetime_fromisoformat, date_fromisoformat
-__all__ = ['vools_preprocess', 'vools_default', 'vools_object_hook', 'post_process_orjson', 'post_process_msgpack']
+from ..decorators.bridge_decorator import bridge
+__all__ = [
+    'vools_preprocess', 'vools_default', 'vools_object_hook',
+    'post_process_orjson', 'post_process_msgpack',
+    'pickle_encode', 'pickle_decode',
+]
 
 
 # ─── 编码（序列化） ───
@@ -343,3 +349,90 @@ def post_process_orjson(obj: Any) -> Any:
 
 # msgpack 新版 (>=1.0) 不支持 object_hook，后处理逻辑与 orjson 相同
 post_process_msgpack = post_process_orjson
+
+
+# ─── Pickle 序列化（带 Nim 加速） ───
+
+
+def _pickle_encode_py(obj: Any, protocol: int = pickle.HIGHEST_PROTOCOL) -> bytes:
+    """
+    纯 Python pickle 编码
+
+    Args:
+        obj: 要序列化的对象
+        protocol: pickle 协议版本
+
+    Returns:
+        序列化的 bytes
+    """
+    return pickle.dumps(obj, protocol=protocol)
+
+
+def _pickle_decode_py(data: bytes) -> Any:
+    """
+    纯 Python pickle 解码
+
+    Args:
+        data: pickle 序列化的 bytes
+
+    Returns:
+        反序列化后的对象
+    """
+    return pickle.loads(data)
+
+
+# 尝试导入 Nim 桥接函数
+_nim_pickle_encode = None
+_nim_pickle_decode = None
+
+try:
+    from ..bridge.nim import nim_pickle_encode as _nim_encode
+    from ..bridge.nim import nim_pickle_decode as _nim_decode
+    if callable(_nim_encode):
+        _nim_pickle_encode = _nim_encode
+    if callable(_nim_decode):
+        _nim_pickle_decode = _nim_decode
+except ImportError:
+    pass
+
+
+def pickle_encode(obj: Any, protocol: int = pickle.HIGHEST_PROTOCOL) -> bytes:
+    """
+    序列化对象为字节串
+
+    当 Nim 桥接库可用时，使用 Nim 高性能实现；
+    否则回退到纯 Python pickle 实现。
+
+    Args:
+        obj: 要序列化的对象
+        protocol: pickle 协议版本（仅 Python 实现使用）
+
+    Returns:
+        序列化的 bytes
+    """
+    # Nim 版本返回 None 如果不可用
+    if _nim_pickle_encode is not None:
+        result = _nim_pickle_encode(obj)
+        if result is not None:
+            return result
+    return _pickle_encode_py(obj, protocol)
+
+
+def pickle_decode(data: bytes) -> Any:
+    """
+    反序列化字节串为对象
+
+    当 Nim 桥接库可用时，使用 Nim 高性能实现；
+    否则回退到纯 Python pickle 实现。
+
+    Args:
+        data: pickle 序列化的 bytes
+
+    Returns:
+        反序列化后的对象
+    """
+    if _nim_pickle_decode is not None:
+        result = _nim_pickle_decode(data)
+        if result is not None:
+            return result
+    return _pickle_decode_py(data)

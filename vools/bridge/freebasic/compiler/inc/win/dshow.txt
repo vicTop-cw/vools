@@ -1,0 +1,1 @@
+修改 inc\win\dshow.bi    26行 #include once "windowsx.bi" 改为 #include once "Afx/windowsxx.bi" 为了兼容WIN9库和AFX库

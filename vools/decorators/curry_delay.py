@@ -250,7 +250,7 @@ class DelayCurried:
             
         providers = self._validate_providers(providers, sep)
         
-        from .cache import memorize
+        from ..cache import memorize
         func = memorize(func)
         
         def _wrap_func(func, key):

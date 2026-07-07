@@ -1,9 +1,4 @@
 """测试 stuff 装饰器 - 新 API"""
-
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools import stuff
 
 print("=" * 60)

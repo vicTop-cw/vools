@@ -2,10 +2,10 @@
 vools.bridge - 跨语言桥接框架
 
 提供统一的 Python 到其他语言的桥接能力，基于 LangBridge 抽象基类，
-所有 26 种语言使用一致的装饰器接口，支持自动编译、缓存和回退机制。
+所有 27 种语言使用一致的装饰器接口，支持自动编译、缓存和回退机制。
 
-支持的 26 种语言：
-  FreeBASIC / C / C++ / Nim / Go / CangJie / Rust / Mojo / C# / Java / Scala / Ruby / Julia / R / TypeScript / VB.NET / Perl / Lua / Zig / Kotlin / Swift / PHP / Dart / PowerShell / VBScript / Shell
+支持的 27 种语言：
+  FreeBASIC / C / C++ / Nim / Go / CangJie / Rust / Mojo / MoonBit / C# / Java / Scala / Ruby / Julia / R / TypeScript / VB.NET / Perl / Lua / Zig / Kotlin / Swift / PHP / Dart / PowerShell / VBScript / Shell
 
 LangBridge 统一接口：
   所有语言桥接模块均继承自 LangBridge 抽象基类，提供统一的 decorator() 装饰器工厂。
@@ -16,9 +16,18 @@ LangBridge 统一接口：
   2. only_code 仅代码模式 - 只生成代码不编译，支持多种写入模式
   3. project 项目模式 - 编译整个项目目录，支持可执行文件或共享库
 
+编译器自动发现：
+  自动探测本机和 WSL 环境中已安装的编译器，无需手动配置 PATH。
+  - discover_all() / discover_local() / discover_wsl() - 发现编译器
+  - get_discovery_report() - 生成发现报告
+  - configure_from_discovery() - 自动配置 BridgeManager
+  - auto_discover() - 一键发现并配置
+
 子模块：
 - core: 核心基础设施（加载器、装饰器、类型映射、序列化）
 - manager: 语言编译器和运行时环境统一管理器
+- probe: 编译器自动探测模块
+- auto_discovery: 一键自动发现与配置
 - _base: LangBridge 抽象基类 + FunctionParser / DepResolver 工具类
 - c / cpp / nim / go / cangjie / rust / mojo / csharp / java / scala / ruby / julia / r / freebasic / typescript / vbnet / perl / lua / zig / kotlin / swift / php / dart / powershell / vbscript / shell: 各语言桥接实现
 """
@@ -34,13 +43,27 @@ from .manager import (
     LanguageConfig,
     LanguageStatus,
     BridgeManager,
+    LanguageCompilerHelper,
     register_language,
     get_status,
     get_compiler_path,
+    get_compiler,
+    get_compiler_executable,
+    get_helper,
     get_version,
     setup_runtime,
     list_languages,
     list_available,
+    auto_discover,
+)
+
+# auto_discovery 模块 - 一键自动发现
+from .auto_discovery import (
+    discover_all,
+    discover_local,
+    discover_wsl,
+    get_discovery_report,
+    configure_from_discovery,
 )
 
 # 便捷函数：检查语言是否可用
@@ -77,6 +100,14 @@ __all__ = [
     'setup_runtime',
     'list_languages',
     'list_available',
+    'auto_discover',
+
+    # auto_discovery 模块
+    'discover_all',
+    'discover_local',
+    'discover_wsl',
+    'get_discovery_report',
+    'configure_from_discovery',
     'set_compiler_path',
     'add_compiler_path',
     'set_runtime_path',
@@ -151,6 +182,7 @@ __all__ = [
     'typescript',
     'vbnet',
     'vb',
+    'vbnet_api',
     'perl',
     'pl',
     'lua',
@@ -426,6 +458,10 @@ def _load_vbnet():
             globals()['vbnet'] = vbnet.vbnet
             globals()['vb'] = vbnet.vb
             globals()['vbnet_compiler_available'] = vbnet.vbnet_compiler_available
+            try:
+                globals()['vbnet_api'] = vbnet.api
+            except AttributeError:
+                pass
             _vbnet_loaded = True
         except Exception:
             _vbnet_loaded = False
@@ -662,7 +698,7 @@ def __getattr__(name):
             return globals().get(name)
         raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
 
-    if name in ('vbnet', 'vb', 'vbnet_compiler_available'):
+    if name in ('vbnet', 'vb', 'vbnet_compiler_available', 'vbnet_api'):
         if _load_vbnet():
             return globals().get(name)
         raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)

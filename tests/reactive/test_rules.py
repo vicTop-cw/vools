@@ -21,9 +21,6 @@ import json
 import tempfile
 from typing import Dict, Any, List, Callable
 from vools.core.dataclass_compat import FrozenInstanceError
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools.functional import Result
 from vools.task.rules import Rule, RuleSet, RuleEngine, rule, RuleStatus, DagScheduler
 

@@ -75,9 +75,6 @@ def monitor_process(test_dir: str, control_file: str, log_file: str, enable_filt
     """Test helper function."""
     import logging
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
-
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
     from vools.reactive.monitoring.folder_watcher import FolderSubject, FolderObserver, FolderChangeType
 
     process = psutil.Process(os.getpid())

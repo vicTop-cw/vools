@@ -50,26 +50,3 @@ def vic_execute(func: Optional[Callable] = None, max_workers: int = 3, use_proce
 trd = vic_execute(max_workers=10, use_process=False)
 proc = vic_execute(max_workers=3, use_process=True)
 
-
-# ============================================================================
-# 测试代码
-# ============================================================================
-
-if __name__ == "__main__":
-    from time import sleep, time
-    
-    print("=== 测试 trd（多线程）===")
-    
-    @trd
-    def add(x):
-        sleep(0.1)
-        return x + 1
-    
-    start = time()
-    results = add(range(20))
-    elapsed = time() - start
-    
-    print(f"处理 20 个任务，耗时: {elapsed:.2f}秒")
-    print(f"结果前5个: {results[:5]}")
-    
-    print("\n所有测试通过!")

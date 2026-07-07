@@ -6,13 +6,7 @@
 2. delay_curry 装饰器测试
 3. overload 装饰器测试
 """
-
 import sys
-import os
-
-# 添加项目根目录到路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools.decorators import (
     curry, delay_curry, is_curried,
     overload, strict,

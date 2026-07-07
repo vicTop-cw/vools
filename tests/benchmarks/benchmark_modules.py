@@ -38,7 +38,7 @@ def test_lazy():
 
 def test_cache():
     """测试 cache 模块性能"""
-    from vools.decorators.cache import memorize
+    from vools.cache import memorize
     
     @memorize
     def fib(n):

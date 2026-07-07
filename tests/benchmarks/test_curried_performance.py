@@ -12,15 +12,6 @@ import time
 import gc
 import tracemalloc
 from functools import reduce as functools_reduce
-
-# 添加项目路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-# ============================================================================
-# 性能测试辅助函数
-# ============================================================================
-
 def measure_time(func, iterations=10000):
     """测量函数执行时间"""
     gc.disable()

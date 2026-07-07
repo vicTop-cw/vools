@@ -1,8 +1,5 @@
 """验证 curry 装饰器在被 get_signature 替换后是否工作"""
 import pytest
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
 from vools.decorators import curry
 from vools.cache import clear_cache
 

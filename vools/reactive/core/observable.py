@@ -18,28 +18,32 @@ R = TypeVar('R')
 
 
 class Subscription:
-    """订阅管理类"""
+    """订阅管理类 - 性能优化版本"""
     
     __slots__ = ('_unsubscribe', '_is_closed', '_children')
     
     def __init__(self, unsubscribe):
         self._unsubscribe = unsubscribe
         self._is_closed = False
-        self._children = set()
+        self._children = None  # 使用None代替set()，减少内存开销
     
     def add_child(self, child):
         """添加子订阅"""
-        self._children.add(child)
+        if self._children is None:
+            self._children = []
+        self._children.append(child)
     
     def remove_child(self, child):
         """移除子订阅"""
-        self._children.discard(child)
+        if self._children is not None and child in self._children:
+            self._children.remove(child)
     
     def unsubscribe(self):
         if not self._is_closed:
             self._is_closed = True
-            for child in self._children:
-                child.unsubscribe()
+            if self._children is not None:
+                for child in self._children:
+                    child.unsubscribe()
             self._unsubscribe()
     
     def dispose(self):
@@ -60,11 +64,15 @@ class Subscription:
 
 
 class Observer(Generic[T], ABC):
-    """观察者抽象基类"""
+    """观察者抽象基类 - 性能优化版本，支持通过返回值控制流"""
     
     @abstractmethod
-    def on_next(self, value: T) -> None:
-        """收到下一个数据"""
+    def on_next(self, value: T) -> Optional[bool]:
+        """收到下一个数据
+        
+        Returns:
+            Optional[bool]: None继续正常处理，True停止后续迭代，False跳过本次
+        """
         pass
     
     @abstractmethod
@@ -73,14 +81,13 @@ class Observer(Generic[T], ABC):
         pass
     
     @abstractmethod
-
     def on_completed(self) -> None:
         """流完成"""
         pass
 
 
 class DefaultObserver(Observer[T]):
-    """默认观察者实现"""
+    """默认观察者实现 - 性能优化版本"""
     
     __slots__ = ('_on_next', '_on_error', '_on_completed', '_pool')
     
@@ -90,9 +97,15 @@ class DefaultObserver(Observer[T]):
         self._on_completed = on_completed or (lambda: None)
         self._pool = None
     
-    def on_next(self, value: T) -> None:
-        """收到下一个数据"""
-        self._on_next(value)
+    def on_next(self, value: T) -> Optional[bool]:
+        """收到下一个数据
+        
+        Returns:
+            Optional[bool]: None继续，True停止，False跳过
+        """
+        result = self._on_next(value)
+        # 如果回调返回True，表示要停止迭代
+        return result if result is not None else None
     
     def on_error(self, error: Exception) -> None:
         """收到错误"""
@@ -1018,7 +1031,7 @@ class Observable(Generic[T]):
         on_completed: Optional[Callable[[], None]] = None,
         observer: Optional[Observer[T]] = None
     ) -> Subscription:
-        """订阅此 Observable
+        """订阅此 Observable - 性能优化版本
         
         Args:
             on_next: 数据到达回调
@@ -1029,23 +1042,25 @@ class Observable(Generic[T]):
         Returns:
             Subscription 对象，可调用 dispose() 取消订阅
         """
+        # 性能优化：直接创建observer而不使用object_pool
         if observer is None:
-            observer_pool = get_pool(DefaultObserver, max_size=200, min_size=20)
-            observer = observer_pool.acquire()
-            observer._on_next = on_next or (lambda _: None)
-            observer._on_error = on_error or (lambda e: None)
-            observer._on_completed = on_completed or (lambda: None)
-            observer._pool = observer_pool
+            observer = DefaultObserver(
+                on_next or (lambda _: None),
+                on_error or (lambda e: None),
+                on_completed or (lambda: None)
+            )
         
         subscription = self._subscribe_fn(observer)
         
-        original_unsubscribe = subscription._unsubscribe
-        def wrapped_unsubscribe():
-            original_unsubscribe()
-            if hasattr(observer, 'release') and callable(observer.release):
+        # 高性能优化：对于简单subscription，不包装unsubscribe
+        # 只有当observer来自object_pool时才需要包装释放逻辑
+        if hasattr(observer, '_pool') and observer._pool is not None:
+            original_unsubscribe = subscription._unsubscribe
+            def wrapped_unsubscribe():
+                original_unsubscribe()
                 observer.release()
+            subscription._unsubscribe = wrapped_unsubscribe
         
-        subscription._unsubscribe = wrapped_unsubscribe
         return subscription
     
     def subscribe_(
@@ -1096,7 +1111,7 @@ class Observable(Generic[T]):
     
     @classmethod
     def from_iterable(cls, iterable: Iterable[T]) -> "Observable[T]":
-        """从可迭代对象创建 Observable
+        """从可迭代对象创建 Observable - 极高性能版本
         
         Args:
             iterable: 可迭代数据源
@@ -1105,24 +1120,32 @@ class Observable(Generic[T]):
             "Observable[T]": 发射可迭代对象中所有元素的序列
         """
         def subscribe(observer: Observer[T]) -> Subscription:
+            # 检查iterable是否为空列表/元组，直接完成无需迭代
+            if isinstance(iterable, (list, tuple)) and len(iterable) == 0:
+                observer.on_completed()
+                return Subscription(lambda: None)
+            
             iterator = iter(iterable)
-            subscription = None
             is_closed = False
             
-            def unsubscribe() -> None:
+            def unsubscribe():
                 nonlocal is_closed
                 is_closed = True
             
             subscription = Subscription(unsubscribe)
             
             try:
+                # 极高性能优化：使用observer返回值直接控制迭代
                 while not is_closed:
-                    observer.on_next(next(iterator))
-                    if is_closed:
+                    result = observer.on_next(next(iterator))
+                    # 如果observer返回True，立即停止迭代（真正的提前终止）
+                    if result is True:
+                        is_closed = True
                         break
             except StopIteration:
                 pass
             
+            # 只有在未关闭且未发生错误时才调用on_completed
             if not is_closed:
                 observer.on_completed()
             

@@ -35,40 +35,37 @@ FreeBASIC 是一款自由开源的 BASIC 语言编译器，完全兼容 QuickBAS
 
 ## 4. 编译器要求
 
-使用 FreeBASIC 语言桥接需要安装 FreeBASIC 编译器：
+`vools.bridge.freebasic` 模块**已内置 32/64 位 FreeBASIC 编译器**（fbc32.exe / fbc64.exe）以及完整的头文件库，开箱即用，无需手动安装。
 
-### Windows
+> 内置编译器版本：FreeBASIC 1.x（详见 `compiler/VERSION` 或通过 `fbc --version` 查询）
 
-从 [FreeBASIC 官网](https://www.freebasic.net/) 下载安装包：
+### 自动检测
 
-```bash
-# 下载并安装 FreeBASIC
-# https://www.freebasic.net/
-# 将 fbc.exe 添加到系统 PATH
-```
-
-### Linux
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install freebasic
-
-# 或者从官网下载安装包
-```
-
-### 验证安装
-```bash
-fbc --version
-```
-
-### Python 端验证
 ```python
-from vools.bridge.freebasic import is_freebasic_available, fbc_available
+from vools.bridge import freebasic
 
-if fbc_available():
-    print("FreeBASIC 编译器可用")
+# 检查编译器是否可用（已内置，应返回 True）
+if freebasic.fbc_compiler_available():
+    print("FreeBASIC 编译器可用（内置）")
 else:
-    print("FreeBASIC 编译器不可用，请安装 fbc 并添加到 PATH")
+    print("FreeBASIC 编译器不可用")
+```
+
+### 使用外部 FreeBASIC（可选）
+
+如需使用系统安装的 FreeBASIC（覆盖内置版本），将 `fbc64.exe` / `fbc` 加入系统 PATH：
+- **Windows**: 从 [FreeBASIC 官网](https://www.freebasic.net/) 下载并安装
+- **Linux**: `sudo apt-get install freebasic`
+
+### 验证内置编译器
+
+```python
+import os
+from vools.bridge.freebasic import _get_fbc_path
+
+fbc_path = _get_fbc_path()
+print(f"使用的 fbc 路径: {fbc_path}")
+print(f"存在: {os.path.exists(fbc_path)}")
 ```
 
 ## 5. 类型映射表
@@ -347,6 +344,205 @@ set_transport(MyTransport())
 | `NORMAL` | 命中缓存跳过编译；未命中则编译（默认） |
 | `ONLY_RUN` | 缓存未命中抛异常 |
 | `ONLY_CODE` | 只返回生成的 FreeBASIC 源码字符串，不编译 |
+
+## 10. 内置扩展 DLL 库
+
+`vools.bridge.freebasic` 模块**内置了 9 个常用第三方 DLL 库**，按类别组织在 `libs/win64/` 目录下：
+
+| 类别 | 库 | 说明 |
+|------|-----|------|
+| **database** | sqlite3.dll | SQLite3 数据库引擎 |
+| **database** | libmysql.dll | MySQL/MariaDB 客户端库 |
+| **graphics** | cairo.dll | Cairo 2D 图形渲染库 |
+| **multimedia** | SDL3.dll | SDL3 多媒体库（窗口/渲染/事件） |
+| **multimedia** | SDL3_image.dll | SDL3 图像加载扩展 |
+| **multimedia** | SDL3_mixer.dll | SDL3 音频混音扩展 |
+| **multimedia** | SDL3_ttf.dll | SDL3 字体渲染扩展 |
+| **gui** | Scintilla.dll | Scintilla 代码编辑控件 |
+| **gui** | mCtrl.dll | mCtrl Windows 控件库 |
+
+### 库清单查询
+
+```python
+from vools.bridge import freebasic
+
+# 列出所有可用的第三方 DLL 库
+print(freebasic.list_fb_libs())
+# ['sqlite3', 'libmysql', 'cairo', 'SDL3', 'SDL3_image', ...]
+
+# 按类别过滤
+print(freebasic.list_fb_libs('database'))
+# ['sqlite3', 'libmysql']
+```
+
+### 通过 ctypes 直接调用
+
+```python
+from vools.bridge import freebasic
+
+# 加载 SQLite3 DLL（自动加载依赖）
+lib = freebasic.get_fb_lib('sqlite3', category='database')
+print(lib.sqlite3_libversion())  # b'3.50.4'
+```
+
+### Python 端 SQLite3 shim 层
+
+模块内置 SQLite3 兼容层，当标准库 sqlite3 不可用时自动 fallback：
+
+```python
+from vools.bridge import freebasic
+
+# 检查可用性
+if freebasic.is_sqlite3_available():
+    print(f"SQLite3 可用，版本: {freebasic.sqlite3_version()}")
+
+# 连接数据库（标准 sqlite3 接口）
+conn = freebasic.connect(':memory:')
+cursor = conn.cursor()
+cursor.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)')
+cursor.execute("INSERT INTO t (name) VALUES (?)", ('Alice',))
+conn.commit()
+```
+
+## 11. .bas 封装模块（简化 @fbc 调用）
+
+`vools.bridge.freebasic.modules` 提供对第三方 DLL 的 FreeBASIC 端**简化封装层**，
+统一以 `fb_` 前缀命名，避免直接使用复杂的 C API。
+
+### 可用模块
+
+| 模块名 | 头文件依赖 | 库文件 | 典型场景 |
+|--------|-----------|--------|----------|
+| `sqlite3_wrapper` | `database/inc/sqlite3.bi` | `database/sqlite3.dll` | 嵌入式数据库 |
+| `cairo_wrapper` | `graphics/inc/cairo/cairo.bi` | `graphics/cairo.dll` | 2D 图形渲染 |
+| `sdl3_wrapper` | `multimedia/inc/SDL3.bi` | `multimedia/SDL3.dll` | 窗口/输入/音频 |
+
+### 查询模块信息
+
+```python
+from vools.bridge import freebasic
+
+# 列出所有可用模块
+print(freebasic.list_fb_modules())
+# ['cairo_wrapper', 'sdl3_wrapper', 'sqlite3_wrapper']
+
+# 读取模块源码
+code = freebasic.get_fb_module('sqlite3_wrapper')
+
+# 获取头文件搜索路径
+inc_paths = freebasic.get_fb_inc_paths('sqlite3_wrapper')
+
+# 获取库搜索路径
+lib_paths = freebasic.get_fb_lib_paths('sqlite3_wrapper')
+```
+
+### 使用示例：SQLite3 查询
+
+```python
+from vools.bridge import freebasic
+from vools.bridge.freebasic import compile_and_run
+
+sqlite_code = freebasic.get_fb_module('sqlite3_wrapper')
+
+result = compile_and_run(
+    '''
+    Dim As ZString Ptr v = fb_sqlite3_libversion()
+    Return v
+    ''',
+    func_name='test_sqlite',
+    ret_type='ZString Ptr',
+    extra_includes=[sqlite_code],
+    inc_paths=freebasic.get_fb_inc_paths('sqlite3_wrapper'),
+    lib_paths=freebasic.get_fb_lib_paths('sqlite3_wrapper'),
+)
+print(result)  # '3.50.4'
+```
+
+### 使用示例：Cairo 绘图
+
+```python
+from vools.bridge import freebasic
+from vools.bridge.freebasic import compile_and_run
+
+cairo_code = freebasic.get_fb_module('cairo_wrapper')
+
+result = compile_and_run(
+    '''
+    '' 创建一个 200x200 的 ARGB32 surface
+    Dim As FB_CAIRO_SURFACE Ptr surf = fb_cairo_image_surface_create(0, 200, 200)
+    '' 错误检测
+    If surf = 0 OrElse surf->handle = 0 Then Return -1
+    '' 销毁
+    fb_cairo_surface_destroy(surf)
+    Return 0
+    ''',
+    func_name='cairo_test',
+    ret_type='Long',
+    extra_includes=[cairo_code],
+    inc_paths=freebasic.get_fb_inc_paths('cairo_wrapper'),
+    lib_paths=freebasic.get_fb_lib_paths('cairo_wrapper'),
+)
+```
+
+### 使用示例：SDL3 初始化
+
+```python
+from vools.bridge import freebasic
+from vools.bridge.freebasic import compile_and_run
+
+sdl_code = freebasic.get_fb_module('sdl3_wrapper')
+
+result = compile_and_run(
+    '''
+    Return fb_sdl3_init(0)
+    ''',
+    func_name='sdl_test',
+    ret_type='Long',
+    extra_includes=[sdl_code],
+    inc_paths=freebasic.get_fb_inc_paths('sdl3_wrapper'),
+    lib_paths=freebasic.get_fb_lib_paths('sdl3_wrapper'),
+)
+print(f"SDL3 初始化返回: {result}")
+```
+
+## 12. 编译参数注入
+
+`compile_and_run` / `compile_and_run_async` 接受以下与 fbc 编译相关的参数：
+
+| 参数 | 作用 | 示例 |
+|------|------|------|
+| `extra_includes` | 额外注入的源码片段（字符串列表），会拼接到主代码前 | `[freebasic.get_fb_module('sqlite3_wrapper')]` |
+| `inc_paths` | 头文件搜索路径（通过 `-i` 传给 fbc） | `freebasic.get_fb_inc_paths('sqlite3_wrapper')` |
+| `lib_paths` | 库搜索路径（通过 `-p` 传给 fbc） | `freebasic.get_fb_lib_paths('sqlite3_wrapper')` |
+| `cache_dir` | 编译缓存目录，默认 `%TEMP%/vools_fbc_cache` | `None` |
+
+`lib_paths` 同时会被 `_load_fbc_dll` 用于 `os.add_dll_directory`（Python 3.8+），
+确保运行时能找到所有依赖 DLL。
+
+## 13. 链接器 .a 导入库生成
+
+对于未提供 .a 导入库的第三方 DLL（如 `sqlite3.dll`），需要先用 `dlltool` 生成：
+
+```python
+import subprocess
+import pefile
+import os
+
+def gen_a(dll_path, a_path):
+    pe = pefile.PE(dll_path)
+    symbols = [e.name.decode() for e in pe.DIRECTORY_ENTRY_EXPORT.symbols if e.name]
+    dll_name = os.path.basename(dll_path)
+    def_content = f'LIBRARY {dll_name}\nEXPORTS\n' + '\n'.join(f'  {s}' for s in symbols)
+    def_path = a_path + '.def'
+    with open(def_path, 'w', encoding='utf-8') as f:
+        f.write(def_content)
+    subprocess.run(['dlltool.exe', '-D', dll_name, '-d', def_path, '-l', a_path], check=True)
+    os.remove(def_path)
+
+gen_a('libs/win64/database/sqlite3.dll', 'libs/win64/database/libsqlite3.a')
+```
+
+> vools 已为所有内置 DLL 预生成 `lib<name>.a` 导入库，开箱即用。
 
 ### FreeBASIC 语法特点
 - 不区分大小写（`Function` 和 `function` 相同）

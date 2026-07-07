@@ -1,6 +1,4 @@
 """Test basic transform/filter operators: map, filter, flat_map, etc."""
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from vools.reactive import Observable, ops, Subject
 
 # ==================== map ====================

@@ -154,6 +154,55 @@ def sum_list(numbers: list) -> int:
     return "Return numbers.Sum()"
 ```
 
+## API.tlb COM 组件桥接
+
+除了编译器桥接模式外，`vools.bridge.vbnet` 还提供了 `api` 子包，用于直接调用已注册的 API.tlb COM 组件，提供 Windows 自动化能力。
+
+### 功能概述
+
+`api` 子包封装了 API.tlb 中的 7 个功能模块：
+
+| 模块 | 说明 |
+|------|------|
+| `api.Window` | 窗口操作（查找、移动、大小、状态等） |
+| `api.Mouse` | 鼠标操作（移动、点击、滚轮等） |
+| `api.Keyboard` | 键盘操作（按键模拟、状态查询等） |
+| `api.Image` | 图像处理（截图、像素、变换等） |
+| `api.FileSystem` | 文件系统操作（文件/目录管理） |
+| `api.Process` | 进程管理（启动、查询、终止等） |
+| `api.Network` | 网络功能（下载、URL编解码等） |
+
+### 前置条件
+
+- Windows 操作系统
+- API.dll / API.tlb 已正确注册为 COM 组件
+- pywin32 (`pip install pywin32`)
+
+### 快速示例
+
+```python
+from vools.bridge.vbnet import api
+
+if api.is_api_available():
+    # 查找记事本窗口
+    hwnd = api.Window.FindWindow("Notepad", None)
+    if hwnd:
+        print(f"记事本句柄: {hwnd}")
+        title = api.Window.GetWindowText(hwnd)
+        print(f"窗口标题: {title}")
+
+    # 鼠标操作
+    api.Mouse.MouseMove(100, 200)
+    api.Mouse.LeftClick()
+
+    # 键盘输入
+    api.Keyboard.SendKeys("Hello, World!")
+```
+
+### 详细文档
+
+更多详细信息请参考 [api 子包 README](api/README.md)。
+
 ## 注意事项
 
 - 函数体通过 `return` 语句返回 VB.NET 代码字符串
