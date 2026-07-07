@@ -11,6 +11,8 @@
 
 ## 核心功能
 
+### 签名缓存
+
 | 名称 | 说明 |
 |------|------|
 | `get_signature` | 获取函数签名（带 LRU 缓存） |
@@ -19,8 +21,15 @@
 | `remove_signature` | 从缓存中删除指定函数的签名 |
 | `clear_cache` | 清空全局签名缓存 |
 | `cache_info` | 返回缓存统计信息 |
+
+### 缓存装饰器
+
+| 名称 | 说明 |
+|------|------|
+| `memorize` | 函数记忆化装饰器（支持 TTL 和 LRUCache） |
 | `once` | 单次执行装饰器 |
 | `persist` | 持久化缓存装饰器 |
+| `FileLock` | 文件锁（用于持久化缓存并发控制） |
 
 ## 使用示例
 
@@ -55,6 +64,26 @@ def initialize():
 initialize()  # 输出: Initializing...
 initialize()  # 不输出，直接返回缓存结果
 ```
+
+### memorize 装饰器
+
+```python
+from vools.cache import memorize
+import time
+
+# 基础记忆化
+@memorize
+def slow_function(x):
+    time.sleep(1)  # 模拟耗时操作
+    return x * 2
+
+start = time.time()
+result1 = slow_function(5)  # 耗时 1 秒
+result2 = slow_function(5)  # 几乎无耗时（命中缓存）
+print(f"第二次调用耗时: {time.time() - start:.4f} 秒")
+```
+
+### persist 装饰器
 
 ```python
 from vools.cache import persist

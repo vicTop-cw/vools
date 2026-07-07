@@ -1,11 +1,6 @@
 """
 Box 组件和 box 装饰器的单元测试
 """
-import sys
-import os
-
-# 添加父目录到路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from datetime import datetime, date
 from vools.functional.box import box, Box, setattr_box

@@ -1,6 +1,4 @@
 """Test time-based operators: interval, timer, debounce, throttle, delay, timeout, sample, etc."""
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import time
 from vools.reactive import Observable, ops, Subject
 

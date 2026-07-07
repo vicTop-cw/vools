@@ -76,58 +76,77 @@ def rself(cls: Type) -> Type:
         """
         应用返回值转换规则：
         - None → 返回 self
-        - 已经是当前类或其子类的实例 → 直接返回原值
+        - 已经是当前类或其子类的实例 → 直接返回原值（可选复制属性）
         - 父类实例 → 使用 __from_parent__ 或 cls(value) 转换
 
         支持自定义初始化，通过 __from_parent__ 方法或实例属性传递参数
+        支持属性复制：如果类定义了 _rself_copy_attrs，则将这些属性从 self 复制到返回值
         """
         if value is None:
             return self
 
         if isinstance(value, cls):
-            return value
-
-        # 检查是否是当前类或其任何祖先类的实例
-        # 用于处理继承链的情况
-        if parent_cls is not None:
-            for base in cls.__mro__:
-                if base is object:
-                    break
-                if isinstance(value, base):
-                    # 找到匹配的基类，使用该基类的转换逻辑
-                    # 尝试从实例属性获取初始化参数
-                    kwargs = {}
+            # 如果返回值已经是当前类的实例，检查是否需要复制属性
+            copy_attrs = getattr(cls, '_rself_copy_attrs', None)
+            if copy_attrs and value is not self:
+                for attr_name in copy_attrs:
                     try:
-                        kwargs_attr = object.__getattribute__(self, '_rself_kwargs')
-                        kwargs = dict(kwargs_attr) if kwargs_attr else {}
+                        attr_val = object.__getattribute__(self, attr_name)
+                        if isinstance(attr_val, (list, dict, set)):
+                            # 可变类型做浅拷贝
+                            attr_val = attr_val.copy()
+                        object.__setattr__(value, attr_name, attr_val)
                     except AttributeError:
                         pass
+                # 同时更新 _rself_kwargs
+                try:
+                    kwargs_attr = object.__getattribute__(self, '_rself_kwargs')
+                    value._rself_kwargs = dict(kwargs_attr) if kwargs_attr else {}
+                except AttributeError:
+                    pass
+            return value
 
-                    # 优先使用 __from_parent__ 类方法
-                    if has_from_parent:
-                        try:
-                            # 调用类的 __from_parent__ 方法
-                            result = cls.__from_parent__(value, **kwargs)
-                            return result
-                        except TypeError:
-                            # 如果 __from_parent__ 不接受 kwargs，尝试无参数调用
-                            try:
-                                result = cls.__from_parent__(value)
-                                return result
-                            except Exception:
-                                pass
+        # 检查是否是当前类或其祖先类的实例
+        # 注意：只处理类型本身在 MRO 中的情况，避免兄弟类被错误转换
+        # 例如：Table(Seq) 和 Row(Seq) 是兄弟类，Table 的方法返回 Row 不应被转换
+        if parent_cls is not None:
+            value_type = type(value)
+            # 检查 value 的类型是否在当前类的 MRO 中
+            # 只有当返回值是当前类或其祖先类的直接实例时才转换
+            if value_type in cls.__mro__:
+                # 尝试从实例属性获取初始化参数
+                kwargs = {}
+                try:
+                    kwargs_attr = object.__getattribute__(self, '_rself_kwargs')
+                    kwargs = dict(kwargs_attr) if kwargs_attr else {}
+                except AttributeError:
+                    pass
 
-                    # 使用默认的 cls(value) 方式
+                # 优先使用 __from_parent__ 类方法
+                if has_from_parent:
                     try:
-                        return cls(value)
+                        # 调用类的 __from_parent__ 方法
+                        result = cls.__from_parent__(value, **kwargs)
+                        return result
                     except TypeError:
-                        # 如果构造函数需要额外参数但没有 __from_parent__，抛出错误
-                        if kwargs:
-                            raise TypeError(
-                                f"类 {cls.__name__} 的构造函数不支持直接用父类实例初始化，"
-                                f"请定义 __from_parent__(cls, parent_val, **kwargs) 类方法来处理"
-                            )
-                        raise
+                        # 如果 __from_parent__ 不接受 kwargs，尝试无参数调用
+                        try:
+                            result = cls.__from_parent__(value)
+                            return result
+                        except Exception:
+                            pass
+
+                # 使用默认的 cls(value) 方式
+                try:
+                    return cls(value)
+                except TypeError:
+                    # 如果构造函数需要额外参数但没有 __from_parent__，抛出错误
+                    if kwargs:
+                        raise TypeError(
+                            f"类 {cls.__name__} 的构造函数不支持直接用父类实例初始化，"
+                            f"请定义 __from_parent__(cls, parent_val, **kwargs) 类方法来处理"
+                        )
+                    raise
 
         return value
 
@@ -236,226 +255,3 @@ def rself(cls: Type) -> Type:
     # 注入新方法
     cls.__getattribute__ = __getattribute__
     return cls
-
-
-# ========== 示例和测试 ==========
-if __name__ == "__main__":
-    @rself
-    class SuperText(str):
-        """扩展的字符串类，支持链式调用自定义方法"""
-        def __init__(self, value: str = "", extra: str = None):
-            # str 是不可变类型，初始化时需调用父类 __new__
-            super().__init__()
-            self._value = value
-            self._extra = extra
-
-        @property
-        def extra(self):
-            return self._extra
-
-        def set_extra(self, extra: str):
-            """设置额外参数"""
-            self._extra = extra
-
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-        def decorated(self):
-            """自定义方法：返回带前缀并重复的字符串"""
-            prefix = self._extra or ""
-            return prefix + self._value
-
-    @rself
-    class SuperTextWithFactory(str):
-        """使用 __from_parent__ 的字符串类"""
-        def __new__(cls, value: str = "", prefix: str = "", suffix: str = ""):
-            instance = super().__new__(cls, value)
-            instance._prefix = prefix
-            instance._suffix = suffix
-            return instance
-
-        @classmethod
-        def __from_parent__(cls, parent_val, **kwargs):
-            """自定义工厂方法，支持传递额外参数"""
-            prefix = kwargs.get('prefix', '>> ')
-            suffix = kwargs.get('suffix', '')
-            return cls(str(parent_val), prefix=prefix, suffix=suffix)
-
-        def with_affix(self):
-            """返回带前后缀的字符串"""
-            return self._prefix + str(self) + self._suffix
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self for chaining.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function applied before f
-                sub_f: Post-processing function (no return expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
-
-    @rself
-    class SuperList(list):
-        """增强版列表类，支持链式调用"""
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-        def add(self, item):
-            new_list = SuperList(self)
-            new_list.append(item)
-            return new_list
-
-    @rself
-    class NoInheritance:
-        """无继承的类"""
-        def __init__(self):
-            self.value = 0
-
-        def increment(self):
-            self.value += 1
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self for chaining.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function applied before f
-                sub_f: Post-processing function (no return expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
-
-    # ----- 测试 SuperText -----
-    print("=== 测试 SuperText ===")
-    s = SuperText("hello")
-
-    # 1. 父类方法返回 str 实例 → 自动转为 SuperText 实例
-    result = s.upper()
-    print(f"type(s.upper()) = {type(result).__name__}, value = '{result}'")
-    assert isinstance(result, SuperText), "s.upper() 应该返回 SuperText 类型"
-
-    # set_times() 返回 None → 返回自身
-    result2 = result.set_extra("prefix:")
-    print(f"type(result.set_extra()) = {type(result2).__name__}")
-    assert result2 is result, "set_extra() 应该返回自身"
-
-    # 2. 自定义方法返回 str → 也会被包装
-    d = s.decorated()
-    print(f"type(s.decorated()) = {type(d).__name__}, value = '{d}'")
-    assert isinstance(d, SuperText), "decorated() 应该返回 SuperText 类型"
-
-    # ----- 测试 SuperTextWithFactory -----
-    print("\n=== 测试 SuperTextWithFactory ===")
-    s2 = SuperTextWithFactory("hello", prefix=">> ", suffix=" <<")
-
-    # 链式调用继承方法
-    result = s2.upper()
-    print(f"type(s2.upper()) = {type(result).__name__}, value = '{result}'")
-    assert isinstance(result, SuperTextWithFactory), "upper() 应该返回 SuperTextWithFactory 类型"
-
-    # 链式调用自定义方法
-    result2 = result.with_affix()
-    print(f"type(s2.with_affix()) = {type(result2).__name__}, value = '{result2}'")
-    assert isinstance(result2, SuperTextWithFactory), "with_affix() 应该返回 SuperTextWithFactory 类型"
-
-    # ----- 测试 SuperList -----
-    print("\n=== 测试 SuperList ===")
-    lst = SuperList([1, 2, 3])
-    result = lst.add(4)
-    print(f"type(lst.add(4)) = {type(result).__name__}, value = {result}")
-    assert isinstance(result, SuperList), "add() 应该返回 SuperList 类型"
-
-    # 链式调用
-    chained_list = SuperList([1, 2]).add(3).add(4)
-    print(f"链式调用结果: {chained_list}")
-    assert isinstance(chained_list, SuperList)
-
-    # ----- 测试 NoInheritance -----
-    print("\n=== 测试 NoInheritance ===")
-    obj = NoInheritance()
-    result = obj.increment()
-    print(f"type(obj.increment()) = {type(result).__name__}")
-    assert result is obj, "increment() 应该返回自身"
-    assert obj.value == 1
-
-    # ----- 测试多继承错误 -----
-    print("\n=== 测试多继承限制 ===")
-    try:
-        @rself
-        class MultiInherit(str, list):
-            pass
-
-            def do(self, f=print, pre_f=None, sub_f=None):
-                """Apply a function for side effects, return self for chaining.
-
-                Args:
-                    f: Function to apply (default print)
-                    pre_f: Pre-processing function applied before f
-                    sub_f: Post-processing function (no return expected)
-
-                Returns:
-                    self, for chaining
-                """
-                rs = self
-                if pre_f:
-                    rs = pre_f(rs)
-                rs = f(rs)
-                if sub_f:
-                    sub_f(rs)
-                return self
-
-        print("[FAIL] 应该抛出错误")
-    except TypeError as e:
-        print(f"[OK] 正确抛出错误: {e}")
-
-    print("\n所有测试通过!")

@@ -1,9 +1,21 @@
 """
 安全表达式求值模块
 提供受限的表达式求值能力，防止代码注入攻击
+
+支持 Rust 加速：通过 safe_eval_rust 函数在 Rust 库可用时使用高性能实现，
+否则回退到纯 Python 实现。
 """
 
-__all__ = ['safe_eval', 'ALLOWED_OPERATORS', 'ALLOWED_BUILTINS']
+__all__ = [
+    'safe_eval',
+    'safe_eval_rust',
+    'is_rust_safe_eval_available',
+    'SafeEvalError',
+    'SafeExpressionEvaluator',
+    'ALLOWED_OPERATORS',
+    'ALLOWED_BUILTINS',
+    'safe_lambda',
+]
 
 import ast
 import operator
@@ -188,6 +200,102 @@ def safe_eval(expr: str, vars: Optional[Dict[str, Any]] = None) -> Any:
     """
     evaluator = SafeExpressionEvaluator(vars)
     return evaluator.evaluate(expr)
+
+
+# =============================================================================
+# Rust 加速版本的 safe_eval
+# =============================================================================
+
+# 导入 shim（shim 不引用 vools 子包，避免循环导入）
+from ..bridge.rust import safe_eval_shim as _safe_eval_shim
+
+
+def _safe_eval_rust_impl(expr: str, vars: Optional[Dict[str, Any]] = None, timeout_ms: int = 1000) -> Any:
+    """
+    Rust 版本的 safe_eval 实现
+
+    通过栈式 VM 在 Rust 沙箱中执行表达式，提供：
+    - 超时控制
+    - 内存限制
+    - 安全隔离（无文件/网络/系统调用访问）
+
+    Args:
+        expr: 要求值的表达式字符串
+        vars: 允许的变量字典（暂未支持）
+        timeout_ms: 超时时间（毫秒）
+
+    Returns:
+        表达式求值结果
+
+    Raises:
+        SafeEvalError: 当表达式包含不安全内容时
+    """
+    # 检查 Rust 是否可用
+    if not _safe_eval_shim.is_rust_available():
+        raise SafeEvalError("Rust 桥接库不可用")
+
+    # 编译表达式为 VM 指令
+    instructions, compile_err = _safe_eval_shim.compile_to_instructions(expr)
+    if compile_err:
+        raise SafeEvalError(compile_err)
+
+    # 执行指令
+    result = _safe_eval_shim.eval_instructions(instructions, timeout_ms)
+
+    if not result.get("ok", False):
+        error = result.get("error", {})
+        error_type = error.get("type", "unknown")
+        error_msg = error.get("message", "Unknown error")
+        raise SafeEvalError(f"[Rust] {error_type}: {error_msg}")
+
+    # 解析返回值
+    value = result.get("value", {})
+    value_type = value.get("type", "unknown")
+    value_data = value.get("value")
+
+    if value_type == "int":
+        return int(value_data)
+    elif value_type == "float":
+        return float(value_data)
+    elif value_type == "str":
+        return str(value_data)
+    elif value_type == "bool":
+        return bool(value_data)
+    else:
+        raise SafeEvalError(f"[Rust] Unknown value type: {value_type}")
+
+
+def safe_eval_rust(expr: str, vars: Optional[Dict[str, Any]] = None, timeout_ms: int = 1000) -> Any:
+    """
+    安全求值表达式（Rust 加速版）
+
+    当 Rust 库可用时使用 Rust 沙箱执行，否则回退到纯 Python 实现。
+
+    Args:
+        expr: 要求值的表达式字符串
+        vars: 允许的变量字典（暂未支持）
+        timeout_ms: 超时时间（毫秒）
+
+    Returns:
+        表达式求值结果
+
+    Raises:
+        SafeEvalError: 当表达式包含不安全内容时
+    """
+    # 优先尝试 Rust
+    try:
+        return _safe_eval_rust_impl(expr, vars, timeout_ms)
+    except SafeEvalError as e:
+        error_msg = str(e)
+        if "Rust 桥接库不可用" in error_msg:
+            # Rust 不可用，回退到纯 Python
+            return safe_eval(expr, vars)
+        raise
+
+
+def is_rust_safe_eval_available() -> bool:
+    """检查 Rust 安全沙箱是否可用"""
+    return _safe_eval_shim.is_rust_available()
 
 
 DANGEROUS_PATTERNS = [

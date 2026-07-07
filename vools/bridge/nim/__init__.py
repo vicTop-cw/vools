@@ -4,6 +4,13 @@ vools.bridge.nim - Nim 语言桥接模块
 提供 Nim 加速的高性能函数，自动回退到 Python 实现。
 """
 
+from .sigcache_shim import (
+    hash_signature,
+    hash_signature_int,
+    build_signature_str,
+    signature_hash_from_inspect,
+    is_available as is_sigcache_available,
+)
 from .crypto import md5, sha1, sha256, hmac_sha256, hmac_md5
 from .seq import (
     seq_map_int, seq_filter_int, seq_reduce_sum_int, seq_reduce_max_int,
@@ -32,11 +39,29 @@ from .curried import (
     cur_diff_string, cur_count_string,
 )
 from .encoding import base64_encode, base64_decode, zlib_compress, zlib_decompress
+from .serialize_shim import (
+    pickle_encode as nim_pickle_encode,
+    pickle_decode as nim_pickle_decode,
+    msgpack_encode as nim_msgpack_encode,
+    msgpack_decode as nim_msgpack_decode,
+    is_available as is_serialize_available,
+)
+from .json_shim import (
+    json_encode as nim_json_encode,
+    json_decode as nim_json_decode,
+    json_encode_bytes as nim_json_encode_bytes,
+    json_decode_bytes as nim_json_decode_bytes,
+    is_available as is_json_available,
+)
 
 from ._loader import is_nim_available
 from .compiler import nim, compile_and_run, nim_compiler_available
 
 __all__ = [
+    # sigcache 模块
+    'hash_signature', 'hash_signature_int', 'build_signature_str',
+    'signature_hash_from_inspect', 'is_sigcache_available',
+    # crypto 模块
     'md5', 'sha1', 'sha256', 'hmac_sha256', 'hmac_md5',
     'seq_map_int', 'seq_filter_int', 'seq_reduce_sum_int', 'seq_reduce_max_int',
     'seq_reduce_min_int', 'seq_sort_int', 'seq_unique_int', 'seq_count_int',
@@ -59,6 +84,11 @@ __all__ = [
     'cur_distinct_string', 'cur_union_string', 'cur_intersect_string',
     'cur_diff_string', 'cur_count_string',
     'base64_encode', 'base64_decode', 'zlib_compress', 'zlib_decompress',
-    'is_nim_available', 'nim_compiler_available',
+    'nim_pickle_encode', 'nim_pickle_decode',
+    'nim_msgpack_encode', 'nim_msgpack_decode',
+    'nim_json_encode', 'nim_json_decode',
+    'nim_json_encode_bytes', 'nim_json_decode_bytes',
+    'is_nim_available', 'is_serialize_available', 'is_json_available',
+    'nim_compiler_available',
     'nim', 'compile_and_run',
 ]

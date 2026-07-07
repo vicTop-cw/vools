@@ -4,10 +4,6 @@
 """
 测试 functional 模块的功能
 """
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools.functional import (
     _, _1, _2, _3, f, magic, hd, box, Box, g, 
     Pipe, Ops, Seq, P, NONE, iif

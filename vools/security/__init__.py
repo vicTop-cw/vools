@@ -11,6 +11,14 @@ from .expression_handler import (
     create_filter_func,
     create_map_func,
 )
+from .hash import (
+    sha256_hex,
+    md5_hex,
+    sha1_hex,
+    sha224_hex,
+    sha384_hex,
+    sha512_hex,
+)
 
 __all__ = [
     'safe_eval',
@@ -20,4 +28,10 @@ __all__ = [
     'safe_eval_expression',
     'create_filter_func',
     'create_map_func',
+    'sha256_hex',
+    'md5_hex',
+    'sha1_hex',
+    'sha224_hex',
+    'sha384_hex',
+    'sha512_hex',
 ]

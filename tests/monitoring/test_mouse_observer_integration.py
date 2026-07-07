@@ -19,9 +19,6 @@ from typing import Dict, List, Any
 import pytest
 
 pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools.reactive.monitoring.mouse import (
     MouseSubject, MouseObserver, MouseData, MouseEventType
 )

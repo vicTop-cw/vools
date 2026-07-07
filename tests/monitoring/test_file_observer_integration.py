@@ -55,9 +55,6 @@ def monitor_process(test_dir, control_file, log_file):
     """ç  æ §ç¨ åº è¿ ç¨ """
     import logging
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
-
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
     from vools.reactive.monitoring.file_watcher import FileSubject, FileObserver, FileChangeType
 
     log_event(log_file, "monitor_start", pid=os.getpid(), test_dir=test_dir)

@@ -1,9 +1,4 @@
 """测试 vools 主模块导入"""
-
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 print("=" * 60)
 print("测试 vools 主模块导入")
 print("=" * 60)

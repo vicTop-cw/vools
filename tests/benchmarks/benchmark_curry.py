@@ -6,9 +6,6 @@ import os
 import time
 import tracemalloc
 import gc
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools.decorators.curry_core import curry
 from vools.decorators.curry_decorator import curry_class
 from vools.decorators.curry_delay import delay_curry

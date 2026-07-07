@@ -1,6 +1,4 @@
 """Test Observable core class methods & Subscription"""
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import time
 import threading
 from vools.reactive import Observable, Subscription, DefaultObserver, ops

@@ -139,7 +139,7 @@ def _find_executable(name: str, extra_paths: List[str] = None) -> Optional[str]:
 
     参数：
         name: 可执行文件名
-        extra_paths: 额外的搜索路径
+        extra_paths: 额外的搜索路径（支持通配符 * 和 ?）
 
     返回：
         找到的路径，不存在返回 None
@@ -149,9 +149,10 @@ def _find_executable(name: str, extra_paths: List[str] = None) -> Optional[str]:
     if system_path and os.path.exists(system_path):
         return system_path
 
-    # 检查额外路径
+    # 检查额外路径（支持通配符展开）
     if extra_paths:
-        for base_dir in extra_paths:
+        expanded_paths = _expand_paths(extra_paths)
+        for base_dir in expanded_paths:
             if not base_dir:
                 continue
             # Windows 可能需要加 .exe
@@ -164,6 +165,25 @@ def _find_executable(name: str, extra_paths: List[str] = None) -> Optional[str]:
                 return candidate
 
     return None
+
+
+def _expand_paths(paths: List[str]) -> List[str]:
+    """
+    展开路径列表中的通配符
+
+    支持 * 和 ? 通配符
+    """
+    import glob
+    result = []
+    for pat in paths:
+        if not pat:
+            continue
+        if '*' in pat or '?' in pat:
+            matched = glob.glob(pat)
+            result.extend([p for p in matched if os.path.isdir(p)])
+        else:
+            result.append(pat)
+    return result
 
 
 def _run_version_check(config: LanguageConfig) -> tuple:
@@ -569,6 +589,72 @@ class BridgeManager:
         return None
 
     # ------------------------------------------------------------------------
+    # 自动发现集成
+    # ------------------------------------------------------------------------
+
+    def auto_discover(self, include_wsl: bool = True) -> dict:
+        """
+        使用 probe 模块自动发现并配置所有可用编译器
+
+        会自动探测本机和 WSL 环境，将找到的编译器路径添加到配置中。
+
+        Args:
+            include_wsl: 是否包含 WSL 环境探测
+
+        Returns:
+            dict: 发现结果 {'local': [...], 'wsl': [...]}
+        """
+        from .probe import (
+            probe_with_extra_paths,
+            probe_all_wsl,
+            LANGUAGE_PROBES,
+        )
+
+        discovered = {'local': [], 'wsl': []}
+
+        # 1. 本机探测
+        local_report = probe_with_extra_paths()
+        for lang, status in local_report.languages.items():
+            if status.available and status.path:
+                lang_lower = lang.lower()
+                config = self._configs.get(lang_lower)
+                if config:
+                    # 更新已有配置的编译器路径
+                    bin_dir = os.path.dirname(status.path)
+                    if bin_dir and bin_dir not in config.compiler_paths:
+                        config.compiler_paths.insert(0, bin_dir)
+                        self.clear_cache(lang_lower)
+                    discovered['local'].append(lang_lower)
+                else:
+                    # 注册新语言
+                    probe_config = LANGUAGE_PROBES.get(lang, {})
+                    self.register(LanguageConfig(
+                        name=lang_lower,
+                        compiler=status.command or lang_lower,
+                        compiler_paths=[os.path.dirname(status.path)] if status.path else [],
+                        version_pattern=probe_config.get('version_pattern'),
+                    ))
+                    discovered['local'].append(lang_lower)
+
+        # 2. WSL 探测（仅 Windows）
+        if _IS_WINDOWS and include_wsl:
+            try:
+                wsl_reports = probe_all_wsl()
+                for report in wsl_reports:
+                    for lang, status in report.languages.items():
+                        if status.available and status.path:
+                            lang_lower = lang.lower()
+                            # WSL 的编译器路径标记为 wsl 路径
+                            wsl_key = f'wsl:{report.host}'
+                            if wsl_key not in discovered:
+                                discovered[wsl_key] = []
+                            discovered[wsl_key].append(lang_lower)
+            except Exception:
+                pass
+
+        return discovered
+
+    # ------------------------------------------------------------------------
     # 路径配置管理
     # ------------------------------------------------------------------------
 
@@ -812,18 +898,22 @@ def _register_builtin_languages():
     nim_paths = []
     if _IS_WINDOWS:
         nim_paths = [
-            r'E:\Dowloads\nim-2.2.10_x64\nim-2.2.10\bin',
-            r'C:\Users\victo\.codearts-cpp\tools\mingw\bin',
+            os.environ.get('NIM_PATH'),
+            os.path.expanduser(r'~\.codearts-cpp\tools\mingw\bin'),
             r'C:\Program Files\Nim\bin',
             r'C:\nim\bin',
+            os.path.join(os.path.dirname(__file__), '..', '..', 'nim', 'bin'),
         ]
+        nim_paths = [p for p in nim_paths if p and os.path.exists(p)]
     else:
         nim_paths = [
-            '/home/vic/nim-2.2.10/bin',
+            os.environ.get('NIM_PATH'),
+            os.path.expanduser('~/nim-2.2.10/bin'),
             '/opt/nim/bin',
             '/usr/local/bin',
             '/usr/bin',
         ]
+        nim_paths = [p for p in nim_paths if p and os.path.exists(p)]
 
     manager.register(LanguageConfig(
         name='nim',
@@ -931,9 +1021,9 @@ def _register_builtin_languages():
     julia_paths = []
     if _IS_WINDOWS:
         julia_paths = [
-            r'C:\Users\victo\AppData\Local\Programs\Julia-1.11.0\bin',
+            os.path.expanduser(r'~\AppData\Local\Programs\Julia-1.11.0\bin'),
             r'C:\Program Files\Julia-1.11.0\bin',
-            r'C:\Users\victo\AppData\Local\Microsoft\WindowsApps',
+            os.path.expanduser(r'~\AppData\Local\Microsoft\WindowsApps'),
             os.path.expanduser('~/AppData/Local/Programs/Julia-1.11.0/bin'),
         ]
     else:
@@ -955,21 +1045,50 @@ def _register_builtin_languages():
 
     # FreeBASIC
     fbc_paths = []
+    fbc_runtime_paths = []
+    fbc_extra_env = {}
     if _IS_WINDOWS:
+        _builtin_fbc_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'bridge', 'freebasic', 'compiler'
+        )
+        _builtin_fbc_libs_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'bridge', 'freebasic', 'libs'
+        )
         fbc_paths = [
+            _builtin_fbc_dir,
             r'C:\FreeBASIC',
             r'C:\Program Files\FreeBASIC',
             os.path.expanduser('~\\FreeBASIC'),
         ]
+        fbc_runtime_paths = list(fbc_paths)
+        if os.path.isdir(_builtin_fbc_dir):
+            fbc_extra_env['FBC'] = os.path.join(_builtin_fbc_dir, 'fbc64.exe')
+            fbc_extra_env['FBC32'] = os.path.join(_builtin_fbc_dir, 'fbc32.exe')
+            fbc_extra_env['FBC_DIR'] = _builtin_fbc_dir
+            _lib_platform = 'win64' if '64' in platform.architecture()[0] else 'win32'
+            _compiler_bin_dir = os.path.join(_builtin_fbc_dir, 'bin', _lib_platform)
+            if os.path.isdir(_compiler_bin_dir):
+                fbc_runtime_paths.append(_compiler_bin_dir)
+            _libs_platform_dir = os.path.join(_builtin_fbc_libs_dir, _lib_platform)
+            if os.path.isdir(_libs_platform_dir):
+                fbc_runtime_paths.append(_libs_platform_dir)
+                for _cat in ['database', 'graphics', 'multimedia', 'gui', 'web', 'utils']:
+                    _cat_dir = os.path.join(_libs_platform_dir, _cat)
+                    if os.path.isdir(_cat_dir):
+                        fbc_runtime_paths.append(_cat_dir)
     else:
         fbc_paths = ['/usr/local/bin', '/usr/bin', '/opt/freebasic/bin']
+        fbc_runtime_paths = list(fbc_paths)
 
     manager.register(LanguageConfig(
         name='freebasic',
         compiler='fbc64' + ('.exe' if _IS_WINDOWS else ''),
         compiler_paths=fbc_paths,
-        runtime_paths=fbc_paths,
+        runtime_paths=fbc_runtime_paths,
         library_suffix='.dll' if _IS_WINDOWS else '.so',
+        extra_env=fbc_extra_env,
     ))
 
     # 仓颉 (CangJie)
@@ -1029,7 +1148,7 @@ def _register_builtin_languages():
     mojo_paths = []
     if _IS_WINDOWS:
         mojo_paths = [
-            r'C:\Users\victo\.modular\mojo',
+            os.path.expanduser(r'~\.modular\mojo'),
             os.path.expanduser('~\\.modular\\mojo'),
         ]
     else:
@@ -1139,6 +1258,19 @@ def load_config(file_path: str = None) -> int:
 def get_config_file_path() -> str:
     """便捷函数：获取默认配置文件路径"""
     return manager.get_config_file_path()
+
+
+def auto_discover(include_wsl: bool = True) -> dict:
+    """
+    便捷函数：自动发现并配置所有可用编译器
+
+    参数：
+        include_wsl: 是否包含 WSL 环境探测
+
+    返回：
+        dict: 发现结果
+    """
+    return manager.auto_discover(include_wsl=include_wsl)
 
 
 def get_compiler(name: str) -> tuple:
@@ -1314,6 +1446,7 @@ __all__ = [
     'setup_runtime',
     'list_languages',
     'list_available',
+    'auto_discover',
     # 路径配置
     'set_compiler_path',
     'add_compiler_path',

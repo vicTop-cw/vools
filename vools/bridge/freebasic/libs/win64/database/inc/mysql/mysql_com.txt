@@ -1,0 +1,1 @@
+修改 inc\mysql\mysql_com.bi  注销172--175行，因为与 inc\win\winsock2.bi 的339行冲突， 造成mysql和winsock2 无法同时使用

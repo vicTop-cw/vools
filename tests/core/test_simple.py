@@ -1,11 +1,7 @@
 """
 简单调试测试
 """
-
-import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools.task import TaskQueue
 import time
 import tempfile

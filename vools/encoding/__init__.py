@@ -83,16 +83,65 @@ b64encode = Encoder._b64encode
 b64decode = Decoder._b64decode
 urlencode = Encoder._urlencode
 urldecode = Decoder._urldecode
-gzip_compress = Encoder._gzip_compress
-gzip_decompress = Decoder._gzip_decompress
-zlib_compress = Encoder._zlib_compress
-zlib_decompress = Decoder._zlib_decompress
 lzma_compress = Encoder._lzma_compress
 lzma_decompress = Decoder._lzma_decompress
 json_dumps = Encoder._json_dumps
 json_loads = Decoder._json_loads
 pickle_dumps = Encoder._pickle_dumps
 pickle_loads = Decoder._pickle_loads
+
+# 尝试加载 Nim 加速的 gzip/zlib 实现
+_gzip_compress_impl = None
+_gzip_decompress_impl = None
+_zlib_compress_impl = None
+_zlib_decompress_impl = None
+
+try:
+    from vools.bridge.nim.compress_shim import (
+        gzip_compress as _nim_gzip_compress,
+        gzip_decompress as _nim_gzip_decompress,
+        zlib_compress as _nim_zlib_compress,
+        zlib_decompress as _nim_zlib_decompress,
+        is_nim_compress_available as _nim_compress_available,
+    )
+    if _nim_compress_available():
+        _gzip_compress_impl = _nim_gzip_compress
+        _gzip_decompress_impl = _nim_gzip_decompress
+        _zlib_compress_impl = _nim_zlib_compress
+        _zlib_decompress_impl = _nim_zlib_decompress
+except ImportError:
+    pass
+
+# Python fallback 实现
+def _py_gzip_compress(data, level=9):
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    import gzip
+    return gzip.compress(data, compresslevel=level)
+
+def _py_gzip_decompress(data):
+    if isinstance(data, str):
+        data = data.encode('latin-1')
+    import gzip
+    return gzip.decompress(data)
+
+def _py_zlib_compress(data, level=9):
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    import zlib
+    return zlib.compress(data, level=level)
+
+def _py_zlib_decompress(data):
+    if isinstance(data, str):
+        data = data.encode('latin-1')
+    import zlib
+    return zlib.decompress(data)
+
+# 最终函数绑定（Nim 优先，否则 Python）
+gzip_compress = _gzip_compress_impl if _gzip_compress_impl else _py_gzip_compress
+gzip_decompress = _gzip_decompress_impl if _gzip_decompress_impl else _py_gzip_decompress
+zlib_compress = _zlib_compress_impl if _zlib_compress_impl else _py_zlib_compress
+zlib_decompress = _zlib_decompress_impl if _zlib_decompress_impl else _py_zlib_decompress
 
 
 def compress(data, method='gzip', **kwargs):

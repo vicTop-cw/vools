@@ -346,7 +346,10 @@ _fbc_bridge = FbcBridge()
 fbc = _fbc_bridge.decorator
 
 
-def _compile_fbc_code(code: str, func_name: str, cache_dir: str = None) -> str:
+def _compile_fbc_code(code: str, func_name: str, cache_dir: str = None,
+                      extra_includes: list = None,
+                      inc_paths: list = None,
+                      lib_paths: list = None) -> str:
     """
     编译 FreeBASIC 代码并返回 DLL 路径
 
@@ -354,6 +357,9 @@ def _compile_fbc_code(code: str, func_name: str, cache_dir: str = None) -> str:
         code: 完整 FreeBASIC 源代码
         func_name: 函数名（用于生成文件名）
         cache_dir: 缓存目录，None 则使用 _BAS_CACHE_DIR
+        extra_includes: 额外的源码片段（字符串列表，会在主代码前注入，可包含 #include 指令）
+        inc_paths: 额外的头文件搜索路径（通过 -i 参数传给 fbc）
+        lib_paths: 额外的库搜索路径（通过 -p 参数传给 fbc，让链接器能找到 .dll/.a）
 
     返回：
         编译后的 DLL 路径
@@ -366,8 +372,9 @@ def _compile_fbc_code(code: str, func_name: str, cache_dir: str = None) -> str:
 
     os.makedirs(cache_dir, exist_ok=True)
 
-    # 生成唯一文件名（基于代码 MD5）
-    code_hash = hashlib.md5(code.encode('utf-8')).hexdigest()[:12]
+    # 生成唯一文件名（基于代码 MD5 + 额外 include）
+    full_source = '\n'.join(extra_includes or []) + '\n' + code
+    code_hash = hashlib.md5(full_source.encode('utf-8')).hexdigest()[:12]
     dll_name = f'fbc_{func_name}_{code_hash}'
 
     if _IS_WINDOWS:
@@ -382,14 +389,24 @@ def _compile_fbc_code(code: str, func_name: str, cache_dir: str = None) -> str:
     # 写入临时 .bas 文件
     bas_path = os.path.join(cache_dir, f'{dll_name}.bas')
     with open(bas_path, 'w', encoding='utf-8') as f:
-        f.write(code)
+        f.write(full_source)
 
     # 编译命令（不切换工作目录，用 cwd 参数）
     fbc_path = _get_fbc_path()
     if _IS_WINDOWS:
-        compile_cmd = [fbc_path, '-s', 'gui', '-dll', '-export', bas_path]
+        compile_cmd = [fbc_path, '-s', 'gui', '-dll', '-export']
     else:
-        compile_cmd = [fbc_path, '-dll', '-export', bas_path]
+        compile_cmd = [fbc_path, '-dll', '-export']
+
+    # 添加头文件搜索路径
+    for inc in (inc_paths or []):
+        compile_cmd.extend(['-i', inc])
+
+    # 添加库搜索路径（让链接器能找到 .dll/.a）
+    for lp in (lib_paths or []):
+        compile_cmd.extend(['-p', lp])
+
+    compile_cmd.append(bas_path)
 
     import subprocess
     result = subprocess.run(
@@ -413,15 +430,32 @@ def _compile_fbc_code(code: str, func_name: str, cache_dir: str = None) -> str:
     return dll_path
 
 
-def _load_fbc_dll(dll_path: str):
+def _load_fbc_dll(dll_path: str, lib_paths: list = None):
     """加载 FreeBASIC 编译的 DLL"""
     if not os.path.exists(dll_path):
         raise FileNotFoundError(f'FreeBASIC 共享库不存在: {dll_path}')
 
+    # 在 Windows 上，把依赖库所在目录加入搜索路径（Python 3.8+）
+    if _IS_WINDOWS and lib_paths:
+        for lp in lib_paths:
+            lp_abs = os.path.abspath(lp)
+            if os.path.isdir(lp_abs):
+                try:
+                    os.add_dll_directory(lp_abs)
+                except (AttributeError, OSError):
+                    pass
+        # 加上 DLL 自身的目录
+        dll_dir = os.path.dirname(os.path.abspath(dll_path))
+        try:
+            os.add_dll_directory(dll_dir)
+        except (AttributeError, OSError):
+            pass
+
     return ctypes.CDLL(dll_path)
 
 
-def _call_fbc_func(dll_path: str, func_name: str, args: tuple, ret_type: str = 'Long'):
+def _call_fbc_func(dll_path: str, func_name: str, args: tuple, ret_type: str = 'Long',
+                   lib_paths: list = None):
     """
     调用 FreeBASIC 编译的函数（免序列化）
 
@@ -430,12 +464,13 @@ def _call_fbc_func(dll_path: str, func_name: str, args: tuple, ret_type: str = '
         func_name: 函数名
         args: 参数元组
         ret_type: 返回类型（FB 类型字符串）
+        lib_paths: DLL 搜索路径（用于解决依赖）
 
     返回：
         函数返回值（已通过 transport.decode_result 解码）
     """
     transport = get_transport()
-    lib = _load_fbc_dll(dll_path)
+    lib = _load_fbc_dll(dll_path, lib_paths=lib_paths)
     func = getattr(lib, func_name)
 
     # 推断 FB 入参类型
@@ -606,7 +641,10 @@ def _remove_cached_dll(func_name: str):
 
 def compile_and_run(fbc_code: str, func_name: str = 'main',
                     args: tuple = (), ret_type: str = 'Long',
-                    cache_dir: str = None):
+                    cache_dir: str = None,
+                    extra_includes: list = None,
+                    inc_paths: list = None,
+                    lib_paths: list = None):
     """
     直接编译并运行 FreeBASIC 代码
 
@@ -616,6 +654,9 @@ def compile_and_run(fbc_code: str, func_name: str = 'main',
         args: 参数元组
         ret_type: 返回类型
         cache_dir: 编译缓存目录
+        extra_includes: 额外的源码片段（字符串列表，会在主代码前注入）
+        inc_paths: 额外的头文件搜索路径
+        lib_paths: 额外的库搜索路径
 
     返回：
         函数返回值
@@ -626,13 +667,19 @@ def compile_and_run(fbc_code: str, func_name: str = 'main',
         fbc_code,
         ret_type,
     )
-    dll_path = _compile_fbc_code(full_code, func_name, cache_dir)
-    return _call_fbc_func(dll_path, func_name, args, ret_type)
+    dll_path = _compile_fbc_code(full_code, func_name, cache_dir,
+                                 extra_includes=extra_includes,
+                                 inc_paths=inc_paths,
+                                 lib_paths=lib_paths)
+    return _call_fbc_func(dll_path, func_name, args, ret_type, lib_paths=lib_paths)
 
 
 async def compile_and_run_async(fbc_code: str, func_name: str = 'main',
                                 args: tuple = (), ret_type: str = 'Long',
-                                cache_dir: str = None):
+                                cache_dir: str = None,
+                                extra_includes: list = None,
+                                inc_paths: list = None,
+                                lib_paths: list = None):
     """
     异步编译并运行 FreeBASIC 代码
 
@@ -642,6 +689,9 @@ async def compile_and_run_async(fbc_code: str, func_name: str = 'main',
         args: 参数元组
         ret_type: 返回类型
         cache_dir: 编译缓存目录
+        extra_includes: 额外的源码片段
+        inc_paths: 额外的头文件搜索路径
+        lib_paths: 额外的库搜索路径
 
     返回：
         函数返回值（awaitable）
@@ -658,7 +708,10 @@ async def compile_and_run_async(fbc_code: str, func_name: str = 'main',
             fbc_code,
             ret_type,
         )
-        dll_path = _compile_fbc_code(full_code, func_name, cache_dir)
-        return _call_fbc_func(dll_path, func_name, args, ret_type)
+        dll_path = _compile_fbc_code(full_code, func_name, cache_dir,
+                                     extra_includes=extra_includes,
+                                     inc_paths=inc_paths,
+                                     lib_paths=lib_paths)
+        return _call_fbc_func(dll_path, func_name, args, ret_type, lib_paths=lib_paths)
 
     return await loop.run_in_executor(_executor, _run)

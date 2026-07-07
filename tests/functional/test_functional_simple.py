@@ -4,14 +4,6 @@
 """
 测试 functional 模块的核心功能（不需要 Spark）
 """
-
-# 直接导入模块，避免触发 Spark 初始化
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-
 from vools.functional.placeholder import _ , _1, _2, _3, f, magic, hd, g
 from vools.functional.box import box, Box
 from vools.functional import Pipe, Ops, Seq, P, NONE, iif

@@ -1,0 +1,17 @@
+[package]
+name = "vools_bridge_safe_eval"
+version = "0.1.0"
+edition = "2021"
+description = "Rust-based secure expression evaluator for vools"
+authors = ["vools"]
+
+[lib]
+name = "vools_bridge_safe_eval"
+crate-type = ["cdylib"]
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true

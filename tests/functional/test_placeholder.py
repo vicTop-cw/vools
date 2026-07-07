@@ -1,11 +1,6 @@
 """
 测试 placeholder_impl.py 中的 X 和 Y 工具
 """
-import sys
-import os
-# 确保导入项目中的 vools 包
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
 from vools.functional.placeholder_impl import X, Y
 
 

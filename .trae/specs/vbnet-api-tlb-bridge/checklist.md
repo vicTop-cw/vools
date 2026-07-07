@@ -1,0 +1,22 @@
+# VB.NET API TLB 桥接模块 - 验证清单
+
+- [x] Checkpoint 1: 模块导入不报错（无论 API.dll 是否安装）
+- [x] Checkpoint 2: is_api_available() 正确检测 API 组件可用性
+- [x] Checkpoint 3: COM 对象创建与缓存机制正常工作
+- [x] Checkpoint 4: Window 模块核心方法可用（FindWindow, GetWindowText, GetWindowRect, MoveWindow, ShowWindow, CloseWindow）
+- [x] Checkpoint 5: Window 模块属性访问正确（Hwnd 等）
+- [x] Checkpoint 6: Mouse 模块方法可用（MouseMove, LeftClick, RightClick, DoubleClick, MouseWheel）
+- [x] Checkpoint 7: Keyboard 模块方法可用（SendKeys, KeyDown, KeyUp, GetKeyPressed）
+- [x] Checkpoint 8: Image 模块截图功能正常（ScreenCapture 返回有效图像）
+- [x] Checkpoint 9: Image 模块图像处理方法可用（OpenImage, SaveImage, GetPixelColor, ChangeSize）
+- [x] Checkpoint 10: FileSystem 模块文件操作正确（FileExists, DirectoryExists, ReadAllText, WriteAllText, CreateDirectory）
+- [x] Checkpoint 11: Process 模块进程管理可用（Start, Shell, GetProcesses, Kill）
+- [x] Checkpoint 12: Network 模块网络功能可用（NetworkIsAvailable, DownloadFile, UrlEncode, UrlDecode）
+- [x] Checkpoint 13: 错误调用时抛出有意义的 Python 异常
+- [x] Checkpoint 14: 统一 API 入口正常（from vools.bridge.vbnet import api）
+- [x] Checkpoint 15: 模块层级结构与 vools.bridge 其他子包一致
+- [x] Checkpoint 16: vools.bridge.__init__.py 延迟加载机制正确支持 api 模块
+- [x] Checkpoint 17: README.md 包含安装说明、API 列表、使用示例
+- [x] Checkpoint 18: 单元测试覆盖主要功能模块（60 个测试用例全部通过）
+- [x] Checkpoint 19: 代码遵循项目现有编码风格和约定
+- [ ] Checkpoint 20: 所有测试在 Python 3.6 和 3.13 上通过（Windows 平台）

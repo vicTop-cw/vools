@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.julia.compiler - Julia 代码编译
 
 提供 Julia 代码编译为共享库的功能，包括：
@@ -36,10 +36,9 @@ _JULIA_COMPILER = 'julia'
 
 # 常用 PATH 搜索
 _JULIA_SEARCH_PATHS_WINDOWS = [
-    r"C:\Users\victo\AppData\Local\Programs\Julia-1.11.0\bin",
+    os.path.expanduser(r"~\AppData\Local\Programs\Julia-1.11.0\bin"),
     r"C:\Program Files\Julia-1.11.0\bin",
-    r"C:\Users\victo\AppData\Local\Microsoft\WindowsApps",
-    os.path.expanduser("~/AppData/Local/Programs/Julia-1.11.0/bin"),
+    os.path.expanduser(r"~\AppData\Local\Microsoft\WindowsApps"),
 ]
 _JULIA_SEARCH_PATHS_UNIX = [
     "/home/julia/bin",

@@ -11,9 +11,6 @@ import pytest
 pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
 from datetime import datetime
 from typing import Dict, List, Callable
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from vools.reactive.monitoring.keyboard import (
     KeySubject, KeyObserver, KeyData, KeyEventType
 )

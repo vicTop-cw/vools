@@ -1,7 +1,7 @@
+import os
 import timeit
 import gc
 import psutil
-import os
 import vools.reactive as rx
 import reactivex as rxx
 from reactivex.operators import map as rxx_map, filter as rxx_filter, take, skip, reduce, scan, distinct, flat_map, switch_map, buffer_with_count, window_with_count
@@ -37,7 +37,7 @@ def run_benchmarks():
     print("vools.reactive vs reactivex 性能对比基准测试")
     print("="*100)
     
-    data_sizes = [1000, 10000]
+    data_sizes = [100,1000]
     results = []
     
     for size in data_sizes:

@@ -1,0 +1,75 @@
+{
+  "platform": "win64",
+  "libraries": {
+    "sqlite3": {
+      "category": "database",
+      "dll": "database/sqlite3.dll",
+      "header": "database/inc/sqlite3.bi",
+      "version": "unknown",
+      "dependencies": []
+    },
+    "libmysql": {
+      "category": "database",
+      "dll": "database/libmysql.dll",
+      "header": "database/inc/mysql/mysql.bi",
+      "version": "unknown",
+      "dependencies": []
+    },
+    "cairo": {
+      "category": "graphics",
+      "dll": "graphics/cairo.dll",
+      "header": "graphics/inc/cairo/cairo.bi",
+      "version": "unknown",
+      "dependencies": []
+    },
+    "SDL3": {
+      "category": "multimedia",
+      "dll": "multimedia/SDL3.dll",
+      "header": "multimedia/inc/SDL3.bi",
+      "version": "unknown",
+      "dependencies": []
+    },
+    "SDL3_image": {
+      "category": "multimedia",
+      "dll": "multimedia/SDL3_image.dll",
+      "header": "multimedia/inc/SDL3.bi",
+      "version": "unknown",
+      "dependencies": [
+        "SDL3"
+      ]
+    },
+    "SDL3_mixer": {
+      "category": "multimedia",
+      "dll": "multimedia/SDL3_mixer.dll",
+      "header": "multimedia/inc/SDL3.bi",
+      "version": "unknown",
+      "dependencies": [
+        "SDL3"
+      ]
+    },
+    "SDL3_ttf": {
+      "category": "multimedia",
+      "dll": "multimedia/SDL3_ttf.dll",
+      "header": "multimedia/inc/SDL3.bi",
+      "version": "unknown",
+      "dependencies": [
+        "SDL3"
+      ]
+    },
+    "Scintilla": {
+      "category": "gui",
+      "dll": "gui/Scintilla.dll",
+      "header": "gui/inc/scintilla/modScintilla.bi",
+      "version": "3.x (VFB)",
+      "dependencies": [],
+      "inc_dir": "gui/inc/scintilla"
+    },
+    "mCtrl": {
+      "category": "gui",
+      "dll": "gui/mCtrl.dll",
+      "header": "",
+      "version": "unknown",
+      "dependencies": []
+    }
+  }
+}

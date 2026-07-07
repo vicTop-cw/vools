@@ -2,11 +2,7 @@
 测试任务队列功能 - 修复版本
 使用单独模块中的函数来确保多进程可pickle
 """
-
-import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import time
 import tempfile
 

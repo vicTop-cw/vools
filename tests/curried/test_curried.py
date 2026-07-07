@@ -14,10 +14,6 @@ import threading
 from typing import List, Dict, Any, Callable
 from functools import reduce
 from collections import OrderedDict
-
-# 添加项目路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import pytest
 
 

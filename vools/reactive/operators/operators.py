@@ -526,47 +526,56 @@ def with_latest_from(other: Observable[R]) -> Callable[[Observable[T]], Observab
 
 
 def take(n: int) -> Callable[[Observable[T]], Observable[T]]:
-    """取前 n 个元素"""
+    """取前 n 个元素 - 高性能版本，针对零元素和少量元素极致优化"""
     def operator(source: Observable[T]) -> Observable[T]:
         def subscribe(observer: Observer[T]) -> Subscription:
-            counter = 0
-            is_closed = False
+            # 特殊优化：take(0)直接立即完成，不订阅源Observable
+            if n <= 0:
+                observer.on_completed()
+                return Subscription(lambda: None)
+            
+            count = 0
             source_sub = None
             
+            def on_next(value: T) -> Optional[bool]:
+                """高性能on_next：返回True立即终止源Observable迭代"""
+                nonlocal count
+                count += 1
+                
+                if count <= n:
+                    # 继续转发给下游observer
+                    observer.on_next(value)
+                    if count == n:
+                        # 达到n个元素，立即完成并返回True停止源迭代
+                        observer.on_completed()
+                        return True  # 通知源Observable立即停止迭代
+                    return None  # 继续正常处理
+                else:
+                    # 已经超过n个（防止竞态），立即停止
+                    return True
+            
+            def on_error(error: Exception) -> None:
+                # 转发错误给下游
+                observer.on_error(error)
+            
+            def on_completed() -> None:
+                # 只有在未达到n个时才调用（源提前结束）
+                nonlocal count
+                if count < n:
+                    observer.on_completed()
+            
             def unsubscribe():
-                nonlocal is_closed, source_sub
-                is_closed = True
+                nonlocal source_sub
                 if source_sub is not None:
                     source_sub.unsubscribe()
             
-            def on_next(value: T) -> None:
-                nonlocal counter, is_closed, source_sub
-                if is_closed:
-                    return
-                if counter < n:
-                    observer.on_next(value)
-                    counter += 1
-                    if counter == n:
-                        is_closed = True
-                        if source_sub is not None:
-                            source_sub.unsubscribe()
-                        observer.on_completed()
-            
-            def on_completed():
-                nonlocal is_closed
-                if not is_closed:
-                    is_closed = True
-                    observer.on_completed()
-            
             source_sub = source.subscribe(
                 on_next=on_next,
-                on_error=observer.on_error,
+                on_error=on_error,
                 on_completed=on_completed
             )
             
-            result = Subscription(unsubscribe)
-            result.add_child(source_sub)
-            return result
+            return Subscription(unsubscribe)
         
         return Observable(subscribe)
     

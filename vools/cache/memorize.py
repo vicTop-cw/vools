@@ -169,23 +169,3 @@ def memorize(func: Optional[Callable] = None, *, duration: float = 3) -> Callabl
         # @memorize 直接调用
         return decorator(func)
 
-
-if __name__ == '__main__':
-    print("=== 测试 memorize ===")
-    
-    @memorize
-    def test_func1():
-        return time.time()
-    
-    for i in range(5):
-        print(f"调用 {i}: {test_func1()}")
-        time.sleep(0.5)
-    
-    @memorize(duration=2)
-    def test_func2():
-        return time.time()
-    
-    print("\n测试 duration 参数:")
-    for i in range(5):
-        print(f"调用 {i}: {test_func2()}")
-        time.sleep(0.5)

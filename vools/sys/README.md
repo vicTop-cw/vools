@@ -378,7 +378,7 @@ def ls(_l=None):
 | **参数映射** | @exe 基于命名约定映射命令行选项 | 函数参数直接映射 |
 | **缓存机制** | 无（直接调用） | 基于内容哈希的编译缓存 |
 | **依赖关系** | 无 deps 概念 | 支持 deps 依赖、拓扑排序 |
-| **支持语言** | 任何能生成 exe/dll 的语言 | 14 种语言内置支持 |
+| **支持语言** | 任何能生成 exe/dll 的语言 | 27 种语言内置支持（Nim/Rust/Go/C/C++/Cangjie/Mojo/MoonBit/C#/Java/Scala/Ruby/Julia/R/TypeScript/VB.NET/Perl/Lua/Zig/Kotlin/Swift/PHP/Dart/PowerShell/VBScript/Shell/FreeBASIC） |
 
 ### 选型建议
 

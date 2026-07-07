@@ -785,39 +785,6 @@ class Itor:
             self._history_tail = node
 
 
-if __name__ == '__main__':
-    # 示例 1：普通迭代 + 暂停/插队/重启（在副本上操作，不影响原实例）
-    # 注意：插队 99 已被加入 gen 的历史，因此 restart 会先重放 [1, 2, 99]
-    itor = Itor([1, 2, 3, 4, 5])
-    gen = itor()
-    print("basic:", next(gen), next(gen))  # 1, 2
-    gen.send(Node(99))
-    print("jump:", next(gen))               # 99
-    gen.restart()
-    print("restart:", list(gen))            # [1, 2, 99, 3, 4, 5]
-    print("gen state:", gen.state.name)     # STOPPED
-    print("original state:", itor.state.name)  # PENDING（原实例未被影响）
-
-    # 示例 2：使用类方法设置历史保留策略
-    itor2 = Itor([1, 2, 3, 4, 5])
-    Itor.set_history_max(itor2, 3)
-    gen2 = itor2()
-    print("full:", list(gen2))             # [1, 2, 3, 4, 5]
-    gen2.restart()
-    print("last 3:", list(gen2))           # [3, 4, 5]
-
-    # 示例 3：条件插队
-    itor3 = Itor([1, 2, 3, 4, 5])
-    gen3 = itor3()
-    gen3.send(Node(88), jump_when=lambda it: it._history_tail and it._history_tail.val == 2)
-    print("conditional:", list(gen3))      # [1, 2, 88, 3, 4, 5]
-
-    # 示例 4：直接迭代和 next()（使用原实例本身）
-    itor4 = Itor([10, 20, 30])
-    print("iter direct:", list(itor4))         # [10, 20, 30]
-    itor5 = Itor([7, 8, 9])
-    print("next direct:", next(itor5), next(itor5))  # 7, 8
-
 
 # 向后兼容别名：旧代码中直接使用 State 仍可用，但推荐改用 ItorState
 State = ItorState

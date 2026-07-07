@@ -2,9 +2,6 @@
 import sys
 import os
 import builtins
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
 from vools.cache import (
     get_signature, add_custom_sig, cached_getsignature,
     clear_cache, cache_info,

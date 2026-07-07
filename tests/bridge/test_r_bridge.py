@@ -9,9 +9,6 @@ import pytest
 import sys
 import os
 import asyncio
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
 from vools.bridge.r.types import (
     RTypeMapper,
     get_r_type,

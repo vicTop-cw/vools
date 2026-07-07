@@ -290,23 +290,3 @@ class Ops:
 
 
 
-
-
-# ============================================================================
-# 测试代码
-# ============================================================================
-
-if __name__ == '__main__':
-    print("=== 测试 Pipe ===")
-    result = range(10) | Pipe(lambda x: [i * 2 for i in x])
-    print(f"Pipe 结果: {result}")
-    
-    print("\n=== 测试 Ops ===")
-    result = range(10) | Ops.filter(lambda x: x % 2 == 0) | Ops.map(lambda x: x * 2) | Ops.sum()
-    print(f"Ops 结果: {result}")
-    
-    print("\n=== 测试 Seq ===")
-    result = Seq(range(10)).map(lambda x: x * 2).filter(lambda x: x > 5).collect()
-    print(f"Seq 结果: {result}")
-    
-    print("\n所有测试通过!")

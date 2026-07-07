@@ -48,6 +48,7 @@ if _HAS_DATACLASSES:
 else:
     # ── attrs 降级模式 ──
     try:
+        import attr
         from attr import attrs, attrib, asdict as _attr_asdict
         from attr import has as _attr_has
         from attr.exceptions import FrozenInstanceError as _attr_FrozenInstanceError
@@ -57,6 +58,31 @@ else:
             "Run: pip install attrs"
         )
         raise ImportError(msg)
+
+    def _detect_attr_capabilities():
+        """检测 attrs 版本支持的特性，确保最大兼容性"""
+        import inspect
+        caps = {
+            'factory': False,
+            'auto_attribs': True,
+            'frozen': True,
+        }
+        try:
+            sig = inspect.signature(attrib)
+            caps['factory'] = 'factory' in sig.parameters
+        except (ValueError, TypeError):
+            pass
+        try:
+            sig = inspect.signature(attrs)
+            if 'auto_attribs' not in sig.parameters:
+                caps['auto_attribs'] = False
+            if 'frozen' not in sig.parameters:
+                caps['frozen'] = False
+        except (ValueError, TypeError):
+            pass
+        return caps
+
+    _ATTR_CAPS = _detect_attr_capabilities()
 
     class _MISSING_TYPE:
         """模拟 dataclasses.MISSING"""
@@ -96,17 +122,23 @@ else:
         """
         frozen = kwargs.pop('frozen', False)
 
+        _attrs_kwargs = {}
+        if _ATTR_CAPS['auto_attribs']:
+            _attrs_kwargs['auto_attribs'] = True
+        if _ATTR_CAPS['frozen'] and frozen:
+            _attrs_kwargs['frozen'] = True
+
         def _wrap(c):
-            wrapped = attrs(c, frozen=frozen, auto_attribs=True)
+            wrapped = attrs(c, **_attrs_kwargs)
+            if not _ATTR_CAPS['auto_attribs']:
+                pass
             # 兼容 __post_init__: attrs 用 __attrs_post_init__
             if hasattr(wrapped, '__post_init__') and not hasattr(wrapped, '__attrs_post_init__'):
                 wrapped.__attrs_post_init__ = wrapped.__post_init__
             return wrapped
 
-        # attrs 的 frozen 默认是 False，等价
         if cls is not None:
             return _wrap(cls)
-        # 带参装饰器模式: @dataclass(frozen=True)
         return _wrap
 
     def field(*, default=MISSING, default_factory=MISSING, **kwargs) -> Any:
@@ -118,11 +150,13 @@ else:
             default_factory: 默认值工厂
             **kwargs: 其他参数（如 compare=False, repr=True）
         """
-        # dataclasses → attrs 参数映射
         if 'compare' in kwargs:
             kwargs['eq'] = kwargs.pop('compare')
         if default_factory is not MISSING:
-            return attrib(factory=default_factory, **kwargs)
+            if _ATTR_CAPS['factory']:
+                return attrib(factory=default_factory, **kwargs)
+            else:
+                return attrib(default=attr.Factory(default_factory), **kwargs)
         if default is not MISSING:
             return attrib(default=default, **kwargs)
         return attrib(**kwargs)

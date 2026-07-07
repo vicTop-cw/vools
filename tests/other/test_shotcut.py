@@ -4,9 +4,6 @@
 """
 测试 shotcut 模块的功能
 """
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vools.functional.placeholder import _ , _1, _2, _3, f, magic, hd
 from vools.functional.arrow_func import g
 

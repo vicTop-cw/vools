@@ -12,10 +12,6 @@ iif 函数和 ConditionBuilder 类的单元测试（匹配改进版）
   - comp.setter: 各分支独立 return，消除 UnboundLocalError
   - _fix_comp: try/except 替代 inspect.signature
 """
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from vools.functional.iif import iif, ConditionBuilder, LazyProperty
 
