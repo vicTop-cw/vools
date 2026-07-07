@@ -7,7 +7,7 @@ vools - Python 函数式编程工具集
 import importlib
 from typing import Any
 
-__version__ = "0.2.4"
+__version__ = "0.4.5"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
@@ -258,34 +258,6 @@ try:
 except Exception:
     BRIDGE_AVAILABLE = False
 
-# ============================================================================
-# Nim 加速状态 - 自动回退，纯 Python 环境仍可工作
-# ============================================================================
-
-import warnings
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', category=DeprecationWarning)
-    try:
-        from . import _nim_loader
-        from . import _nim_crypto
-        from . import _nim_encoding
-        from . import _nim_seq
-        from . import _nim_datetime
-        from . import _nim_curried
-        NIM_CRYPTO_AVAILABLE = _nim_crypto.is_nim_available() if hasattr(_nim_crypto, 'is_nim_available') else False
-        NIM_ENCODING_AVAILABLE = _nim_encoding.is_nim_encoding_available() if hasattr(_nim_encoding, 'is_nim_encoding_available') else False
-        NIM_SEQ_AVAILABLE = _nim_seq.is_nim_seq_available() if hasattr(_nim_seq, 'is_nim_seq_available') else False
-        NIM_DATETIME_AVAILABLE = _nim_datetime.is_nim_datetime_available() if hasattr(_nim_datetime, 'is_nim_datetime_available') else False
-        NIM_CURRIED_AVAILABLE = _nim_curried.is_nim_curried_available() if hasattr(_nim_curried, 'is_nim_curried_available') else False
-        NIM_AVAILABLE = any([NIM_CRYPTO_AVAILABLE, NIM_ENCODING_AVAILABLE, NIM_SEQ_AVAILABLE,
-                              NIM_DATETIME_AVAILABLE, NIM_CURRIED_AVAILABLE])
-    except Exception:
-        NIM_AVAILABLE = False
-        NIM_CRYPTO_AVAILABLE = False
-        NIM_ENCODING_AVAILABLE = False
-        NIM_SEQ_AVAILABLE = False
-        NIM_DATETIME_AVAILABLE = False
-        NIM_CURRIED_AVAILABLE = False
 VIC_AVAILABLE = True
 
 
@@ -552,35 +524,3 @@ if _sys.version_info < (3, 7):
     except Exception:
         pass
 
-if __name__ == '__main__':
-    print(f"vools version: {__version__}")
-    print(f"Available exports: {len(__all__)} items")
-
-    @memorize(duration=5)
-    def expensive_function(x):
-        return x ** 2
-
-    print(f"expensive_function(5) = {expensive_function(5)}")
-    print(f"expensive_function(5) = {expensive_function(5)} (cached)")
-
-    print("\n=== 测试 once ===")
-
-    @once
-    def initialize():
-        print("Initializing...")
-        return 42
-
-    print(f"initialize() = {initialize()}")
-    print(f"initialize() = {initialize()} (cached)")
-
-    print("\n=== 测试 iif ===")
-
-    result = iif(True, "yes", "no")
-    print(f"iif(True, 'yes', 'no') = {result}")
-
-    print("\n=== 测试 g ===")
-
-    f = g("x, y => x + y")
-    print(f"g('x, y => x + y')(3, 4) = {f(3, 4)}")
-
-    print("\n所有测试通过!")
