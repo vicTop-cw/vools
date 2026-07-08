@@ -4,7 +4,6 @@ vools.sys.fire_app - Fire CLI 应用实例
 使用 Fire 框架自动生成 CLI 界面。
 """
 
-import fire
 from . import dll_cmd, compile_cmd, run_cmd, env_cmd
 
 
@@ -20,6 +19,7 @@ class SysCLI:
 
 def main():
     """CLI 入口点"""
+    import fire
     fire.Fire(SysCLI)
 
 

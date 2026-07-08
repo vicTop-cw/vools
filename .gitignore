@@ -114,3 +114,9 @@ logs/
 release.log
 site/
 
+# Nim build artifacts
+*.dll
+*.lib
+*.exp
+*.nim.c
+

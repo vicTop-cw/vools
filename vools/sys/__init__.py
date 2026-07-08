@@ -33,10 +33,13 @@ vools.sys - 外部系统资源轻量桥接子包
     # get_env 系统环境变量读取
     path = get_env("PATH")
 """
-
-from .fire_app import SysCLI
+try:
+    from .fire_app import SysCLI
+except ImportError:
+    SysCLI = None
 from .exe import exe
 from .dll import dll
+from .cmd import cmd
 from .env import get_env, get_env_with_default
 
-__all__ = ['SysCLI', 'exe', 'dll', 'get_env', 'get_env_with_default']
+__all__ = ['SysCLI', 'exe', 'dll', 'cmd', 'get_env', 'get_env_with_default']
