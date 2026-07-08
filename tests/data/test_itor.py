@@ -287,6 +287,57 @@ class TestItorJump:
         assert 99 in results
         assert results.index(99) == 2
 
+    def test_immediate_jump_without_pause_in_thread(self):
+        itor = Itor(range(100))
+        results = []
+
+        def consumer():
+            for v in itor:
+                results.append(v)
+                time.sleep(0.01)
+
+        def controller():
+            while len(results) < 2:
+                time.sleep(0.005)
+            itor.send(Node(999))
+            time.sleep(0.05)
+            itor.stop()
+
+        t = threading.Thread(target=consumer)
+        t.start()
+        threading.Thread(target=controller).start()
+        t.join(timeout=2)
+        assert not t.is_alive()
+        assert 999 in results
+
+    def test_producer_consumer_sequential_jumps(self):
+        itor = Itor(range(10))
+        results = []
+
+        def consumer():
+            for v in itor:
+                results.append(v)
+                time.sleep(0.1)
+
+        def producer():
+            time.sleep(0.05)
+            for i in [999, 888]:
+                if itor.state == ItorState.ITERRING:
+                    itor.set_pause()
+                    itor.send(Node(i))
+                    itor.resume()
+                    time.sleep(0.05)
+                else:
+                    break
+
+        threading.Thread(target=producer).start()
+        consumer()
+
+        assert 999 in results
+        assert 888 in results
+        assert results.index(999) < results.index(1)
+        assert results.index(888) < results.index(1)
+
     def test_conditional_jump(self):
         itor = Itor([1, 2, 3, 4, 5])
         gen = itor()
@@ -318,6 +369,19 @@ class TestItorJump:
             next(gen)
         with pytest.raises(RuntimeError, match="迭代器已终止"):
             gen.send(Node(99))
+
+    def test_send_both_none_raises(self):
+        itor = Itor([1, 2, 3])
+        gen = itor()
+        with pytest.raises(ValueError, match="jump 和 jump_when 不能同时为 None"):
+            gen.send(None)
+
+    def test_send_jump_none_with_jump_when(self):
+        itor = Itor([1, 2, 3])
+        gen = itor()
+        gen.send(None, jump_when=lambda it: it.state == ItorState.ITERRING)
+        vals = list(gen)
+        assert vals == [1, None, 2, 3]
 
     def test_send_returns_self(self):
         itor = Itor([1, 2, 3])

@@ -13,6 +13,7 @@ from .vlist import VList
 from .vtext import VText
 from .table import Table, Row, Column
 from .qax import Qax
+from .itor import Itor,Node,ItorState, use_nim, get_itor
 
 # 便捷函数
 from .table import read_excel, write_excel
@@ -25,4 +26,6 @@ __all__ = [
     'Qax',
     'read_excel',
     'write_excel',
+    'Itor','Node','ItorState',
+    'use_nim', 'get_itor',
 ]

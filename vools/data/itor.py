@@ -324,7 +324,7 @@ class Itor:
         with self._lock:
             return self._state
 
-    def send(self, jump: Any, jump_when: Optional[Callable[['Itor'], bool]] = None) -> 'Itor':
+    def send(self, jump: Any = None, jump_when: Optional[Callable[['Itor'], bool]] = None) -> 'Itor':
         """
         插队函数。
 
@@ -346,6 +346,7 @@ class Itor:
 
         Raises:
             RuntimeError: 当迭代器已处于 ``STOPPED`` 状态时。
+            ValueError: 当 ``jump`` 和 ``jump_when`` 同时为 ``None`` 时。
 
         Example:
             >>> itor = Itor([1, 2, 3])
@@ -362,8 +363,10 @@ class Itor:
             >>> next(gen), next(gen), next(gen)
             (77, 78, 76)
         """
-        # 将任意类型统一转为 Node
-        if not isinstance(jump, Node):
+        if jump is None and jump_when is None:
+            raise ValueError("jump 和 jump_when 不能同时为 None")
+
+        if not isinstance(jump, Node) and jump is not None:
             if isinstance(jump, (str, bytes)):
                 jump = Node(jump)
             elif isinstance(jump, Iterable):
@@ -380,7 +383,8 @@ class Itor:
 
             if jump_when is None:
                 # 紧急插队：将 jump 链表整体插入到 dummy 之后
-                self._insert_jump_chain(jump)
+                if jump is not None:
+                    self._insert_jump_chain(jump)
             else:
                 # 条件插队：暂存，等待条件满足时插入
                 self._conditional_jumps.append((jump, jump_when))
@@ -719,8 +723,17 @@ class Itor:
         except RuntimeError:  # 迭代器被并发修改等异常
             return None
 
-        # 6. 重新加锁，检查取数期间是否发生了 restart
+        # 6. 重新加锁，检查取数期间是否发生了 restart 或紧急插队
         with self._lock:
+            # 优先处理紧急插队
+            if self._dummy.next is not None:
+                # 取数期间插入了紧急插队：保存该值，先产出插队值
+                self._pending_source = Node(val)
+                node = self._dummy.next
+                self._dummy.next = node.next
+                node.next = None
+                return node
+
             if self._replay_mode:
                 # 取数期间被 restart：保存该值，等重放结束后再产出
                 self._pending_source = Node(val)
@@ -788,3 +801,50 @@ class Itor:
 
 # 向后兼容别名：旧代码中直接使用 State 仍可用，但推荐改用 ItorState
 State = ItorState
+
+
+_USE_NIM = False
+
+
+def use_nim(enabled: bool = True) -> bool:
+    """
+    控制是否使用 Nim 版本的 Itor。
+    
+    Args:
+        enabled: True 表示启用 Nim 版本（仅对整数序列有效），False 表示使用 Python 版本。
+    
+    Returns:
+        是否成功启用 Nim 版本（返回 False 表示回退到 Python 版本）。
+    """
+    global _USE_NIM
+    if enabled:
+        try:
+            from . import itor_nim
+            _USE_NIM = itor_nim.NimItor.use_nim(True)
+            return _USE_NIM
+        except Exception as e:
+            print(f"Failed to enable Nim: {e}")
+            _USE_NIM = False
+            return False
+    else:
+        _USE_NIM = False
+        return True
+
+
+def get_itor(iterable: Iterable):
+    """
+    根据配置返回 Itor 实例（可能是 Nim 版本或 Python 版本）。
+    
+    Args:
+        iterable: 可迭代对象。
+    
+    Returns:
+        Itor 实例。
+    """
+    if _USE_NIM:
+        try:
+            from . import itor_nim
+            return itor_nim.NimItor(iterable)
+        except Exception:
+            pass
+    return Itor(iterable)
