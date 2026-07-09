@@ -1,6 +1,6 @@
 import ctypes
 import os
-import pickle
+from collections import deque
 from enum import Enum
 from typing import Any, Callable, Optional, Iterable, Type
 
@@ -22,17 +22,15 @@ class NimItor:
             dll_path = os.path.join(os.path.dirname(__file__), 'itor.dll')
             if os.path.exists(dll_path):
                 cls._dll = ctypes.CDLL(dll_path)
-                cls._dll.newItor.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
-                                             ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+                cls._dll.newItor.argtypes = []
                 cls._dll.newItor.restype = ctypes.c_void_p
-                cls._dll.nextValue.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
-                                               ctypes.POINTER(ctypes.c_int)]
-                cls._dll.nextValue.restype = ctypes.c_bool
+                cls._dll.waitForData.argtypes = [ctypes.c_void_p]
+                cls._dll.waitForData.restype = ctypes.c_bool
+                cls._dll.signalData.argtypes = [ctypes.c_void_p]
                 cls._dll.setPause.argtypes = [ctypes.c_void_p]
                 cls._dll.resume.argtypes = [ctypes.c_void_p]
                 cls._dll.stop.argtypes = [ctypes.c_void_p]
                 cls._dll.restart.argtypes = [ctypes.c_void_p]
-                cls._dll.sendJump.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
                 cls._dll.state.argtypes = [ctypes.c_void_p]
                 cls._dll.state.restype = ctypes.c_int
                 cls._dll.freeItor.argtypes = [ctypes.c_void_p]
@@ -51,24 +49,13 @@ class NimItor:
             raise RuntimeError("Nim DLL not found")
 
         self._handle = None
-        self._data_buffer = None
-        self._offsets = []
+        self._iterable = iterable
+        self._iterator = None
+        self._queue = deque()
+        self._jump_queue = deque()
+        self._source_exhausted = False
 
-        serialized_items = [pickle.dumps(item) for item in iterable]
-        
-        total_len = sum(len(item) for item in serialized_items)
-        self._data_buffer = (ctypes.c_ubyte * total_len)()
-        
-        offset = 0
-        self._offsets = []
-        for item in serialized_items:
-            self._offsets.append(offset)
-            for i, byte in enumerate(item):
-                self._data_buffer[offset + i] = byte
-            offset += len(item)
-        
-        offsets_arr = (ctypes.c_int * len(self._offsets))(*self._offsets)
-        self._handle = self._dll.newItor(self._data_buffer, total_len, offsets_arr, len(self._offsets))
+        self._handle = self._dll.newItor()
 
     @property
     def state(self) -> ItorState:
@@ -81,22 +68,11 @@ class NimItor:
             return self
         if isinstance(jump, (list, tuple)):
             for v in jump:
-                self._send_single(v)
+                self._jump_queue.append(v)
         else:
-            self._send_single(jump)
+            self._jump_queue.append(jump)
+        self._dll.signalData(self._handle)
         return self
-
-    def _send_single(self, value):
-        serialized = pickle.dumps(value)
-        offset = len(self._data_buffer)
-        new_len = offset + len(serialized)
-        new_buffer = (ctypes.c_ubyte * new_len)()
-        for i in range(len(self._data_buffer)):
-            new_buffer[i] = self._data_buffer[i]
-        for i, byte in enumerate(serialized):
-            new_buffer[offset + i] = byte
-        self._data_buffer = new_buffer
-        self._dll.sendJump(self._handle, offset, len(serialized))
 
     def set_pause(self) -> 'NimItor':
         self._dll.setPause(self._handle)
@@ -112,6 +88,10 @@ class NimItor:
 
     def restart(self) -> 'NimItor':
         self._dll.restart(self._handle)
+        self._iterator = None
+        self._queue = deque()
+        self._jump_queue = deque()
+        self._source_exhausted = False
         return self
 
     def history_strategy(self, strategy=None) -> 'NimItor':
@@ -122,20 +102,30 @@ class NimItor:
         return cls
 
     def __call__(self) -> 'NimItor':
-        return NimItor([])
+        return NimItor(self._iterable)
 
     def __iter__(self):
         return self
 
     def __next__(self) -> Any:
-        offset = ctypes.c_int()
-        length = ctypes.c_int()
-        if self._dll.nextValue(self._handle, offset, length):
-            start = offset.value
-            end = start + length.value
-            data_bytes = bytes(self._data_buffer[start:end])
-            return pickle.loads(data_bytes)
-        raise StopIteration
+        while True:
+            if self._jump_queue:
+                return self._jump_queue.popleft()
+
+            if self._queue:
+                return self._queue.popleft()
+
+            if self._source_exhausted:
+                raise StopIteration
+
+            if self._iterator is None:
+                self._iterator = iter(self._iterable)
+
+            try:
+                item = next(self._iterator)
+                return item
+            except StopIteration:
+                self._source_exhausted = True
 
     def __del__(self):
         if self._handle is not None:
