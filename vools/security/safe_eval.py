@@ -172,6 +172,7 @@ class SafeExpressionEvaluator:
         if sub_f:
             sub_f(rs)
         return self
+    
     def evaluate(self, expr: str) -> Any:
         try:
             tree = ast.parse(expr, mode='eval')
