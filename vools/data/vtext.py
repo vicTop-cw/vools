@@ -6,6 +6,7 @@ VText 文本类
 __all__ = ['VText']
 
 import os
+import re
 from typing import Any, Optional, Union, Tuple, Dict, List, Callable
 
 from ..decorators import rself
@@ -187,3 +188,61 @@ class VText(str):
             state: 序列化状态字典
         """
         pass
+
+    def strip_margin(self, **kwargs: Any) -> 'VText':
+        """对每行进行掐头处理，移除边距标记。
+
+        处理规则：
+            1. 行以 ``\\s*|`` 开头 → 移除前缀，保留后面内容
+            2. 行以 ``\\s*#|`` 开头 → 整行丢弃（注释）
+            3. 行以 ``\\s*\\$|`` 开头 → 移除前缀，并且对后面内容使用 ``formatEx(**kwargs)`` 多次格式化
+            4. 行以 ``\\s*\\$\\d+|`` 开头 → 同规则3，且 ``\\d+`` 表示前面添加 n 个空格缩进
+            5. 不以上述开头 → 保持原样
+
+        Args:
+            **kwargs: 格式化参数，传递给 ``formatEx`` 用于变量替换
+
+        Returns:
+            VText: 处理后的新 VText 实例
+        """
+        lines = str(self).splitlines()
+        result_lines = []
+        pattern_dollar_indent = re.compile(r'^\s*\$(\d+)\|')
+        pattern_dollar_pipe = re.compile(r'^\s*\$\|')
+        pattern_hash_pipe = re.compile(r'^\s*#\|')
+        pattern_pipe = re.compile(r'^\s*\|')
+
+        # 对 $| 或 $\d+| 后的内容执行多次 formatEx 直到收敛
+        def _format_until_stable(text: str) -> str:
+            prev = self.__class__(text)
+            while True:
+                current = prev.formatEx(**kwargs)
+                if current == prev:
+                    break
+                prev = current
+            return prev
+
+        for line in lines:
+            m = pattern_dollar_indent.match(line)
+            if m:
+                # 规则4: $\d+| 开头，掐头 + n 空格缩进 + 多次 formatEx
+                indent = int(m.group(1))
+                stripped = line[m.end():]
+                formatted = _format_until_stable(stripped)
+                result_lines.append(' ' * indent + formatted)
+            elif pattern_dollar_pipe.match(line):
+                # 规则3: \$| 开头，掐头 + 多次 formatEx
+                stripped = pattern_dollar_pipe.sub('', line)
+                result_lines.append(_format_until_stable(stripped))
+            elif pattern_hash_pipe.match(line):
+                # 规则2: #| 开头，整行丢弃
+                continue
+            elif pattern_pipe.match(line):
+                # 规则1: | 开头，仅掐头
+                stripped = pattern_pipe.sub('', line)
+                result_lines.append(stripped)
+            else:
+                # 规则5: 不匹配，原样返回
+                result_lines.append(line)
+
+        return '\n'.join(result_lines) # 返回新的实例，有 rself 兜底

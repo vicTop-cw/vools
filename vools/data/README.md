@@ -5,8 +5,78 @@
 ## 数据结构
 
 - **Seq/VList**: 链式序列
-- **VText**: 文本处理
+- **VText**: 文本处理（支持 strip_margin 代码模板生成）
 - **Table**: 二维表格 (新增)
+
+## VText 文本对象
+
+`VText` 继承自 `str`，提供链式文本处理方法。
+
+### strip_margin 边距掐头
+
+`strip_margin` 对每行文本进行掐头处理，支持 5 种规则，适合在字符串中嵌入代码模板。
+
+#### 处理规则
+
+| 序号 | 前缀 | 处理方式 |
+|------|------|----------|
+| 1 | `\s*\|` | 移除前缀 |
+| 2 | `\s*#\|` | 整行丢弃（注释） |
+| 3 | `\s*$\|` | 移除前缀 + 多次 `formatEx` 格式化 |
+| 4 | `\s*$\d+\|` | 移除前缀 + n 空格缩进 + 多次 `formatEx` 格式化 |
+| 5 | 其他 | 原样返回 |
+
+#### 使用示例
+
+生成 Python 代码：
+
+```python
+from vools.data import VText
+
+code = VText("""\
+#| 这是注释，会被丢弃
+$|class {class_name}:
+$4|def __init__(self, name):
+$8|self.name = name
+$4|
+$4|def greet(self):
+$8|return f\"Hello, {{self.name}}!\"
+$|
+$|if __name__ == \"__main__\":
+$4|obj = {class_name}(\"{instance_name}\")
+$4|print(obj.greet())""")
+
+result = code.strip_margin(class_name="Person", instance_name="Alice")
+print(result)
+```
+
+输出：
+
+```python
+class Person:
+    def __init__(self, name):
+        self.name = name
+
+    def greet(self):
+        return f"Hello, {self.name}!"
+
+if __name__ == "__main__":
+    obj = Person("Alice")
+    print(obj.greet())
+```
+
+生成 Nim 代码：
+
+```python
+nim_code = VText("""\
+#| Nim 示例
+$|type
+$4|{type_name} = object
+$8|name: string
+$8|age: int""")
+
+print(nim_code.strip_margin(type_name="Person"))
+```
 
 ## Table 二维表格
 
