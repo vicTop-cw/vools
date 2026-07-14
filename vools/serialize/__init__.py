@@ -49,6 +49,7 @@ __all__ = [
     'BaseBackend',
     'PickleBackend',
     'JsonBackend',
+    'VBJsonBackend',
     'MSGPACK_AVAILABLE',
 
     # 类型注册表
@@ -71,7 +72,7 @@ from .decorators import (
     deserialize_method,
 )
 from .config import set_default_backend, get_default_backend
-from .backends import BaseBackend, PickleBackend, JsonBackend, MSGPACK_AVAILABLE
+from .backends import BaseBackend, PickleBackend, JsonBackend, VBJsonBackend, MSGPACK_AVAILABLE
 from .type_registry import register_type, get_type_handler, get_type_deserializer
 
 # msgpack 可能不可用

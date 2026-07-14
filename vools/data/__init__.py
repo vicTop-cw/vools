@@ -14,6 +14,12 @@ from .vtext import VText
 from .table import Table, Row, Column
 from .qax import Qax
 from .itor import Itor,Node,ItorState, use_nim, get_itor
+from .validator import (
+    is_email, is_mobile, is_id_card_15, is_id_card_18,
+    is_plate_number, is_url, is_username, is_password,
+    is_chinese_name, is_phone_with_area, is_phone_without_area,
+    is_all_chinese, contains_chinese, starts_with, ends_with,
+)
 
 # 便捷函数
 from .table import read_excel, write_excel
@@ -28,4 +34,8 @@ __all__ = [
     'write_excel',
     'Itor','Node','ItorState',
     'use_nim', 'get_itor',
+    'is_email', 'is_mobile', 'is_id_card_15', 'is_id_card_18',
+    'is_plate_number', 'is_url', 'is_username', 'is_password',
+    'is_chinese_name', 'is_phone_with_area', 'is_phone_without_area',
+    'is_all_chinese', 'contains_chinese', 'starts_with', 'ends_with',
 ]

@@ -9,6 +9,7 @@ vools.bridge.freebasic.modules - FreeBASIC 封装模块
 - cairo_wrapper.bas   : Cairo 2D 图形（graphics/inc/ 头文件依赖）
 - sdl3_wrapper.bas    : SDL3 多媒体（multimedia/inc/ 头文件依赖）
 - scintilla_wrapper.bas : Scintilla 代码编辑控件（gui/inc/scintilla/ 头文件依赖）
+- hash_wrapper.bas    : 哈希算法（MD5, SHA1, SHA256, SHA512）
 
 每个模块的 docstring 中有详细使用说明。
 """

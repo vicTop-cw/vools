@@ -17,7 +17,7 @@ from datetime import datetime
 
 import pytest
 
-pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
+pytestmark = pytest.mark.skip(reason="legacy test, replaced by dual-process integration tests")
 
 
 def log_event(log_file, event_type, **data):

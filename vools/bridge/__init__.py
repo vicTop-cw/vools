@@ -178,6 +178,17 @@ __all__ = [
     'go',
     'r',
     'julia',
+    'julia_compiler_available',
+    'is_julia_available',
+
+    'erlang',
+    'erlang_compiler_available',
+    'is_erlang_available',
+
+    'elixir',
+    'elixir_compiler_available',
+    'is_elixir_available',
+
     'ruby',
     'typescript',
     'vbnet',
@@ -215,6 +226,8 @@ _cangjie_loaded = False
 _go_loaded = False
 _r_loaded = False
 _julia_loaded = False
+_erlang_loaded = False
+_elixir_loaded = False
 _ruby_loaded = False
 _typescript_loaded = False
 _vbnet_loaded = False
@@ -415,6 +428,42 @@ def _load_julia():
         except Exception:
             _julia_loaded = False
     return _julia_loaded
+
+
+def _load_erlang():
+    """延迟加载 Erlang 模块"""
+    global _erlang_loaded
+    if _erlang_loaded:
+        return True
+    try:
+        import importlib
+        erlang_mod = importlib.import_module('.erlang', __package__)
+        globals()['erlang'] = erlang_mod.erlang
+        globals()['erlang_compiler_available'] = erlang_mod.erlang_compiler_available
+        globals()['is_erlang_available'] = erlang_mod.is_erlang_available
+        _erlang_loaded = True
+        return True
+    except Exception:
+        _erlang_loaded = False
+        return False
+
+
+def _load_elixir():
+    """延迟加载 Elixir 模块"""
+    global _elixir_loaded
+    if _elixir_loaded:
+        return True
+    try:
+        import importlib
+        elixir_mod = importlib.import_module('.elixir', __package__)
+        globals()['elixir'] = elixir_mod.elixir
+        globals()['elixir_compiler_available'] = elixir_mod.elixir_compiler_available
+        globals()['is_elixir_available'] = elixir_mod.is_elixir_available
+        _elixir_loaded = True
+        return True
+    except Exception:
+        _elixir_loaded = False
+        return False
 
 
 def _load_ruby():
@@ -685,6 +734,16 @@ def __getattr__(name):
 
     if name in ('julia', 'julia_compiler_available', 'is_julia_available'):
         if _load_julia():
+            return globals().get(name)
+        raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
+
+    if name in ('erlang', 'erlang_compiler_available', 'is_erlang_available'):
+        if _load_erlang():
+            return globals().get(name)
+        raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
+
+    if name in ('elixir', 'elixir_compiler_available', 'is_elixir_available'):
+        if _load_elixir():
             return globals().get(name)
         raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
 

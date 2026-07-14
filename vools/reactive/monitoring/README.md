@@ -11,6 +11,8 @@
 | `from_clipboard` | 剪贴板变化监控 |
 | `from_filesystem` | 文件变化监控 |
 | `from_foldersystem` | 文件夹变化监控 |
+| `from_window` | 窗口焦点变化监控 |
+| `from_process` | 进程启动/退出监控 |
 
 > 需要平台特定依赖（如 `pywin32`）。
 
@@ -89,6 +91,62 @@ folder_obs.subscribe(
         f"Type: {folder_data.change_type}"
     )
 )
+```
+
+### 窗口监控
+
+```python
+from vools.reactive.monitoring import from_window
+
+# 监听窗口焦点变化
+window_obs, dispatcher = from_window()
+window_obs.subscribe(
+    on_next=lambda wd: print(
+        f"Window: {wd.title}, Class: {wd.class_name}, PID: {wd.pid}"
+    )
+)
+
+# 获取当前窗口快照
+windows = dispatcher.snapshot()
+for w in windows:
+    print(f"{w.hwnd}: {w.title}")
+```
+
+### 进程监控
+
+```python
+from vools.reactive.monitoring import from_process
+
+# 监听进程启动/退出
+process_obs, dispatcher = from_process()
+process_obs.subscribe(
+    on_next=lambda pd: print(
+        f"Process: {pd.name} (PID: {pd.pid}), Event: {pd.event_type}"
+    )
+)
+
+# 获取当前进程快照
+processes = dispatcher.snapshot()
+for p in processes:
+    print(f"{p.pid}: {p.name}")
+```
+
+### 热键注册
+
+```python
+from vools.reactive.monitoring import KeyboardDispatcher, MOD_CONTROL, MOD_ALT
+
+kbd = KeyboardDispatcher()
+
+# 注册 Ctrl+Alt+F1 热键
+hotkey_id = kbd.register_hotkey(
+    modifiers=MOD_CONTROL | MOD_ALT,
+    vk=0x70,  # VK_F1
+    callback=lambda: print("Hotkey triggered!")
+)
+
+# 注销热键
+kbd.unregister_hotkey(hotkey_id)
 ```
 
 ### 结合操作符使用

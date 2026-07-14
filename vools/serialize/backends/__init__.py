@@ -5,14 +5,15 @@
 from .base import BaseBackend
 from .pickle_backend import PickleBackend
 from .json_backend import JsonBackend
+from .vb_json_backend import VBJsonBackend
 
 # msgpack 是可选的
 try:
     from .msgpack_backend import MsgpackBackend, is_available as _msgpack_available
-    __all__ = ['BaseBackend', 'PickleBackend', 'JsonBackend', 'MsgpackBackend']
+    __all__ = ['BaseBackend', 'PickleBackend', 'JsonBackend', 'MsgpackBackend', 'VBJsonBackend']
     MSGPACK_AVAILABLE = _msgpack_available()
 except ImportError:
-    __all__ = ['BaseBackend', 'PickleBackend', 'JsonBackend']
+    __all__ = ['BaseBackend', 'PickleBackend', 'JsonBackend', 'VBJsonBackend']
     MSGPACK_AVAILABLE = False
 
 
@@ -20,6 +21,7 @@ except ImportError:
 _BACKENDS = {
     'pickle': PickleBackend,
     'json': JsonBackend,
+    'vb_json': VBJsonBackend,
 }
 
 

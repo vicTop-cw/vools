@@ -1681,6 +1681,175 @@ class ClipSubject(MonitorSubject):
             metadata=metadata,
         )
 
+    def save_clips_text_to_file(
+        self,
+        *,
+        reg_pattern: str = "",
+        extension: str = ".txt",
+        save_to_one_file: bool = False,
+        output_dir: Optional[str] = None,
+    ) -> bool:
+        """
+        保存剪贴板文本内容到文件。
+
+        基于 VB6 cClip.cls 的 Vfx_SaveClipsTextToFile 功能。
+
+        Args:
+            reg_pattern: 正则表达式模式，用于过滤文本内容。空字符串表示不过滤。
+            extension: 文件名后缀，默认为 ".txt"
+            save_to_one_file: 是否将所有内容保存到单个文件。默认为 False（每个剪贴板内容一个文件）。
+            output_dir: 输出目录。如果为 None，使用当前工作目录。
+
+        Returns:
+            bool: 保存成功返回 True，否则返回 False。
+        """
+        import os
+        import re
+        import datetime
+
+        output_dir = output_dir or os.getcwd()
+        os.makedirs(output_dir, exist_ok=True)
+
+        try:
+            change_type, content, files, meta = self._dispatcher._reader.read()
+            if change_type != ClipChangeType.TEXT or content is None:
+                return False
+
+            text = content
+            if not isinstance(text, str):
+                text = str(text)
+
+            if reg_pattern:
+                try:
+                    if not re.search(reg_pattern, text):
+                        return False
+                except re.error:
+                    return False
+
+            if save_to_one_file:
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"clip_text_{timestamp}{extension}"
+                filepath = os.path.join(output_dir, filename)
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(text)
+            else:
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                filename = f"clip_{timestamp}{extension}"
+                filepath = os.path.join(output_dir, filename)
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(text)
+
+            return True
+        except Exception as e:
+            log.debug("save_clips_text_to_file 异常: %s", e)
+            return False
+
+    def save_clips_picture_to_file(
+        self,
+        *,
+        extension: str = ".png",
+        output_dir: Optional[str] = None,
+    ) -> bool:
+        """
+        保存剪贴板图片内容到文件。
+
+        基于 VB6 cClip.cls 的 Vfx_SaveClipsPictureToFile 功能。
+
+        Args:
+            extension: 文件名后缀，默认为 ".png"
+            output_dir: 输出目录。如果为 None，使用当前工作目录。
+
+        Returns:
+            bool: 保存成功返回 True，否则返回 False。
+        """
+        import os
+        import datetime
+
+        output_dir = output_dir or os.getcwd()
+        os.makedirs(output_dir, exist_ok=True)
+
+        try:
+            change_type, content, files, meta = self._dispatcher._reader.read()
+            if change_type != ClipChangeType.IMAGE or content is None:
+                return False
+
+            if not isinstance(content, (bytes, bytearray)):
+                return False
+
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            filename = f"clip_image_{timestamp}{extension}"
+            filepath = os.path.join(output_dir, filename)
+
+            with open(filepath, "wb") as f:
+                f.write(bytes(content))
+
+            return True
+        except Exception as e:
+            log.debug("save_clips_picture_to_file 异常: %s", e)
+            return False
+
+    def save_all_to_file(
+        self,
+        *,
+        text_extension: str = ".txt",
+        image_extension: str = ".png",
+        output_dir: Optional[str] = None,
+    ) -> bool:
+        """
+        保存剪贴板所有内容到文件。
+
+        基于 VB6 cClip.cls 的 Vfx_SaveAllToFile 功能。
+
+        Args:
+            text_extension: 文本文件后缀，默认为 ".txt"
+            image_extension: 图片文件后缀，默认为 ".png"
+            output_dir: 输出目录。如果为 None，使用当前工作目录。
+
+        Returns:
+            bool: 保存成功返回 True，否则返回 False。
+        """
+        import os
+        import datetime
+
+        output_dir = output_dir or os.getcwd()
+        os.makedirs(output_dir, exist_ok=True)
+
+        try:
+            change_type, content, files, meta = self._dispatcher._reader.read()
+
+            if change_type == ClipChangeType.TEXT and content is not None:
+                text = content
+                if not isinstance(text, str):
+                    text = str(text)
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                filename = f"clip_{timestamp}{text_extension}"
+                filepath = os.path.join(output_dir, filename)
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(text)
+                return True
+
+            elif change_type == ClipChangeType.IMAGE and content is not None:
+                if isinstance(content, (bytes, bytearray)):
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    filename = f"clip_image_{timestamp}{image_extension}"
+                    filepath = os.path.join(output_dir, filename)
+                    with open(filepath, "wb") as f:
+                        f.write(bytes(content))
+                    return True
+
+            elif change_type == ClipChangeType.FILES and files:
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                filename = f"clip_files_{timestamp}{text_extension}"
+                filepath = os.path.join(output_dir, filename)
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write("\n".join(files))
+                return True
+
+            return False
+        except Exception as e:
+            log.debug("save_all_to_file 异常: %s", e)
+            return False
+
     def do(self, f=print, pre_f=None, sub_f=None):
         """Apply a function for side effects, return self.
 

@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pytest
 
-pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
+pytestmark = pytest.mark.skip(reason="legacy test, replaced by dual-process integration tests")
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s.%(msecs)03d - %(message)s',
