@@ -189,6 +189,10 @@ __all__ = [
     'elixir_compiler_available',
     'is_elixir_available',
 
+    'haskell',
+    'haskell_compiler_available',
+    'is_haskell_available',
+
     'ruby',
     'typescript',
     'vbnet',
@@ -228,6 +232,7 @@ _r_loaded = False
 _julia_loaded = False
 _erlang_loaded = False
 _elixir_loaded = False
+_haskell_loaded = False
 _ruby_loaded = False
 _typescript_loaded = False
 _vbnet_loaded = False
@@ -463,6 +468,24 @@ def _load_elixir():
         return True
     except Exception:
         _elixir_loaded = False
+        return False
+
+
+def _load_haskell():
+    """延迟加载 Haskell 模块"""
+    global _haskell_loaded
+    if _haskell_loaded:
+        return True
+    try:
+        import importlib
+        haskell_mod = importlib.import_module('.haskell', __package__)
+        globals()['haskell'] = haskell_mod.haskell
+        globals()['haskell_compiler_available'] = haskell_mod.haskell_compiler_available
+        globals()['is_haskell_available'] = haskell_mod.is_haskell_available
+        _haskell_loaded = True
+        return True
+    except Exception:
+        _haskell_loaded = False
         return False
 
 
@@ -744,6 +767,11 @@ def __getattr__(name):
 
     if name in ('elixir', 'elixir_compiler_available', 'is_elixir_available'):
         if _load_elixir():
+            return globals().get(name)
+        raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
+
+    if name in ('haskell', 'haskell_compiler_available', 'is_haskell_available'):
+        if _load_haskell():
             return globals().get(name)
         raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
 

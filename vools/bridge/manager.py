@@ -1228,6 +1228,33 @@ def _register_builtin_languages():
         version_pattern=r'Elixir (\d+\.\d+\.\d+)',
     ))
 
+    # Haskell
+    haskell_paths = []
+    if _IS_WINDOWS:
+        haskell_paths = [
+            r'D:\GHC\bin',
+            r'C:\Program Files\Haskell Platform\8.6.5\bin',
+            r'C:\Program Files\Haskell\bin',
+            os.path.expanduser(r'~\AppData\Local\Programs\ghc\bin'),
+        ]
+    else:
+        haskell_paths = [
+            '/usr/lib/ghc/bin',
+            '/usr/local/ghc/bin',
+            '/opt/ghc/bin',
+            '/usr/bin',
+            '/usr/local/bin',
+        ]
+
+    manager.register(LanguageConfig(
+        name='haskell',
+        compiler='ghc',
+        compiler_paths=haskell_paths,
+        runtime_paths=haskell_paths,
+        version_check=['ghc', '--version'],
+        version_pattern=r'The Glorious Glasgow Haskell Compilation System, version (\d+\.\d+\.\d+)',
+    ))
+
 
 # 注册内置语言
 _register_builtin_languages()
