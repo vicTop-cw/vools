@@ -51,7 +51,13 @@ else:
         import attr
         from attr import attrs, attrib, asdict as _attr_asdict
         from attr import has as _attr_has
-        from attr.exceptions import FrozenInstanceError as _attr_FrozenInstanceError
+        try:
+            from attr.exceptions import FrozenInstanceError as _attr_FrozenInstanceError
+        except ImportError:
+            # attrs < 18.1.0 没有 frozen 特性，也就没有 FrozenInstanceError
+            class _attr_FrozenInstanceError(AttributeError):
+                """占位异常，兼容低版本 attrs"""
+                pass
     except ImportError:
         msg = (
             "Python < 3.7 detected but 'attrs' package is not installed. "
@@ -64,8 +70,8 @@ else:
         import inspect
         caps = {
             'factory': False,
-            'auto_attribs': True,
-            'frozen': True,
+            'auto_attribs': False,
+            'frozen': False,
         }
         try:
             sig = inspect.signature(attrib)
@@ -129,9 +135,35 @@ else:
             _attrs_kwargs['frozen'] = True
 
         def _wrap(c):
-            wrapped = attrs(c, **_attrs_kwargs)
             if not _ATTR_CAPS['auto_attribs']:
-                pass
+                # attrs < 18.2.0 不支持 auto_attribs，需手动将类型注解转为 attr.ib()
+                # 由于 attrs 按 _CountingAttr.counter 排序，必须统一重新创建以确保顺序
+                annotations = getattr(c, '__annotations__', {})
+                _SENTINEL = object()
+                _fields = {}
+                for attr_name in annotations:
+                    if attr_name.startswith('_'):
+                        continue
+                    val = getattr(c, attr_name, _SENTINEL)
+                    if type(val).__name__ == '_CountingAttr':
+                        _fields[attr_name] = ('ib', val._default)
+                    elif val is not _SENTINEL:
+                        _fields[attr_name] = ('default', val)
+                    else:
+                        _fields[attr_name] = ('required', None)
+                    if attr_name in c.__dict__:
+                        delattr(c, attr_name)
+                for attr_name in annotations:
+                    if attr_name not in _fields:
+                        continue
+                    kind, val = _fields[attr_name]
+                    if kind == 'ib' and val is not attr.NOTHING:
+                        setattr(c, attr_name, attr.ib(default=val))
+                    elif kind == 'default':
+                        setattr(c, attr_name, attr.ib(default=val))
+                    else:
+                        setattr(c, attr_name, attr.ib())
+            wrapped = attrs(c, **_attrs_kwargs)
             # 兼容 __post_init__: attrs 用 __attrs_post_init__
             if hasattr(wrapped, '__post_init__') and not hasattr(wrapped, '__attrs_post_init__'):
                 wrapped.__attrs_post_init__ = wrapped.__post_init__
