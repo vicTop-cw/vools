@@ -333,10 +333,16 @@ class FbcBridge(LangBridge):
                 c_argtypes.append(ctype)
 
         func.argtypes = c_argtypes
-        func.restype = transport.prepare_ret(ret_type or 'Long')
+        
+        if ret_type is None:
+            fb_ret_type = 'Long'
+        else:
+            fb_ret_type = get_fb_type(ret_type)
+        
+        func.restype = transport.prepare_ret(fb_ret_type)
 
         result = func(*c_args)
-        return transport.decode_result(result, ret_type or 'Long')
+        return transport.decode_result(result, fb_ret_type)
 
 
 # 全局 FbcBridge 实例

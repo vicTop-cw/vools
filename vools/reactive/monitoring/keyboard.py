@@ -3,6 +3,8 @@ vools/reactive/monitoring/keyboard.py
 仅支持 Windows 平台。
 """
 
+from __future__ import annotations
+
 import ctypes
 import ctypes.wintypes as wt
 import datetime
@@ -11,6 +13,7 @@ import json
 import logging
 import pickle
 import sys
+import threading
 import time
 from ...core.dataclass_compat import dataclass, field, asdict
 from enum import IntEnum, IntFlag
@@ -24,7 +27,21 @@ from queue import Queue
 
 from .monitor_subject import MonitorSubject
 from .monitor_observer import MonitorObserver
-__all__ = ['log', 'MAX_SIGNATURE_AGE', 'KeyEventType', 'KeyModifier', 'KeyData', 'KeyboardDispatcher', 'KeySubject', 'KeyObserver', 'from_keyboard', 'write_to_keyboard']
+
+# 热键修饰键常量
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+MOD_SHIFT = 0x0004
+MOD_WIN = 0x0008
+MOD_NOREPEAT = 0x4000  # 防止重复触发
+
+__all__ = [
+    'log', 'MAX_SIGNATURE_AGE', 'KeyEventType', 'KeyModifier', 'KeyData',
+    'KeyboardDispatcher', 'KeySubject', 'KeyObserver', 'from_keyboard',
+    'write_to_keyboard',
+    'MOD_ALT', 'MOD_CONTROL', 'MOD_SHIFT', 'MOD_WIN', 'MOD_NOREPEAT',
+    'HotKeyData',
+]
 
 if TYPE_CHECKING:
     from vools.reactive.core.observable import Observable, Observer, Subscription
@@ -267,11 +284,51 @@ class KeyData:
         )
 
 
+@dataclass
+class HotKeyData:
+    """热键触发事件数据。"""
+    id: int               # 热键 ID
+    modifiers: int        # 修饰键组合
+    vk: int               # 虚拟键码
+    callback: Callable[[], Any]  # 回调函数
+    timestamp: datetime.datetime
+    sequence: int
+
+
 if sys.platform == "win32":
     _user32 = ctypes.PyDLL("user32.dll", use_last_error=True)
     _kernel32 = ctypes.PyDLL("kernel32.dll", use_last_error=True)
 
+    # Win32 API 常量
+    WM_HOTKEY = 0x0312
+    WM_QUIT = 0x0012
+
     ULONG_PTR = ctypes.c_ulonglong
+
+    # 窗口类结构体（用于热键消息循环）
+    class WNDCLASSW(ctypes.Structure):
+        _fields_ = [
+            ("style", wt.UINT),
+            ("lpfnWndProc", wt.LPVOID),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", wt.HINSTANCE),
+            ("hIcon", wt.HICON),
+            ("hCursor", wt.HANDLE),
+            ("hbrBackground", wt.HBRUSH),
+            ("lpszMenuName", wt.LPCWSTR),
+            ("lpszClassName", wt.LPCWSTR),
+        ]
+
+    class MSG(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wt.HWND),
+            ("message", wt.UINT),
+            ("wParam", wt.WPARAM),
+            ("lParam", wt.LPARAM),
+            ("time", wt.DWORD),
+            ("pt", wt.POINT),
+        ]
 
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [
@@ -893,6 +950,13 @@ class KeyboardDispatcher:
         self._self_filtered_count = 0
         self._pending_sigs: Dict[str, float] = {}
 
+        # 热键相关
+        self._hotkeys: Dict[int, dict] = {}
+        self._hotkey_id_counter = itertools.count(1)
+        self._hotkey_thread: Optional[threading.Thread] = None
+        self._hotkey_thread_running: bool = False
+        self._hotkey_hwnd: Optional[int] = None
+
         be = backend
         if be == "auto":
             be = "win32" if sys.platform == "win32" else "polling"
@@ -977,6 +1041,10 @@ class KeyboardDispatcher:
                 self._backend.start()
 
     def stop(self) -> None:
+        # 注销所有热键
+        for hid in list(self._hotkeys.keys()):
+            self.unregister_hotkey(hid)
+
         with self._lock:
             if not self._running:
                 return
@@ -1037,6 +1105,124 @@ class KeyboardDispatcher:
     def hotkey(self, *keys: str) -> "KeyboardDispatcher":
         _hotkey(*keys)
         return self
+
+    def register_hotkey(
+        self,
+        modifiers: int,
+        vk: int,
+        callback: Callable[[], Any],
+    ) -> int:
+        """注册全局热键。
+
+        Args:
+            modifiers: 修饰键组合（MOD_ALT | MOD_CONTROL 等）
+            vk: 虚拟键码
+            callback: 触发时的回调函数
+
+        Returns:
+            热键 ID（用于注销）
+
+        Raises:
+            RuntimeError: 热键注册失败
+        """
+        # 分配唯一 ID
+        hotkey_id = next(self._hotkey_id_counter)
+
+        # 调用 RegisterHotKey(hwnd, id, modifiers, vk)
+        # hwnd 可以为 None（使用调用线程的消息队列）
+        if sys.platform == "win32":
+            if not _user32.RegisterHotKey(None, hotkey_id, modifiers, vk):
+                raise RuntimeError(f"RegisterHotKey failed: {ctypes.get_last_error()}")
+
+        # 存储热键信息
+        self._hotkeys[hotkey_id] = {
+            'modifiers': modifiers,
+            'vk': vk,
+            'callback': callback,
+        }
+
+        # 如果是第一个热键，启动热键线程
+        if len(self._hotkeys) == 1 and sys.platform == "win32":
+            self._start_hotkey_thread()
+
+        return hotkey_id
+
+    def unregister_hotkey(self, hotkey_id: int) -> bool:
+        """注销热键。
+
+        Args:
+            hotkey_id: register_hotkey 返回的 ID
+
+        Returns:
+            是否成功注销
+        """
+        if hotkey_id not in self._hotkeys:
+            return False
+
+        # 调用 UnregisterHotKey
+        if sys.platform == "win32":
+            _user32.UnregisterHotKey(None, hotkey_id)
+
+        del self._hotkeys[hotkey_id]
+
+        # 如果没有热键了，停止热键线程
+        if not self._hotkeys:
+            self._stop_hotkey_thread()
+
+        return True
+
+    def _start_hotkey_thread(self):
+        """启动热键消息线程。"""
+        if sys.platform != "win32":
+            return
+        self._hotkey_thread = threading.Thread(target=self._hotkey_message_loop, daemon=True)
+        self._hotkey_thread_running = True
+        self._hotkey_thread.start()
+
+    def _stop_hotkey_thread(self):
+        """停止热键消息线程。"""
+        self._hotkey_thread_running = False
+        # 向线程发送 WM_QUIT 消息
+        if sys.platform == "win32" and self._hotkey_hwnd:
+            _user32.PostMessageW(self._hotkey_hwnd, WM_QUIT, 0, 0)
+
+    def _hotkey_message_loop(self):
+        """热键消息循环（运行在后台线程）。"""
+        if sys.platform != "win32":
+            return
+
+        # 创建消息窗口（不显示）
+        wc = WNDCLASSW()
+        wc.style = 0
+        wc.lpfnWndProc = _user32.DefWindowProcW
+        wc.cbClsExtra = 0
+        wc.cbWndExtra = 0
+        wc.hInstance = _kernel32.GetModuleHandleW(None)
+        wc.hIcon = None
+        wc.hCursor = None
+        wc.hbrBackground = None
+        wc.lpszMenuName = None
+        wc.lpszClassName = "VoolsHotkeyClass"
+        _user32.RegisterClassW(ctypes.byref(wc))
+
+        self._hotkey_hwnd = _user32.CreateWindowExW(
+            0, "VoolsHotkeyClass", "", 0, 0, 0, 0, 0, None, None, wc.hInstance, None
+        )
+
+        msg = MSG()
+        while self._hotkey_thread_running:
+            # GetMessage 阻塞等待消息
+            if _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) == 0:
+                break  # WM_QUIT
+
+            if msg.message == WM_HOTKEY:
+                hotkey_id = msg.wParam
+                if hotkey_id in self._hotkeys:
+                    callback = self._hotkeys[hotkey_id]['callback']
+                    try:
+                        callback()
+                    except Exception as e:
+                        log.error(f"Hotkey callback error: {e}")
 
 
 class KeySubject(MonitorSubject):

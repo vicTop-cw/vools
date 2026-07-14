@@ -155,12 +155,13 @@ def _find_executable(name: str, extra_paths: List[str] = None) -> Optional[str]:
         for base_dir in expanded_paths:
             if not base_dir:
                 continue
-            # Windows 可能需要加 .exe
+            # Windows 可能需要加 .exe / .bat / .cmd
             candidate = os.path.join(base_dir, name)
             if _IS_WINDOWS:
-                candidate_exe = candidate + '.exe'
-                if os.path.exists(candidate_exe):
-                    return candidate_exe
+                for ext in ('.exe', '.bat', '.cmd'):
+                    candidate_with_ext = candidate + ext
+                    if os.path.exists(candidate_with_ext):
+                        return candidate_with_ext
             if os.path.exists(candidate):
                 return candidate
 
@@ -193,12 +194,20 @@ def _run_version_check(config: LanguageConfig) -> tuple:
     返回：
         (success: bool, output: str, version: str or None)
     """
-    compiler_path = _find_executable(config.compiler, config.compiler_paths)
-    if not compiler_path:
-        return False, '', None
+    # 优先查找 version_check 中指定的命令（可能和 compiler 不同，如 erlang 的 erl）
+    check_cmd_name = config.version_check[0]
+    search_paths = list(config.compiler_paths) + list(config.runtime_paths)
+    check_cmd_path = _find_executable(check_cmd_name, search_paths)
+
+    if not check_cmd_path:
+        # 回退到 compiler 路径
+        compiler_path = _find_executable(config.compiler, config.compiler_paths)
+        if not compiler_path:
+            return False, '', None
+        check_cmd_path = compiler_path
 
     cmd = config.version_check.copy()
-    cmd[0] = compiler_path  # 替换为实际路径
+    cmd[0] = check_cmd_path  # 替换为实际路径
 
     try:
         result = subprocess.run(
@@ -1166,6 +1175,59 @@ def _register_builtin_languages():
         version_pattern=r'Mojo (\d+\.\d+\.\d+)',
     ))
 
+    # Erlang
+    erlang_paths = []
+    if _IS_WINDOWS:
+        erlang_paths = [
+            r'D:\Erlang\bin',
+            r'C:\Program Files\Erlang OTP\bin',
+            r'C:\Program Files (x86)\Erlang OTP\bin',
+            os.path.expanduser(r'~\AppData\Local\Programs\Erlang\bin'),
+        ]
+    else:
+        erlang_paths = [
+            '/usr/lib/erlang/bin',
+            '/usr/local/erlang/bin',
+            '/opt/erlang/bin',
+            '/usr/bin',
+            '/usr/local/bin',
+        ]
+
+    manager.register(LanguageConfig(
+        name='erlang',
+        compiler='erlc',
+        compiler_paths=erlang_paths,
+        runtime_paths=erlang_paths,
+        version_check=['erl', '+V'],
+        version_pattern=r'Erlang/OTP (\d+\.\d+\.?\d*)',
+    ))
+
+    # Elixir
+    elixir_paths = []
+    if _IS_WINDOWS:
+        elixir_paths = [
+            r'D:\Elixir\bin',
+            r'C:\Program Files\Elixir\bin',
+            r'C:\Program Files (x86)\Elixir\bin',
+            os.path.expanduser(r'~\AppData\Local\Programs\Elixir\bin'),
+        ]
+    else:
+        elixir_paths = [
+            '/usr/local/elixir/bin',
+            '/opt/elixir/bin',
+            '/usr/bin',
+            '/usr/local/bin',
+        ]
+
+    manager.register(LanguageConfig(
+        name='elixir',
+        compiler='elixirc',
+        compiler_paths=elixir_paths,
+        runtime_paths=elixir_paths,
+        version_check=['elixir', '--version'],
+        version_pattern=r'Elixir (\d+\.\d+\.\d+)',
+    ))
+
 
 # 注册内置语言
 _register_builtin_languages()
@@ -1346,9 +1408,13 @@ class LanguageCompilerHelper:
 
     @property
     def status(self) -> LanguageStatus:
-        """获取语言状态（带缓存）"""
-        if self._status is None:
-            self._status = manager.get_status(self.name)
+        """获取语言状态（委托给 manager，使用 manager 的缓存）"""
+        return manager.get_status(self.name)
+
+    def refresh_status(self) -> LanguageStatus:
+        """强制刷新语言状态"""
+        manager.clear_cache(self.name)
+        self._status = manager.get_status(self.name, use_cache=False)
         return self._status
 
     def is_available(self) -> bool:

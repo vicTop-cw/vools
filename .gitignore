@@ -116,7 +116,9 @@ site/
 
 # Nim build artifacts
 *.dll
+*.dll.a
 *.lib
 *.exp
+*.exe
 *.nim.c
 

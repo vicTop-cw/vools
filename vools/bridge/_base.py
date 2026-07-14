@@ -823,7 +823,11 @@ class LangBridge(abc.ABC):
             if mode_upper == 'FORCE':
                 return lib_path
 
-            return self.call_func(lib_path, func.__name__, args, ret_type)
+            actual_ret_type = ret_type
+            if actual_ret_type is None:
+                actual_ret_type = spec.annotations.get('return')
+
+            return self.call_func(lib_path, func.__name__, args, actual_ret_type)
 
         except Exception:
             if fallback:

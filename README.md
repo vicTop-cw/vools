@@ -18,8 +18,9 @@
 - **任务调度**: TaskQueue、WorkerPool、DAG 调度器
 - **序列化**: 支持 JSON、MsgPack、Pickle 等多种格式
 - **编码/加密**: Base64、URL 编码、哈希函数
-- **多语言桥接**: 支持 27 种编程语言（Lua、Rust、Go、Java、Kotlin、Swift、Dart、MoonBit 等），统一装饰器接口
+- **多语言桥接**: 支持 27+ 种编程语言（Lua、Rust、Go、Java、Kotlin、Swift、Dart、MoonBit 等），统一装饰器接口
 - **编译器自动发现**: 自动探测本机和 WSL 环境中的编译器，支持注册表搜索、常见安装路径、通配符路径展开
+- **跨语言操作符**: Scala / Kotlin / Nim 隐式双元操作符，支持函数组合与数据管道处理
 
 ## 安装
 
@@ -162,65 +163,75 @@ if nim_helper.is_available():
     print(f"Nim 编译器路径: {nim_helper.get_compiler_path()}")
 ```
 
+### 跨语言隐式操作符（Scala / Kotlin / Nim）
+
+#### Scala
+
+```scala
+import com.example.operators.Operators._
+
+def genA(): String = "Hello"
+def genB(s: String): String = s"$s, World!"
+
+val merged = genA _ #> genB _
+merged() // "Hello, World!"
+
+val doubled = List(1, 2, 3) |>> (_ * 2)
+// List(2, 4, 6)
+```
+
+#### Kotlin
+
+```kotlin
+import com.example.operators.Operators._
+
+fun genA(): String = "Hello"
+fun genB(s: String): String = "$s, World!"
+
+val merged = genA `#gt` genB
+println(merged()) // "Hello, World!"
+
+val doubled = listOf(1, 2, 3).pipeMap { it * 2 }
+// [2, 4, 6]
+```
+
+#### Nim
+
+```nim
+import operators
+
+proc genA(): string = "Hello"
+proc genB(s: string): string = s & ", World!"
+
+let merged = compose01(genA, genB)
+echo merged() # "Hello, World!"
+
+let doubled = pipeMap(@[1, 2, 3], proc(x: int): int = x * 2)
+echo doubled # @[2, 4, 6]
+```
+
 ## 项目结构
 
 ```
 vools/
 ├── api/             # CLI 命令行接口
-├── bridge/          # 多语言桥接（27种语言）+ 编译器自动发现
+├── bridge/          # 多语言桥接（27+ 种语言）+ 编译器自动发现
 │   ├── core/        # 桥接核心（类型、签名缓存、装饰器）
 │   ├── probe.py     # 编译器探测模块
 │   ├── manager.py   # 配置管理模块
 │   ├── auto_discovery.py  # 一键发现入口
+│   ├── scala/       # Scala 桥接 + 隐式操作符
+│   ├── kotlin/      # Kotlin 桥接 + 隐式操作符
+│   ├── nim/         # Nim 桥接 + 隐式操作符
 │   ├── lua/         # Lua 桥接
 │   ├── rust/        # Rust 桥接
 │   ├── go/          # Go 桥接
 │   ├── java/        # Java 桥接
-│   ├── kotlin/      # Kotlin 桥接
-│   ├── swift/       # Swift 桥接
-│   ├── dart/        # Dart 桥接
-│   ├── moonbit/     # MoonBit 桥接
-│   ├── c/           # C 桥接
-│   ├── cpp/         # C++ 桥接
 │   └── ...          # 更多语言
-├── cache/           # 缓存装饰器
-│   ├── memorize     # 时间缓存
-│   ├── once         # 单次执行
-│   ├── persist      # 持久化缓存
-│   └── sigcache     # 签名缓存
-├── core/            # 核心模块
-├── crypto/          # 加密模块
-├── curried/         # 柯里化函数库
-│   ├── collection   # 集合操作
-│   ├── composition  # 函数组合
-│   ├── iteration    # 迭代操作
-│   ├── math         # 数学运算
-│   ├── predicate    # 谓词函数
-│   └── string       # 字符串操作
-├── data/            # 数据处理
-│   ├── seq          # Seq 序列操作
-│   ├── vlist        # VList 增强列表
-│   └── vtext        # VText 增强文本
-├── datetime/        # 日期时间工具
-├── decorators/      # 装饰器
-├── encoding/        # 编码解码
-├── functional/      # 函数式工具
-│   ├── box          # Box 包装器
-│   ├── pipe_ops     # 管道操作符
-│   ├── placeholder  # 占位符
-│   └── result       # Result 类型
-├── oop/             # OOP 工具
-├── reactive/        # 响应式编程
-│   ├── core         # Observable、Subject
-│   ├── monitoring   # 系统监控
-│   └── operators    # 操作符
-├── recorder/        # 录制回放
-├── security/        # 安全模块
-├── serialize/       # 序列化
-├── sql/             # SQL 工具
-├── sys/             # 系统工具
-├── task/           # 任务调度
-└── utils/          # 通用工具
+dev-tools/           # 开发辅助脚本和实验性代码
+tests/               # 测试目录（按模块组织）
+examples/            # 使用示例
+docs/                # 文档
 ```
 
 ## API 概览
@@ -270,12 +281,12 @@ vools/
 ## 详细文档
 
 - [用户指南](USER_GUIDE.md)
-- [快速入门](docs/quickstart.md)
-- [函数式编程](docs/functional.md)
-- [响应式编程](docs/reactive.md)
-- [装饰器](docs/decorators.md)
-- [性能跃迁计划](docs/performance-leap.md)
-- [基准测试](docs/benchmark.md)
+- [快速入门](docs/getting-started/quickstart.md)
+- [函数式编程](docs/functional/index.md)
+- [响应式编程](docs/reactive/index.md)
+- [装饰器](docs/core/decorators.md)
+- [多语言桥接](docs/bridge/index.md)
+- [跨语言操作符](docs/scala_nim_kotlin-implicit-operators/README.md)
 
 ## 性能对比
 
@@ -300,7 +311,7 @@ vools 通过桥接 Nim/Rust/Go 等编译型语言，为高频核心函数提供�
 **注意**：
 - 桥接库为可选增强，未安装时自动使用纯 Python 实现
 - 测试数据为 1KB 左右的小数据，大数据量提升更显著
-- 详细基准测试方法请参见 [基准测试文档](docs/benchmark.md)
+- 详细基准测试方法请参见 [基准测试文档](docs/appendix/benchmark.md)
 
 ## 更新日志
 
