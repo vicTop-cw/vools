@@ -1,0 +1,9 @@
+chore: update changelog and fix Python 3.6 compatibility
+
+- Add Python 3.6 + attrs 17.4.0 compatibility section to changelog/v0.5.0.md
+- Fix dataclass_compat.py for attrs 17.4.0:
+  - Default auto_attribs/frozen to False for conservative detection
+  - Add FrozenInstanceError fallback for attrs < 18.1.0
+  - Auto-convert type annotations to attr.ib() for attrs < 18.2.0
+  - Fix field ordering by recreating all attr.ib() in annotations order
+- Update CHANGELOG.md with v0.5.0 release info
