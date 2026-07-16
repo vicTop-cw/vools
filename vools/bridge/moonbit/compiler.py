@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.moonbit.compiler - MoonBit 语言桥接编译器实现
 
 提供 MoonBit 动态编译与跨语言桥接能力，继承 LangBridge 抽象基类。
@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Any
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType, CompileMode
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,7 @@ class MoonBitBridge(LangBridge):
     name = 'moonbit'
     file_ext = '.mbt'
     lib_ext = ''
+    lang_type = LangType.COMPILED
 
     def __init__(self):
         super().__init__()
@@ -459,9 +461,9 @@ class MoonBitBridge(LangBridge):
 
         return output
 
-    def _run_sync(self, func, args, kwargs, deps, module_code,
+    def _run_sync(self, func, args, kwargs, mode, deps, module_code,
                   fallback, cache_dir, ret_type,
-                  only_code=False, output_file=None, write_mode='overwrite',
+                  output_file=None, write_mode='overwrite',
                   prefix='', suffix='', project_dir=None, entry='main'):
         """同步执行（重写基类方法，优化 MoonBit 缓存策略）
 
@@ -471,10 +473,10 @@ class MoonBitBridge(LangBridge):
         if project_dir is not None:
             return self._run_project_sync(
                 func, args, kwargs, project_dir, entry,
-                fallback, cache_dir, ret_type
+                fallback, cache_dir, ret_type, mode
             )
 
-        if only_code:
+        if CompileMode.normalize(mode) == CompileMode.ONLY_CODE:
             return self._run_only_code(
                 func, args, kwargs, deps, module_code,
                 output_file, write_mode, prefix, suffix

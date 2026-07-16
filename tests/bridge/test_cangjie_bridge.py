@@ -92,7 +92,6 @@ class TestCangjieCodeGenerator:
 
 
 @pytest.mark.skipif(not cjc_compiler_available(), reason="仓颉编译器不可用")
-@pytest.mark.skip(reason="仓颉运行时初始化问题待解决")
 class TestCangjieDecorator:
     """测试仓颉装饰器"""
 
@@ -127,7 +126,6 @@ class TestCangjieDecorator:
 
 
 @pytest.mark.skipif(not cjc_compiler_available(), reason="仓颉编译器不可用")
-@pytest.mark.skip(reason="仓颉运行时初始化问题待解决")
 class TestCangjieCompileAndRun:
     """测试直接编译运行"""
 
@@ -143,18 +141,18 @@ class TestCangjieCompileAndRun:
 
 
 @pytest.mark.skipif(not cjc_compiler_available(), reason="仓颉编译器不可用")
-@pytest.mark.skip(reason="仓颉运行时初始化问题待解决")
 class TestCangjieAsync:
     """测试异步调用"""
 
-    def test_async_decorator_only_code(self):
+    @pytest.mark.asyncio
+    async def test_async_decorator_only_code(self):
         """测试异步装饰器 ONLY_CODE 模式"""
-        @cangjie(async_mode=True)
+        @cangjie(mode='ONLY_CODE', async_mode=True)
         def multiply_async(a: int, b: int) -> int:
             return 'return a * b'
 
         # 异步模式只生成代码
-        code = multiply_async(5, 6)
+        code = await multiply_async(5, 6)
         assert '@C' in code
         assert 'func multiply_async' in code
 
@@ -168,7 +166,7 @@ class TestCangjieAsync:
             ret_type='Int64'
         )
         # 异步模式返回代码
-        assert '@C' in code or code == 100
+        assert (isinstance(code, str) and '@C' in code) or code == 100
 
     @pytest.mark.asyncio
     async def test_batch_async(self):

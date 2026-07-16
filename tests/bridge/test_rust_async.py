@@ -45,11 +45,14 @@ class TestRustAsyncMode:
             return "a * b"
 
         # 并发调用
-        results = asyncio.run(asyncio.gather(
-            async_mul(5, 10),
-            async_mul(3, 7),
-            async_mul(2, 8)
-        ))
+        async def _run_all():
+            return await asyncio.gather(
+                async_mul(5, 10),
+                async_mul(3, 7),
+                async_mul(2, 8)
+            )
+
+        results = asyncio.run(_run_all())
 
         assert results == [50, 21, 16]
 

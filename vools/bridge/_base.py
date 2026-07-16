@@ -48,18 +48,22 @@ import os
 import sys
 import abc
 import hashlib
+import time
 import tempfile
 import functools
 import inspect
 import asyncio
 import ctypes
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import (
     Callable, Dict, List, Optional, Any, Union,
     get_type_hints,
 )
 from ..core.dataclass_compat import dataclass, field
-from ..core.asyncio_compat import run as asyncio_run
+from ..core.asyncio_compat import run as asyncio_run, get_running_loop as asyncio_get_running_loop
+from .core.tracker import get_tracker, CompileTracker
+from .core.types import CompileMode, LangType
 
 
 # ============================================================================
@@ -416,12 +420,16 @@ class LangBridge(abc.ABC):
     name: str = ''
     file_ext: str = ''
     lib_ext: str = ''
+    is_compiled: bool = True   # 默认编译型语言，解释型语言子类重写为 False
+    lang_type: str = LangType.COMPILED   # 语言类型，子类可重写
 
     def __init__(self) -> None:
         """初始化语言桥接器。"""
         self._dep_resolver: DepResolver = DepResolver()
         self._cache_dir: Optional[str] = None
         self._executor: Optional[ThreadPoolExecutor] = None
+        self._compile_tracker = None  # 懒加载
+        self._package_lock = threading.Lock()  # 保护并发的 _package_code 调用
 
     # ------------------------------------------------------------------
     # 抽象方法（子类必须实现）
@@ -604,7 +612,8 @@ class LangBridge(abc.ABC):
                       lib_path: str, cache_dir: Optional[str] = None) -> str:
         """将编译产物保存到缓存目录。
 
-        复制编译生成的库文件到缓存目录，使用代码哈希作为文件名。
+        使用原子重命名（os.replace）将编译产物移动到缓存位置，
+        避免 shutil.copy2 留下源文件副本导致缓存目录出现重复文件。
 
         Args:
             code: 源代码字符串。
@@ -615,17 +624,227 @@ class LangBridge(abc.ABC):
         Returns:
             str: 缓存中的库文件路径。
         """
+        import shutil
         cache_dir = self.get_cache_dir(cache_dir)
         cache_key = self.get_cache_key(code, func_name)
         cached_path = os.path.join(cache_dir, self.get_lib_filename(cache_key))
 
-        import shutil
         try:
-            shutil.copy2(lib_path, cached_path)
-        except Exception:
-            pass
+            os.replace(lib_path, cached_path)
+        except OSError:
+            # 跨文件系统时 os.replace 可能失败，回退到 copy + remove
+            try:
+                shutil.copy2(lib_path, cached_path)
+                os.unlink(lib_path)
+            except Exception:
+                pass
 
         return cached_path
+
+    # ------------------------------------------------------------------
+    # 编译追踪器
+    # ------------------------------------------------------------------
+
+    def _get_tracker(self):
+        """获取编译追踪器（懒加载）。"""
+        if self._compile_tracker is None:
+            self._compile_tracker = get_tracker()
+        return self._compile_tracker
+
+    # ------------------------------------------------------------------
+    # 编译/打包/执行决策
+    # ------------------------------------------------------------------
+
+    def _should_compile(self, mode, code, func):
+        """根据编译模式和代码变更决定是否需要编译。
+
+        参数：
+            mode: 编译模式字符串（NORMAL/DEBUG/FORCE/ONLY_RUN/ONLY_CODE/WHEN_CHANGE_JUST/WHEN_CHANGE_AND_RUN）
+            code: 源代码字符串
+            func: 被装饰的函数
+
+        返回：
+            bool: True 表示需要编译
+
+        异常：
+            RuntimeError: ONLY_RUN 模式且无缓存时抛出
+        """
+        mode_str = CompileMode.normalize(mode)
+
+        if mode_str == CompileMode.ONLY_CODE:
+            return False  # 不编译，仅生成代码
+
+        if mode_str == CompileMode.ONLY_RUN:
+            # 仅运行，检查缓存
+            lib_path = self.check_cache(code, func.__name__)
+            if lib_path is None:
+                raise RuntimeError(
+                    "ONLY_RUN mode: no cached build for '{}' "
+                    "in {} bridge".format(func.__name__, self.name)
+                )
+            return False
+
+        if CompileMode.is_force_recompile(mode_str):
+            return True
+
+        if CompileMode.is_change_aware(mode_str):
+            # 代码变更感知模式
+            record_key = CompileTracker.make_record_key(func)
+            source_md5 = hashlib.md5(code.encode('utf-8')).hexdigest()
+            tracker = self._get_tracker()
+            if tracker.is_changed(record_key, source_md5):
+                return True
+            # 代码未变更，检查缓存文件是否存在
+            record = tracker.get_record(record_key)
+            if record and record.get('lib_path'):
+                if os.path.exists(record['lib_path']):
+                    return False
+            return True  # 缓存文件不存在，需要编译
+
+        # NORMAL 模式
+        return self.check_cache(code, func.__name__) is None
+
+    def _compile_or_package(self, code, func_name, cache_dir=None):
+        """编译或打包代码。
+
+        编译型语言调用 compile_code() 并保存到缓存，解释型语言调用 _package_code()。
+
+        参数：
+            code: 源代码字符串
+            func_name: 函数名
+            cache_dir: 缓存目录
+
+        返回：
+            str: 编译产物路径（缓存中的路径）
+        """
+        if self.is_compiled:
+            with self._package_lock:
+                lib_path = self.compile_code(code, func_name, cache_dir)
+                return self.save_to_cache(code, func_name, lib_path, cache_dir)
+        else:
+            return self._package_code(code, func_name, cache_dir)
+
+    def _package_code(self, code, func_name, cache_dir=None):
+        """将源代码打包为 zip 文件（解释型语言的'编译'产物）。
+
+        子类可以重写此方法以使用不同的打包格式。
+
+        参数：
+            code: 源代码字符串
+            func_name: 函数名
+            cache_dir: 缓存目录
+
+        返回：
+            str: 打包文件路径
+        """
+        import zipfile
+        cache_dir = self.get_cache_dir(cache_dir)
+        source_filename = self.get_source_filename(func_name)
+        package_path = os.path.join(cache_dir, '{}_package.zip'.format(func_name))
+
+        # 并发安全：如果包已存在，直接返回（相同函数名产生相同内容）
+        if os.path.exists(package_path):
+            return package_path
+
+        # 使用临时文件 + 原子重命名，避免并发读取时读到半写入的 zip 文件
+        fd, tmp_path = tempfile.mkstemp(dir=cache_dir, suffix='.zip')
+        try:
+            os.close(fd)
+            with self._package_lock:
+                # 双重检查：获取锁后再次检查
+                if os.path.exists(package_path):
+                    return package_path
+                with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr(source_filename, code)
+                try:
+                    os.replace(tmp_path, package_path)
+                except (PermissionError, OSError):
+                    # Windows 上目标文件可能被其他进程读取，替换失败时
+                    # 如果包已存在则返回（内容相同），否则清理并抛出
+                    if os.path.exists(package_path):
+                        return package_path
+                    raise
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            raise
+
+        return package_path
+
+    def _call_or_execute(self, lib_path, func_name, args, ret_type=None):
+        """调用或执行函数。
+
+        编译型语言调用 call_func()，解释型语言调用 _execute_code()。
+
+        参数：
+            lib_path: 编译产物路径
+            func_name: 函数名
+            args: 参数元组
+            ret_type: 返回值类型
+
+        返回：
+            Any: 执行结果
+        """
+        if self.is_compiled:
+            return self.call_func(lib_path, func_name, args, ret_type)
+        else:
+            return self._execute_code(lib_path, func_name, args, ret_type)
+
+    def _execute_code(self, package_path, func_name, args, ret_type=None):
+        """解包并通过解释器执行代码（默认实现）。
+
+        子类应重写此方法以使用正确的解释器。
+
+        参数：
+            package_path: 打包文件路径
+            func_name: 函数名
+            args: 参数元组
+            ret_type: 返回值类型
+
+        返回：
+            Any: 执行结果
+
+        异常：
+            NotImplementedError: 子类未重写时抛出
+        """
+        raise NotImplementedError(
+            "'{}' is an interpreted language, "
+            "but _execute_code() is not implemented. "
+            "Please override _execute_code() in your bridge class.".format(self.name)
+        )
+
+    def _record_compile(self, func, code, lib_path, mode, duration_ms=0):
+        """记录编译信息到数据库。
+
+        参数：
+            func: 被装饰的函数
+            code: 源代码字符串
+            lib_path: 编译产物路径
+            mode: 编译模式
+            duration_ms: 编译耗时（毫秒）
+        """
+        record_key = CompileTracker.make_record_key(func)
+        source_md5 = hashlib.md5(code.encode('utf-8')).hexdigest()
+        tracker = self._get_tracker()
+
+        python_module = getattr(func, '__module__', '')
+        python_file = inspect.getfile(func) if hasattr(inspect, 'getfile') else ''
+
+        tracker.upsert_record(
+            record_key,
+            language=self.name,
+            lang_type=self.lang_type,
+            func_name=func.__name__,
+            source_md5=source_md5,
+            source_path='',
+            lib_path=lib_path,
+            compile_mode=CompileMode.normalize(mode),
+            compile_duration_ms=duration_ms,
+            python_module=python_module,
+            python_file=python_file,
+        )
 
     # ------------------------------------------------------------------
     # 装饰器工厂
@@ -635,14 +854,13 @@ class LangBridge(abc.ABC):
         self,
         func: Optional[Callable] = None,
         *,
-        mode: str = 'NORMAL',
+        mode: str = CompileMode.NORMAL,
         deps: Optional[List[Callable]] = None,
         module_code: Optional[str] = None,
         async_mode: bool = False,
         fallback: Optional[Callable] = None,
         cache_dir: Optional[str] = None,
         ret_type: Optional[type] = None,
-        only_code: bool = False,
         output_file: Optional[str] = None,
         write_mode: str = 'overwrite',
         prefix: str = '',
@@ -663,13 +881,15 @@ class LangBridge(abc.ABC):
                 - 'FORCE': 强制重新编译但不执行
                 - 'ONLY_RUN': 只在有缓存时执行；没有则报错
                 - 'ONLY_CODE': 只生成源码，不编译
+                - 'WHEN_CHANGE_JUST': 代码变更时编译但不执行
+                - 'WHEN_CHANGE_AND_RUN': 代码变更时编译并运行
+                支持字符串或 CompileMode 常量。
             deps: 显式依赖函数列表，这些函数会在目标函数之前生成。
             module_code: 模块级代码，会放在所有函数定义之前。
             async_mode: 是否启用异步模式，为 True 时返回 async 包装器。
             fallback: 回退函数，编译器不可用或编译失败时调用。
             cache_dir: 编译缓存目录，为 None 时使用默认缓存目录。
             ret_type: 返回值类型，用于 ctypes 返回类型转换。
-            only_code: 仅代码模式，不编译，只生成目标语言代码。
             output_file: 输出文件路径，仅代码模式下将代码写入该文件。
             write_mode: 写入模式，可选值：
                 - 'overwrite': 覆盖整个文件
@@ -699,7 +919,7 @@ class LangBridge(abc.ABC):
 
             仅代码模式::
 
-                @bridge.decorator(only_code=True, output_file="out.bas")
+                @bridge.decorator(mode=CompileMode.ONLY_CODE, output_file="out.bas")
                 def example(x: int) -> int:
                     return "..."
 
@@ -719,7 +939,7 @@ class LangBridge(abc.ABC):
                 return self._run_sync(
                     f, args, kwargs, mode, deps, module_code,
                     fallback, cache_dir, ret_type,
-                    only_code, output_file, write_mode, prefix, suffix,
+                    output_file, write_mode, prefix, suffix,
                     project_dir, entry
                 )
 
@@ -728,7 +948,7 @@ class LangBridge(abc.ABC):
                 return await self._run_async(
                     f, args, kwargs, mode, deps, module_code,
                     fallback, cache_dir, ret_type,
-                    only_code, output_file, write_mode, prefix, suffix,
+                    output_file, write_mode, prefix, suffix,
                     project_dir, entry
                 )
 
@@ -748,7 +968,7 @@ class LangBridge(abc.ABC):
                   mode: str, deps: Optional[List[Callable]], module_code: Optional[str],
                   fallback: Optional[Callable], cache_dir: Optional[str],
                   ret_type: Optional[type],
-                  only_code: bool = False, output_file: Optional[str] = None,
+                  output_file: Optional[str] = None,
                   write_mode: str = 'overwrite',
                   prefix: str = '', suffix: str = '',
                   project_dir: Optional[str] = None, entry: str = 'main') -> Any:
@@ -760,13 +980,12 @@ class LangBridge(abc.ABC):
             func: 被装饰的 Python 函数。
             args: 位置参数元组。
             kwargs: 关键字参数字典。
-            mode: 运行模式（NORMAL/DEBUG/FORCE/ONLY_RUN/ONLY_CODE）。
+            mode: 运行模式（NORMAL/DEBUG/FORCE/ONLY_RUN/ONLY_CODE/WHEN_CHANGE_JUST/WHEN_CHANGE_AND_RUN）。
             deps: 显式依赖函数列表。
             module_code: 模块级代码。
             fallback: 回退函数。
             cache_dir: 编译缓存目录。
             ret_type: 返回值类型。
-            only_code: 是否仅代码模式。
             output_file: 输出文件路径。
             write_mode: 文件写入模式。
             prefix: 代码前缀。
@@ -781,9 +1000,7 @@ class LangBridge(abc.ABC):
             RuntimeError: 编译器不可用且无回退函数时抛出。
             Exception: 编译或执行异常且无回退函数时重新抛出。
         """
-        mode_upper = mode.upper() if isinstance(mode, str) else 'NORMAL'
-        if mode_upper == 'ONLY_CODE':
-            only_code = True
+        mode_upper = CompileMode.normalize(mode)
 
         if project_dir is not None:
             return self._run_project_sync(
@@ -791,7 +1008,7 @@ class LangBridge(abc.ABC):
                 fallback, cache_dir, ret_type, mode_upper
             )
 
-        if only_code:
+        if mode_upper == CompileMode.ONLY_CODE:
             return self._run_only_code(
                 func, args, kwargs, deps, module_code,
                 output_file, write_mode, prefix, suffix
@@ -801,8 +1018,8 @@ class LangBridge(abc.ABC):
             if fallback:
                 return fallback(*args, **kwargs)
             raise RuntimeError(
-                f"{self.name} compiler not available "
-                f"and no fallback provided for '{func.__name__}'"
+                "{} compiler not available "
+                "and no fallback provided for '{}'".format(self.name, func.__name__)
             )
 
         try:
@@ -814,20 +1031,37 @@ class LangBridge(abc.ABC):
 
             code = self.generate_code(spec)
 
-            force_recompile = mode_upper in ('DEBUG', 'FORCE')
-            if force_recompile:
-                lib_path = self._compile_force(code, func.__name__, cache_dir)
+            if self._should_compile(mode_upper, code, func):
+                start_time = time.time()
+                lib_path = self._compile_or_package(code, func.__name__, cache_dir)
+                duration_ms = int((time.time() - start_time) * 1000)
+                # 记录编译信息
+                self._record_compile(func, code, lib_path, mode_upper, duration_ms)
             else:
-                lib_path = self._compile_with_cache(code, func.__name__, cache_dir)
+                # 使用缓存
+                if CompileMode.is_change_aware(mode_upper):
+                    # 变更感知模式：从数据库获取 lib_path
+                    record_key = CompileTracker.make_record_key(func)
+                    record = self._get_tracker().get_record(record_key)
+                    lib_path = record['lib_path'] if record else None
+                else:
+                    lib_path = self.check_cache(code, func.__name__, cache_dir)
 
-            if mode_upper == 'FORCE':
+                if lib_path is None:
+                    # 缓存不存在，需要编译
+                    start_time = time.time()
+                    lib_path = self._compile_or_package(code, func.__name__, cache_dir)
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    self._record_compile(func, code, lib_path, mode_upper, duration_ms)
+
+            if not CompileMode.should_execute(mode_upper):
                 return lib_path
 
             actual_ret_type = ret_type
             if actual_ret_type is None:
                 actual_ret_type = spec.annotations.get('return')
 
-            return self.call_func(lib_path, func.__name__, args, actual_ret_type)
+            return self._call_or_execute(lib_path, func.__name__, args, actual_ret_type)
 
         except Exception:
             if fallback:
@@ -838,7 +1072,7 @@ class LangBridge(abc.ABC):
                          mode: str, deps: Optional[List[Callable]], module_code: Optional[str],
                          fallback: Optional[Callable], cache_dir: Optional[str],
                          ret_type: Optional[type],
-                         only_code: bool = False, output_file: Optional[str] = None,
+                         output_file: Optional[str] = None,
                          write_mode: str = 'overwrite',
                          prefix: str = '', suffix: str = '',
                          project_dir: Optional[str] = None, entry: str = 'main') -> Any:
@@ -850,13 +1084,12 @@ class LangBridge(abc.ABC):
             func: 被装饰的 Python 函数。
             args: 位置参数元组。
             kwargs: 关键字参数字典。
-            mode: 运行模式（NORMAL/DEBUG/FORCE/ONLY_RUN/ONLY_CODE）。
+            mode: 运行模式（NORMAL/DEBUG/FORCE/ONLY_RUN/ONLY_CODE/WHEN_CHANGE_JUST/WHEN_CHANGE_AND_RUN）。
             deps: 显式依赖函数列表。
             module_code: 模块级代码。
             fallback: 回退函数。
             cache_dir: 编译缓存目录。
             ret_type: 返回值类型。
-            only_code: 是否仅代码模式。
             output_file: 输出文件路径。
             write_mode: 文件写入模式。
             prefix: 代码前缀。
@@ -867,9 +1100,7 @@ class LangBridge(abc.ABC):
         Returns:
             Any: 执行结果。
         """
-        mode_upper = mode.upper() if isinstance(mode, str) else 'NORMAL'
-        if mode_upper == 'ONLY_CODE':
-            only_code = True
+        mode_upper = CompileMode.normalize(mode)
 
         if project_dir is not None:
             return await self._run_project_async(
@@ -877,7 +1108,7 @@ class LangBridge(abc.ABC):
                 fallback, cache_dir, ret_type, mode_upper
             )
 
-        if only_code:
+        if mode_upper == CompileMode.ONLY_CODE:
             return await self._run_only_code_async(
                 func, args, kwargs, deps, module_code,
                 output_file, write_mode, prefix, suffix
@@ -886,13 +1117,13 @@ class LangBridge(abc.ABC):
         if self._executor is None:
             self._executor = ThreadPoolExecutor(max_workers=4)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio_get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             lambda: self._run_sync(
                 func, args, kwargs, mode, deps, module_code,
                 fallback, cache_dir, ret_type,
-                only_code, output_file, write_mode, prefix, suffix,
+                output_file, write_mode, prefix, suffix,
                 project_dir, entry
             )
         )
@@ -1345,7 +1576,7 @@ class LangBridge(abc.ABC):
         if self._executor is None:
             self._executor = ThreadPoolExecutor(max_workers=4)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio_get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             lambda: self._run_project_sync(

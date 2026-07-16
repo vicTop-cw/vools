@@ -190,3 +190,144 @@ def convert_args(args, argtypes):
         转换后的参数列表
     """
     return CTypeMapper.convert_args(args, argtypes)
+
+
+
+# ============================================================================
+# 编译模式枚举
+# ============================================================================
+
+class CompileMode:
+    """编译模式枚举（兼容字符串比较）。
+
+    定义所有编译执行模式，用于控制桥接装饰器的编译和执行行为。
+
+    成员：
+        NORMAL -- 正常模式，命中缓存跳过编译；未命中则编译
+        DEBUG -- 调试模式，强制重新编译并执行
+        FORCE -- 强制模式，强制重新编译但不执行
+        ONLY_RUN -- 仅运行模式，只在有缓存时执行；没有则报错
+        ONLY_CODE -- 仅代码模式，只生成源码不编译
+        WHEN_CHANGE_JUST -- 变更编译模式，检测到代码变更时编译，不执行
+        WHEN_CHANGE_AND_RUN -- 变更编译运行模式，检测到代码变更时编译并执行
+    """
+
+    NORMAL = 'NORMAL'
+    DEBUG = 'DEBUG'
+    FORCE = 'FORCE'
+    ONLY_RUN = 'ONLY_RUN'
+    ONLY_CODE = 'ONLY_CODE'
+    WHEN_CHANGE_JUST = 'WHEN_CHANGE_JUST'
+    WHEN_CHANGE_AND_RUN = 'WHEN_CHANGE_AND_RUN'
+
+    _ALL = frozenset({NORMAL, DEBUG, FORCE, ONLY_RUN, ONLY_CODE,
+                       WHEN_CHANGE_JUST, WHEN_CHANGE_AND_RUN})
+
+    @classmethod
+    def normalize(cls, mode):
+        """将字符串或枚举值规范化为标准字符串。
+
+        参数：
+            mode: CompileMode 枚举成员 或 大小写不敏感的字符串。
+
+        返回：
+            str: 标准化的大写字符串。
+
+        异常：
+            ValueError: 无效的模式字符串。
+        """
+        if isinstance(mode, str):
+            upper = mode.upper()
+            if upper in cls._ALL:
+                return upper
+            raise ValueError(
+                "Invalid compile mode: {!r}. "
+                "Valid modes: {}".format(mode, sorted(cls._ALL))
+            )
+        # 假设是 CompileMode 枚举成员（通过字符串比较）
+        mode_str = str(mode) if not isinstance(mode, str) else mode
+        if mode_str in cls._ALL:
+            return mode_str
+        raise ValueError("Invalid compile mode: {!r}".format(mode))
+
+    @classmethod
+    def is_change_aware(cls, mode):
+        """判断模式是否为代码变更感知模式。
+
+        参数：
+            mode: 编译模式字符串。
+
+        返回：
+            bool: True 如果是 WHEN_CHANGE_JUST 或 WHEN_CHANGE_AND_RUN。
+        """
+        m = cls.normalize(mode)
+        return m in (cls.WHEN_CHANGE_JUST, cls.WHEN_CHANGE_AND_RUN)
+
+    @classmethod
+    def is_force_recompile(cls, mode):
+        """判断模式是否需要强制重新编译。
+
+        参数：
+            mode: 编译模式字符串。
+
+        返回：
+            bool: True 如果需要强制重编译。
+        """
+        m = cls.normalize(mode)
+        return m in (cls.DEBUG, cls.FORCE)
+
+    @classmethod
+    def should_execute(cls, mode):
+        """判断模式是否需要在编译后执行。
+
+        参数：
+            mode: 编译模式字符串。
+
+        返回：
+            bool: True 如果需要执行函数。
+        """
+        m = cls.normalize(mode)
+        return m not in (cls.FORCE, cls.ONLY_CODE, cls.WHEN_CHANGE_JUST)
+
+
+# ============================================================================
+# 语言类型枚举
+# ============================================================================
+
+class LangType:
+    """语言类型枚举。
+
+    用于分类语言，决定编译产物的处理方式。
+
+    成员：
+        COMPILED -- 编译型语言（Nim, Rust, C, C++, Go, Zig, FreeBASIC, Mojo, Cangjie, VBNet, MoonBit）
+        INTERPRETED -- 解释型语言（Lua, Shell, Perl, PHP, Python, R, Ruby, VBScript, PowerShell）
+        JVM -- JVM 语言（Java, Scala, Kotlin）
+        DOTNET -- .NET 语言（C#）
+        BEAM -- BEAM VM 语言（Erlang, Elixir）
+    """
+
+    COMPILED = 'compiled'
+    INTERPRETED = 'interpreted'
+    JVM = 'jvm'
+    DOTNET = 'dotnet'
+    BEAM = 'beam'
+
+    _ALL = frozenset({COMPILED, INTERPRETED, JVM, DOTNET, BEAM})
+
+    @classmethod
+    def normalize(cls, lang_type):
+        """规范化语言类型字符串。
+
+        参数：
+            lang_type: 字符串或 LangType 成员。
+
+        返回：
+            str: 标准化的小写字符串。
+        """
+        if isinstance(lang_type, str):
+            lower = lang_type.lower()
+            if lower in cls._ALL:
+                return lower
+            raise ValueError("Invalid lang type: {!r}".format(lang_type))
+        return str(lang_type)

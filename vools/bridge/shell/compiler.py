@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.shell.compiler - Shell/Bash 语言桥接编译器实现
 
 提供 ShellBridge 类，继承 LangBridge 抽象基类，实现 Shell/Bash 特定的代码生成、
@@ -19,6 +19,7 @@ import textwrap
 from typing import Any, Optional
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 from .types import get_shell_type
 
 _IS_WINDOWS = platform.system() == 'Windows'
@@ -71,7 +72,8 @@ def _wsl_available() -> bool:
     try:
         result = subprocess.run(
             ['wsl', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=5,
         )
         return result.returncode == 0
     except (FileNotFoundError, OSError):
@@ -89,7 +91,8 @@ def shell_compiler_available() -> bool:
         try:
             result = subprocess.run(
                 [_SHELL_PATH, '--version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                universal_newlines=True, timeout=5,
             )
             return result.returncode == 0
         except (FileNotFoundError, OSError):
@@ -101,7 +104,8 @@ def shell_compiler_available() -> bool:
             try:
                 result = subprocess.run(
                     [_SHELL_PATH, '--version'],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    universal_newlines=True, timeout=5,
                 )
                 return result.returncode == 0
             except Exception:
@@ -246,7 +250,7 @@ def _execute_shell_code(code: str, func_name: str, cache_dir: str = None,
         if output is not None:
             return output.strip()
 
-    with open(src_path, 'w', encoding='utf-8') as f:
+    with open(src_path, 'w', encoding='utf-8', newline='\n') as f:
         f.write(code)
 
     if not _IS_WINDOWS:
@@ -267,8 +271,9 @@ def _execute_shell_code(code: str, func_name: str, cache_dir: str = None,
 
 def _run_shell_script(script_path: str, args: list) -> Optional[str]:
     try:
-        if _IS_WINDOWS and _WSL_AVAILABLE and not shutil.which('bash'):
-            wsl_path = script_path.replace('\\', '/')
+        if _IS_WINDOWS:
+            # Convert Windows path to WSL path for bash.exe (WSL launcher)
+            wsl_path = script_path.replace(chr(92), '/')
             wsl_path = '/mnt/' + wsl_path[0].lower() + wsl_path[2:]
             cmd = ['wsl', 'bash', wsl_path] + args
         else:
@@ -277,7 +282,7 @@ def _run_shell_script(script_path: str, args: list) -> Optional[str]:
         result = subprocess.run(
             cmd,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=60,
         )
         if result.returncode == 0:
@@ -354,7 +359,7 @@ def _get_cached_code(func_name: str, code: str, force: bool = False) -> str:
         base_name = f'shell_{func_name}_{code_hash}'
         src_path = os.path.join(_SHELL_CACHE_DIR, f'{base_name}.sh')
         os.makedirs(_SHELL_CACHE_DIR, exist_ok=True)
-        with open(src_path, 'w', encoding='utf-8') as f:
+        with open(src_path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(code)
         if not _IS_WINDOWS:
             try:
@@ -381,7 +386,7 @@ def _run_async(code: str, func_name: str, args: tuple,
     executor = ThreadPoolExecutor(max_workers=1)
 
     def _execute():
-        shell_ret_type = get_shell_type(ret_type) if ret_type else 'string'
+        shell_ret_type = get_shell_type(ret_type) if ret_type else 'auto'
         full_code = _generate_callable_shell_code(code, func_name, args)
         output = _execute_shell_code(full_code, func_name, cache_dir)
         return _parse_shell_output(output, shell_ret_type)
@@ -405,6 +410,8 @@ class ShellBridge(LangBridge):
     """
 
     name = 'shell'
+    is_compiled = False
+    lang_type = LangType.INTERPRETED
     file_ext = '.sh'
     lib_ext = '.sh'
 
@@ -414,6 +421,40 @@ class ShellBridge(LangBridge):
 
     def compiler_available(self) -> bool:
         return shell_compiler_available()
+
+    def _execute_code(self, package_path, func_name, args, ret_type=None):
+        """解包并执行代码。"""
+        import zipfile, tempfile, shutil
+
+        shell_ret_type = get_shell_type(ret_type) if ret_type else 'auto'
+
+        tmpdir = tempfile.mkdtemp()
+        try:
+            with zipfile.ZipFile(package_path, 'r') as zf:
+                zf.extractall(tmpdir)
+
+            source_file = os.path.join(tmpdir, self.get_source_filename(func_name))
+
+            # Read the generated code
+            with open(source_file, 'r', encoding='utf-8') as f:
+                code = f.read()
+
+            # Build wrapper that calls the function with arguments
+            full_code = '#!/usr/bin/env bash\nset -euo pipefail\n\n' + code + '\n' + func_name + ' "$@"\n'
+
+            wrapper_path = os.path.join(tmpdir, 'wrapper.sh')
+            with open(wrapper_path, 'w', encoding='utf-8', newline='\n') as f:
+                f.write(full_code)
+
+            arg_list = [str(a) for a in args]
+            output = _run_shell_script(wrapper_path, arg_list)
+            if output is None:
+                raise RuntimeError(
+                    "Shell execution failed for '{}'".format(func_name)
+                )
+            return _parse_shell_output(output.strip(), shell_ret_type)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def generate_code(self, spec: FunctionSpec) -> str:
         parts = []
@@ -463,7 +504,7 @@ class ShellBridge(LangBridge):
         base_name = f'shell_{func_name}_{code_hash}'
         src_path = os.path.join(cache_dir, f'{base_name}.sh')
 
-        with open(src_path, 'w', encoding='utf-8') as f:
+        with open(src_path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(code)
 
         if not _IS_WINDOWS:
@@ -521,7 +562,7 @@ class ShellBridge(LangBridge):
 
             final_code = '\n'.join(all_code)
 
-            with open(output_path, 'w', encoding='utf-8') as f:
+            with open(output_path, 'w', encoding='utf-8', newline='\n') as f:
                 f.write(final_code)
 
             if not _IS_WINDOWS:
@@ -534,7 +575,7 @@ class ShellBridge(LangBridge):
 
     def call_func(self, src_path: str, func_name: str,
                   args: tuple, ret_type=None) -> Any:
-        shell_ret_type = get_shell_type(ret_type) if ret_type else 'string'
+        shell_ret_type = get_shell_type(ret_type) if ret_type else 'auto'
 
         with open(src_path, 'r', encoding='utf-8') as f:
             code = f.read()
@@ -555,7 +596,7 @@ set -euo pipefail
         os.makedirs(cache_dir, exist_ok=True)
         call_path = os.path.join(cache_dir, f'{base_name}.sh')
 
-        with open(call_path, 'w', encoding='utf-8') as f:
+        with open(call_path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(full_code)
 
         if not _IS_WINDOWS:

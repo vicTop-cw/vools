@@ -53,6 +53,7 @@ from typing import Any
 
 from ..manager import get_helper
 from .._base import LangBridge, FunctionSpec, FunctionParser
+from ..core.types import LangType
 from .types import (
     get_cj_type,
     infer_cj_argtypes,
@@ -60,7 +61,7 @@ from .types import (
     CJ_TO_CTYPES,
     get_ctype_for,
 )
-from .templates import generate_cj_code
+from .templates import generate_cj_code, generate_cj_exe_with_args_code
 from .loader import load_cj_dll, setup_cj_func, convert_args, convert_result
 
 # 平台判断
@@ -75,6 +76,8 @@ _CJ_CACHE_DIR = os.path.join(tempfile.gettempdir(), 'vools_cangjie_cache')
 
 # 缓存:func_name -> (code, dll_path) 映射
 _dll_cache = {}
+# 缓存:func_name -> (body, arg_names, arg_types, ret_type) 以供 EXE 回退
+_exe_fallback_cache = {}
 _cache_lock = threading.Lock()
 
 # 异步执行器
@@ -270,6 +273,124 @@ def _call_cj_func(dll_path: str, func_name: str, args: tuple, ret_type: str = 'I
     return convert_result(result, ret_type)
 
 
+def _compile_cj_exe(code: str, func_name: str, cache_dir: str = None) -> str:
+    """
+    编译仓颉代码为可执行文件
+
+    参数:
+        code: 完整仓颉源代码（包含 main 函数）
+        func_name: 函数名(用于生成文件名)
+        cache_dir: 缓存目录
+
+    返回:
+        编译后的可执行文件路径
+
+    抛出:
+        RuntimeError: 编译失败
+    """
+    if cache_dir is None:
+        cache_dir = _CJ_CACHE_DIR
+
+    os.makedirs(cache_dir, exist_ok=True)
+
+    code_hash = hashlib.md5(code.encode('utf-8')).hexdigest()[:12]
+    exe_name = f'cj_{func_name}_{code_hash}'
+
+    if _IS_WINDOWS:
+        exe_path = os.path.join(cache_dir, f'{exe_name}.exe')
+    else:
+        exe_path = os.path.join(cache_dir, exe_name)
+
+    # 检查缓存
+    if os.path.exists(exe_path):
+        return exe_path
+
+    # 写入临时 .cj 文件
+    cj_path = os.path.join(cache_dir, f'{exe_name}.cj')
+    with open(cj_path, 'w', encoding='utf-8') as f:
+        f.write(code)
+
+    # 编译命令
+    cjc_path = _get_cjc_path()
+    compile_cmd = [cjc_path, '--output-type=exe', '-o', exe_path, cj_path]
+
+    result = subprocess.run(
+        compile_cmd,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+        cwd=cache_dir
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f'仓颉编译失败:\nstderr:\n{result.stderr}\nstdout:\n{result.stdout}\n代码:\n{code}'
+        )
+
+    if not os.path.exists(exe_path):
+        raise FileNotFoundError(f'编译后未找到可执行文件: {exe_path}')
+
+    return exe_path
+
+
+def _run_cj_exe(exe_path: str, args: tuple = ()) -> str:
+    """
+    运行仓颉可执行文件并捕获输出
+
+    参数:
+        exe_path: 可执行文件路径
+        args: 命令行参数
+
+    返回:
+        标准输出（去除末尾换行）
+    """
+    result = subprocess.run(
+        [exe_path] + [str(a) for a in args],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+        timeout=30
+    )
+    return result.stdout.strip()
+
+
+def _call_cj_exe(cj_code: str, func_name: str, args: tuple,
+                 param_names: list, param_types: list, ret_type: str,
+                 cache_dir: str = None):
+    """
+    通过编译为可执行文件并运行来调用仓颉函数
+
+    参数:
+        cj_code: 仓颉函数体代码
+        func_name: 函数名
+        args: 参数元组
+        param_names: 参数名列表
+        param_types: 仓颉参数类型列表
+        ret_type: 返回类型
+        cache_dir: 缓存目录
+
+    返回:
+        函数返回值
+    """
+    arg_dict = dict(zip(param_names, args))
+    exe_code = generate_cj_exe_with_args_code(
+        func_name, param_names, param_types, ret_type,
+        cj_code, arg_values=arg_dict
+    )
+    exe_path = _compile_cj_exe(exe_code, func_name, cache_dir)
+    output = _run_cj_exe(exe_path)
+
+    # 解析返回值
+    if ret_type in ('Int64', 'Int32', 'Int16', 'Int8', 'UInt64', 'UInt32', 'UInt16', 'UInt8'):
+        return int(output)
+    elif ret_type in ('Float64', 'Float32'):
+        return float(output)
+    elif ret_type == 'Bool':
+        return output.lower() == 'true'
+    elif ret_type == 'String':
+        return output
+    else:
+        return output
+
+
 
 
 
@@ -278,6 +399,8 @@ def compile_and_run(cj_code: str, func_name: str = 'main',
                     cache_dir: str = None):
     """
     直接编译并运行仓颉代码
+
+    使用 EXE + subprocess 方式，避免 DLL 运行时初始化问题。
 
     参数:
         cj_code: 仓颉函数体代码(不含签名)
@@ -289,15 +412,9 @@ def compile_and_run(cj_code: str, func_name: str = 'main',
     返回:
         函数返回值
     """
-    full_code = generate_cj_code(
-        func_name,
-        [],
-        infer_cj_argtypes(args),
-        ret_type,
-        cj_code,
-    )
-    dll_path = _compile_cj_code(full_code, func_name, cache_dir)
-    return _call_cj_func(dll_path, func_name, args, ret_type)
+    param_names = [f'arg{i}' for i in range(len(args))]
+    param_types = infer_cj_argtypes(args)
+    return _call_cj_exe(cj_code, func_name, args, param_names, param_types, ret_type, cache_dir)
 
 
 async def compile_and_run_async(cj_code: str, func_name: str = 'main',
@@ -354,6 +471,7 @@ class CjBridge(LangBridge):
     name = 'cangjie'
     file_ext = '.cj'
     lib_ext = '.dll' if _IS_WINDOWS else '.so'
+    lang_type = LangType.COMPILED
 
     def __init__(self):
         super().__init__()
@@ -370,7 +488,32 @@ class CjBridge(LangBridge):
         1. module_code（用户提供的模块级代码）
         2. 依赖函数（从 deps 参数生成）
         3. 主函数
+
+        同时缓存 EXE 回退所需信息。
         """
+        # 缓存 EXE 回退信息
+        arg_names = []
+        cj_argtypes = []
+        for name, ann in spec.annotations.items():
+            if name == 'return':
+                continue
+            arg_names.append(name)
+            if ann is None or ann is inspect.Parameter.empty:
+                cj_argtypes.append('Int64')
+            else:
+                cj_argtypes.append(get_cj_type(ann))
+
+        ret_type = 'Int64'
+        if 'return' in spec.annotations:
+            ann = spec.annotations['return']
+            if ann is type(None) or str(ann).lower() == 'none':
+                ret_type = 'Unit'
+            else:
+                ret_type = get_cj_type(ann)
+
+        with _cache_lock:
+            _exe_fallback_cache[spec.name] = (spec.body, arg_names, cj_argtypes, ret_type)
+
         parts = []
 
         # 模块级代码
@@ -428,15 +571,21 @@ class CjBridge(LangBridge):
                 indented_body += '\n'
 
         if ret_type == 'Unit':
-            return f'''func {spec.name}({params_str}) {{
+            return f'''@C
+func {spec.name}({params_str}) {{
 {indented_body}}}'''
         else:
-            return f'''func {spec.name}({params_str}): {ret_type} {{
+            return f'''@C
+func {spec.name}({params_str}): {ret_type} {{
 {indented_body}}}'''
 
     def compile_code(self, code: str, func_name: str, cache_dir: str = None) -> str:
-        """编译仓颉代码"""
-        return _compile_cj_code(code, func_name, cache_dir)
+        """编译仓颉代码（编译为 DLL 并缓存代码）"""
+        dll_path = _compile_cj_code(code, func_name, cache_dir)
+        # 缓存代码以便后续 EXE fallback
+        with _cache_lock:
+            _dll_cache[func_name] = (code, dll_path)
+        return dll_path
 
     def compile_project(self, project_dir: str, entry: str, output_dir: str = None) -> str:
         """
@@ -504,9 +653,22 @@ class CjBridge(LangBridge):
 
     def call_func(self, lib_path: str, func_name: str,
                   args: tuple, ret_type=None) -> Any:
-        """调用仓颉编译的函数"""
-        cj_ret_type = ret_type or 'Int64'
-        return _call_cj_func(lib_path, func_name, args, cj_ret_type)
+        """调用仓颉编译的函数
+
+        使用 EXE + subprocess 方式，避免 DLL 运行时初始化问题。
+        """
+        cj_ret_type = str(ret_type or 'Int64')
+        with _cache_lock:
+            fallback = _exe_fallback_cache.get(func_name)
+        if fallback:
+            body, param_names, param_types, fb_ret_type = fallback
+            return _call_cj_exe(
+                body, func_name, args,
+                param_names, param_types, fb_ret_type or cj_ret_type
+            )
+        raise RuntimeError(
+            f'无法调用函数 {func_name}: 缺少 EXE 回退信息'
+        )
 
 
 # 全局 CjBridge 实例

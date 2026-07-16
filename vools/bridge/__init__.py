@@ -33,9 +33,10 @@ LangBridge 统一接口：
 """
 
 from .core.loader import LibraryLoader, SharedLibrary, load_library, load_from_path, is_available
-from .core.types import CTypeMapper
+from .core.types import CTypeMapper, CompileMode, LangType
 from .core.decorators import bridge_function, bridge_module, bridge_func_name
 from .core.serialization import Serializer
+from .core.tracker import CompileTracker, get_tracker
 
 # manager 模块 - 语言编译器和运行时环境统一管理
 from .manager import (
@@ -79,6 +80,10 @@ __all__ = [
     'load_from_path',
     'is_available',
     'CTypeMapper',
+    'CompileMode',
+    'CompileTracker',
+    'get_tracker',
+    'LangType',
     'bridge_function',
     'bridge_module',
     'bridge_func_name',

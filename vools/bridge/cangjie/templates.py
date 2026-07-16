@@ -137,6 +137,128 @@ def generate_from_python_func(func, body, auto_signature=True):
     )
 
 
+def generate_cj_exe_code(
+    func_name,
+    param_names,
+    param_types,
+    return_type,
+    body,
+    package_name=None,
+):
+    """
+    生成可执行文件的仓颉代码（包含 main 函数包装）
+
+    参数:
+        func_name: 函数名
+        param_names: 参数名列表
+        param_types: 仓颉参数类型列表
+        return_type: 仓颉返回类型
+        body: 函数体代码
+        package_name: 包名(默认使用函数名)
+
+    返回:
+        完整的仓颉代码字符串（包含 main 入口）
+    """
+    if package_name is None:
+        package_name = func_name
+
+    if return_type == 'Unit':
+        return_type = 'Int64'
+
+    # 生成目标函数
+    target_code = generate_cj_code(
+        func_name,
+        param_names,
+        param_types,
+        return_type,
+        body,
+        package_name=package_name,
+        include_c_annotation=False,
+    )
+
+    # 生成 main 函数包装
+    main_code = f'''main(): Int64 {{
+    var result = {func_name}()
+    println(result)
+    return 0
+}}'''
+
+    return target_code + '\n' + main_code
+
+
+def generate_cj_exe_with_args_code(
+    func_name,
+    param_names,
+    param_types,
+    return_type,
+    body,
+    package_name=None,
+    arg_values=None,
+):
+    """
+    生成带参数的可执行仓颉代码
+
+    参数:
+        func_name: 函数名
+        param_names: 参数名列表
+        param_types: 仓颉参数类型列表
+        return_type: 仓颉返回类型
+        body: 函数体代码
+        package_name: 包名
+        arg_values: 参数值列表（Python 值）
+
+    返回:
+        完整的仓颉代码字符串
+    """
+    if package_name is None:
+        package_name = func_name
+
+    if return_type == 'Unit':
+        return_type = 'Int64'
+
+    # 生成目标函数
+    target_code = generate_cj_code(
+        func_name,
+        param_names,
+        param_types,
+        return_type,
+        body,
+        package_name=package_name,
+        include_c_annotation=False,
+    )
+
+    # 生成带参数的 main 函数
+    arg_decls = []
+    for name, cj_type in zip(param_names, param_types):
+        if arg_values is not None and name in arg_values if isinstance(arg_values, dict) else False:
+            val = arg_values[name] if isinstance(arg_values, dict) else arg_values
+            arg_decls.append(f'    let {name} = {_format_cj_literal(val, cj_type)}')
+        else:
+            arg_decls.append(f'    let {name}: {cj_type} = 0')
+
+    main_code = f'''main(): Int64 {{
+{chr(10).join(arg_decls)}
+    var result = {func_name}({', '.join(param_names)})
+    println(result)
+    return 0
+}}'''
+
+    return target_code + '\n' + main_code
+
+
+def _format_cj_literal(value, cj_type):
+    """格式化 Python 值为仓颉字面量"""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, str):
+        return f'"{value}"'
+    if isinstance(value, float):
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    return str(value)
+
+
 class CangjieCodeGenerator:
     """仓颉代码生成器类"""
 

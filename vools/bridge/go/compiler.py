@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.go.compiler - Go 语言桥接编译器实现
 
 提供 Go 动态编译与跨语言桥接能力，对齐 vools.bridge.mojo / freebasic 的 API 形态。
@@ -25,7 +25,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Tuple
 
-from ..core.types import CTypeMapper, infer_arg_types, infer_ret_type, convert_args
+from ..core.types import CTypeMapper, infer_arg_types, infer_ret_type, convert_args, LangType
 from ..manager import get_helper
 from .._base import LangBridge, FunctionSpec, FunctionParser
 
@@ -257,6 +257,58 @@ def _resolve_go_ret_type(annotation):
 # 编译逻辑
 # ----------------------------------------------------------------------------
 
+def _find_c_compiler() -> str:
+    """
+    查找系统上可用的 C 编译器（用于 cgo）
+
+    优先查找功能完整的 MinGW GCC，避免使用可能缺少头文件的
+    精简版 GCC（如 FreeBasic 内置的 GCC）。
+
+    返回：
+        C 编译器路径或命令名
+    """
+    # 优先查找 MinGW GCC（在常见安装路径中）
+    mingw_paths = [
+        os.path.join(os.environ.get('LOCALAPPDATA', ''), 'mingw64', 'mingw64', 'bin'),
+        os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), 'mingw64', 'bin'),
+        'C:\\mingw64\\bin',
+        'C:\\msys64\\mingw64\\bin',
+        'C:\\msys64\\ucrt64\\bin',
+    ]
+    for cc_name in ('gcc', 'cc', 'clang', 'cl.exe'):
+        # 优先检查 MinGW 路径
+        for mp in mingw_paths:
+            cc_path = os.path.join(mp, cc_name + '.exe')
+            if os.path.isfile(cc_path):
+                return cc_path
+        # 回退到 PATH 搜索
+        cc_path = shutil.which(cc_name)
+        if cc_path:
+            # 排除已知缺少头文件的精简版 GCC
+            cc_lower = cc_path.lower()
+            if 'freebasic' in cc_lower:
+                continue
+            return cc_path
+    return 'gcc'
+
+
+def _build_env_with_cc() -> dict:
+    """
+    构建包含 C 编译器路径的子进程环境
+
+    返回：
+        dict: 环境变量字典
+    """
+    env = os.environ.copy()
+    cc_path = _find_c_compiler()
+    cc_dir = os.path.dirname(cc_path)
+    if cc_dir and cc_dir not in env.get('PATH', ''):
+        env['PATH'] = cc_dir + os.pathsep + env.get('PATH', '')
+    # 使用完整路径而非 basename，确保 Go 的 cgo 使用正确的 C 编译器
+    env['CC'] = cc_path
+    return env
+
+
 def _compile_go_code(code: str, func_name: str, cache_dir: str = None,
                      force: bool = False) -> str:
     """
@@ -302,11 +354,15 @@ def _compile_go_code(code: str, func_name: str, cache_dir: str = None,
         src_path,
     ]
 
+    # 构建包含 C 编译器的子进程环境
+    build_env = _build_env_with_cc()
+
     result = subprocess.run(
         compile_cmd,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True,
         timeout=60,
+        env=build_env,
     )
 
     if result.returncode != 0 or not os.path.exists(so_path):
@@ -504,11 +560,14 @@ def _generate_go_source(
     else:
         indented_body = '\n'
 
+    # 检查是否需要 unsafe 包（数组参数需要 unsafe.Pointer）
+    needs_unsafe = any(is_arr for _, _, is_arr in params)
+
     # c-shared 必须有 main()
     code = f'''package main
 
 import "C"
-import "unsafe"
+{('import "unsafe"' if needs_unsafe else '')}
 
 //export {func_name}
 func {func_name}({params_str}){ret_signature} {{{indented_body}}}
@@ -667,6 +726,7 @@ class GoBridge(LangBridge):
     name = 'go'
     file_ext = '.go'
     lib_ext = '.dll' if _IS_WINDOWS else ('.dylib' if _IS_MACOS else '.so')
+    lang_type = LangType.COMPILED
 
     def __init__(self):
         super().__init__()
@@ -707,10 +767,12 @@ class GoBridge(LangBridge):
 
     def _wrap_full_source(self, funcs_code: str, main_func: str) -> str:
         """包装完整的 Go 源码（package main, import, main 函数）"""
+        # 检测是否需要 unsafe 包（检查是否使用了 unsafe.Pointer）
+        needs_unsafe = 'unsafe.Pointer' in funcs_code
         return f'''package main
 
 import "C"
-import "unsafe"
+{('import "unsafe"' if needs_unsafe else '')}
 
 {funcs_code}
 
@@ -828,7 +890,8 @@ func {spec.name}({params_str}){ret_signature} {{{indented_body}}}'''
             compile_cmd,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
-            cwd=project_dir
+            cwd=project_dir,
+            env=_build_env_with_cc(),
         )
 
         if result.returncode != 0 or not os.path.exists(output_path):
@@ -859,7 +922,10 @@ func {spec.name}({params_str}){ret_signature} {{{indented_body}}}'''
             else:
                 param_go_types.append('C.longlong')
 
-        go_ret_type = ret_type or 'C.longlong'
+        # 将 Python 类型注解转换为 Go 类型字符串
+        go_ret_type = _resolve_go_ret_type(ret_type)
+        if go_ret_type == 'C.void':
+            go_ret_type = 'C.longlong'
         return _call_go_function(
             lib_path, func_name, args, param_go_types, go_ret_type
         )

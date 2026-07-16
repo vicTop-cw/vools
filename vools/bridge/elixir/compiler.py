@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Tuple
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 from ..manager import get_helper, _find_executable
 
 # ----------------------------------------------------------------------------
@@ -604,6 +605,7 @@ class ElixirBridge(LangBridge):
     name = 'elixir'
     file_ext = '.ex'
     lib_ext = '.beam'
+    lang_type = LangType.BEAM
 
     def compiler_available(self) -> bool:
         """编译器是否可用"""

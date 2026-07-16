@@ -215,19 +215,41 @@ echo doubled # @[2, 4, 6]
 ```
 vools/
 ├── api/             # CLI 命令行接口
-├── bridge/          # 多语言桥接（27+ 种语言）+ 编译器自动发现
-│   ├── core/        # 桥接核心（类型、签名缓存、装饰器）
+├── bridge/          # 多语言桥接（30+ 种语言）+ 编译器自动发现
+│   ├── core/        # 桥接核心（CompileMode、CompileTracker、LangType、类型系统）
 │   ├── probe.py     # 编译器探测模块
 │   ├── manager.py   # 配置管理模块
 │   ├── auto_discovery.py  # 一键发现入口
 │   ├── scala/       # Scala 桥接 + 隐式操作符
 │   ├── kotlin/      # Kotlin 桥接 + 隐式操作符
 │   ├── nim/         # Nim 桥接 + 隐式操作符
-│   ├── lua/         # Lua 桥接
-│   ├── rust/        # Rust 桥接
+│   ├── c/           # C 桥接
+│   ├── cpp/         # C++ 桥接
+│   ├── csharp/      # C# 桥接
+│   ├── dart/        # Dart 桥接
+│   ├── elixir/      # Elixir 桥接
+│   ├── erlang/      # Erlang 桥接
+│   ├── freebasic/   # FreeBASIC 桥接
 │   ├── go/          # Go 桥接
+│   ├── haskell/     # Haskell 桥接
 │   ├── java/        # Java 桥接
-│   └── ...          # 更多语言
+│   ├── julia/       # Julia 桥接
+│   ├── lua/         # Lua 桥接
+│   ├── mojo/        # Mojo 桥接
+│   ├── moonbit/     # MoonBit 桥接
+│   ├── perl/        # Perl 桥接
+│   ├── php/         # PHP 桥接
+│   ├── powershell/  # PowerShell 桥接
+│   ├── r/           # R 桥接
+│   ├── ruby/        # Ruby 桥接
+│   ├── rust/        # Rust 桥接
+│   ├── shell/       # Shell 桥接
+│   ├── swift/       # Swift 桥接
+│   ├── typescript/  # TypeScript 桥接
+│   ├── vbnet/       # VB.NET 桥接
+│   ├── vbscript/    # VBScript 桥接
+│   ├── zig/         # Zig 桥接
+│   └── cangjie/     # 仓颉桥接
 dev-tools/           # 开发辅助脚本和实验性代码
 tests/               # 测试目录（按模块组织）
 examples/            # 使用示例

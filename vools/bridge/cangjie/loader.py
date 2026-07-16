@@ -12,22 +12,61 @@ vools.bridge.cangjie.loader - 仓颉 DLL 加载器
 import os
 import ctypes
 import platform
+import subprocess
 
 _IS_WINDOWS = platform.system() == 'Windows'
 _IS_LINUX = platform.system() == 'Linux'
+
+
+def _find_cangjie_sdk_path():
+    """自动检测仓颉 SDK 安装路径"""
+    # 1. 检查环境变量
+    sdk_path = os.environ.get('CANGJIE_SDK_PATH')
+    if sdk_path and os.path.exists(sdk_path):
+        return sdk_path
+
+    # 2. 从 cjc 编译器路径推导
+    try:
+        if _IS_WINDOWS:
+            result = subprocess.run(['where', 'cjc'], capture_output=True, text=True, timeout=5)
+        else:
+            result = subprocess.run(['which', 'cjc'], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0 and result.stdout.strip():
+            cjc_path = result.stdout.strip().split('\n')[0]
+            # cjc 通常在 <sdk>/cangjie/bin/cjc.exe
+            # 运行时 DLL 在 <sdk>/cangjie/runtime/lib/windows_x86_64_llvm/
+            bin_dir = os.path.dirname(cjc_path)
+            cangjie_dir = os.path.dirname(bin_dir)  # <sdk>/cangjie/
+            if os.path.exists(cangjie_dir):
+                return cangjie_dir
+    except Exception:
+        pass
+
+    return None
+
+
+# 仓颉 SDK 路径
+_CJ_SDK_PATH = _find_cangjie_sdk_path()
 
 # 仓颉运行时路径
 _CJ_RUNTIME_PATHS = []
 if _IS_WINDOWS:
     cj_sdk_paths = [
         os.environ.get('CANGJIE_SDK_PATH'),
+        _CJ_SDK_PATH,
         os.path.join(os.path.dirname(__file__), 'runtime', 'lib', 'windows_x86_64_llvm'),
         os.path.join(os.path.dirname(__file__), 'runtime', 'lib'),
         os.path.join(os.path.dirname(__file__), 'runtime', 'bin'),
     ]
+    # 如果找到了 SDK 路径，添加运行时子目录
+    if _CJ_SDK_PATH:
+        cj_sdk_paths.insert(0, os.path.join(_CJ_SDK_PATH, 'runtime', 'lib', 'windows_x86_64_llvm'))
+        cj_sdk_paths.insert(0, os.path.join(_CJ_SDK_PATH, 'runtime', 'lib'))
+
     for p in cj_sdk_paths:
         if p and os.path.exists(p):
-            _CJ_RUNTIME_PATHS.append(p)
+            if p not in _CJ_RUNTIME_PATHS:
+                _CJ_RUNTIME_PATHS.append(p)
 
 # 设置 DLL 搜索路径
 if _IS_WINDOWS:
@@ -45,6 +84,10 @@ if _IS_WINDOWS:
     for p in _CJ_RUNTIME_PATHS:
         if p not in cur_path:
             os.environ['PATH'] = p + os.pathsep + cur_path
+
+# 设置 CANGJIE_SDK_PATH 环境变量
+if _CJ_SDK_PATH and 'CANGJIE_SDK_PATH' not in os.environ:
+    os.environ['CANGJIE_SDK_PATH'] = _CJ_SDK_PATH
 
 # 已加载的库缓存
 _LOADED_LIBS = {}
@@ -65,9 +108,6 @@ def _init_cangjie_runtime():
         if os.path.exists(runtime_dll):
             try:
                 runtime_lib = ctypes.CDLL(runtime_dll)
-                # 尝试调用运行时初始化函数(如果存在)
-                # 注意:仓颉运行时可能需要特定的初始化方式
-                # 这里暂时跳过,因为运行时可能已经自动初始化
                 _RUNTIME_INITIALIZED = True
                 return True
             except Exception:

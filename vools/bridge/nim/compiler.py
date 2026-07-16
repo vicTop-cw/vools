@@ -27,6 +27,7 @@ from typing import Any
 from ..core.types import CTypeMapper
 from ..manager import manager, setup_runtime as _setup_lang_runtime
 from .._base import LangBridge, FunctionSpec, FunctionParser
+from ..core.types import LangType
 
 # 平台判断
 _IS_WINDOWS = platform.system() == 'Windows'
@@ -114,13 +115,21 @@ def _compile_nim_code(code: str, func_name: str, cache_dir: str = None) -> str:
     nim_path = _get_nim_path()
 
     if _IS_WINDOWS:
+        # 提取所有导出函数名，用于 MSVC /EXPORT 链接器标志
+        # Nim 的 {.exportc.} 在 MSVC 下生成 N_LIB_PRIVATE（空符号），
+        # 需要使用 /EXPORT 强制导出符号；/link 前缀将标志传递给 link.exe
+        import re
+        export_names = re.findall(r'\{\.exportc:\s*"(\w+)"', code)
         compile_cmd = [
             nim_path, 'c', '--app:lib',
             '--out:' + dll_path,
-            '--passL:-Wl,--export-all',
             '-d:release',
-            nim_file
         ]
+        if export_names:
+            compile_cmd.append('--passL=/link')
+            for name in export_names:
+                compile_cmd.append('--passL=/EXPORT:' + name)
+        compile_cmd.append(nim_file)
     else:
         compile_cmd = [
             nim_path, 'c', '--app:lib',
@@ -140,7 +149,12 @@ def _compile_nim_code(code: str, func_name: str, cache_dir: str = None) -> str:
     )
 
     if result.returncode != 0:
-        raise RuntimeError(f'Nim 编译失败:\n{result.stderr}\n{result.stdout}')
+        # Nim 可能在链接成功后仍返回非零退出码（如 nimcache JSON 写入失败）
+        # 如果 DLL 已成功生成，则视为编译成功
+        if os.path.exists(dll_path):
+            pass  # DLL 已生成，忽略非致命错误
+        else:
+            raise RuntimeError(f'Nim 编译失败:\n{result.stderr}\n{result.stdout}')
 
     # 清理临时 .nim 文件
     try:
@@ -200,7 +214,7 @@ def _call_nim_func(dll_path: str, func_name: str, args: tuple, ret_type=None):
 PY_TO_NIM_TYPE = {
     int: 'cint',
     float: 'cdouble',
-    bool: 'cbool',
+    bool: 'bool',
     str: 'cstring',
     bytes: 'cstring',
 }
@@ -208,12 +222,11 @@ PY_TO_NIM_TYPE = {
 NIM_TO_CTYPES = {
     'cint': ctypes.c_int,
     'cdouble': ctypes.c_double,
-    'cbool': ctypes.c_bool,
+    'bool': ctypes.c_bool,
     'cstring': ctypes.c_char_p,
     'string': ctypes.c_char_p,
     'int': ctypes.c_long,
     'float': ctypes.c_double,
-    'bool': ctypes.c_int,
 }
 
 
@@ -236,7 +249,7 @@ def _generate_nim_wrapper(func_name: str, args: tuple, nim_body: str,
     type_mapping = {
         'int': 'cint',
         'float': 'cdouble',
-        'bool': 'cbool',
+        'bool': 'bool',
         'string': 'cstring',
     }
     actual_ret_type = type_mapping.get(ret_type, ret_type)
@@ -338,6 +351,7 @@ class NimBridge(LangBridge):
     name = 'nim'
     file_ext = '.nim'
     lib_ext = '.dll' if _IS_WINDOWS else '.so'
+    lang_type = LangType.COMPILED
 
     def __init__(self):
         super().__init__()
@@ -512,7 +526,9 @@ class NimBridge(LangBridge):
         """调用 Nim 编译的函数"""
         c_ret_type = None
         if ret_type is not None:
-            c_ret_type = NIM_TO_CTYPES.get(ret_type, ctypes.c_long)
+            # ret_type 可能是 Python 类型（如 int, float, bool）或字符串
+            nim_type = PY_TO_NIM_TYPE.get(ret_type, ret_type)
+            c_ret_type = NIM_TO_CTYPES.get(nim_type, ctypes.c_long)
         return _call_nim_func(lib_path, func_name, args, c_ret_type)
 
 

@@ -192,10 +192,14 @@ def _configure_from_report(report: probe.ProbeReport) -> int:
             else:
                 # 注册新语言
                 probe_config = probe.LANGUAGE_PROBES.get(lang, {})
+                # 构造 version_check: [compiler, *version_args]，默认 ['--version']
+                version_args = probe_config.get('version_args', ['--version'])
+                version_check = [status.command or lang_lower] + version_args
                 _manager_instance.register(LanguageConfig(
                     name=lang_lower,
                     compiler=status.command or lang_lower,
                     compiler_paths=[bin_dir] if bin_dir else [],
+                    version_check=version_check,
                     version_pattern=probe_config.get('version_pattern'),
                 ))
             count += 1

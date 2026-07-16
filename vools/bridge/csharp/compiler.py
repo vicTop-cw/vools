@@ -3,7 +3,7 @@ vools.bridge.csharp.compiler - C# 动态编译器
 
 提供 @csharp 装饰器，支持：
 - 自动生成 C# 代码和项目文件
-- 调用 dotnet build 编译 DLL
+- 调用 dotnet publish (NativeAOT) 编译原生 DLL
 - 基于 MD5 的代码缓存
 - ctypes 调用导出函数
 - 异步执行支持
@@ -16,15 +16,14 @@ import subprocess
 import hashlib
 import tempfile
 import ctypes
-import functools
-import inspect
 import platform
-import asyncio
-from concurrent.futures import ThreadPoolExecutor, Future
+import inspect
+import threading
 from typing import Any
 
 from ..manager import get_helper
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 from .types import get_cs_type, get_cs_ctype, infer_cs_argtypes, PY_TO_CS_TYPE, CS_TO_CTYPES
 from .templates import generate_cs_method, generate_cs_class, generate_csproj
 
@@ -36,33 +35,8 @@ _csharp_helper = get_helper('csharp')
 # 缓存目录
 _CS_CACHE_DIR = os.path.join(tempfile.gettempdir(), 'vools_csharp_cache')
 
-# 异步执行器
-_executor = ThreadPoolExecutor(max_workers=4)
-
-
-class CsharpFuture:
-    """异步 C# 函数调用的 Future 封装"""
-
-    def __init__(self, future: Future, dll_path: str, func_name: str, ret_type):
-        self._future = future
-        self._dll_path = dll_path
-        self._func_name = func_name
-        self._ret_type = ret_type
-
-    def result(self, timeout=None):
-        """获取结果（阻塞）"""
-        return self._future.result(timeout)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        return self.result()
-
-    def __await__(self):
-        # 使用 asyncio.wrap_future 将 concurrent.futures.Future 转换为 asyncio Future
-        return asyncio.wrap_future(self._future).__await__()
-
+# 编译锁：防止并发编译同一项目时的文件竞争
+_compile_lock = threading.Lock()
 
 def csharp_compiler_available():
     """
@@ -85,7 +59,7 @@ def _compile_csharp_code(cs_code, func_name, cache_dir=None):
     2. 检查缓存是否已存在 DLL
     3. 创建临时项目目录
     4. 写入 .cs 和 .csproj 文件
-    5. 运行 dotnet build
+    5. 运行 dotnet publish (NativeAOT)
     6. 返回 DLL 路径
 
     参数：
@@ -125,18 +99,23 @@ def _compile_csharp_code(cs_code, func_name, cache_dir=None):
         f.write(cs_code)
 
     with open(csproj_file, 'w', encoding='utf-8') as f:
-        f.write(generate_csproj())
+        f.write(generate_csproj(dll_name))
 
-    # 编译
-    result = subprocess.run(
-        ['dotnet', 'build', '-c', 'Release', '-o', cache_dir],
-        cwd=project_dir,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True
-    )
+    # 编译（使用锁防止并发编译同一项目时的文件竞争）
+    with _compile_lock:
+        # 双重检查：可能在等待锁期间其他线程已完成编译
+        if os.path.exists(dll_path):
+            return dll_path
 
-    if result.returncode != 0:
-        raise RuntimeError(f'C# 编译失败:\n{result.stderr}\n{result.stdout}')
+        result = subprocess.run(
+            ['dotnet', 'publish', '-c', 'Release', '-o', cache_dir],
+            cwd=project_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(f'C# 编译失败:\n{result.stderr}\n{result.stdout}')
 
     # 验证 DLL 是否生成
     if not os.path.exists(dll_path):
@@ -197,177 +176,6 @@ def _call_csharp_func(dll_path, func_name, args, ret_type=None):
     return result
 
 
-def csharp(func=None, mode='NORMAL', cache_dir=None, ret_type=None, auto_signature=True, async_mode=False):
-    """
-    C# 动态编译装饰器
-
-    参数：
-        func: 被装饰的函数
-        mode: 运行模式
-            - NORMAL: DLL 存在则用，不存在则编译
-            - DEBUG: 强制重新编译
-            - FORCE: 只编译不执行
-            - ONLY_RUN: 只运行，DLL 不存在则报错
-            - ONLY_CODE: 只生成代码不编译
-        cache_dir: 缓存目录
-        ret_type: 返回类型（可覆盖注解）
-        auto_signature: 是否自动生成签名
-        async_mode: 是否异步执行（默认 False）
-
-    用法：
-        @csharp
-        def add(a: int, b: int) -> int:
-            return "return a + b;"
-
-        @csharp(mode='DEBUG')
-        def greet(name: str) -> str:
-            return "return $\"Hello, {name}!\";"
-
-        @csharp(async_mode=True)
-        async def compute(x: int) -> int:
-            return "return x * x;"
-    """
-    def decorator(func):
-        sig = inspect.signature(func)
-        func_name = func.__name__
-
-        def generate_full_cs_code(args_for_body=None):
-            """
-            生成完整的 C# 代码（包含签名和导出属性）
-
-            参数：
-                args_for_body: 可选的参数值列表，用于生成方法体
-                            如果为 None，使用 None 参数调用 func
-            """
-            # 获取参数类型（从签名推断，不依赖实际参数）
-            params = []
-            for param_name, param in sig.parameters.items():
-                py_type = param.annotation if param.annotation != param.empty else int
-                cs_type = get_cs_type(py_type)
-                params.append((param_name, cs_type))
-
-            # 获取返回类型
-            if ret_type is not None:
-                py_ret = ret_type
-            elif 'return' in func.__annotations__:
-                py_ret = func.__annotations__['return']
-            else:
-                py_ret = int
-
-            cs_ret = get_cs_type(py_ret)
-
-            # 获取方法体
-            # 对于 ONLY_CODE 模式或生成模板时，使用 None 参数
-            # 对于实际执行时，使用实际参数
-            if args_for_body is None:
-                # 使用 None 参数调用 func 获取代码模板
-                body = func(*[None] * len(sig.parameters))
-            else:
-                # 使用实际参数调用 func
-                body = func(*args_for_body)
-
-            # 生成方法代码
-            method_code = generate_cs_method(func_name, params, cs_ret, body)
-
-            # 生成类代码
-            class_code = generate_cs_class([method_code])
-
-            return class_code, cs_ret
-
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # 确定缓存路径
-            actual_cache_dir = cache_dir or _CS_CACHE_DIR
-
-            dll_path = os.path.join(actual_cache_dir, f'cs_{func_name}.dll')
-
-            mode_upper = mode.upper()
-
-            # 处理 ONLY_CODE 模式 - 不使用实际参数，只生成模板
-            if mode_upper == 'ONLY_CODE':
-                cs_code, _ = generate_full_cs_code(None)
-                return cs_code
-
-            # 检查是否需要编译
-            need_compile = (
-                mode_upper in ('DEBUG', 'FORCE') or
-                (mode_upper == 'NORMAL' and not os.path.exists(dll_path))
-            )
-
-            if need_compile:
-                cs_code, cs_ret = generate_full_cs_code(args)
-
-                try:
-                    dll_path = _compile_csharp_code(cs_code, func_name, actual_cache_dir)
-                except Exception as e:
-                    raise RuntimeError(f'C# 编译失败: {e}')
-
-                if mode_upper == 'FORCE':
-                    return dll_path
-
-            elif mode_upper == 'ONLY_RUN' and not os.path.exists(dll_path):
-                raise FileNotFoundError(f'DLL 不存在: {dll_path}')
-
-            # 调用函数
-            py_ret = ret_type or func.__annotations__.get('return', int)
-            return _call_csharp_func(dll_path, func_name, args, py_ret)
-
-        @functools.wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            """异步执行包装器"""
-            loop = asyncio.get_event_loop()
-
-            def _run():
-                # 确定缓存路径
-                actual_cache_dir = cache_dir or _CS_CACHE_DIR
-
-                dll_path = os.path.join(actual_cache_dir, f'cs_{func_name}.dll')
-
-                mode_upper = mode.upper()
-
-                # 处理 ONLY_CODE 模式 - 不使用实际参数
-                if mode_upper == 'ONLY_CODE':
-                    cs_code, _ = generate_full_cs_code(None)
-                    return cs_code
-
-                # 检查是否需要编译
-                need_compile = (
-                    mode_upper in ('DEBUG', 'FORCE') or
-                    (mode_upper == 'NORMAL' and not os.path.exists(dll_path))
-                )
-
-                if need_compile:
-                    cs_code, cs_ret = generate_full_cs_code(args)
-
-                    try:
-                        dll_path = _compile_csharp_code(cs_code, func_name, actual_cache_dir)
-                    except Exception as e:
-                        raise RuntimeError(f'C# 编译失败: {e}')
-
-                    if mode_upper == 'FORCE':
-                        return dll_path
-
-                elif mode_upper == 'ONLY_RUN' and not os.path.exists(dll_path):
-                    raise FileNotFoundError(f'DLL 不存在: {dll_path}')
-
-                # 调用函数
-                py_ret = ret_type or func.__annotations__.get('return', int)
-                return _call_csharp_func(dll_path, func_name, args, py_ret)
-
-            return await loop.run_in_executor(_executor, _run)
-
-        # 根据 async_mode 返回不同的包装器
-        if async_mode:
-            return async_wrapper
-        else:
-            return wrapper
-
-    if func is not None:
-        return decorator(func)
-
-    return decorator
-
-
 def compile_and_run(cs_code, func_name='main', args=(), ret_type=int, cache_dir=None):
     """
     便捷函数：编译并运行 C# 代码
@@ -410,6 +218,7 @@ class CSharpBridge(LangBridge):
     name = 'csharp'
     file_ext = '.cs'
     lib_ext = '.dll'
+    lang_type = LangType.DOTNET
 
     def __init__(self):
         super().__init__()
@@ -498,9 +307,9 @@ class CSharpBridge(LangBridge):
         csproj_file = csproj_files[0]
         project_dir = os.path.dirname(csproj_file)
 
-        # 编译
+        # 编译（使用 NativeAOT 发布）
         result = subprocess.run(
-            ['dotnet', 'build', '-c', 'Release', '-o', output_dir],
+            ['dotnet', 'publish', '-c', 'Release', '-o', output_dir],
             cwd=project_dir,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True
@@ -552,6 +361,57 @@ class CSharpBridge(LangBridge):
             函数返回值。
         """
         return _call_csharp_func(lib_path, func_name, args, ret_type)
+
+
+# ============================================================================
+# CsharpFuture - 异步 Future 包装器
+# ============================================================================
+
+class CsharpFuture:
+    """C# 异步执行结果包装器。
+
+    包装 concurrent.futures.Future，提供 result() 和 __await__ 支持，
+    使 C# 函数调用可以在异步上下文中使用 await。
+
+    Attributes:
+        _future: 底层的 concurrent.futures.Future 对象。
+        _dll_path: 编译生成的 DLL 文件路径。
+        _func_name: 调用的函数名称。
+        _ret_type: Python 返回值类型。
+    """
+
+    def __init__(self, future, dll_path, func_name, ret_type=None):
+        """初始化 CsharpFuture。
+
+        Args:
+            future: concurrent.futures.Future 实例。
+            dll_path: DLL 文件路径。
+            func_name: 函数名称。
+            ret_type: Python 返回值类型。
+        """
+        self._future = future
+        self._dll_path = dll_path
+        self._func_name = func_name
+        self._ret_type = ret_type
+
+    def result(self, timeout=None):
+        """获取执行结果。
+
+        Args:
+            timeout: 超时时间（秒），None 表示无限等待。
+
+        Returns:
+            Any: 函数执行结果。
+        """
+        return self._future.result(timeout=timeout)
+
+    def __await__(self):
+        """支持 await 语法。
+
+        通过 asyncio 将 Future 包装为可等待对象。
+        """
+        import asyncio
+        return asyncio.wrap_future(self._future).__await__()
 
 
 # 全局 CSharpBridge 实例

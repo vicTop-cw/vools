@@ -37,7 +37,7 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
 
 from ..core.loader import load_from_path, SharedLibrary
-from ..core.types import CTypeMapper
+from ..core.types import CTypeMapper, LangType
 from ..manager import manager, setup_runtime as _setup_lang_runtime
 from .._base import LangBridge, FunctionSpec, FunctionParser
 
@@ -173,7 +173,7 @@ def _generate_cpp_wrapper(func_name: str, args: tuple, cpp_body: str,
     # 生成参数列表
     params = []
     for i, arg in enumerate(args):
-        arg_type = type_mapping.get(CTypeMapper.get_py_type(arg), 'int')
+        arg_type = PY_TO_CPP_TYPE.get(CTypeMapper.get_py_type(arg), 'int')
         if arg_names and i < len(arg_names):
             param_name = arg_names[i]
         else:
@@ -620,6 +620,7 @@ class CppBridge(LangBridge):
     name = 'cpp'
     file_ext = '.cpp'
     lib_ext = '.dll' if _IS_WINDOWS else ('.dylib' if _IS_MACOS else '.so')
+    lang_type = LangType.COMPILED
 
     def __init__(self):
         super().__init__()

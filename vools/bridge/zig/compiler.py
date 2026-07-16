@@ -18,6 +18,7 @@ from typing import Optional, Any, Dict, List
 
 from .._base import LangBridge, FunctionSpec
 from ...core.asyncio_compat import run as asyncio_run
+from ..core.types import LangType
 from .types import PY_TO_ZIG_TYPE, ZIG_TO_CTYPES, get_zig_type, get_zig_ctype
 
 
@@ -101,6 +102,7 @@ class ZigBridge(LangBridge):
     name = 'zig'
     file_ext = '.zig'
     lib_ext = '.dll' if platform.system() == 'Windows' else '.so'
+    lang_type = LangType.COMPILED
 
     def __init__(self):
         super().__init__()
@@ -186,14 +188,8 @@ class ZigBridge(LangBridge):
         # 构建导出函数
         export_name = f'vools_{spec.name}'
 
-        if ret_type == 'void':
-            return f'''export fn {export_name}({params_str}) void {{
+        return f'''export fn {export_name}({params_str}) {ret_type} {{
 {body}
-}}'''
-        else:
-            return f'''export fn {export_name}({params_str}) {ret_type} {{
-{body}
-return {body.strip()};
 }}'''
 
     def compile_code(self, code: str, func_name: str, cache_dir: Optional[str] = None) -> str:
@@ -218,6 +214,10 @@ return {body.strip()};
         cache_dir = cache_dir or tempfile.gettempdir()
         os.makedirs(cache_dir, exist_ok=True)
 
+        # Zig 编译缓存目录（避免全局缓存损坏导致编译挂起）
+        zig_cache_dir = os.path.join(cache_dir, 'vools_zig_cache')
+        os.makedirs(zig_cache_dir, exist_ok=True)
+
         # 创建临时目录存放源文件
         with tempfile.TemporaryDirectory(dir=cache_dir) as tmpdir:
             src_path = os.path.join(tmpdir, f'{func_name}.zig')
@@ -235,6 +235,7 @@ return {body.strip()};
                 self._zig_executable,
                 'build-lib',
                 '-dynamic',
+                '--global-cache-dir', zig_cache_dir,
                 '-femit-bin=' + output_lib,
                 src_path
             ]

@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.c - C 语言桥接模块
 
 提供 C 语言 DLL 的加载和调用支持，包括自动类型推断、参数转换和便捷装饰器。
@@ -34,8 +34,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ..core.loader import load_from_path, SharedLibrary
-from ..core.types import CTypeMapper
-from ..manager import get_helper
+from ..core.types import CTypeMapper, LangType
+from ..manager import get_helper, manager
 from .._base import LangBridge, FunctionSpec, FunctionParser
 
 # 平台判断
@@ -57,7 +57,34 @@ _setup_c_env()
 
 def _get_c_path():
     """获取 C 编译器路径"""
-    return _c_helper.get_compiler_path() or ('gcc' if _IS_WINDOWS else 'cc')
+    c_path = _c_helper.get_compiler_path()
+    if c_path:
+        # 检测是否使用了 FreeBASIC 自带的损坏 gcc（缺少系统库）
+        c_path_norm = os.path.normpath(c_path).lower()
+        if 'freebasic' in c_path_norm:
+            # 尝试从 C++ 桥接的 g++ 目录找到可用的 gcc
+            try:
+                cpp_path = manager.get_compiler_path('cpp')
+                if cpp_path:
+                    cpp_dir = os.path.dirname(cpp_path)
+                    gcc_name = 'gcc.exe' if _IS_WINDOWS else 'gcc'
+                    gcc_path = os.path.join(cpp_dir, gcc_name)
+                    if os.path.isfile(gcc_path):
+                        # 测试 gcc 是否可用
+                        try:
+                            result = subprocess.run(
+                                [gcc_path, '--version'],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, timeout=10
+                            )
+                            if result.returncode == 0:
+                                return gcc_path
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        return c_path
+    return 'gcc' if _IS_WINDOWS else 'cc'
 
 
 def c_compiler_available():
@@ -564,6 +591,7 @@ class CBridge(LangBridge):
     name = 'c'
     file_ext = '.c'
     lib_ext = '.dll' if _IS_WINDOWS else ('.dylib' if _IS_MACOS else '.so')
+    lang_type = LangType.COMPILED
 
     def __init__(self):
         super().__init__()
@@ -716,7 +744,15 @@ class CBridge(LangBridge):
         """调用 C 编译的函数"""
         c_ret_type = None
         if ret_type is not None:
-            c_ret_type = C_TO_CTYPES.get(ret_type, ctypes.c_int)
+            # ret_type 可能是 Python 类型（如 float）或 C 类型字符串（如 'double'）
+            if isinstance(ret_type, type):
+                c_type_str = PY_TO_C_TYPE.get(ret_type)
+                if c_type_str:
+                    c_ret_type = C_TO_CTYPES.get(c_type_str, ctypes.c_int)
+                else:
+                    c_ret_type = ctypes.c_int
+            else:
+                c_ret_type = C_TO_CTYPES.get(ret_type, ctypes.c_int)
         return _call_c_func(lib_path, func_name, args, c_ret_type)
 
     def set_includes(self, includes: list):

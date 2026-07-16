@@ -25,6 +25,7 @@ import shutil
 import inspect
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +37,19 @@ def _find_scala_compiler() -> Optional[str]:
     优先查找 scala-cli，其次查找 scalac
 
     返回：
-        编译器路径，如果未找到返回 None
+        编译器完整路径，如果未找到返回 None
     """
     import shutil
 
     # 优先使用 scala-cli
-    if shutil.which('scala-cli'):
-        return 'scala-cli'
+    path = shutil.which('scala-cli')
+    if path:
+        return path
 
     # 回退到 scalac
-    if shutil.which('scalac'):
-        return 'scalac'
+    path = shutil.which('scalac')
+    if path:
+        return path
 
     return None
 
@@ -89,16 +92,16 @@ def get_scala_version() -> Optional[str]:
         return None
 
     try:
-        if compiler == 'scala-cli':
+        if 'scala-cli' in compiler:
             result = subprocess.run(
-                ['scala-cli', 'version'],
+                [compiler, 'version'],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True,
                 timeout=10,
             )
         else:
             result = subprocess.run(
-                ['scalac', '-version'],
+                [compiler, '-version'],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True,
                 timeout=10,
@@ -165,9 +168,9 @@ def compile_scala(
     jar_path = os.path.join(output_dir, jar_name)
 
     try:
-        if compiler == 'scala-cli':
+        if 'scala-cli' in compiler:
             cmd = [
-                'scala-cli',
+                compiler,
                 'package',
                 source_path,
                 '--output', jar_path,
@@ -190,9 +193,11 @@ def compile_scala(
             )
 
         else:  # scalac
+            # 编译到独立的 class 目录（避免与之前编译冲突）
+            class_dir = tempfile.mkdtemp(prefix='classes_', dir=output_dir)
             cmd = [
-                'scalac',
-                '-d', output_dir,
+                compiler,
+                '-d', class_dir,
             ]
 
             if class_path:
@@ -219,9 +224,22 @@ def compile_scala(
                 timeout=120,
             )
 
-            # scalac 不会自动生成 JAR，需要打包
-            if result.returncode == 0 and not jar_path.endswith('.jar'):
-                jar_path = jar_path + '.jar'
+            # scalac 不会自动生成 JAR，需要手动打包
+            if result.returncode == 0:
+                jar_exe = shutil.which('jar') or shutil.which('jar.exe')
+                if jar_exe is None:
+                    logger.error("jar command not found for JAR packaging")
+                    return None
+                jar_cmd = [jar_exe, '-cf', jar_path, '-C', class_dir, '.']
+                jar_result = subprocess.run(
+                    jar_cmd,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=60,
+                )
+                if jar_result.returncode != 0:
+                    logger.error(f"JAR creation failed: {jar_result.stderr}")
+                    return None
 
         if result.returncode != 0:
             logger.error(f"Compilation failed: {result.stderr}")
@@ -452,6 +470,7 @@ class ScalaBridge(LangBridge):
     """
 
     name = 'scala'
+    lang_type = LangType.JVM
     file_ext = '.scala'
     lib_ext = '.jar'
 
@@ -583,9 +602,9 @@ class ScalaBridge(LangBridge):
         if compiler is None:
             raise RuntimeError('Scala compiler not found')
 
-        if compiler == 'scala-cli':
+        if 'scala-cli' in compiler:
             cmd = [
-                'scala-cli', 'package',
+                compiler, 'package',
                 project_dir,
                 '--output', jar_path,
                 '--force',
@@ -594,7 +613,7 @@ class ScalaBridge(LangBridge):
             class_dir = os.path.join(output_dir, f'{project_name}_classes')
             os.makedirs(class_dir, exist_ok=True)
 
-            cmd = ['scalac', '-d', class_dir] + scala_files
+            cmd = [compiler, '-d', class_dir] + scala_files
 
         result = subprocess.run(
             cmd,
@@ -613,13 +632,13 @@ class ScalaBridge(LangBridge):
             )
 
         # scalac 需要手动打包 JAR
-        if compiler == 'scalac':
+        if 'scalac' in compiler:
             class_dir = os.path.join(output_dir, f'{project_name}_classes')
             jar_exe = shutil.which('jar') or shutil.which('jar.exe')
             if jar_exe is None:
                 raise RuntimeError('jar command not found')
 
-            jar_cmd = ['jar', '-cf', jar_path, '-C', class_dir, '.']
+            jar_cmd = [jar_exe, '-cf', jar_path, '-C', class_dir, '.']
             jar_result = subprocess.run(
                 jar_cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -639,32 +658,61 @@ class ScalaBridge(LangBridge):
         """
         调用 Scala 编译的函数
 
-        通过 Py4J Gateway 调用 JAR 中的 Scala 方法。
+        使用 scala -cp JAR -e 表达式来执行编译后的 Scala 函数。
         """
-        from .loader import get_scala_gateway
-        from .types import ScalaTypeMapper
+        import shutil
 
-        gateway = get_scala_gateway(jar_path=lib_path)
-
-        if not gateway.is_connected:
-            gateway.start()
+        scala_cmd = shutil.which('scala')
+        if scala_cmd is None:
+            raise RuntimeError('scala command not found')
 
         object_name = func_name.capitalize() + 'Ops'
-        scala_obj = gateway.get_object(object_name)
 
-        method = getattr(scala_obj, func_name)
-
-        converted_args = []
+        # 构建参数表达式
+        scala_args = []
         for arg in args:
-            converted = ScalaTypeMapper.convert_to_jvm(arg)
-            converted_args.append(converted)
+            if isinstance(arg, str):
+                # 转义字符串中的特殊字符
+                escaped = arg.replace('\\', '\\\\').replace('"', '\\"')
+                scala_args.append(f'"{escaped}"')
+            elif isinstance(arg, bool):
+                scala_args.append(str(arg).lower())
+            elif isinstance(arg, float):
+                scala_args.append(repr(arg))
+            else:
+                scala_args.append(str(arg))
 
-        result = method(*converted_args)
+        expr = f'{object_name}.{func_name}({", ".join(scala_args)})'
+        scala_expr = f'println({expr})'
 
+        result = subprocess.run(
+            [scala_cmd, '-cp', lib_path, '-e', scala_expr],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f'Scala execution failed for {func_name}:\n'
+                f'stderr: {result.stderr}\n'
+                f'stdout: {result.stdout}'
+            )
+
+        output = result.stdout.strip()
+
+        # 类型转换
         if ret_type is not None:
-            result = ScalaTypeMapper.convert_to_py(result)
+            if ret_type == int:
+                return int(output)
+            elif ret_type == float:
+                return float(output)
+            elif ret_type == bool:
+                return output.lower() == 'true'
+            elif ret_type == str:
+                return output
 
-        return result
+        return output
 
 
 # 全局 ScalaBridge 实例

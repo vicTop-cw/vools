@@ -101,6 +101,17 @@ def get_mojo_type(py_type):
         # 未知字符串类型默认 Int64
         return 'Int64'
 
+    # 泛型别名类型（如 list[int]、list[float]），转为字符串后匹配
+    origin = getattr(py_type, '__origin__', None)
+    if origin is not None and hasattr(py_type, '__args__'):
+        normalized = str(py_type).lower()
+        if normalized in _TYPE_ALIASES:
+            return _TYPE_ALIASES[normalized]
+        # 回退到 origin 名称
+        origin_name = getattr(origin, '__name__', '')
+        if origin_name in _TYPE_ALIASES:
+            return _TYPE_ALIASES[origin_name]
+
     # 其他未知类型
     return 'Int64'
 
@@ -134,6 +145,11 @@ def infer_mojo_argtypes(args):
                 result.append('UnsafePointer[Int64]')
             elif arg and all(isinstance(x, float) for x in arg):
                 result.append('UnsafePointer[Float64]')
+            elif arg and all(isinstance(x, bool) for x in arg):
+                result.append('UnsafePointer[Bool]')
+            elif not arg:
+                # 空列表 → 默认 Int64 数组（最常见的场景）
+                result.append('UnsafePointer[Int64]')
             else:
                 result.append('OpaquePointer')
         elif isinstance(arg, tuple):

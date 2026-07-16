@@ -2,7 +2,8 @@
 测试 C# 桥接功能
 
 前置条件：
-- 安装 .NET SDK (dotnet) 并添加到 PATH
+- 安装 .NET SDK 9.0+ (dotnet) 并添加到 PATH
+- 使用 NativeAOT + [UnmanagedCallersOnly] 属性导出函数
 """
 
 import pytest
@@ -24,6 +25,10 @@ try:
 except ImportError as e:
     pytest.skip(f"无法导入 vools.bridge.csharp: {e}", allow_module_level=True)
 
+
+# ============================================================================
+# 测试用例
+# ============================================================================
 
 def test_csharp_compiler_available():
     """测试编译器可用性检查"""
@@ -66,7 +71,7 @@ def test_mode_only_code():
 
     code = add(5)  # 参数不重要，只生成代码
     assert isinstance(code, str)
-    assert 'DllExport' in code
+    assert 'UnmanagedCallersOnly' in code
     assert 'add' in code
     assert 'return a + b' in code
     print(f"生成的 C# 代码:\n{code}")
@@ -91,7 +96,6 @@ def test_string_function():
     if not csharp_compiler_available():
         pytest.skip("C# 编译器不可用")
 
-    # 注意：C# 字符串插值需要特殊处理
     @csharp
     def greet(name: str) -> str:
         return "return \"Hello, \" + name + \"!\";"
@@ -114,8 +118,6 @@ def test_recursive_function():
         return fib(n - 1) + fib(n - 2);
         """
 
-    # 注意：递归函数在 C# DLL 中需要特殊处理（函数名匹配）
-    # 这里简化测试，只测试小数值
     result = fib(5)
     assert result == 5  # fib(5) = 5
     print(f"fib(5) = {result}")
@@ -126,7 +128,6 @@ def test_compile_and_run():
     if not csharp_compiler_available():
         pytest.skip("C# 编译器不可用")
 
-    # 简单返回常量
     result = compile_and_run("return 42;", func_name='main', args=(), ret_type=int)
     assert result == 42
     print(f"compile_and_run('return 42;') = {result}")
@@ -150,16 +151,13 @@ def test_mode_force():
 
 def test_async_mode_only_code():
     """测试异步模式 ONLY_CODE（不依赖编译器）"""
-    # 注意：async_mode=True 时，被装饰的函数仍然是普通函数（返回代码字符串）
-    # async_wrapper 会返回一个 async 函数
     @csharp(mode='ONLY_CODE', async_mode=True)
     def async_add(a: int, b: int) -> int:
         return "return a + b;"
 
-    # async_add 是一个 async 函数，调用它返回 coroutine
     code = asyncio.run(async_add(1, 2))
     assert isinstance(code, str)
-    assert 'DllExport' in code
+    assert 'UnmanagedCallersOnly' in code
     assert 'async_add' in code
     print(f"异步 ONLY_CODE 模式生成的代码:\n{code}")
 
@@ -169,12 +167,10 @@ def test_async_mode_execution():
     if not csharp_compiler_available():
         pytest.skip("C# 编译器不可用")
 
-    # async_mode=True 时，被装饰的函数仍然是普通函数
     @csharp(async_mode=True)
     def async_compute(x: int) -> int:
         return "return x * x;"
 
-    # 异步执行
     result = asyncio.run(async_compute(5))
     assert result == 25
     print(f"async_compute(5) = {result}")
@@ -185,12 +181,10 @@ def test_async_mode_concurrent():
     if not csharp_compiler_available():
         pytest.skip("C# 编译器不可用")
 
-    # async_mode=True 时，被装饰的函数仍然是普通函数
     @csharp(async_mode=True)
     def async_multiply(a: int, b: int) -> int:
         return "return a * b;"
 
-    # 并发执行多个任务
     async def run_concurrent():
         results = await asyncio.gather(
             async_multiply(2, 3),
@@ -208,17 +202,13 @@ def test_csharp_future():
     """测试 CsharpFuture 类"""
     from concurrent.futures import ThreadPoolExecutor, Future
 
-    # 创建一个简单的 Future
     executor = ThreadPoolExecutor(max_workers=1)
     future = executor.submit(lambda: 42)
 
-    # 创建 CsharpFuture
     cs_future = CsharpFuture(future, "dummy.dll", "test_func", int)
 
-    # 测试 result 方法
     assert cs_future.result(timeout=5) == 42
 
-    # 测试 __await__
     async def test_await():
         result = await cs_future
         return result
@@ -229,12 +219,10 @@ def test_csharp_future():
 
 
 if __name__ == '__main__':
-    # 直接运行测试
     print("=" * 50)
     print("C# 桥接测试")
     print("=" * 50)
 
-    # 检查编译器可用性
     available = csharp_compiler_available()
     print(f"C# 编译器可用: {available}")
 

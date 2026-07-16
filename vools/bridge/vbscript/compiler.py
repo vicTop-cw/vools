@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.vbscript.compiler - VBScript 语言桥接编译器实现
 
 提供 VBScriptBridge 类，继承 LangBridge 抽象基类，实现 VBScript 特定的代码生成、
@@ -19,6 +19,7 @@ import textwrap
 from typing import Any, Optional, List
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 
 
 _IS_WINDOWS = platform.system() == 'Windows'
@@ -532,6 +533,8 @@ class VBScriptBridge(LangBridge):
     """
 
     name = 'vbscript'
+    is_compiled = False
+    lang_type = LangType.INTERPRETED
     file_ext = '.vbs'
     lib_ext = '.vbs'
 
@@ -542,6 +545,66 @@ class VBScriptBridge(LangBridge):
     def compiler_available(self) -> bool:
         """解释器是否可用"""
         return vbscript_compiler_available()
+
+    def _execute_code(self, package_path, func_name, args, ret_type=None):
+        """解包并执行代码，通过 _generate_vbs_source 构建完整执行脚本。"""
+        import zipfile, tempfile, subprocess, os, shutil, json
+        
+        tmpdir = tempfile.mkdtemp()
+        try:
+            with zipfile.ZipFile(package_path, 'r') as zf:
+                zf.extractall(tmpdir)
+            
+            source_file = os.path.join(tmpdir, self.get_source_filename(func_name))
+            
+            with open(source_file, 'r', encoding='utf-8') as f:
+                source_code = f.read()
+            
+            # 构建参数字典和参数名列表
+            args_dict = {}
+            arg_names = []
+            for i, arg in enumerate(args):
+                arg_name = 'arg{}'.format(i)
+                arg_names.append(arg_name)
+                args_dict[arg_name] = arg
+            
+            args_json = json.dumps(args_dict, ensure_ascii=False)
+            
+            vbs_ret_type = get_vbs_type(ret_type) if ret_type is not None else 'Variant'
+            vbs_argtypes = infer_vbs_argtypes(args)
+            
+            # 构建完整可执行脚本
+            full_code = _generate_vbs_source(
+                func_name=func_name,
+                arg_names=arg_names,
+                arg_vbs_types=vbs_argtypes,
+                ret_vbs_type=vbs_ret_type,
+                body=source_code,
+                auto_signature=False,
+                args_json=args_json,
+            )
+            
+            # 写入并执行完整脚本
+            exec_path = os.path.join(tmpdir, '_exec_{}.vbs'.format(func_name))
+            with open(exec_path, 'w', encoding='utf-8') as f:
+                f.write(full_code)
+            
+            result = subprocess.run(
+                [_CSCRIPT_PATH, '//Nologo', '//E:vbscript', exec_path],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    'VBScript execution failed:\n'
+                    'stderr:\n{}\n'
+                    'stdout:\n{}'.format(result.stderr, result.stdout)
+                )
+            
+            return _parse_vbs_output(result.stdout.strip(), vbs_ret_type)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def generate_code(self, spec: FunctionSpec) -> str:
         """

@@ -11,11 +11,12 @@ import subprocess
 import hashlib
 import shutil
 import platform
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Tuple
 from pathlib import Path
 
 from ..manager import get_helper
 from .._base import LangBridge, FunctionSpec, FunctionParser
+from ..core.types import LangType
 from .templates import generate_lib_code, generate_cargo_toml
 from .types import RustTypeMapper, infer_ctypes_types, convert_args
 
@@ -94,12 +95,13 @@ class RustCompiler:
         content = f'{func_name}\n{code}'
         return hashlib.md5(content.encode('utf-8')).hexdigest()
 
-    def _get_cache_path(self, code_hash: str) -> tuple:
+    def _get_cache_path(self, code_hash: str, package_name: str = None) -> Tuple[str, str]:
         """
         获取缓存文件路径
 
         参数：
             code_hash: 代码哈希值
+            package_name: Cargo 包名称（用于匹配实际 DLL 文件名）
 
         返回：
             (dll_path, project_dir) 元组
@@ -107,16 +109,24 @@ class RustCompiler:
         # 项目目录
         project_dir = os.path.join(self.cache_dir, code_hash)
 
-        # DLL 文件路径
-        if platform.system() == 'Windows':
-            dll_name = f'{code_hash}.dll'
+        # DLL 文件路径（Cargo cdylib 输出以 package_name 命名）
+        if package_name:
+            if platform.system() == 'Windows':
+                dll_name = f'{package_name}.dll'
+            elif platform.system() == 'Darwin':
+                dll_name = f'lib{package_name}.dylib'
+            else:
+                dll_name = f'lib{package_name}.so'
         else:
-            dll_name = f'{code_hash}.so'
+            if platform.system() == 'Windows':
+                dll_name = f'{code_hash}.dll'
+            else:
+                dll_name = f'{code_hash}.so'
         dll_path = os.path.join(project_dir, 'target', 'release', dll_name)
 
         return (dll_path, project_dir)
 
-    def _check_cache(self, code_hash: str) -> Optional[str]:
+    def _check_cache(self, code_hash: str, package_name: str = None) -> Optional[str]:
         """
         检查缓存是否存在
 
@@ -126,7 +136,7 @@ class RustCompiler:
         返回：
             DLL 文件路径，如果缓存不存在则返回 None
         """
-        dll_path, project_dir = self._get_cache_path(code_hash)
+        dll_path, project_dir = self._get_cache_path(code_hash, package_name)
 
         if os.path.exists(dll_path):
             return dll_path
@@ -134,7 +144,6 @@ class RustCompiler:
 
     def _clean_old_cache(self):
         """
-        清理旧缓存文件
 
         当缓存文件数量超过 max_cache_size 时，删除最旧的缓存。
         """
@@ -194,18 +203,18 @@ class RustCompiler:
         # 计算代码哈希
         code_hash = self._get_code_hash(code, func_name)
 
-        # 检查缓存
-        if not force:
-            cached_dll = self._check_cache(code_hash)
-            if cached_dll:
-                return cached_dll
-
         # 生成包名称
         if package_name is None:
             package_name = f'vools_rust_{func_name}'
 
+        # 检查缓存
+        if not force:
+            cached_dll = self._check_cache(code_hash, package_name)
+            if cached_dll:
+                return cached_dll
+
         # 获取项目目录
-        dll_path, project_dir = self._get_cache_path(code_hash)
+        dll_path, project_dir = self._get_cache_path(code_hash, package_name)
 
         # 创建项目目录
         if os.path.exists(project_dir):
@@ -317,6 +326,7 @@ class RustBridge(LangBridge):
     lib_ext = '.dll' if platform.system() == 'Windows' else (
         '.dylib' if platform.system() == 'Darwin' else '.so'
     )
+    lang_type = LangType.COMPILED
 
     def __init__(self):
         super().__init__()

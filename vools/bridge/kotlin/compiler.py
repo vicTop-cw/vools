@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.kotlin.compiler - Kotlin 编译支持
 
 使用 kotlinc 编译 Kotlin 源码为 JAR，通过 kotlin 命令运行。
@@ -20,6 +20,7 @@ from typing import Optional, List, Any, Callable
 from concurrent.futures import ThreadPoolExecutor
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,7 @@ class KotlinBridge(LangBridge):
     """
 
     name = 'kotlin'
+    lang_type = LangType.JVM
     file_ext = '.kt'
     lib_ext = '.jar'
 

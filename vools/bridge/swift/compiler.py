@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 from .types import PY_TO_SWIFT_TYPE, get_swift_type
 
 _IS_WINDOWS = os.name == 'nt'
@@ -148,6 +149,7 @@ class SwiftBridge(LangBridge):
     """
 
     name = 'swift'
+    lang_type = LangType.COMPILED
     file_ext = '.swift'
     lib_ext = '.swift'
 

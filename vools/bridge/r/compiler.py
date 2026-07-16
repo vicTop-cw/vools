@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.r.compiler - R 动态执行装饰器
 
 通过 WSL 调用 Rscript 执行 R 代码，提供 @r 装饰器。
@@ -414,7 +414,6 @@ def r_module(name=None, cache_dir=None, use_wsl=None):
                     decorated_method = r(
                         method,
                         cache_dir=cache_dir,
-                        use_wsl=use_wsl,
                     )
                     setattr(cls, method_name, decorated_method)
 
@@ -428,6 +427,7 @@ def r_module(name=None, cache_dir=None, use_wsl=None):
 # ============================================================================
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 
 
 class RBridge(LangBridge):
@@ -439,6 +439,8 @@ class RBridge(LangBridge):
     """
 
     name = 'r'
+    is_compiled = False
+    lang_type = LangType.INTERPRETED
     file_ext = '.R'
     lib_ext = '.R'
 
@@ -449,6 +451,49 @@ class RBridge(LangBridge):
     def compiler_available(self) -> bool:
         """解释器是否可用"""
         return r_compiler_available()
+
+    def _execute_code(self, package_path, func_name, args, ret_type=None):
+        """解包并执行代码。"""
+        import zipfile, tempfile, os, shutil
+        
+        tmpdir = tempfile.mkdtemp()
+        try:
+            with zipfile.ZipFile(package_path, 'r') as zf:
+                zf.extractall(tmpdir)
+            
+            source_file = os.path.join(tmpdir, self.get_source_filename(func_name))
+            
+            with open(source_file, 'r', encoding='utf-8') as f:
+                func_code = f.read()
+            
+            use_jsonlite = _is_jsonlite_available(self._use_wsl)
+            full_script = RCodeGenerator.generate_script_code(
+                func_code, func_name, use_jsonlite=use_jsonlite
+            )
+            
+            temp_script = os.path.join(tmpdir, f'_exec_{func_name}_{os.getpid()}.R')
+            with open(temp_script, 'w', encoding='utf-8') as f:
+                f.write(full_script)
+            
+            input_data = serialize_args(list(args))
+            
+            if self._use_wsl:
+                wsl_temp_path = _windows_to_wsl_path(temp_script)
+                cmd = ['wsl', 'Rscript', wsl_temp_path]
+            else:
+                cmd = ['Rscript', temp_script]
+            
+            result = _safe_subprocess_run(cmd, input_data=input_data, timeout=120)
+            
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() or result.stdout.strip()
+                raise RuntimeError(
+                    f'R script execution failed (exit code {result.returncode}):\n{error_msg}'
+                )
+            
+            return deserialize_result(result.stdout.strip(), ret_type)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def generate_code(self, spec: FunctionSpec) -> str:
         """

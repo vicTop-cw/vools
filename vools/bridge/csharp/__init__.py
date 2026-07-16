@@ -32,8 +32,8 @@ from .compiler import (
     cs,
     csharp_compiler_available,
     compile_and_run,
-    CsharpFuture,
     CSharpBridge,
+    CsharpFuture,
     _csharp_bridge,
 )
 from .loader import get_cs_lib, is_csharp_available
@@ -51,8 +51,8 @@ __all__ = [
     'cs',
     'csharp_compiler_available',
     'compile_and_run',
-    'CsharpFuture',
     'CSharpBridge',
+    'CsharpFuture',
     'csharp_bridge',
     'get_cs_lib',
     'is_csharp_available',
