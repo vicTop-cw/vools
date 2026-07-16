@@ -38,6 +38,9 @@ from .compiler import (
     run_scala_app,
 )
 
+# Alias for API compatibility
+scala_compiler_available = is_scala_compiler_available
+
 __all__ = [
     'ScalaBridge',
     'scala_bridge',
@@ -56,6 +59,7 @@ __all__ = [
     'ScalaTypeMapper',
     'compile_scala',
     'is_scala_compiler_available',
+    'scala_compiler_available',
     'is_java_available',
     'get_scala_version',
     'check_scala_environment',

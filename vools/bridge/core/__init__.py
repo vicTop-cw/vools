@@ -17,6 +17,8 @@ from .types import (
     infer_arg_types,
     infer_ret_type,
     convert_args,
+    CompileMode,
+    LangType,
 )
 from .decorators import bridge_function, bridge_module, bridge_func_name
 from .serialization import Serializer
@@ -33,6 +35,7 @@ from .sigcache import (
     clear_cache,
     cache_info,
 )
+from .tracker import CompileTracker, get_tracker
 
 __all__ = [
     'LibraryLoader',
@@ -60,4 +63,8 @@ __all__ = [
     'get_cached_spec',
     'clear_cache',
     'cache_info',
+    'CompileTracker',
+    'get_tracker',
+    'CompileMode',
+    'LangType',
 ]

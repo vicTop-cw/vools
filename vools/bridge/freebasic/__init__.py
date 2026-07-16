@@ -30,6 +30,7 @@ vools.bridge.freebasic - FreeBASIC 语言桥接模块
 
 import os
 
+from . import transport
 from .types import (
     PY_TO_FB_TYPE,
     FB_TO_CTYPES,

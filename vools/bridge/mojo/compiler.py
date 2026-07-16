@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.mojo.compiler - Mojo 动态编译装饰器
 
 使用方式：
@@ -67,6 +67,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Tuple
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 from .types import (
     PY_TO_MOJO_TYPE,
     get_mojo_type,
@@ -99,6 +100,61 @@ _MOJO_SEARCH_PATHS = [
     '/opt/modular/bin',
 ]
 
+# 延迟导入 subprocess（避免顶层硬依赖）
+import subprocess
+
+
+# ---------------------------------------------------------------------------
+# WSL 支持（Windows 上通过 WSL 调用 Mojo）
+# ---------------------------------------------------------------------------
+
+def _is_wsl_available():
+    """检查 WSL 是否可用（仅 Windows 上）。"""
+    if not _IS_WINDOWS:
+        return False
+    try:
+        result = subprocess.run(
+            ['wsl', '--status'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _windows_to_wsl_path(win_path):
+    """将 Windows 绝对路径转换为 WSL 路径。
+
+    例如：C:\\Users\\foo\\bar  →  /mnt/c/Users/foo/bar
+    """
+    win_path = os.path.abspath(win_path)
+    drive = win_path[0].lower()
+    rest = win_path[3:].replace('\\', '/')
+    return '/mnt/{}/{}'.format(drive, rest)
+
+
+def _wsl_run(cmd_args, timeout=120, cwd=None):
+    """通过 WSL 运行命令，返回 (returncode, stdout, stderr)。"""
+    wsl_cmd = ['wsl']
+    if cwd:
+        wsl_cwd = _windows_to_wsl_path(cwd)
+        wsl_cmd.extend(['--cd', wsl_cwd])
+    wsl_cmd.extend(cmd_args)
+    result = subprocess.run(
+        wsl_cmd,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding='utf-8', errors='replace',
+        timeout=timeout,
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Mojo 编译器路径检测
+# ---------------------------------------------------------------------------
+
+_WSL_MOJO_AVAILABLE = None  # 缓存 WSL Mojo 检测结果
+
 
 def _get_mojo_path() -> str:
     """获取 mojo 编译器路径。优先 shutil.which，找不到时按 _MOJO_SEARCH_PATHS 探测。"""
@@ -126,22 +182,42 @@ def _setup_mojo_env() -> str:
 
 _MOJO_PATH = _setup_mojo_env()
 
-# 延迟导入 subprocess（避免顶层硬依赖）
-import subprocess
+
+def _check_mojo_version(cmd):
+    """执行 mojo --version 并返回是否成功。"""
+    try:
+        result = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def mojo_compiler_available() -> bool:
-    """检查 Mojo 编译器是否可用（执行 `mojo --version`）"""
-    try:
-        result = subprocess.run(
-            [_MOJO_PATH, '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, OSError):
-        return False
-    except Exception:
-        return False
+    """检查 Mojo 编译器是否可用。
+
+    检测顺序：
+    1. 本地 mojo 命令（Linux/macOS 原生安装）
+    2. WSL 中的 mojo 命令（Windows + WSL）
+    """
+    global _WSL_MOJO_AVAILABLE
+
+    # 1. 本地 mojo
+    if _check_mojo_version([_MOJO_PATH, '--version']):
+        return True
+
+    # 2. Windows 上通过 WSL 检测
+    if _IS_WINDOWS and _is_wsl_available():
+        if _WSL_MOJO_AVAILABLE is None:
+            try:
+                rc, stdout, stderr = _wsl_run(['mojo', '--version'], timeout=10)
+                _WSL_MOJO_AVAILABLE = (rc == 0)
+            except Exception:
+                _WSL_MOJO_AVAILABLE = False
+        return _WSL_MOJO_AVAILABLE
+
+    return False
 
 
 # 编译缓存目录
@@ -153,12 +229,25 @@ _CACHE_DIR = os.path.join(tempfile.gettempdir(), 'vools_mojo_cache')
 # ----------------------------------------------------------------------------
 
 # 候选编译命令（按优先级排列）
+# Mojo 1.0b1 使用 --emit shared-lib 生成共享库
 _MOJO_COMPILE_CANDIDATES = [
+    ['build', '--emit', 'shared-lib', '-o', '{out}', '{src}'],
     ['build', '-o', '{out}', '{src}'],
-    ['build', '--emit', 'shared', '-o', '{out}', '{src}'],
-    ['build', '-shared', '-o', '{out}', '{src}'],
-    ['build', '--shared', '-o', '{out}', '{src}'],
 ]
+
+
+def _get_mojo_cmd():
+    """获取 mojo 编译命令前缀。
+
+    返回 (cmd_prefix, use_wsl) 元组。
+    - 本地 mojo 可用时：cmd_prefix=['mojo'], use_wsl=False
+    - WSL mojo 可用时：cmd_prefix=['wsl', 'mojo'], use_wsl=True
+    """
+    if _check_mojo_version([_MOJO_PATH, '--version']):
+        return [_MOJO_PATH], False
+    if _IS_WINDOWS and _WSL_MOJO_AVAILABLE:
+        return ['wsl', 'mojo'], True
+    return [_MOJO_PATH], False
 
 
 def _compile_mojo_source(src_path: str, out_so_path: str, force: bool = False) -> str:
@@ -167,8 +256,8 @@ def _compile_mojo_source(src_path: str, out_so_path: str, force: bool = False) -
 
     1. 命中缓存（out_so_path 存在且 not force）直接返回；
     2. 候选命令按优先级尝试，每个失败时记录 stderr 摘要；
-    3. 全部失败抛 RuntimeError。
-    不使用 os.chdir，统一用绝对路径。
+    3. 支持 WSL（Windows 上通过 wsl mojo 编译）；
+    4. 全部失败抛 RuntimeError。
     """
     if not force and os.path.exists(out_so_path):
         return out_so_path
@@ -179,35 +268,63 @@ def _compile_mojo_source(src_path: str, out_so_path: str, force: bool = False) -
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
 
+    mojo_cmd_prefix, use_wsl = _get_mojo_cmd()
+
     last_err = None
     for tmpl in _MOJO_COMPILE_CANDIDATES:
-        cmd = [_MOJO_PATH] + [t.format(src=src_abs, out=out_abs) for t in tmpl]
-        try:
-            result = subprocess.run(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60,
+        if use_wsl:
+            # WSL 路径转换
+            wsl_src = _windows_to_wsl_path(src_abs)
+            wsl_out = _windows_to_wsl_path(out_abs)
+            cmd_raw = ['mojo'] + [t.format(src=wsl_src, out=wsl_out) for t in tmpl]
+            try:
+                rc, stdout, stderr = _wsl_run(cmd_raw, timeout=120)
+            except subprocess.TimeoutExpired:
+                last_err = 'TimeoutExpired (120s) (wsl cmd={})'.format(cmd_raw)
+                continue
+            except Exception as e:
+                last_err = '{}: {} (wsl cmd={})'.format(type(e).__name__, e, cmd_raw)
+                continue
+
+            if rc == 0 and os.path.exists(out_abs):
+                return out_abs
+
+            last_err = (
+                    'wsl cmd={}\nreturncode={}\nstdout={}\nstderr={}'.format(
+                        cmd_raw, rc,
+                        (stdout or '')[:500],
+                        (stderr or '')[:500]
+                    )
+                )
+        else:
+            cmd = mojo_cmd_prefix + [t.format(src=src_abs, out=out_abs) for t in tmpl]
+            try:
+                result = subprocess.run(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, timeout=60,
+                )
+            except FileNotFoundError as e:
+                last_err = 'FileNotFoundError: {} (cmd={})'.format(e, cmd)
+                continue
+            except subprocess.TimeoutExpired:
+                last_err = 'TimeoutExpired (60s) (cmd={})'.format(cmd)
+                continue
+            except Exception as e:
+                last_err = '{}: {} (cmd={})'.format(type(e).__name__, e, cmd)
+                continue
+
+            if result.returncode == 0 and os.path.exists(out_abs):
+                return out_abs
+
+            last_err = (
+                'cmd={}\nreturncode={}\nstdout={}\nstderr={}'.format(
+                    cmd, result.returncode,
+                    result.stdout[:500], result.stderr[:500]
+                )
             )
-        except FileNotFoundError as e:
-            last_err = f'FileNotFoundError: {e} (cmd={cmd})'
-            continue
-        except subprocess.TimeoutExpired:
-            last_err = f'TimeoutExpired (60s) (cmd={cmd})'
-            continue
-        except Exception as e:
-            last_err = f'{type(e).__name__}: {e} (cmd={cmd})'
-            continue
-
-        if result.returncode == 0 and os.path.exists(out_abs):
-            return out_abs
-
-        last_err = (
-            f'cmd={cmd}\n'
-            f'returncode={result.returncode}\n'
-            f'stdout={result.stdout[:500]}\n'
-            f'stderr={result.stderr[:500]}'
-        )
         continue
 
-    raise RuntimeError(f'Mojo 编译失败: 所有候选命令均未成功\n{last_err}')
+    raise RuntimeError('Mojo 编译失败: 所有候选命令均未成功\n{}'.format(last_err))
 
 
 # ----------------------------------------------------------------------------
@@ -425,7 +542,9 @@ def _execute_sync(
     # 5. 检查编译器可用性
     if not mojo_compiler_available():
         raise RuntimeError(
-            f'Mojo 编译器不可用（{_MOJO_PATH}）。请在 WSL 内安装 Modular Mojo 1.0b1。'
+            'Mojo 编译器不可用。请通过以下方式之一安装：\n'
+            '  - 本地: https://docs.modular.com/mojo/manual/get-started/\n'
+            '  - WSL:  在 WSL 内安装 Modular Mojo，然后从 Windows 自动检测'
         )
 
     # 6. 写 .mojo 源文件 + 编译
@@ -450,14 +569,12 @@ def _execute_sync(
     if mode_upper == 'ONLY_RUN' and not os.path.exists(out_so_path):
         raise FileNotFoundError(f'ONLY_RUN 模式: .so 文件不存在: {out_so_path}')
 
-    # 7. 加载 .so 并执行
-    return _call_mojo_function(
-        so_path=out_so_path,
+    # 7. 加载 .so 并执行（通过 MojoBridge 以支持 WSL 模式）
+    return _mojo_bridge.call_func(
+        lib_path=out_so_path,
         func_name=func_name,
         args=args,
-        params=params,
         ret_type=ret_type_str,
-        transport=transport,
     )
 
 
@@ -491,19 +608,22 @@ def compile_and_run(
     os.makedirs(actual_cache_dir, exist_ok=True)
 
     code_hash = hashlib.md5(mojo_code.encode('utf-8')).hexdigest()[:12]
-    src_path = os.path.join(actual_cache_dir, f'{func_name}_{code_hash}.mojo')
-    out_so_path = os.path.join(actual_cache_dir, f'lib{func_name}_{code_hash}.so')
+    src_path = os.path.join(actual_cache_dir, '{}_{}.mojo'.format(func_name, code_hash))
+    out_so_path = os.path.join(
+        actual_cache_dir,
+        _mojo_bridge.get_lib_filename('{}_{}'.format(func_name, code_hash)))
 
     with open(src_path, 'w', encoding='utf-8') as f:
         f.write(mojo_code)
 
     _compile_mojo_source(src_path, out_so_path, force=False)
 
-    lib = ctypes.CDLL(out_so_path)
-    fn = getattr(lib, func_name)
-    fn.restype = get_ctype_for(ret_type)
-    raw = fn(*args)
-    return get_transport().decode_result(raw, ret_type)
+    return _mojo_bridge.call_func(
+        lib_path=out_so_path,
+        func_name=func_name,
+        args=args,
+        ret_type=ret_type,
+    )
 
 
 def is_mojo_available() -> bool:
@@ -533,6 +653,16 @@ class MojoBridge(LangBridge):
     name = 'mojo'
     file_ext = '.mojo'
     lib_ext = '.dll' if _IS_WINDOWS else ('.dylib' if platform.system() == 'Darwin' else '.so')
+
+    def get_lib_filename(self, func_name: str) -> str:
+        """根据函数名生成库文件名。WSL 模式下使用 .so 扩展名。"""
+        _, use_wsl = _get_mojo_cmd()
+        if use_wsl:
+            if os.name == 'nt':
+                return '{}.so'.format(func_name)
+            return 'lib{}.so'.format(func_name)
+        return super().get_lib_filename(func_name)
+    lang_type = LangType.COMPILED
 
     def __init__(self):
         super().__init__()
@@ -573,6 +703,16 @@ class MojoBridge(LangBridge):
         params = []
         ret_type = 'Int64'
 
+        # 预扫描：统计数组参数数量
+        array_param_names = []
+        for name, ann in spec.annotations.items():
+            if name == 'return':
+                continue
+            mojo_type = get_mojo_type(ann) if ann else 'Int64'
+            if is_array_type(mojo_type):
+                array_param_names.append(name)
+        use_short_n = (len(array_param_names) == 1)
+
         for name, ann in spec.annotations.items():
             if name == 'return':
                 ret_type = get_mojo_type(ann)
@@ -580,7 +720,7 @@ class MojoBridge(LangBridge):
             mojo_type = get_mojo_type(ann) if ann else 'Int64'
             if is_array_type(mojo_type):
                 params.append((name, mojo_type))
-                length_name = f'{name}_n'
+                length_name = 'n' if use_short_n else f'{name}_n'
                 params.append((length_name, 'Int64'))
             else:
                 params.append((name, mojo_type))
@@ -617,6 +757,7 @@ class MojoBridge(LangBridge):
 
         扫描 project_dir 下所有 .mojo 文件，调用 mojo build 编译。
         entry='main' 时生成可执行文件，否则生成共享库。
+        支持 WSL（Windows 上通过 wsl mojo 编译）。
         """
         output_dir = output_dir or _CACHE_DIR
         os.makedirs(output_dir, exist_ok=True)
@@ -628,42 +769,67 @@ class MojoBridge(LangBridge):
                     mojo_files.append(os.path.join(root, f))
 
         if not mojo_files:
-            raise RuntimeError(f'No .mojo files found in project directory: {project_dir}')
+            raise RuntimeError('No .mojo files found in project directory: {}'.format(project_dir))
 
         mojo_files.sort()
 
         project_name = os.path.basename(os.path.abspath(project_dir))
+        mojo_cmd_prefix, use_wsl = _get_mojo_cmd()
 
         if entry == 'main':
             if _IS_WINDOWS:
-                output_path = os.path.join(output_dir, f'{project_name}.exe')
+                output_path = os.path.join(output_dir, '{}.exe'.format(project_name))
             else:
                 output_path = os.path.join(output_dir, project_name)
-            compile_cmd = [_MOJO_PATH, 'build', '-o', output_path] + mojo_files
+            build_flag = []
         else:
             output_path = os.path.join(output_dir, self.get_lib_filename(project_name))
-            compile_cmd = [_MOJO_PATH, 'build', '--shared', '-o', output_path] + mojo_files
+            build_flag = ['--emit', 'shared-lib']
 
-        result = subprocess.run(
-            compile_cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            cwd=output_dir
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                f'Mojo project compilation failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}\n'
-                f'files: {mojo_files}'
+        if use_wsl:
+            wsl_output = _windows_to_wsl_path(output_path)
+            wsl_files = [_windows_to_wsl_path(f) for f in mojo_files]
+            compile_cmd = ['mojo', 'build'] + build_flag + ['-o', wsl_output] + wsl_files
+            rc, stdout, stderr = _wsl_run(compile_cmd, timeout=300,
+                                          cwd=output_dir)
+            if rc != 0:
+                raise RuntimeError(
+                    'Mojo project compilation failed (WSL):\n'
+                    'stderr:\n{}\nstdout:\n{}\nfiles: {}'.format(
+                        stderr, stdout, mojo_files)
+                )
+        else:
+            compile_cmd = mojo_cmd_prefix + ['build'] + build_flag + ['-o', output_path] + mojo_files
+            result = subprocess.run(
+                compile_cmd,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+                cwd=output_dir
             )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    'Mojo project compilation failed:\n'
+                    'stderr:\n{}\nstdout:\n{}\nfiles: {}'.format(
+                        result.stderr, result.stdout, mojo_files)
+                )
 
         return output_path
 
     def call_func(self, lib_path: str, func_name: str,
                   args: tuple, ret_type=None) -> Any:
-        """调用 Mojo 编译的函数"""
+        """调用 Mojo 编译的函数。
+
+        Windows + WSL 模式下，通过 wsl python3 加载 .so 并执行，
+        因为 WSL 编译的 .so 是 Linux ELF 格式，无法被 Windows ctypes 加载。
+        """
+        _, use_wsl = _get_mojo_cmd()
+        if use_wsl:
+            return self._call_func_via_wsl(lib_path, func_name, args, ret_type)
+        return self._call_func_native(lib_path, func_name, args, ret_type)
+
+    def _call_func_native(self, lib_path: str, func_name: str,
+                          args: tuple, ret_type=None) -> Any:
+        """本地 ctypes 调用（Linux/macOS 原生 Mojo）。"""
         transport = get_transport()
         lib = ctypes.CDLL(lib_path)
         fn = getattr(lib, func_name)
@@ -687,6 +853,100 @@ class MojoBridge(LangBridge):
         fn.argtypes = fn_argtypes
         raw_result = fn(*ctypes_args)
         return transport.decode_result(raw_result, mojo_ret_type)
+
+    def _call_func_via_wsl(self, lib_path: str, func_name: str,
+                           args: tuple, ret_type=None) -> Any:
+        """通过 WSL Python 加载 .so 并调用函数。
+
+        生成临时 Python 脚本，在 WSL 中运行该脚本加载 .so 并调用函数，
+        结果以 JSON 格式通过 stdout 返回。
+        """
+        import json
+        mojo_ret_type = get_mojo_type(ret_type) if ret_type else 'Int64'
+        mojo_arg_types = infer_mojo_argtypes(list(args))
+
+        wsl_lib_path = _windows_to_wsl_path(lib_path)
+
+        def _ctype_name(mojo_type):
+            """获取 ctypes 类型名称字符串（如 'c_longlong'）。"""
+            ct = get_ctype_for(mojo_type)
+            name = ct.__name__
+            # POINTER 类型使用元素类型名
+            if name.startswith('LP_'):
+                return name[3:]  # LP_c_longlong -> c_longlong
+            return name
+
+        # 构建 WSL 侧 Python 调用脚本
+        lines = [
+            'import ctypes, json, sys',
+            'lib = ctypes.CDLL({})'.format(json.dumps(wsl_lib_path)),
+            'fn = getattr(lib, {})'.format(json.dumps(func_name)),
+        ]
+
+        # 返回类型
+        ret_ct = get_ctype_for(mojo_ret_type)
+        ret_name = ret_ct.__name__
+        if ret_name.startswith('LP_'):
+            # POINTER 返回类型不常见，先保留
+            ret_name = 'c_longlong'
+        lines.append('fn.restype = ctypes.{}'.format(ret_name))
+
+        # 参数类型和值
+        arg_setups = []
+        arg_values = []
+        for i, (value, mojo_type) in enumerate(zip(args, mojo_arg_types)):
+            ctype = _ctype_name(mojo_type)
+            if is_array_type(mojo_type):
+                # 数组参数：创建 ctypes 数组 + 传递长度
+                py_val = list(value) if value is not None else []
+                arg_setups.append(
+                    'arr_{i} = (ctypes.{ctype} * {length})(*{py_val})'.format(
+                        i=i, ctype=ctype, length=len(py_val),
+                        py_val=json.dumps(py_val)))
+                arg_values.append('arr_{}'.format(i))
+                arg_values.append('ctypes.c_longlong({})'.format(len(py_val)))
+            elif isinstance(value, bool):
+                # bool 值使用 Python 的 True/False（而非 json.dumps 的 true/false）
+                arg_values.append('ctypes.{ctype}({val})'.format(
+                    ctype=ctype, val=str(value)))
+            else:
+                arg_values.append('ctypes.{ctype}({val})'.format(
+                    ctype=ctype, val=json.dumps(value)))
+
+        if arg_setups:
+            lines.extend(arg_setups)
+
+        lines.append('fn.argtypes = {}  # ctypes auto-detects')
+        lines.append('result = fn({})'.format(', '.join(arg_values)))
+        lines.append('print(json.dumps({"result": result}))')
+
+        script = '\n'.join(lines)
+
+        # 写入临时脚本
+        script_dir = os.path.dirname(lib_path)
+        script_path = os.path.join(
+            script_dir, '_wsl_call_{}.py'.format(func_name))
+        with open(script_path, 'w', encoding='utf-8') as f:
+            f.write(script)
+
+        try:
+            wsl_script = _windows_to_wsl_path(script_path)
+            rc, stdout, stderr = _wsl_run(
+                ['python3', wsl_script], timeout=30,
+                cwd=script_dir)
+            if rc != 0:
+                raise RuntimeError(
+                    'WSL Python 调用失败 (rc={}):\nstdout={}\nstderr={}'.format(
+                        rc, stdout, stderr))
+            result_data = json.loads(stdout.strip())
+            raw_result = result_data.get('result', 0)
+            transport = get_transport()
+            return transport.decode_result(raw_result, mojo_ret_type)
+        finally:
+            try:
+                os.unlink(script_path)
+            except OSError:
+                pass
 
 
 # 全局 MojoBridge 实例

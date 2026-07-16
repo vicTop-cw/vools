@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.dart.compiler - Dart 语言桥接编译器实现
 
 提供 Dart 动态编译与跨语言桥接能力，继承 LangBridge 抽象基类。
@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Any
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 
 logger = logging.getLogger(__name__)
 
@@ -616,6 +617,7 @@ class DartBridge(LangBridge):
     """
 
     name = 'dart'
+    lang_type = LangType.COMPILED
     file_ext = '.dart'
     lib_ext = _dart_exe_ext() or '.exe'
 

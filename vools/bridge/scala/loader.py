@@ -12,6 +12,7 @@ vools.bridge.scala.loader - Py4J JVM Gateway 加载器
 import os
 import asyncio
 import subprocess
+import shutil
 import threading
 import logging
 from typing import Optional, Any, Coroutine
@@ -121,7 +122,7 @@ class ScalaGateway:
         if not os.path.exists(self.jar_path):
             raise FileNotFoundError(f"JAR file not found: {self.jar_path}")
 
-        java_cmd = ['java']
+        java_cmd = [shutil.which('java') or 'java']
         java_cmd.extend(self.javaopts)
         java_cmd.extend(['-jar', self.jar_path])
         if app_class:

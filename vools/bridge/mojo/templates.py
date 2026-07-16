@@ -1,17 +1,33 @@
 """
 vools.bridge.mojo.templates - Mojo 代码模板生成
 
-负责生成符合 cdecl 边界的 Mojo 函数包装代码：
+负责生成符合 Mojo 导出边界的函数包装代码：
 - @export("func_name") 装饰器
-- def name(...) -> RetType abi("C"):
+- def name(...) -> RetType:
 - 数组参数自动展开为 (ptr, length) 两个形参
 - auto_signature 时剥离 # 注释行
 
-运行环境：Mojo 1.0b1（WSL Linux）。
+运行环境：Mojo 1.0b1+（WSL Linux / 本地安装）。
 """
 
 import re
 from typing import List, Tuple, Optional
+
+
+def _add_origin(ptype: str) -> str:
+    """为需要 origin 的 UnsafePointer 类型添加 MutExternalOrigin。
+
+    Mojo 1.0b1 要求 UnsafePointer 必须指定 origin 参数，
+    而 MutExternalOrigin 是内置的 external origin 类型（无需显式导入）。
+    """
+    if ptype in ('UnsafePointer[Int64]', 'UnsafePointer[Float64]',
+                 'UnsafePointer[Int32]', 'UnsafePointer[Float32]',
+                 'UnsafePointer[Int8]', 'UnsafePointer[UInt8]',
+                 'UnsafePointer[Int16]', 'UnsafePointer[UInt16]',
+                 'UnsafePointer[UInt32]', 'UnsafePointer[UInt64]',
+                 'UnsafePointer[c_char]'):
+        return ptype.replace(']', ', MutExternalOrigin]')
+    return ptype
 
 
 def generate_function_signature(
@@ -33,21 +49,22 @@ def generate_function_signature(
         Mojo 签名字符串（含 @export 装饰器 + def 头 + 冒号）
     """
     export = export_name or func_name
-    # 形参列表
+    # 形参列表（为 UnsafePointer 类型添加 MutExternalOrigin）
     if params:
-        param_str = ', '.join(f'{pname}: {ptype}' for pname, ptype in params)
+        param_str = ', '.join(
+            f'{pname}: {_add_origin(ptype)}' for pname, ptype in params)
     else:
         param_str = ''
 
     if ret_type in (None, 'None', 'void'):
         sig = (
             f'@export("{export}")\n'
-            f'def {func_name}({param_str}) abi("C"):'
+            f'def {func_name}({param_str}):'
         )
     else:
         sig = (
             f'@export("{export}")\n'
-            f'def {func_name}({param_str}) -> {ret_type} abi("C"):'
+            f'def {func_name}({param_str}) -> {ret_type}:'
         )
     return sig
 

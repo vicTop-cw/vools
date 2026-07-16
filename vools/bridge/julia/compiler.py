@@ -21,6 +21,7 @@ import json
 from typing import Optional, List, Any
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 
 # =============================================================================
 # 平台判断
@@ -619,6 +620,8 @@ class JuliaBridge(LangBridge):
     """
 
     name = 'julia'
+    is_compiled = False
+    lang_type = LangType.INTERPRETED
     file_ext = '.jl'
     lib_ext = '.dll' if _IS_WINDOWS else ('.dylib' if _IS_MACOS else '.so')
 
@@ -629,6 +632,79 @@ class JuliaBridge(LangBridge):
     def compiler_available(self) -> bool:
         """编译器是否可用"""
         return julia_compiler_available()
+
+    def _execute_code(self, package_path, func_name, args, ret_type=None):
+        """解包并执行代码。"""
+        import zipfile, tempfile, subprocess, os, shutil, json
+        
+        tmpdir = tempfile.mkdtemp()
+        try:
+            with zipfile.ZipFile(package_path, 'r') as zf:
+                zf.extractall(tmpdir)
+            
+            source_file = os.path.join(tmpdir, self.get_source_filename(func_name))
+            
+            with open(source_file, 'r', encoding='utf-8') as f:
+                julia_source = f.read()
+
+            julia_args = []
+            for i, arg in enumerate(args):
+                if isinstance(arg, bool):
+                    julia_args.append(f'a{i} = {"true" if arg else "false"}')
+                elif isinstance(arg, int):
+                    julia_args.append(f'a{i} = {arg}')
+                elif isinstance(arg, float):
+                    julia_args.append(f'a{i} = {float(arg)}')
+                elif isinstance(arg, str):
+                    escaped = arg.replace('\\', '\\\\').replace('"', '\\"')
+                    julia_args.append(f'a{i} = "{escaped}"')
+                else:
+                    julia_args.append(f'a{i} = {arg}')
+
+            call_expr = f'{func_name}({", ".join(f"a{i}" for i in range(len(args)))})'
+            result_expr = f'println({call_expr})'
+
+            julia_script = f'''
+{julia_source}
+
+{chr(10).join(julia_args)}
+{result_expr}
+'''
+
+            script_path = os.path.join(tmpdir, f'_run_{func_name}.jl')
+            with open(script_path, 'w', encoding='utf-8') as f:
+                f.write(julia_script)
+
+            cmd = ['julia', script_path]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                raise RuntimeError("Execution failed: " + result.stderr)
+            
+            output = result.stdout.strip()
+            if not output:
+                return None
+
+            try:
+                return json.loads(output)
+            except Exception:
+                pass
+
+            try:
+                if '.' in output:
+                    return float(output)
+                return int(output)
+            except Exception:
+                pass
+
+            if output.lower() == 'true':
+                return True
+            if output.lower() == 'false':
+                return False
+
+            return output
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def generate_code(self, spec: FunctionSpec) -> str:
         """

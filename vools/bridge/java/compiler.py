@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.java.compiler - Java 编译支持
 
 使用 javac 编译 Java 源码为 class 文件或 JAR。
@@ -18,6 +18,7 @@ import logging
 from typing import Optional, List, Any
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 
 logger = logging.getLogger(__name__)
 
@@ -185,11 +186,11 @@ def create_jar(
         return None
 
     try:
-        cmd = ['jar', '-cf']
         if main_class:
-            cmd.extend(['-e', main_class])
-        cmd.append(jar_path)
-        cmd.append('-C', class_dir)
+            cmd = ['jar', '-cfe', jar_path, main_class]
+        else:
+            cmd = ['jar', '-cf', jar_path]
+        cmd.extend(['-C', class_dir])
         cmd.append('.')
 
         logger.info(f"Creating JAR: {' '.join(cmd)}")
@@ -202,7 +203,7 @@ def create_jar(
         )
 
         if result.returncode != 0:
-            logger.error(f"JAR creation failed: {result.stderr}")
+            logger.error(f"JAR creation failed: stdout={result.stdout}, stderr={result.stderr}")
             return None
 
         logger.info(f"JAR created: {jar_path}")
@@ -241,8 +242,9 @@ class JavaBridge(LangBridge):
     """
 
     name = 'java'
+    lang_type = LangType.JVM
     file_ext = '.java'
-    lib_ext = '.jar'
+    lib_ext = '.jar'  # 实际编译产物是 JAR 而非 .class
 
     def __init__(self):
         super().__init__()

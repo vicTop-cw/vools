@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.ruby.compiler - Ruby 语言桥接编译器实现
 
 提供 RubyBridge 类，继承 LangBridge 抽象基类，实现 Ruby 特定的代码生成、
@@ -18,6 +18,7 @@ import threading
 from typing import Any
 
 from .._base import LangBridge, FunctionSpec, FunctionParser
+from ..core.types import LangType
 
 # ----------------------------------------------------------------------------
 # 平台判断
@@ -410,6 +411,8 @@ class RubyBridge(LangBridge):
     """
 
     name = 'ruby'
+    is_compiled = False
+    lang_type = LangType.INTERPRETED
     file_ext = '.rb'
     lib_ext = '.rb'
 
@@ -420,6 +423,26 @@ class RubyBridge(LangBridge):
     def compiler_available(self) -> bool:
         """解释器是否可用"""
         return ruby_compiler_available()
+
+    def _execute_code(self, package_path, func_name, args, ret_type=None):
+        """解包并执行代码。"""
+        import zipfile, tempfile, subprocess, os, shutil
+        
+        tmpdir = tempfile.mkdtemp()
+        try:
+            with zipfile.ZipFile(package_path, 'r') as zf:
+                zf.extractall(tmpdir)
+            
+            source_file = os.path.join(tmpdir, self.get_source_filename(func_name))
+            
+            cmd = ['ruby', source_file]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                raise RuntimeError("Execution failed: " + result.stderr)
+            return result.stdout.strip()
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def generate_code(self, spec: FunctionSpec) -> str:
         """

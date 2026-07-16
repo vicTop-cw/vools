@@ -36,6 +36,9 @@ from .compiler import (
     PY_TO_JAVA_TYPE,
 )
 
+# Alias for API compatibility
+java_compiler_available = is_javac_available
+
 __all__ = [
     'JavaGateway',
     'get_java_gateway',
@@ -54,6 +57,7 @@ __all__ = [
     'compile_java',
     'create_jar',
     'is_javac_available',
+    'java_compiler_available',
     'check_java_environment',
     'get_java_version',
     'PY_TO_JAVA_TYPE',

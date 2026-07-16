@@ -421,9 +421,13 @@ class BridgeManager:
         # 2. 版本检测
         success, output, version = _run_version_check(config)
         if not success:
+            # 版本检测失败不阻止标记为可用（部分编译器如 go/zig 使用
+            # 'version' 子命令而非 '--version' 标志，回退到不严格模式）
             return LanguageStatus(
-                available=False,
+                available=True,
                 compiler_path=compiler_path,
+                version='unknown',
+                runtime_ready=False,
                 error=f"Version check failed: {output}"
             )
 
@@ -637,10 +641,14 @@ class BridgeManager:
                 else:
                     # 注册新语言
                     probe_config = LANGUAGE_PROBES.get(lang, {})
+                    # 构造 version_check: [compiler, *version_args]，默认 ['--version']
+                    version_args = probe_config.get('version_args', ['--version'])
+                    version_check = [status.command or lang_lower] + version_args
                     self.register(LanguageConfig(
                         name=lang_lower,
                         compiler=status.command or lang_lower,
                         compiler_paths=[os.path.dirname(status.path)] if status.path else [],
+                        version_check=version_check,
                         version_pattern=probe_config.get('version_pattern'),
                     ))
                     discovered['local'].append(lang_lower)
@@ -1024,6 +1032,22 @@ def _register_builtin_languages():
         compiler='dotnet',
         compiler_paths=csharp_paths,
         runtime_paths=csharp_paths,
+    ))
+
+    # VB.NET (uses dotnet, same as C#)
+    if _IS_WINDOWS:
+        vbnet_paths = [
+            r'C:\Program Files\dotnet',
+            r'C:\Windows\Microsoft.NET\Framework64\v4.0.30319',
+        ]
+    else:
+        vbnet_paths = ['/usr/share/dotnet', '/usr/local/share/dotnet']
+
+    manager.register(LanguageConfig(
+        name='vbnet',
+        compiler='dotnet',
+        compiler_paths=vbnet_paths,
+        runtime_paths=vbnet_paths,
     ))
 
     # Julia

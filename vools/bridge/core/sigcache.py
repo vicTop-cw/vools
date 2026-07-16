@@ -534,23 +534,26 @@ def _extract_body(func: Callable[..., Any], args: tuple, kwargs: Dict[str, Any])
     Returns:
         提取到的函数体代码字符串，提取失败返回空字符串。
     """
-    try:
-        result = func(*args, **kwargs)
-        if result is not None:
-            return str(result)
-    except TypeError:
-        pass
-    except Exception:
-        pass
+    # 异步函数不能直接调用（会返回协程而非 body 字符串），
+    # 直接跳到 AST 解析路径
+    if not inspect.iscoroutinefunction(func):
+        try:
+            result = func(*args, **kwargs)
+            if result is not None:
+                return str(result)
+        except TypeError:
+            pass
+        except Exception:
+            pass
 
-    try:
-        result = func()
-        if result is not None:
-            return str(result)
-    except TypeError:
-        pass
-    except Exception:
-        pass
+        try:
+            result = func()
+            if result is not None:
+                return str(result)
+        except TypeError:
+            pass
+        except Exception:
+            pass
 
     try:
         import ast

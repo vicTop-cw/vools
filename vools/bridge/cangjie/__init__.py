@@ -40,6 +40,8 @@ from .types import (
 from .templates import (
     generate_cj_signature,
     generate_cj_code,
+    generate_cj_exe_code,
+    generate_cj_exe_with_args_code,
     generate_from_python_func,
     CangjieCodeGenerator,
 )
@@ -78,6 +80,8 @@ __all__ = [
     # 代码生成
     'generate_cj_signature',
     'generate_cj_code',
+    'generate_cj_exe_code',
+    'generate_cj_exe_with_args_code',
     'generate_from_python_func',
     'CangjieCodeGenerator',
 

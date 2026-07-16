@@ -185,7 +185,7 @@ class TestCompiler:
 
     def test_r_decorator_only_code_no_signature(self):
         """测试 @r 装饰器 ONLY_CODE 模式（不自动生成签名）"""
-        @r(mode='ONLY_CODE', auto_signature=False)
+        @r(mode='ONLY_CODE')
         def custom_func():
             return 'x <- 1:10\nmean(x)'
 

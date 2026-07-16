@@ -60,6 +60,7 @@ from typing import Any, List, Callable, Optional
 
 from ..manager import get_helper
 from .._base import LangBridge, FunctionSpec, FunctionParser
+from ..core.types import LangType
 from .types import (
     PY_TO_FB_TYPE,
     get_fb_type,
@@ -122,6 +123,7 @@ class FbcBridge(LangBridge):
     name = 'freebasic'
     file_ext = '.bas'
     lib_ext = '.dll' if os.name == 'nt' else '.so'
+    lang_type = LangType.COMPILED
 
     def __init__(self):
         super().__init__()
@@ -211,10 +213,21 @@ class FbcBridge(LangBridge):
 
     def compile_code(self, code: str, func_name: str, cache_dir: str = None) -> str:
         """编译 FreeBASIC 代码"""
-        cache_dir = cache_dir or _BAS_CACHE_DIR
+        cache_dir = self.get_cache_dir(cache_dir)
         os.makedirs(cache_dir, exist_ok=True)
 
-        bas_path = os.path.join(cache_dir, f'{func_name}.bas')
+        # 使用哈希命名避免 DLL 文件锁定问题
+        cache_key = self.get_cache_key(code, func_name)
+        if _IS_WINDOWS:
+            dll_path = os.path.join(cache_dir, f'{cache_key}.dll')
+        else:
+            dll_path = os.path.join(cache_dir, f'lib{cache_key}.so')
+
+        # 如果已编译则直接返回
+        if os.path.exists(dll_path):
+            return dll_path
+
+        bas_path = os.path.join(cache_dir, f'{cache_key}.bas')
         with open(bas_path, 'w', encoding='utf-8') as f:
             f.write(code)
 
@@ -236,11 +249,6 @@ class FbcBridge(LangBridge):
             raise RuntimeError(
                 f'FreeBASIC 编译失败:\nstderr:\n{result.stderr}\nstdout:\n{result.stdout}\n代码:\n{code}'
             )
-
-        if _IS_WINDOWS:
-            dll_path = os.path.join(cache_dir, f'{func_name}.dll')
-        else:
-            dll_path = os.path.join(cache_dir, f'lib{func_name}.so')
 
         return dll_path
 

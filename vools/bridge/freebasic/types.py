@@ -70,6 +70,18 @@ def get_fb_type(py_type):
     if py_type in PY_TO_FB_TYPE:
         return PY_TO_FB_TYPE[py_type]
 
+    # 处理泛型别名（如 list[int]、list[float]），get_type_hints 会解析字符串注解
+    import typing as _typing
+    origin = _typing.get_origin(py_type)
+    if origin is not None:
+        if origin is list:
+            args = _typing.get_args(py_type)
+            if args and args[0] is float:
+                return 'Double Ptr'
+            return 'Long Ptr'
+        if origin is dict:
+            return 'Any Ptr'
+
     # 字符串形式注解（来自 typing 或 forward reference）
     if isinstance(py_type, str):
         normalized = py_type.strip().lower()

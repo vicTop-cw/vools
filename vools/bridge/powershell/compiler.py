@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.powershell.compiler - PowerShell 语言桥接编译器实现
 
 提供 PowerShellBridge 类，继承 LangBridge 抽象基类，实现 PowerShell 特定的代码生成、
@@ -19,6 +19,7 @@ import textwrap
 from typing import Any, Optional
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 
 
 # ----------------------------------------------------------------------------
@@ -85,7 +86,7 @@ def powershell_compiler_available() -> bool:
     try:
         result = subprocess.run(
             [_PS_PATH, '-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=10,
         )
         return result.returncode == 0
     except (FileNotFoundError, OSError):
@@ -314,7 +315,7 @@ def _execute_ps_code(code: str, func_name: str, cache_dir: str = None,
         result = subprocess.run(
             [_PS_PATH, '-NoProfile', '-File', src_path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=60,
         )
         if result.returncode == 0:
@@ -326,7 +327,7 @@ def _execute_ps_code(code: str, func_name: str, cache_dir: str = None,
     result = subprocess.run(
         [_PS_PATH, '-NoProfile', '-File', src_path],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
+        universal_newlines=True,
         timeout=60,
     )
 
@@ -479,6 +480,8 @@ class PowerShellBridge(LangBridge):
     """
 
     name = 'powershell'
+    is_compiled = False
+    lang_type = LangType.INTERPRETED
     file_ext = '.ps1'
     lib_ext = '.ps1'
 
@@ -489,6 +492,65 @@ class PowerShellBridge(LangBridge):
     def compiler_available(self) -> bool:
         """解释器是否可用"""
         return powershell_compiler_available()
+
+    def _execute_code(self, package_path, func_name, args, ret_type=None):
+        """解包并执行代码，传递参数并调用函数。"""
+        import zipfile, tempfile, subprocess, os, shutil, json
+        
+        tmpdir = tempfile.mkdtemp()
+        try:
+            with zipfile.ZipFile(package_path, 'r') as zf:
+                zf.extractall(tmpdir)
+            
+            source_file = os.path.join(tmpdir, self.get_source_filename(func_name))
+            
+            with open(source_file, 'r', encoding='utf-8') as f:
+                code = f.read()
+            
+            args_json = json.dumps(list(args))
+            
+            ps_ret_type = get_ps_type(ret_type) if ret_type else 'string'
+            
+            full_code = '''$ErrorActionPreference = "Stop"
+
+$argsJson = @'
+{args_json}
+'@
+$args = $argsJson | ConvertFrom-Json
+
+{code}
+
+$result = {func_name} @args
+
+if ($null -eq $result) {{
+    "null"
+}} elseif ($result -is [array] -or $result -is [System.Collections.IList]) {{
+    $result | ConvertTo-Json -Depth 10 -Compress
+}} elseif ($result -is [hashtable] -or $result -is [System.Collections.IDictionary]) {{
+    $result | ConvertTo-Json -Depth 10 -Compress
+}} elseif ($result -is [bool]) {{
+    $result.ToString().ToLower()
+}} else {{
+    $result.ToString()
+}}
+'''.format(args_json=args_json, code=code, func_name=func_name)
+            
+            tmp_script = os.path.join(tmpdir, '_exec.ps1')
+            with open(tmp_script, 'w', encoding='utf-8') as f:
+                f.write(full_code)
+            
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-File', tmp_script],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                universal_newlines=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                raise RuntimeError("Execution failed: " + result.stderr)
+            
+            return _parse_ps_output(result.stdout.strip(), ps_ret_type)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def generate_code(self, spec: FunctionSpec) -> str:
         """
@@ -761,7 +823,7 @@ if ($null -eq $result) {{
             result = subprocess.run(
                 [_PS_PATH, '-NoProfile', '-File', main_ps] + list(args),
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
+                universal_newlines=True,
                 timeout=60,
             )
             return (result.returncode, result.stdout, result.stderr)

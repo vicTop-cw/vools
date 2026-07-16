@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.bridge.perl.compiler - Perl 语言桥接编译器实现
 
 提供 PerlBridge 类，继承 LangBridge 抽象基类，实现 Perl 特定的代码生成、
@@ -19,6 +19,7 @@ import textwrap
 from typing import Any, Optional
 
 from .._base import LangBridge, FunctionSpec
+from ..core.types import LangType
 
 
 # ----------------------------------------------------------------------------
@@ -483,6 +484,8 @@ class PerlBridge(LangBridge):
     """
 
     name = 'perl'
+    is_compiled = False
+    lang_type = LangType.INTERPRETED
     file_ext = '.pl'
     lib_ext = '.so'
 
@@ -493,6 +496,26 @@ class PerlBridge(LangBridge):
     def compiler_available(self) -> bool:
         """解释器是否可用"""
         return perl_compiler_available()
+
+    def _execute_code(self, package_path, func_name, args, ret_type=None):
+        """解包并执行代码。"""
+        import zipfile, tempfile, subprocess, os, shutil
+        
+        tmpdir = tempfile.mkdtemp()
+        try:
+            with zipfile.ZipFile(package_path, 'r') as zf:
+                zf.extractall(tmpdir)
+            
+            source_file = os.path.join(tmpdir, self.get_source_filename(func_name))
+            
+            cmd = ['perl', source_file]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                raise RuntimeError("Execution failed: " + result.stderr)
+            return result.stdout.strip()
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def generate_code(self, spec: FunctionSpec) -> str:
         """
