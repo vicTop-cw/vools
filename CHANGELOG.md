@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1] - 2026-07-29
+
+### 🐛 修复
+
+#### `flex_pos` 在 Python 3.6 / Spark / eval 环境中无法获取源码
+
+- 新增 `_get_source` 辅助函数，在 `inspect.getsource` 失败时 fallback 直接读取物理源文件
+- 支持通过 `co_filename` 和 `linecache` 获取动态执行环境中的源码
+- 保留原有行为，所有 67 个 flex_pos 测试继续通过
+
 ## [0.7.0] - 2026-07-29
 
 ### ✨ 新增功能
