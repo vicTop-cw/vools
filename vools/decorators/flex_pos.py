@@ -442,6 +442,65 @@ def _globals_of(target, caller_frame=None):
     return env
 
 
+def _get_source(target):
+    """Return source text for *target* with Python 3.6 / eval fallbacks.
+
+    ``inspect.getsource`` can fail when the definition was loaded through
+    ``exec``/``eval`` (e.g. Spark / notebook cells) because the linecache does
+    not contain the file content.  In that case we fall back to reading the
+    file directly via ``inspect.getsourcefile`` or the object's
+    ``co_filename``.
+    """
+    # Standard path first.
+    try:
+        return inspect.getsource(target)
+    except (OSError, TypeError):
+        pass
+
+    # Fallback 1: read the physical source file directly.
+    filename = None
+    try:
+        filename = inspect.getsourcefile(target)
+    except (TypeError, OSError):
+        if hasattr(target, '__code__'):
+            filename = target.__code__.co_filename
+
+    if filename and filename not in ('<string>', '<stdin>', '<input>'):
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except (IOError, OSError):
+            lines = None
+
+        if lines:
+            start = None
+            try:
+                # ``getsourcelines`` works for both functions and classes when
+                # the file is readable.
+                _, start = inspect.getsourcelines(target)
+            except (TypeError, OSError, AttributeError):
+                if hasattr(target, '__code__'):
+                    start = target.__code__.co_firstlineno
+
+            if start is not None and 1 <= start <= len(lines):
+                # Return from the definition start to the end of the file;
+                # ``ast.parse`` will still pick the first top-level definition
+                # as ``tree.body[0]``.
+                return ''.join(lines[start - 1:])
+
+    # Fallback 2: linecache for dynamically registered files (e.g. nested
+    # flex_pos decorators register their generated sources there).
+    if hasattr(target, '__code__'):
+        co_filename = target.__code__.co_filename
+        cached = linecache.getlines(co_filename)
+        if cached:
+            start = target.__code__.co_firstlineno
+            if 1 <= start <= len(cached):
+                return ''.join(cached[start - 1:])
+
+    return None
+
+
 def flex_pos(target):
     """
     Decorate a function or class so that ``_`` becomes an expression placeholder.
@@ -462,10 +521,12 @@ def flex_pos(target):
     """
     caller_frame = sys._getframe(1)
     is_class = isinstance(target, type)
-    source = inspect.getsource(target)
+    source = _get_source(target)
     if source is None:
         raise TypeError(
-            'flex_pos: could not retrieve source for {0!r}'.format(target)
+            'flex_pos: could not retrieve source for {0!r}. '
+            'Make sure the decorated object is defined in a regular file '
+            'or a notebook cell with source available.'.format(target)
         )
 
     tree = ast.parse(textwrap.dedent(source))
