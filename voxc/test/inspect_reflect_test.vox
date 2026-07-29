@@ -1,0 +1,36 @@
+// Test inspect and reflect modules
+
+struct Point:
+    x: int
+    y: int
+
+enum Color:
+    Red
+    Green
+    Blue
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+class Animal:
+    name: str
+    def speak(self) -> str:
+        return "hello"
+
+trait Show:
+    def show(self) -> void
+
+def main() -> void:
+    // inspect tests
+    print(inspect.signature(add))
+    print(inspect.getfile(add))
+    
+    // reflect tests
+    print(reflect.type_name(Point))
+    print(reflect.is_struct(Point))
+    print(reflect.is_enum(Color))
+    // Test first field/variant
+    let fields = reflect.fields(Point)
+    let variants = reflect.variants(Color)
+    let methods = reflect.methods(Animal)
+    print("ok")

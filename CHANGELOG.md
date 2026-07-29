@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-07-29
+
+### ✨ 新增功能
+
+#### `flex_pos` 灵活占位符装饰器
+
+- 新增 `vools.decorators.flex_pos` 装饰器，支持 `_` 表达式占位符自动转 lambda
+- 支持 `_` / `__` 作为函数签名中的可变参数标记（分别转换为 `*args` / `**kwargs`）
+- 支持装饰类和嵌套装饰器
+- Python 3.6+ 兼容，仅使用标准库
+
+### 🔧 项目整理
+
+- 测试文件归位：`tests_flex_pos/test_flex_pos.py` → `tests/decorators/test_flex_pos.py`
+- 清理根目录和 `voxc/voxc-rs/` 下大量构建日志、临时文件和构建产物目录
+- 更新 `.gitignore`，排除虚拟环境、Rust 缓存和编译产物
+
+### 🧪 测试
+
+- 新增 `TestHighPressure` 高压测试类
+- Python 3.6.8 和 Python 3.10.11 双环境通过
+
 ## [0.4.4] - 2026-07-02
 
 ### 🐛 兼容性修复

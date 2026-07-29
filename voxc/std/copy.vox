@@ -1,0 +1,28 @@
+// copy.vox — Vox standard library: shallow and deep copy operations
+// Provides generic copy operations for any Clone-able type,
+// modeled after Python's copy module.
+
+// ===== Copy operations =====
+
+/// Produce a shallow copy of x (calls .clone()).
+/// copy.copy(x) -> T
+def copy<T>(x: T) -> T:
+    return x.clone()
+
+/// Produce a deep copy of x (simplified — same as shallow copy).
+/// copy.deepcopy(x) -> T
+def deepcopy<T>(x: T) -> T:
+    return x.clone()
+
+// ===== Registration (no-op) =====
+
+/// Register a custom copy implementation (no-op in Vox).
+/// copy.register_copyable(type_name) -> void
+def register_copyable(type_name: str) -> void:
+    let _ = type_name
+
+// ===== Exceptions =====
+
+/// Exception raised when an object cannot be copied.
+/// copy.Error
+val Error: str = "copy.Error"

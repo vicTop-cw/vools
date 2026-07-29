@@ -1,0 +1,13 @@
+// Decorator demo
+@deprecated
+def old_func(x: int) -> int:
+    return x
+
+@inline
+@cold
+def rarely_used():
+    print("rarely")
+
+def main():
+    val r = old_func(42)
+    print(r)

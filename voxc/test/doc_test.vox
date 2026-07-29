@@ -1,0 +1,15 @@
+/// This is a documented struct
+struct Point:
+    x: int
+    y: int
+
+/// Calculate distance
+def distance(p1: Point, p2: Point) -> float:
+    return 0.0
+
+// Test doc retrieval via inspect
+println(inspect.doc("Point"))
+println(inspect.doc("distance"))
+
+// Test doc retrieval via reflect
+println(reflect.doc(Point))

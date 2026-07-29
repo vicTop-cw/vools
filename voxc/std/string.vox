@@ -1,0 +1,154 @@
+// string.vox — Vox standard library: string operations
+// Provides constants and functions for string manipulation,
+// modeled after Python's string module.
+
+// ===== Constants =====
+
+/// Lowercase ASCII letters: 'abcdefghijklmnopqrstuvwxyz'
+const ascii_lowercase: str = "abcdefghijklmnopqrstuvwxyz"
+
+/// Uppercase ASCII letters: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+const ascii_uppercase: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+/// All ASCII letters (lower + upper).
+const ascii_letters: str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+/// Decimal digits: '0123456789'
+const digits: str = "0123456789"
+
+/// Hexadecimal digits: '0123456789abcdefABCDEF'
+const hexdigits: str = "0123456789abcdefABCDEF"
+
+/// Octal digits: '01234567'
+const octdigits: str = "01234567"
+
+/// Punctuation characters: !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
+const punctuation: str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+
+/// Whitespace characters: space, tab, newline, return, vtab, formfeed
+const whitespace: str = " \t\n\r\x0b\x0c"
+
+// ===== Splitting and joining =====
+
+/// Split a string by a separator into a list of substrings.
+/// string.split(s, sep) -> list[str]
+def split(s: str, sep: str) -> list:
+    return s.split(sep).map(|x| x.to_string()).collect::<Vec<_>>()
+
+/// Join an iterable of strings with a separator.
+/// string.join(sep, iterable) -> str
+def join(sep: str, iterable: list) -> str:
+    return iterable.join(sep)
+
+// ===== Searching =====
+
+/// Find the first occurrence of a substring; returns -1 if not found.
+/// string.find(s, sub) -> int
+def find(s: str, sub: str) -> int:
+    return s.find(sub).map(|i| i as i64).unwrap_or(-1)
+
+// ===== Replacing =====
+
+/// Replace all occurrences of `old` with `new` in `s`.
+/// string.replace(s, old, new) -> str
+def replace(s: str, old: str, new: str) -> str:
+    return s.replace(old, new)
+
+// ===== Stripping =====
+
+/// Strip leading and trailing whitespace (or given chars) from `s`.
+/// string.strip(s, chars?) -> str
+def strip(s: str, chars: str = " \t\n\r") -> str:
+    return s.trim_matches(|c: char| chars.contains(c)).to_string()
+
+/// Strip leading whitespace (or given chars) from `s`.
+/// string.lstrip(s, chars?) -> str
+def lstrip(s: str, chars: str = " \t\n\r") -> str:
+    return s.trim_start_matches(|c: char| chars.contains(c)).to_string()
+
+/// Strip trailing whitespace (or given chars) from `s`.
+/// string.rstrip(s, chars?) -> str
+def rstrip(s: str, chars: str = " \t\n\r") -> str:
+    return s.trim_end_matches(|c: char| chars.contains(c)).to_string()
+
+// ===== Case conversion =====
+
+/// Convert `s` to uppercase.
+/// string.upper(s) -> str
+def upper(s: str) -> str:
+    return s.to_uppercase()
+
+/// Convert `s` to lowercase.
+/// string.lower(s) -> str
+def lower(s: str) -> str:
+    return s.to_lowercase()
+
+/// Convert `s` to title case (first letter of each word capitalized).
+/// string.title(s) -> str
+def title(s: str) -> str:
+    return s.split(' ').map(|w| {
+        let mut c = w.chars()
+        match c.next() {
+            Some(f) => f.to_uppercase().chain(c.flat_map(|x| x.to_lowercase())).collect::<String>(),
+            None => String::new()
+        }
+    }).collect::<Vec<_>>().join(" ")
+
+// ===== Predicates =====
+
+/// Check if `s` starts with `prefix`.
+/// string.startswith(s, prefix) -> bool
+def startswith(s: str, prefix: str) -> bool:
+    return s.starts_with(prefix)
+
+/// Check if `s` ends with `suffix`.
+/// string.endswith(s, suffix) -> bool
+def endswith(s: str, suffix: str) -> bool:
+    return s.ends_with(suffix)
+
+/// Check if `s` contains `sub`.
+/// string.contains(s, sub) -> bool
+def contains(s: str, sub: str) -> bool:
+    return s.contains(sub)
+
+// ===== Formatting =====
+
+/// Format a string by replacing `{}` placeholders with arguments.
+/// string.format(fmt, args...) -> str
+def format(fmt: str) -> str:
+    return fmt
+
+// ===== Padding and alignment =====
+
+/// Center `s` in a field of `width`, using `fillchar` (default space).
+/// string.center(s, width, fillchar?) -> str
+def center(s: str, width: int, fillchar: char = ' ') -> str:
+    return format_center(s, width, fillchar)
+
+/// Left-justify `s` in a field of `width`, using `fillchar` (default space).
+/// string.ljust(s, width, fillchar?) -> str
+def ljust(s: str, width: int, fillchar: char = ' ') -> str:
+    return format_ljust(s, width, fillchar)
+
+/// Right-justify `s` in a field of `width`, using `fillchar` (default space).
+/// string.rjust(s, width, fillchar?) -> str
+def rjust(s: str, width: int, fillchar: char = ' ') -> str:
+    return format_rjust(s, width, fillchar)
+
+/// Zero-fill `s` on the left to reach `width`.
+/// string.zfill(s, width) -> str
+def zfill(s: str, width: int) -> str:
+    return format_zfill(s, width)
+
+// ===== Word operations =====
+
+/// Capitalize each word in `s`, separated by `sep` (default space).
+/// string.capwords(s, sep?) -> str
+def capwords(s: str, sep: str = " ") -> str:
+    return s.split(sep).map(|w| {
+        let mut c = w.chars()
+        match c.next() {
+            Some(f) => f.to_uppercase().chain(c.flat_map(|x| x.to_lowercase())).collect::<String>(),
+            None => String::new()
+        }
+    }).collect::<Vec<_>>().join(sep)

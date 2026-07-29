@@ -1,0 +1,54 @@
+// weakref.vox — Vox standard library: weak reference support
+// Simplified: weak references become strong references (Option/clone),
+// modeled after Python's weakref module.
+
+// ===== Reference constructors =====
+
+/// Return a weak reference to obj (simplified — Some(obj.clone())).
+/// weakref.ref(obj) -> Option<T>
+def ref<T>(obj: T) -> Option<T>:
+    return Some(obj.clone())
+
+/// Return a proxy for obj (simplified — obj.clone()).
+/// weakref.proxy(obj) -> T
+def proxy<T>(obj: T) -> T:
+    return obj.clone()
+
+// ===== Introspection =====
+
+/// Return the number of weak references to obj (simplified — always 0).
+/// weakref.getweakrefcount(obj) -> int
+def getweakrefcount<T>(obj: T) -> int:
+    return 0
+
+/// Return the list of weak references to obj (simplified — empty).
+/// weakref.getweakrefs(obj) -> list
+def getweakrefs<T>(obj: T) -> list:
+    return []
+
+// ===== Weak containers =====
+
+/// Create an empty WeakValueDictionary (simplified — HashMap).
+/// weakref.WeakValueDictionary() -> HashMap
+def WeakValueDictionary() -> HashMap:
+    return HashMap::new()
+
+/// Create an empty WeakKeyDictionary (simplified — HashMap).
+/// weakref.WeakKeyDictionary() -> HashMap
+def WeakKeyDictionary() -> HashMap:
+    return HashMap::new()
+
+// ===== Finalizers =====
+
+/// Register a finalizer for obj (simplified — no-op).
+/// weakref.finalize(obj, func, *args) -> void
+def finalize(obj: any, func: any, args: list) -> void:
+    let _ = obj
+    let _ = func
+    let _ = args
+
+// ===== Exceptions =====
+
+/// Exception raised when accessing a dead weak reference.
+/// weakref.ReferenceError
+val ReferenceError: str = "weakref.ReferenceError"

@@ -1,0 +1,22 @@
+// fractions.vox — Vox standard library: rational numbers
+// Provides support for rational number arithmetic,
+// modeled after Python's fractions module.
+
+// ===== Core types =====
+
+/// Create a new Fraction from numerator and denominator.
+/// fractions.Fraction(numerator=0, denominator=1) -> Fraction
+def Fraction(numerator: int = 0, denominator: int = 1) -> VoxFraction:
+    return VoxFraction::new(numerator, denominator)
+
+/// Create a Fraction from a single value (int, float, or string).
+/// fractions.Fraction(value) -> Fraction
+def Fraction_from(value: int) -> VoxFraction:
+    return VoxFraction::from(value)
+
+// ===== Number theory =====
+
+/// Return the greatest common divisor of a and b.
+/// fractions.gcd(a, b) -> int
+def gcd(a: int, b: int) -> int:
+    return vox_fractions_gcd(a, b)

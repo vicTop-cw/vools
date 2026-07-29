@@ -1,0 +1,26 @@
+// Test: import statement + lazy keyword
+
+// lazy 延迟求值 — 首次访问时才计算
+lazy var BIG_NUM = 100 * 200
+lazy val GREETING = "hello from lazy"
+
+struct Point:
+    x: int
+    y: int
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+// 延迟求值的复杂计算
+lazy var COMPUTED = add(999, 1)
+
+def main() -> void:
+    // 访问 lazy 变量 — 首次访问触发计算
+    print(BIG_NUM)
+    print(GREETING)
+    print(COMPUTED)
+
+    // 常规代码
+    var p = Point(3, 4)
+    print(p.x)
+    print(add(5, 6))

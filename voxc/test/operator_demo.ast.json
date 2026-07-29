@@ -1,0 +1,335 @@
+{
+  "name": "operator_demo",
+  "statements": [
+    {
+      "node": "OperatorDecl",
+      "span": {
+        "file": "test/operator_demo.vox",
+        "line": 1,
+        "col": 0,
+        "end_line": 1,
+        "end_col": 1
+      },
+      "op_type": "Prefix",
+      "symbol": "!",
+      "name": "not_op",
+      "generics": [],
+      "params": [
+        [
+          "x",
+          {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "bool"
+          }
+        ]
+      ],
+      "return_type": {
+        "node": "Named",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "name": "bool"
+      },
+      "where_clauses": []
+    },
+    {
+      "node": "OperatorDecl",
+      "span": {
+        "file": "test/operator_demo.vox",
+        "line": 5,
+        "col": 0,
+        "end_line": 5,
+        "end_col": 1
+      },
+      "op_type": "Infix",
+      "symbol": "+",
+      "name": "add_op",
+      "generics": [],
+      "params": [
+        [
+          "a",
+          {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "int"
+          }
+        ],
+        [
+          "b",
+          {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "int"
+          }
+        ]
+      ],
+      "return_type": {
+        "node": "Named",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "name": "int"
+      },
+      "where_clauses": []
+    },
+    {
+      "node": "OperatorDecl",
+      "span": {
+        "file": "test/operator_demo.vox",
+        "line": 8,
+        "col": 0,
+        "end_line": 8,
+        "end_col": 1
+      },
+      "op_type": "Suffix",
+      "symbol": "++",
+      "name": "inc_op",
+      "generics": [],
+      "params": [
+        [
+          "x",
+          {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "int"
+          }
+        ]
+      ],
+      "return_type": {
+        "node": "Named",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "name": "int"
+      },
+      "where_clauses": []
+    },
+    {
+      "node": "OperatorDecl",
+      "span": {
+        "file": "test/operator_demo.vox",
+        "line": 11,
+        "col": 0,
+        "end_line": 11,
+        "end_col": 1
+      },
+      "op_type": "Pairfix",
+      "symbol": "QQ",
+      "name": "quote_op",
+      "generics": [],
+      "params": [
+        [
+          "x",
+          {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "str"
+          }
+        ]
+      ],
+      "return_type": {
+        "node": "Named",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "name": "str"
+      },
+      "where_clauses": []
+    },
+    {
+      "node": "VarDecl",
+      "span": {
+        "file": "test/operator_demo.vox",
+        "line": 14,
+        "col": 0,
+        "end_line": 14,
+        "end_col": 1
+      },
+      "mutable": false,
+      "name": "a",
+      "value": {
+        "node": "Literal",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "value": {
+          "kind": "Int",
+          "value": 1
+        }
+      }
+    },
+    {
+      "node": "VarDecl",
+      "span": {
+        "file": "test/operator_demo.vox",
+        "line": 14,
+        "col": 8,
+        "end_line": 14,
+        "end_col": 9
+      },
+      "mutable": false,
+      "name": "b",
+      "value": {
+        "node": "Literal",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "value": {
+          "kind": "Int",
+          "value": 2
+        }
+      }
+    },
+    {
+      "node": "VarDecl",
+      "span": {
+        "file": "test/operator_demo.vox",
+        "line": 15,
+        "col": 8,
+        "end_line": 15,
+        "end_col": 9
+      },
+      "mutable": false,
+      "name": "c",
+      "value": {
+        "node": "BinaryOp",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "left": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "a"
+        },
+        "op": "Add",
+        "right": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "b"
+        }
+      }
+    },
+    {
+      "node": "ExprStmt",
+      "span": {
+        "file": "test/operator_demo.vox",
+        "line": 17,
+        "col": 0,
+        "end_line": 17,
+        "end_col": 1
+      },
+      "expr": {
+        "node": "Call",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "func": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "print"
+        },
+        "args": [
+          {
+            "node": "Ident",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "c"
+          }
+        ]
+      }
+    }
+  ],
+  "span": {
+    "file": "test/operator_demo.vox",
+    "line": 2,
+    "col": 0,
+    "end_line": 2,
+    "end_col": 1
+  }
+}

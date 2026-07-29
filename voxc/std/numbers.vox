@@ -1,0 +1,30 @@
+// numbers.vox — Vox standard library: abstract numeric base classes
+// Provides the abstract base classes for numeric types,
+// modeled after Python's numbers module.
+
+// ===== Abstract base classes =====
+
+/// The abstract base class for all numeric types.
+/// All numbers should implement this ABC.
+/// numbers.Number
+val Number = vox_numbers_abc()
+
+/// The abstract base class for complex numbers.
+/// Extends Number; requires real, imag, conjugate, etc.
+/// numbers.Complex
+val Complex = vox_numbers_abc()
+
+/// The abstract base class for real numbers.
+/// Extends Complex; adds comparison and floor/ceil.
+/// numbers.Real
+val Real = vox_numbers_abc()
+
+/// The abstract base class for rational numbers.
+/// Extends Real; adds numerator, denominator.
+/// numbers.Rational
+val Rational = vox_numbers_abc()
+
+/// The abstract base class for integers.
+/// Extends Rational; adds bitwise operations.
+/// numbers.Integral
+val Integral = vox_numbers_abc()

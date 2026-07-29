@@ -1,0 +1,302 @@
+// math.vox — Vox standard library: mathematical functions
+// Provides standard mathematical functions and constants,
+// modeled after Python's math module.
+
+// ===== Constants =====
+
+/// The mathematical constant pi (3.141592653589793).
+/// math.pi -> float
+val pi: float = 3.141592653589793
+
+/// The mathematical constant e (2.718281828459045).
+/// math.e -> float
+val e: float = 2.718281828459045
+
+/// The mathematical constant tau (2*pi).
+/// math.tau -> float
+val tau: float = 6.283185307179586
+
+/// Positive infinity.
+/// math.inf -> float
+val inf: float = 1.0 / 0.0
+
+/// Not a Number (NaN).
+/// math.nan -> float
+val nan: float = 0.0 / 0.0
+
+// ===== Power and logarithmic functions =====
+
+/// Return x raised to the power y.
+/// math.pow(x, y) -> float
+def pow(x: float, y: float) -> float:
+    return x.powf(y)
+
+/// Return the square root of x.
+/// math.sqrt(x) -> float
+def sqrt(x: float) -> float:
+    return x.sqrt()
+
+/// Return the cube root of x.
+/// math.cbrt(x) -> float
+def cbrt(x: float) -> float:
+    return x.cbrt()
+
+/// Return e raised to the power x.
+/// math.exp(x) -> float
+def exp(x: float) -> float:
+    return x.exp()
+
+/// Return 2 raised to the power x.
+/// math.exp2(x) -> float
+def exp2(x: float) -> float:
+    return x.exp2()
+
+/// Return e raised to the power x minus 1.
+/// math.expm1(x) -> float
+def expm1(x: float) -> float:
+    return x.exp_m1()
+
+/// Return the natural logarithm of x (base e).
+/// math.log(x) -> float
+def log(x: float) -> float:
+    return x.ln()
+
+/// Return the logarithm of x to the given base.
+/// math.log(x, base) -> float
+def log_base(x: float, base: float) -> float:
+    return x.log(base)
+
+/// Return the base-2 logarithm of x.
+/// math.log2(x) -> float
+def log2(x: float) -> float:
+    return x.log2()
+
+/// Return the base-10 logarithm of x.
+/// math.log10(x: float) -> float
+def log10(x: float) -> float:
+    return x.log10()
+
+/// Return the natural logarithm of 1+x (base e).
+/// math.log1p(x: float) -> float
+def log1p(x: float) -> float:
+    return x.ln_1p()
+
+// ===== Trigonometric functions =====
+
+/// Return the sine of x radians.
+/// math.sin(x) -> float
+def sin(x: float) -> float:
+    return x.sin()
+
+/// Return the cosine of x radians.
+/// math.cos(x) float) -> float
+def cos(x: float) -> float:
+    return x.cos()
+
+/// Return the tangent of x radians.
+/// math.tan(x) -> float
+def tan(x: float) -> float:
+    return x.tan()
+
+/// Return the arc sine of x, in radians.
+/// math.asin(x) -> float
+def asin(x: float) -> float:
+    return x.asin()
+
+/// Return the arc cosine of x, in radians.
+/// math.acos(x: float) -> float
+def acos(x: float) -> float:
+    return x.acos()
+
+/// Return the arc tangent of x, in radians.
+/// math.atan(x) -> float
+def atan(x: float) -> float:
+    return x.atan()
+
+/// Return atan(y / x) in radians.
+/// math.atan2(y, x) -> float
+def atan2(y: float, x: float) -> float:
+    return y.atan2(x)
+
+// ===== Hyperbolic functions =====
+
+/// Return the hyperbolic sine of x.
+/// math.sinh(x) -> float
+def sinh(x: float) -> float:
+    return x.sinh()
+
+/// Return the hyperbolic cosine of x.
+/// math.cosh(x) -> float
+def cosh(x: float) -> float:
+    return x.cosh()
+
+/// Return the hyperbolic tangent of x.
+/// math.tanh(x) -> float
+def tanh(x: float) -> float:
+    return x.tanh()
+
+/// Return the inverse hyperbolic sine of x.
+/// math.asinh(x) -> float
+def asinh(x: float) -> float:
+    return x.asinh()
+
+/// Return the inverse hyperbolic cosine of x.
+/// math.acosh(x) -> float
+def acosh(x: float) -> float:
+    return x.acosh()
+
+/// Return the inverse hyperbolic tangent of x.
+/// math.atanh(x) -> float
+def atanh(x: float) -> float:
+    return x.atanh()
+
+// ===== Rounding and truncation =====
+
+/// Return the ceiling of x as an integer.
+/// math.ceil(x) -> int
+def ceil(x: float) -> int:
+    return x.ceil() as int
+
+/// Return the floor of x as an integer.
+/// math.floor(x) -> int
+def floor(x: float) -> int:
+    return x.floor() as int
+
+/// Return the truncated value of x as an integer.
+/// math.trunc(x) -> int
+def trunc(x: float) -> int:
+    return x.trunc() as int
+
+/// Return the rounded value of x as an integer.
+/// math.round(x) -> int
+def round(x: float) -> int:
+    return x.round() as int
+
+// ===== Absolute value and sign =====
+
+/// Return the absolute value of x.
+/// math.fabs(x) -> float
+def fabs(x: float) -> float:
+    return x.abs()
+
+/// Return the absolute value of x (alias for fabs).
+/// math.abs(x) -> float
+def abs(x: float) -> float:
+    return x.abs()
+
+// ===== Division and remainder =====
+
+/// Return the remainder of x / y.
+/// math.fmod(x, y) -> float
+def fmod(x: float, y: float) -> float:
+    return x.rem_euclid(y)
+
+/// Return x with the sign of y.
+/// math.copysign(x, y) -> float
+def copysign(x: float, y: float) -> float:
+    return x.copysign(y)
+
+/// Return the fractional and integer parts of x.
+/// math.modf(x) -> (float, float)
+def modf(x: float) -> (float, float):
+    return (x.trunc(), x.fract())
+
+// ===== Floating point utilities =====
+
+/// Return True if x is NaN.
+/// math.isnan(x) -> bool
+def isnan(x: float) -> bool:
+    return x.is_nan()
+
+/// Return True if x is positive or negative infinity.
+/// math.isinf(x) -> bool
+def isinf(x: float) -> bool:
+    return x.is_infinite()
+
+/// Return True if x is neither NaN nor infinity.
+/// math.isfinite(x) -> bool
+def isfinite(x: float) -> bool:
+    return x.is_finite()
+
+/// Return True if a and b are close (within relative tolerance).
+/// math.isclose(a, b) -> bool
+def isclose(a: float, b: float) -> bool:
+    return (a - b).abs() < 1e-9
+
+// ===== Number theory functions =====
+
+/// Return the greatest common divisor of a and b.
+/// math.gcd(a, b) -> int
+def gcd(a: int, b: int) -> int:
+    return vox_math_gcd(a, b)
+
+/// Return the least common multiple of a and b.
+/// math.lcm(a, b) -> int
+def lcm(a: int, b: int) -> int:
+    return vox_math_lcm(a, b)
+
+/// Return the integer square root of n.
+/// math.isqrt(n) -> int
+def isqrt(n: int) -> int:
+    return (n as float).sqrt() as int
+
+/// Return n factorial.
+/// math.factorial(n) -> int
+def factorial(n: int) -> int:
+    return vox_math_factorial(n as u64) as int
+
+/// Return the number of permutations (n choose k, ordered).
+/// math.perm(n, k) -> int
+def perm(n: int, k: int) -> int:
+    return vox_math_perm(n as u64, k as u64) as int
+
+/// Return the number of combinations (n choose k).
+/// math.comb(n, k) -> int
+def comb(n: int, k: int) -> int:
+    return vox_math_comb(n as u64, k as u64) as int
+
+// ===== Angle conversion =====
+
+/// Convert angle x from radians to degrees.
+/// math.degrees(x) -> float
+def degrees(x: float) -> float:
+    return x.to_degrees()
+
+/// Convert angle x from degrees to radians.
+/// math.radians(x) -> float
+def radians(x: float) -> float:
+    return x.to_radians()
+
+// ===== Special functions =====
+
+/// Return the gamma function at x.
+/// math.gamma(x) -> float
+def gamma(x: float) -> float:
+    return vox_math_gamma(x)
+
+/// Return the natural logarithm of the absolute value of the gamma function.
+/// math.lgamma(x) -> float
+def lgamma(x: float) -> float:
+    return vox_math_lgamma(x)
+
+/// Return the error function at x.
+/// math.erf(x) -> float
+def erf(x: float) -> float:
+    return vox_math_erf(x)
+
+/// Return 1 - erf(x).
+/// math.erfc(x) -> float
+def erfc(x: float) -> float:
+    return 1.0 - vox_math_erf(x)
+
+// ===== Summation =====
+
+/// Return an accurate floating point sum of the values.
+/// math.fsum(values) -> float
+def fsum(values: list[float]) -> float:
+    return values.iter().sum()
+
+/// Return the product of the values.
+/// math.prod(values) -> float
+def prod(values: list[float]) -> float:
+    return values.iter().product()

@@ -1,0 +1,52 @@
+// Phase 2: struct, enum, class, trait, impl, extend, match, comptime
+
+// struct
+struct Point:
+    x: int
+    y: int
+
+// enum
+enum Color:
+    Red
+    Green
+    Blue
+    RGB(int)
+
+// class
+class Animal:
+    name: str
+    age: int
+    def speak(self) -> str:
+        return "animal"
+
+// trait
+trait Show:
+    def show(self) -> void
+    def describe(self) -> str:
+        return "object"
+
+// impl
+impl Show for Point:
+    def show(self) -> void:
+        print(self.x)
+
+// extend
+extend Show for Color:
+    def show(self) -> void:
+        print("color")
+
+// match
+def test_color(c: Color) -> void:
+    match c:
+        Red => print("red")
+        Green => print("green")
+        _ => print("other")
+
+// comptime
+comptime:
+    print("compile time")
+
+// main
+def main():
+    val p = Point(0, 0)
+    p.show()

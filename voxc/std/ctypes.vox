@@ -1,0 +1,84 @@
+// ctypes.vox — Vox standard library: C-compatible types and FFI
+// Provides type aliases for C types and functions for memory
+// manipulation, pointer operations, and FFI.
+
+// ===== C type aliases =====
+// These map to native Rust integer/float types.
+
+val c_int: int = 0       // i32
+val c_long: int = 0      // i64
+val c_float: float = 0.0 // f32
+val c_double: float = 0.0 // f64
+val c_char: char = 'a'   // char
+val c_bool: bool = false // bool
+val c_int8: int = 0      // i8
+val c_int16: int = 0     // i16
+val c_int32: int = 0     // i32
+val c_int64: int = 0     // i64
+val c_uint8: int = 0     // u8
+val c_uint16: int = 0    // u16
+val c_uint32: int = 0    // u32
+val c_uint64: int = 0    // u64
+val c_size_t: int = 0    // usize
+val c_ssize_t: int = 0   // isize
+
+// ===== Memory operations =====
+
+/// Get the size of a type in bytes.
+/// ctypes.sizeof(type) -> usize
+def sizeof(t: int) -> int:
+    return std::mem::size_of::<T>()
+
+/// Cast a value to a different type.
+/// ctypes.cast(obj, type) -> T
+def cast(obj: int, t: int) -> int:
+    return obj as int
+
+/// Get the address of a variable.
+/// ctypes.addressof(obj) -> usize
+def addressof(obj: int) -> int:
+    return &obj as *const _ as usize
+
+/// Get a mutable reference to a variable.
+/// ctypes.byref(obj) -> &mut T
+def byref(obj: int) -> int:
+    return &mut obj
+
+/// Get a raw pointer to a variable.
+/// ctypes.pointer(obj) -> *const T
+def pointer(obj: int) -> int:
+    return &obj as *const _
+
+/// Copy memory from source to destination.
+/// ctypes.memmove(dst, src, count) -> void
+def memmove(dst: int, src: int, count: int) -> void:
+    std::ptr::copy(src, dst, count)
+
+/// Fill memory with a byte value.
+/// ctypes.memset(dst, val, count) -> void
+def memset(dst: int, val: int, count: int) -> void:
+    std::ptr::write_bytes(dst, val, count)
+
+// ===== Pointer types =====
+
+/// Create a pointer type string for a given type.
+/// ctypes.POINTER(type) -> str
+def POINTER(t: int) -> str:
+    return "*const T"
+
+/// Load a shared library (simplified).
+/// ctypes.CDLL(name) -> CDLL
+def CDLL(name: str) -> int:
+    return 0
+
+// ===== Buffer creation =====
+
+/// Create a mutable character buffer from a string.
+/// ctypes.create_string_buffer(init, size?) -> Vec<u8>
+def create_string_buffer(init: str, size: int = 0) -> list:
+    return init.as_bytes().to_vec()
+
+/// Create a mutable unicode character buffer.
+/// ctypes.create_unicode_buffer(init, size?) -> Vec<u16>
+def create_unicode_buffer(init: str, size: int = 0) -> list:
+    return init.encode_utf16().collect()

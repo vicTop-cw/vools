@@ -1,0 +1,17 @@
+// Operator declarations demo
+prefix ! not_op(x: bool) -> bool:
+    return not x
+
+infix + add_op(a: int, b: int) -> int:
+    return a + b
+
+suffix ++ inc_op(x: int) -> int:
+    return x + 1
+
+pairfix QQ quote_op(x: str) -> str:
+    return x
+
+val a = 1
+val b = 2
+val c = a + b
+print(c)

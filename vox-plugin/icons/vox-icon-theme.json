@@ -1,0 +1,12 @@
+{
+  "iconDefinitions": {
+    "vox-file": {
+      "iconPath": "./vox-file.svg"
+    }
+  },
+  "fileExtensions": {
+    "vox": "vox-file"
+  },
+  "fileNames": {},
+  "languageIds": {}
+}

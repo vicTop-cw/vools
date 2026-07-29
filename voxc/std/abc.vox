@@ -1,0 +1,30 @@
+// abc.vox — Vox standard library: abstract base classes
+// Provides decorators and utilities for defining abstract classes
+// and virtual subclasses, modeled after Python's abc module.
+
+/// Decorator to mark a method as abstract.
+/// The method body is replaced with `unimplemented!()` at codegen time.
+/// Usage:
+///   class Shape:
+///       @abc.abstractmethod
+///       def area(self) -> float
+///
+/// abc.abstractmethod(func) -> func
+def abstractmethod(func: () -> void) -> void:
+    unimplemented!()
+
+/// Decorator to mark a property as abstract.
+/// abc.abstractproperty(func) -> property
+def abstractproperty(func: () -> void) -> void:
+    unimplemented!()
+
+/// Get the current abstract class cache token.
+/// Returns 0 in the simplified implementation.
+/// abc.get_cache_token() -> int
+def get_cache_token() -> int:
+    return 0
+
+/// Register a class as a virtual subclass of an abstract base class.
+/// abc.register(subclass) -> subclass
+def register(subclass: int) -> int:
+    return subclass

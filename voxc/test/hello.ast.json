@@ -1,0 +1,551 @@
+{
+  "name": "hello",
+  "statements": [
+    {
+      "node": "VarDecl",
+      "span": {
+        "file": "test/hello.vox",
+        "line": 1,
+        "col": 0,
+        "end_line": 1,
+        "end_col": 1
+      },
+      "mutable": false,
+      "name": "x",
+      "value": {
+        "node": "Literal",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "value": {
+          "kind": "Int",
+          "value": 42
+        }
+      }
+    },
+    {
+      "node": "VarDecl",
+      "span": {
+        "file": "test/hello.vox",
+        "line": 2,
+        "col": 8,
+        "end_line": 2,
+        "end_col": 9
+      },
+      "mutable": false,
+      "name": "y",
+      "value": {
+        "node": "Literal",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "value": {
+          "kind": "Int",
+          "value": 10
+        }
+      }
+    },
+    {
+      "node": "VarDecl",
+      "span": {
+        "file": "test/hello.vox",
+        "line": 3,
+        "col": 8,
+        "end_line": 3,
+        "end_col": 9
+      },
+      "mutable": true,
+      "name": "z",
+      "value": {
+        "node": "BinaryOp",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "left": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "x"
+        },
+        "op": "Add",
+        "right": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "y"
+        }
+      }
+    },
+    {
+      "node": "ExprStmt",
+      "span": {
+        "file": "test/hello.vox",
+        "line": 5,
+        "col": 0,
+        "end_line": 5,
+        "end_col": 1
+      },
+      "expr": {
+        "node": "Call",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "func": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "print"
+        },
+        "args": [
+          {
+            "node": "Ident",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "x"
+          }
+        ]
+      }
+    },
+    {
+      "node": "ExprStmt",
+      "span": {
+        "file": "test/hello.vox",
+        "line": 6,
+        "col": 0,
+        "end_line": 6,
+        "end_col": 1
+      },
+      "expr": {
+        "node": "Call",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "func": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "print"
+        },
+        "args": [
+          {
+            "node": "Ident",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "z"
+          }
+        ]
+      }
+    },
+    {
+      "node": "FnDef",
+      "span": {
+        "file": "test/hello.vox",
+        "line": 6,
+        "col": 7,
+        "end_line": 6,
+        "end_col": 8
+      },
+      "name": "add",
+      "generics": [],
+      "params": [
+        {
+          "name": "a",
+          "variadic": false,
+          "type_annotation": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "int"
+          }
+        },
+        {
+          "name": "b",
+          "variadic": false,
+          "type_annotation": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "int"
+          }
+        }
+      ],
+      "return_type": {
+        "node": "Named",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "name": "int"
+      },
+      "raises": null,
+      "where_clauses": [],
+      "body": [
+        {
+          "node": "ReturnStmt",
+          "span": {
+            "file": "test/hello.vox",
+            "line": 9,
+            "col": 0,
+            "end_line": 9,
+            "end_col": 1
+          },
+          "value": {
+            "node": "BinaryOp",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "left": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "a"
+            },
+            "op": "Add",
+            "right": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "b"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "node": "VarDecl",
+      "span": {
+        "file": "test/hello.vox",
+        "line": 11,
+        "col": 0,
+        "end_line": 11,
+        "end_col": 1
+      },
+      "mutable": false,
+      "name": "result",
+      "value": {
+        "node": "Call",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "func": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "add"
+        },
+        "args": [
+          {
+            "node": "Literal",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "value": {
+              "kind": "Int",
+              "value": 3
+            }
+          },
+          {
+            "node": "Literal",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "value": {
+              "kind": "Int",
+              "value": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "node": "ExprStmt",
+      "span": {
+        "file": "test/hello.vox",
+        "line": 12,
+        "col": 0,
+        "end_line": 12,
+        "end_col": 1
+      },
+      "expr": {
+        "node": "Call",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "func": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "print"
+        },
+        "args": [
+          {
+            "node": "Ident",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "result"
+          }
+        ]
+      }
+    },
+    {
+      "node": "IfStmt",
+      "span": {
+        "file": "test/hello.vox",
+        "line": 12,
+        "col": 12,
+        "end_line": 12,
+        "end_col": 13
+      },
+      "condition": {
+        "node": "BinaryOp",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "left": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "result"
+        },
+        "op": "Gt",
+        "right": {
+          "node": "Literal",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "value": {
+            "kind": "Int",
+            "value": 5
+          }
+        }
+      },
+      "then_body": [
+        {
+          "node": "ExprStmt",
+          "span": {
+            "file": "test/hello.vox",
+            "line": 15,
+            "col": 0,
+            "end_line": 15,
+            "end_col": 1
+          },
+          "expr": {
+            "node": "Call",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "func": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "print"
+            },
+            "args": [
+              {
+                "node": "Literal",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "value": {
+                  "kind": "String",
+                  "value": "Big"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "elif_chain": [],
+      "else_body": [
+        {
+          "node": "ExprStmt",
+          "span": {
+            "file": "test/hello.vox",
+            "line": 17,
+            "col": 0,
+            "end_line": 17,
+            "end_col": 1
+          },
+          "expr": {
+            "node": "Call",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "func": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "print"
+            },
+            "args": [
+              {
+                "node": "Literal",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "value": {
+                  "kind": "String",
+                  "value": "Small"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "span": {
+    "file": "test/hello.vox",
+    "line": 2,
+    "col": 0,
+    "end_line": 2,
+    "end_col": 1
+  }
+}

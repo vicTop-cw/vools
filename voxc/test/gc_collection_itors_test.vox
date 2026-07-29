@@ -1,0 +1,110 @@
+// Test gc, collection, and itors standard library modules
+
+def main() -> void:
+    // ===== gc module tests =====
+    print("=== gc module tests ===")
+
+    // Collection control
+    val collected = gc.collect()
+    print("gc.collect():", collected)
+
+    gc.disable()
+    print("gc.disable() called")
+
+    gc.enable()
+    print("gc.enable() called")
+
+    // Statistics
+    val count = gc.get_count()
+    print("gc.get_count():", count)
+
+    val stats = gc.get_stats()
+    print("gc.get_stats():", stats)
+
+    gc.set_debug(0)
+    print("gc.set_debug(0) called")
+
+    // Reference inspection
+    val x = 42
+    val referrers = gc.get_referrers(x)
+    print("gc.get_referrers(x):", referrers)
+
+    val referents = gc.get_referents(x)
+    print("gc.get_referents(x):", referents)
+
+    // ===== collection module tests =====
+    print("=== collection module tests ===")
+
+    // Counter
+    val ctr = collection.counter([1, 2, 2, 3, 3, 3])
+    print("collection.counter([1,2,2,3,3,3]):", ctr)
+
+    // defaultdict
+    val dd = collection.defaultdict(|| 0)
+    print("collection.defaultdict(()->0):", dd)
+
+    // deque
+    val dq = collection.deque([1, 2, 3])
+    print("collection.deque([1,2,3]):", dq)
+
+    // namedtuple
+    val nt = collection.namedtuple("Point", ["x", "y"])
+    print("collection.namedtuple(\"Point\", [\"x\",\"y\"]):", nt)
+
+    // OrderedDict
+    val od = collection.OrderedDict()
+    print("collection.OrderedDict():", od)
+
+    // ChainMap
+    val cm = collection.ChainMap([{: "a": 1}])
+    print("collection.ChainMap([{: \"a\": 1}]):", cm)
+
+    // ===== itors module tests =====
+    print("=== itors module tests ===")
+
+    // Infinite iterators
+    val c = itors.count(0, 1)
+    print("itors.count(0, 1):", c)
+
+    val cyc = itors.cycle([1, 2, 3])
+    print("itors.cycle([1,2,3]):", cyc)
+
+    val rep = itors.repeat(7, 3)
+    print("itors.repeat(7, 3):", rep)
+
+    // Iterator combination
+    val ch = itors.chain([[1, 2], [3, 4]])
+    print("itors.chain([[1,2],[3,4]]):", ch)
+
+    val isl = itors.islice([0, 1, 2, 3, 4, 5], 1, 5, 2)
+    print("itors.islice([0..5], 1, 5, 2):", isl)
+
+    // Filtering iterators
+    val tw = itors.takewhile(|x| x < 3, [0, 1, 2, 3, 4])
+    print("itors.takewhile(x<3, [0..4]):", tw)
+
+    val dw = itors.dropwhile(|x| x < 3, [0, 1, 2, 3, 4])
+    print("itors.dropwhile(x<3, [0..4]):", dw)
+
+    // Mapping iterators
+    val sm = itors.starmap(|a| a * 2, [1, 2, 3])
+    print("itors.starmap(a*2, [1,2,3]):", sm)
+
+    val acc = itors.accumulate([1, 2, 3, 4], |a, b| a + b)
+    print("itors.accumulate([1,2,3,4], +):", acc)
+
+    // Grouping iterators
+    val gb = itors.groupby([1, 1, 2, 2, 3], |x| x)
+    print("itors.groupby([1,1,2,2,3], id):", gb)
+
+    // Combinatorial iterators
+    val combos = itors.combinations([1, 2, 3], 2)
+    print("itors.combinations([1,2,3], 2):", combos)
+
+    val perms = itors.permutations([1, 2, 3], 2)
+    print("itors.permutations([1,2,3], 2):", perms)
+
+    val prod = itors.product([[1, 2], [3, 4]])
+    print("itors.product([[1,2],[3,4]]):", prod)
+
+    print("All gc/collection/itors tests completed!")

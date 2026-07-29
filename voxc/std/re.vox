@@ -1,0 +1,47 @@
+// re.vox — Vox standard library: regular expressions
+// Provides pattern matching, searching, and substitution
+// using the `regex` crate. The regex dependency is auto-added
+// when the `re` module is used.
+
+/// Compile a regular expression pattern into a Regex object.
+/// re.compile(pattern) -> Regex
+def compile(pattern: str) -> void:
+    return regex::Regex::new(&pattern).unwrap()
+
+/// Check if the pattern matches at the beginning of `string`.
+/// re.match(pattern, string) -> bool
+def match(pattern: str, string: str) -> bool:
+    return regex::Regex::new(&pattern).unwrap().is_match(&string)
+
+/// Search for the pattern anywhere in `string`.
+/// re.search(pattern, string) -> bool
+def search(pattern: str, string: str) -> bool:
+    return regex::Regex::new(&pattern).unwrap().is_match(&string)
+
+/// Find all non-overlapping matches of `pattern` in `string`.
+/// re.findall(pattern, string) -> list[str]
+def findall(pattern: str, string: str) -> list:
+    return regex::Regex::new(&pattern).unwrap()
+        .find_iter(&string)
+        .map(|m| m.as_str().to_string())
+        .collect::<Vec<_>>()
+
+/// Replace all occurrences of `pattern` in `string` with `repl`.
+/// re.sub(pattern, repl, string) -> str
+def sub(pattern: str, repl: str, string: str) -> str:
+    return regex::Regex::new(&pattern).unwrap()
+        .replace_all(&string, &repl)
+        .to_string()
+
+/// Split `string` by occurrences of `pattern`.
+/// re.split(pattern, string) -> list[str]
+def split(pattern: str, string: str) -> list:
+    return regex::Regex::new(&pattern).unwrap()
+        .split(&string)
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>()
+
+/// Escape special regex characters in `string`.
+/// re.escape(string) -> str
+def escape(string: str) -> str:
+    return regex::escape(&string)

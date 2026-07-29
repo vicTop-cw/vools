@@ -1,0 +1,52 @@
+// Vox language grammar (Lark EBNF)
+// Reference grammar for documentation purposes.
+// The actual parser is a hand-written recursive descent parser in voxc-py/voxc/parser/
+
+// ---- Tokens ----
+// Keywords are defined in VoxLexer.KEYWORDS
+// Operators are defined in VoxLexer.OPERATORS
+
+// ---- Grammar (informative) ----
+//
+// module       : statement*
+//
+// statement    : var_decl | val_decl | const_decl | fn_def
+//              | if_stmt | for_loop | while_loop | loop_stmt
+//              | return_stmt | import_stmt | expr_stmt
+//              | class_def | struct_def | enum_def | trait_def
+//              | match_stmt | try_block | defer_stmt
+//              | define_decl | event_decl | template_decl
+//              | operator_decl | test_stmt | suite_stmt
+//
+// var_decl     : "var" NAME (":" type)? "=" expr
+// val_decl     : "val" NAME (":" type)? "=" expr
+// const_decl   : "const" NAME (":" type)? "=" expr
+//
+// fn_def       : "def" NAME generics? "(" params? ")" ("->" type)? ":" block
+// params       : param ("," param)*
+// param        : NAME (":" type)? ("=" expr)?
+//
+// if_stmt      : "if" expr ":" block ("elif" expr ":" block)* ("else" ":" block)?
+// for_loop     : "for" NAME "in" expr ("if" expr)? ":" block ("else" ":" block)?
+// while_loop   : "while" expr ":" block ("else" ":" block)?
+// loop_stmt    : "loop" ":" block
+//
+// return_stmt  : "return" expr?
+// import_stmt  : "import" NAME ("." NAME)* ("::" "{" NAME ("," NAME)* "}")? ("as" NAME)?
+// from_import  : "from" NAME ("." NAME)* "import" NAME ("," NAME)*
+//
+// block        : NEWLINE INDENT statement* DEDENT
+//
+// expr         : if_expr
+// if_expr      : comparison ("if" expr "else" expr)?
+// comparison   : additive (("==" | "!=" | "<" | ">" | "<=" | ">=") additive)*
+// additive     : multiplicative (("+" | "-") multiplicative)*
+// multiplicative: unary (("*" | "/" | "%") unary)*
+// unary        : ("-" | "!") unary | call
+// call         : primary ("(" args? ")" | "." NAME ("(" args? ")")? | "[" expr "]")*
+// primary      : NUMBER | STRING | "true" | "false" | "None"
+//              | NAME | "(" expr ("," expr)* ")" | "[" args? "]"
+//              | "{" args? "}" | "{:" (expr ":" expr ("," expr ":" expr)*)? "}"
+//
+// type         : NAME ("<" type ("," type)* ">")? | "[" type "]" | "{:" type ":" type "}"
+//              | type "?" | "(" type ("," type)* ")"

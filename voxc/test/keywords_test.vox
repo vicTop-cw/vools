@@ -1,0 +1,30 @@
+// Test file for new keywords: ignore, exclude
+// Also exercises normalized lowercase keywords (none, include)
+
+// Regular test (lowercase keyword normalization check)
+test normal_test:
+    val a = 1 + 2
+    print(a)
+
+// ignore test — generates #[test] #[ignore] fn name() { ... }
+ignore test ignored_quick_test:
+    val x = 42
+    print(x)
+
+// ignore test with string-literal name
+ignore test "ignored_string_named":
+    print("this test is ignored")
+
+// exclude — imports everything from a module EXCEPT listed items
+// (emitted as a comment in codegen; resolved at import time)
+exclude std::collections { HashMap, HashSet }
+
+def main() -> void:
+    // Use lowercase 'none' keyword
+    val maybe: int? = none
+    if maybe == none:
+        print("maybe is none")
+    else:
+        print("maybe has a value")
+
+    print("keywords test complete")

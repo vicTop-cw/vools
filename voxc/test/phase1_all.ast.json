@@ -1,0 +1,594 @@
+{
+  "name": "phase1_all",
+  "statements": [
+    {
+      "node": "DefineDecl",
+      "span": {
+        "file": "test/phase1_all.vox",
+        "line": 8,
+        "col": 0,
+        "end_line": 8,
+        "end_col": 1
+      },
+      "name": "Sortable",
+      "generics": [
+        {
+          "name": "T",
+          "bounds": []
+        }
+      ],
+      "constraints": {
+        "props": [],
+        "statics": [],
+        "typemethods": [],
+        "instancemethods": [
+          [
+            "sort",
+            {
+              "node": "FnType",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "params": [
+                {
+                  "node": "Named",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "name": "self"
+                }
+              ],
+              "return_type": {
+                "node": "Named",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "name": "void"
+              }
+            }
+          ]
+        ],
+        "check": null
+      }
+    },
+    {
+      "node": "OperatorDecl",
+      "span": {
+        "file": "test/phase1_all.vox",
+        "line": 13,
+        "col": 0,
+        "end_line": 13,
+        "end_col": 1
+      },
+      "op_type": "Prefix",
+      "symbol": "!",
+      "name": "not_op",
+      "generics": [],
+      "params": [
+        [
+          "x",
+          {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "bool"
+          }
+        ]
+      ],
+      "return_type": {
+        "node": "Named",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "name": "bool"
+      },
+      "where_clauses": []
+    },
+    {
+      "node": "OperatorDecl",
+      "span": {
+        "file": "test/phase1_all.vox",
+        "line": 16,
+        "col": 0,
+        "end_line": 16,
+        "end_col": 1
+      },
+      "op_type": "Suffix",
+      "symbol": "++",
+      "name": "inc_op",
+      "generics": [],
+      "params": [
+        [
+          "x",
+          {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "int"
+          }
+        ]
+      ],
+      "return_type": {
+        "node": "Named",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "name": "int"
+      },
+      "where_clauses": []
+    },
+    {
+      "node": "DecoratedStmt",
+      "span": {
+        "file": "test/phase1_all.vox",
+        "line": 20,
+        "col": 0,
+        "end_line": 20,
+        "end_col": 1
+      },
+      "decorators": [
+        "deprecated"
+      ],
+      "stmt": {
+        "node": "FnDef",
+        "span": {
+          "file": "test/phase1_all.vox",
+          "line": 20,
+          "col": 1,
+          "end_line": 20,
+          "end_col": 2
+        },
+        "name": "old_func",
+        "generics": [],
+        "params": [
+          {
+            "name": "x",
+            "variadic": false,
+            "type_annotation": {
+              "node": "Named",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "int"
+            }
+          }
+        ],
+        "return_type": {
+          "node": "Named",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "int"
+        },
+        "raises": null,
+        "where_clauses": [],
+        "body": [
+          {
+            "node": "ReturnStmt",
+            "span": {
+              "file": "test/phase1_all.vox",
+              "line": 22,
+              "col": 0,
+              "end_line": 22,
+              "end_col": 1
+            },
+            "value": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "x"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "node": "SuiteStmt",
+      "span": {
+        "file": "test/phase1_all.vox",
+        "line": 25,
+        "col": 0,
+        "end_line": 25,
+        "end_col": 1
+      },
+      "name": "math_tests",
+      "body": [
+        {
+          "node": "TestStmt",
+          "span": {
+            "file": "test/phase1_all.vox",
+            "line": 26,
+            "col": 0,
+            "end_line": 26,
+            "end_col": 1
+          },
+          "name": "template_double",
+          "body": [
+            {
+              "node": "VarDecl",
+              "span": {
+                "file": "test/phase1_all.vox",
+                "line": 27,
+                "col": 0,
+                "end_line": 27,
+                "end_col": 1
+              },
+              "mutable": false,
+              "name": "a",
+              "value": {
+                "node": "BinaryOp",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "left": {
+                  "node": "Literal",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "value": {
+                    "kind": "Int",
+                    "value": 5
+                  }
+                },
+                "op": "Add",
+                "right": {
+                  "node": "Literal",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "value": {
+                    "kind": "Int",
+                    "value": 5
+                  }
+                }
+              }
+            },
+            {
+              "node": "ExprStmt",
+              "span": {
+                "file": "test/phase1_all.vox",
+                "line": 28,
+                "col": 0,
+                "end_line": 28,
+                "end_col": 1
+              },
+              "expr": {
+                "node": "Call",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "func": {
+                  "node": "Ident",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "name": "print"
+                },
+                "args": [
+                  {
+                    "node": "Ident",
+                    "span": {
+                      "file": "<unknown>",
+                      "line": 0,
+                      "col": 0,
+                      "end_line": 0,
+                      "end_col": 0
+                    },
+                    "name": "a"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "node": "TestStmt",
+          "span": {
+            "file": "test/phase1_all.vox",
+            "line": 30,
+            "col": 0,
+            "end_line": 30,
+            "end_col": 1
+          },
+          "name": "increment",
+          "body": [
+            {
+              "node": "VarDecl",
+              "span": {
+                "file": "test/phase1_all.vox",
+                "line": 31,
+                "col": 0,
+                "end_line": 31,
+                "end_col": 1
+              },
+              "mutable": false,
+              "name": "x",
+              "value": {
+                "node": "Literal",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "value": {
+                  "kind": "Int",
+                  "value": 10
+                }
+              }
+            },
+            {
+              "node": "VarDecl",
+              "span": {
+                "file": "test/phase1_all.vox",
+                "line": 31,
+                "col": 8,
+                "end_line": 31,
+                "end_col": 9
+              },
+              "mutable": false,
+              "name": "y",
+              "value": {
+                "node": "BinaryOp",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "left": {
+                  "node": "Ident",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "name": "x"
+                },
+                "op": "Add",
+                "right": {
+                  "node": "Literal",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "value": {
+                    "kind": "Int",
+                    "value": 1
+                  }
+                }
+              }
+            },
+            {
+              "node": "ExprStmt",
+              "span": {
+                "file": "test/phase1_all.vox",
+                "line": 33,
+                "col": 0,
+                "end_line": 33,
+                "end_col": 1
+              },
+              "expr": {
+                "node": "Call",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "func": {
+                  "node": "Ident",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "name": "print"
+                },
+                "args": [
+                  {
+                    "node": "Ident",
+                    "span": {
+                      "file": "<unknown>",
+                      "line": 0,
+                      "col": 0,
+                      "end_line": 0,
+                      "end_col": 0
+                    },
+                    "name": "y"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "node": "TestStmt",
+      "span": {
+        "file": "test/phase1_all.vox",
+        "line": 35,
+        "col": 0,
+        "end_line": 35,
+        "end_col": 1
+      },
+      "name": "standalone",
+      "body": [
+        {
+          "node": "VarDecl",
+          "span": {
+            "file": "test/phase1_all.vox",
+            "line": 36,
+            "col": 0,
+            "end_line": 36,
+            "end_col": 1
+          },
+          "mutable": false,
+          "name": "z",
+          "value": {
+            "node": "Call",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "func": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "old_func"
+            },
+            "args": [
+              {
+                "node": "Literal",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "value": {
+                  "kind": "Int",
+                  "value": 42
+                }
+              }
+            ]
+          }
+        },
+        {
+          "node": "ExprStmt",
+          "span": {
+            "file": "test/phase1_all.vox",
+            "line": 37,
+            "col": 0,
+            "end_line": 37,
+            "end_col": 1
+          },
+          "expr": {
+            "node": "Call",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "func": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "print"
+            },
+            "args": [
+              {
+                "node": "Ident",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "name": "z"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "span": {
+    "file": "test/phase1_all.vox",
+    "line": 4,
+    "col": 0,
+    "end_line": 4,
+    "end_col": 1
+  }
+}

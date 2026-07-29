@@ -1,0 +1,10 @@
+// Test: tracker panic mapping
+// This file intentionally triggers a panic to test the tracker
+
+def divide(a: int, b: int) -> int:
+    return a / b
+
+def main() -> void:
+    // This will cause a panic: divide by zero
+    var result = divide(10, 0)
+    print(result)

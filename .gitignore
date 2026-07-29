@@ -26,8 +26,9 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
-# ===== Virtual environments =====
+# ===== Virtual environments
 .venv/
+.venv36/
 venv/
 env/
 ENV/
@@ -73,6 +74,8 @@ dmypy.json
 *~
 .run/
 .atomcode/
+.trae/
+.workbuddy/
 
 # ===== OS =====
 .DS_Store
@@ -113,6 +116,16 @@ vools/config.py
 logs/
 release.log
 site/
+
+# Rust bridge compile cache
+__rust__/cache/
+
+# Rust compiler target directories
+**/target/
+**/target2/
+**/target3/
+**/target4/
+voxc/voxc-rs/target_*/
 
 # Nim build artifacts
 *.dll

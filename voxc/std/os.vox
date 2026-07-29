@@ -1,0 +1,102 @@
+// os.vox — Vox standard library: operating system interfaces
+// Provides file system operations, environment variable access,
+// and platform constants, modeled after Python's os module.
+
+// ===== Working directory =====
+
+/// Get the current working directory.
+/// os.getcwd() -> str
+def getcwd() -> str:
+    return std::env::current_dir().unwrap().to_string_lossy().to_string()
+
+/// Change the current working directory.
+/// os.chdir(path) -> void
+def chdir(path: str) -> void:
+    std::env::set_current_dir(path).unwrap()
+
+// ===== Directory listing =====
+
+/// List entries in a directory (defaults to ".").
+/// os.listdir(path=".") -> list[str]
+def listdir(path: str = ".") -> list[str]:
+    return std::fs::read_dir(path).unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect()
+
+// ===== Directory creation =====
+
+/// Create a single directory.
+/// os.mkdir(path) -> void
+def mkdir(path: str) -> void:
+    std::fs::create_dir(path).unwrap()
+
+/// Create all directories in the path.
+/// os.makedirs(path) -> void
+def makedirs(path: str) -> void:
+    std::fs::create_dir_all(path).unwrap()
+
+// ===== File removal =====
+
+/// Remove a file (alias: unlink).
+/// os.remove(path) -> void
+def remove(path: str) -> void:
+    std::fs::remove_file(path).unwrap()
+
+/// Remove a file (same as remove).
+/// os.unlink(path) -> void
+def unlink(path: str) -> void:
+    std::fs::remove_file(path).unwrap()
+
+/// Remove an empty directory.
+/// os.rmdir(path) -> void
+def rmdir(path: str) -> void:
+    std::fs::remove_dir(path).unwrap()
+
+// ===== File renaming =====
+
+/// Rename or move a file or directory.
+/// os.rename(old, new) -> void
+def rename(old: str, new: str) -> void:
+    std::fs::rename(old, new).unwrap()
+
+// ===== Environment variables =====
+
+/// Get all environment variables as a dictionary.
+/// os.environ() -> dict
+def environ() -> dict:
+    return std::env::vars().collect()
+
+/// Get an environment variable, with optional default.
+/// os.getenv(key, default="") -> str
+def getenv(key: str, default: str = "") -> str:
+    return std::env::var(key).unwrap_or(default)
+
+/// Set an environment variable.
+/// os.setenv(key, value) -> void
+def setenv(key: str, value: str) -> void:
+    std::env::set_var(key, value)
+
+// ===== Platform constants (attributes) =====
+
+/// All environment variables as a dictionary.
+/// os.environ -> dict
+val environ: dict = std::env::vars().collect()
+
+/// Path separator: "\\" on Windows, "/" on POSIX.
+/// os.sep -> str
+val sep: str = if cfg!(windows) { "\\" } else { "/" }
+
+/// Line separator: "\r\n" on Windows, "\n" on POSIX.
+/// os.linesep -> str
+val linesep: str = if cfg!(windows) { "\r\n" } else { "\n" }
+
+/// OS name: "nt" on Windows, "posix" on POSIX.
+/// os.name -> str
+val name: str = if cfg!(windows) { "nt" } else { "posix" }
+
+// ===== os.path submodule =====
+
+/// Check if a path exists.
+/// os.path.exists(path) -> bool
+def path_exists(path: str) -> bool:
+    return std::path::Path::new(&path).exists()

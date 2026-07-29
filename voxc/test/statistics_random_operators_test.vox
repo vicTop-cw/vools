@@ -1,0 +1,109 @@
+// Test statistics, random, and operators standard library modules
+
+def main() -> void:
+    // ===== statistics module tests =====
+    val data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+
+    print("statistics.mean(data):", statistics.mean(data))
+    print("statistics.median(data):", statistics.median(data))
+    print("statistics.mode(data):", statistics.mode(data))
+    print("statistics.multimode(data):", statistics.multimode(data))
+    print("statistics.variance(data):", statistics.variance(data))
+    print("statistics.pvariance(data):", statistics.pvariance(data))
+    print("statistics.stdev(data):", statistics.stdev(data))
+    print("statistics.pstdev(data):", statistics.pstdev(data))
+    print("statistics.harmonic_mean(data):", statistics.harmonic_mean(data))
+    print("statistics.geometric_mean(data):", statistics.geometric_mean(data))
+    print("statistics.quantiles(data, 4):", statistics.quantiles(data, 4))
+
+    // ===== random module tests =====
+    random.seed(42)
+
+    val r1 = random.random()
+    print("random.random():", r1)
+
+    val r2 = random.uniform(0.0, 100.0)
+    print("random.uniform(0, 100):", r2)
+
+    val r3 = random.randint(1, 100)
+    print("random.randint(1, 100):", r3)
+
+    val r4 = random.randrange(0, 10, 2)
+    print("random.randrange(0, 10, 2):", r4)
+
+    val seq = [1, 2, 3, 4, 5]
+    val r5 = random.choice(seq)
+    print("random.choice([1..5]):", r5)
+
+    val r6 = random.choices(seq, [], 3)
+    print("random.choices(seq, k=3):", r6)
+
+    val r7 = random.sample(seq, 3)
+    print("random.sample(seq, 3):", r7)
+
+    val shuffled = random.shuffle(seq)
+    print("random.shuffle(seq):", shuffled)
+
+    val r8 = random.gauss(0.0, 1.0)
+    print("random.gauss(0, 1):", r8)
+
+    val r9 = random.normalvariate(10.0, 2.0)
+    print("random.normalvariate(10, 2):", r9)
+
+    val r10 = random.getrandbits(8)
+    print("random.getrandbits(8):", r10)
+
+    val state = random.getstate()
+    random.setstate(state)
+
+    // Distribution functions
+    print("random.expovariate(1.0):", random.expovariate(1.0))
+    print("random.betavariate(2.0, 5.0):", random.betavariate(2.0, 5.0))
+    print("random.gammavariate(2.0, 1.0):", random.gammavariate(2.0, 1.0))
+    print("random.paretovariate(1.0):", random.paretovariate(1.0))
+    print("random.weibullvariate(1.0, 5.0):", random.weibullvariate(1.0, 5.0))
+    print("random.lognormvariate(0.0, 1.0):", random.lognormvariate(0.0, 1.0))
+
+    // ===== operators module tests =====
+    print("operators.add(3, 4):", operators.add(3, 4))
+    print("operators.sub(10, 3):", operators.sub(10, 3))
+    print("operators.mul(3, 4):", operators.mul(3, 4))
+    print("operators.truediv(10, 4):", operators.truediv(10, 4))
+    print("operators.floordiv(10, 3):", operators.floordiv(10, 3))
+    print("operators.mod(10, 3):", operators.mod(10, 3))
+    print("operators.pow(2.0, 10.0):", operators.pow(2.0, 10.0))
+
+    // Unary
+    print("operators.neg(5):", operators.neg(5))
+    print("operators.pos(5):", operators.pos(5))
+    print("operators.abs(-7):", operators.abs(-7))
+    print("operators.inv(5):", operators.inv(5))
+
+    // Bitwise
+    print("operators.lshift(1, 4):", operators.lshift(1, 4))
+    print("operators.rshift(256, 4):", operators.rshift(256, 4))
+    print("operators.and_(12, 10):", operators.and_(12, 10))
+    print("operators.or_(12, 10):", operators.or_(12, 10))
+    print("operators.xor(12, 10):", operators.xor(12, 10))
+
+    // Sequence
+    print("operators.concat(\"hello\", \"world\"):", operators.concat("hello", "world"))
+    print("operators.contains([1,2,3], 2):", operators.contains([1, 2, 3], 2))
+    print("operators.truth(1):", operators.truth(1))
+    print("operators.truth(0):", operators.truth(0))
+
+    // Identity
+    val a = 42
+    val b = 42
+    print("operators.is_(a, b):", operators.is_(a, b))
+    print("operators.is_not(a, b):", operators.is_not(a, b))
+
+    // Index
+    print("operators.index(5):", operators.index(5))
+
+    // Comparison
+    print("operators.comparison(3, 5, \"<\"):", operators.comparison(3, 5, "<"))
+    print("operators.comparison(5, 3, \">\"):", operators.comparison(5, 3, ">"))
+    print("operators.comparison(3, 3, \"==\"):", operators.comparison(3, 3, "=="))
+
+    print("All statistics/random/operators tests completed!")

@@ -1,0 +1,15 @@
+// Define type constraint demo
+define Sortable<T>:
+    props:
+        cmp: (T, T) -> int
+    instancemethods:
+        sort: (self) -> void
+
+define _InternalCheck<T>:
+    props:
+        name: str
+    statics:
+        create: () -> T
+
+val x = 42
+print(x)

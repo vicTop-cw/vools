@@ -1,0 +1,32 @@
+// Typing module test
+
+// List type annotation (generic syntax with angle brackets)
+val numbers: typing.List<int> = [1, 2, 3]
+numbers.push(4)
+println("typing.List<int>:", numbers)
+
+// Dict type annotation
+val map: typing.Dict<str, str> = {: name: "Alice", age: "30"}
+println("typing.Dict<str, str>:", map)
+
+// Set type annotation
+val s: typing.Set<int> = {1, 2, 3}
+println("typing.Set<int>:", s)
+
+// Optional type annotation  
+val opt_some: typing.Optional<int> = Some(42)
+val opt_none: typing.Optional<int> = None
+println("typing.Optional<int>:", opt_some)
+println("typing.Optional<int>:", opt_none)
+
+// Shorthand optional
+val opt_short: int? = Some(100)
+println("int?:", opt_short)
+
+// List shorthand syntax
+val list_short: [int] = [5, 6, 7]
+println("[int]:", list_short)
+
+// Tuple type
+val t: (int, str, float) = (1, "hello", 3.14)
+println("tuple:", t)

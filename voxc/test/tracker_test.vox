@@ -1,0 +1,33 @@
+// Test: reflect runtime + tracker panic mapping
+
+struct Point:
+    x: int
+    y: int
+
+enum Color:
+    Red
+    Green
+    Blue
+
+trait Show:
+    def show(self) -> void
+
+impl Show for Point:
+    def show(self) -> void:
+        print("point")
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+def main() -> void:
+    // reflect at runtime — only signatures visible
+    print(reflect.type_name(Point))
+    print(reflect.is_struct(Point))
+    print(reflect.is_enum(Color))
+    print(reflect.variants(Color))
+    print(reflect.has_trait(Point, Show))
+
+    // Runtime code
+    var p = Point(1, 2)
+    print(p.x)
+    print(add(3, 4))

@@ -1,0 +1,49 @@
+// decimals.vox — Vox standard library: decimal arithmetic
+// Provides support for fast correctly-rounded decimal floating point arithmetic,
+// modeled after Python's decimal module.
+
+// ===== Constants =====
+
+/// The maximum precision allowed.
+/// decimals.MAX_PREC -> int
+val MAX_PREC: int = 999999999
+
+/// The maximum exponent.
+/// decimals.MAX_EMAX -> int
+val MAX_EMAX: int = 999999999
+
+/// The minimum exponent.
+/// decimals.MIN_EMIN -> int = -999999999
+val MIN_EMIN: int = -999999999
+
+/// Whether context variables are supported.
+/// decimals.HAVE_CONTEXTVAR -> bool
+val HAVE_CONTEXTVAR: bool = true
+
+/// Whether threads are supported.
+/// decimals.HAVE_THREADS -> bool
+val HAVE_THREADS: bool = true
+
+// ===== Core types =====
+
+/// Create a new Decimal from a string, integer, or float.
+/// decimals.Decimal(value="0") -> Decimal
+def Decimal(value: str = "0") -> VoxDecimal:
+    return VoxDecimal::from(value)
+
+// ===== Context management =====
+
+/// Get the current decimal context.
+/// decimals.getcontext() -> context
+def getcontext() -> str:
+    return vox_decimals_getcontext()
+
+/// Set the current decimal context.
+/// decimals.setcontext(ctx) -> void
+def setcontext(ctx: str) -> void:
+    vox_decimals_setcontext(ctx)
+
+/// Return a context manager for a local decimal context.
+/// decimals.localcontext(ctx) -> context
+def localcontext(ctx: str) -> str:
+    return vox_decimals_localcontext(ctx)

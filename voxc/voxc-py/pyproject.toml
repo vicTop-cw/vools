@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "voxc-py"
+version = "0.1.0"
+description = "Vox language compiler frontend (Python Lark)"
+requires-python = ">=3.6"
+dependencies = [
+    "lark>=1.0",
+]
+
+[project.scripts]
+voxc-py = "voxc.__main__:main"

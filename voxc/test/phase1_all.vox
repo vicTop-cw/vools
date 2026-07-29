@@ -1,0 +1,37 @@
+// Phase 1 comprehensive test: template + define + *fix + decorator + test/suite
+
+// template
+template double(x):
+    __x__ + __x__
+
+// define
+define Sortable<T>:
+    instancemethods:
+        sort: (self) -> void
+
+// *fix operators
+prefix ! not_op(x: bool) -> bool:
+    return not x
+
+suffix ++ inc_op(x: int) -> int:
+    return x + 1
+
+// decorator
+@deprecated
+def old_func(x: int) -> int:
+    return x
+
+// test and suite
+suite math_tests:
+    test template_double:
+        val a = double(5)
+        print(a)
+
+    test increment:
+        val x = 10
+        val y = x + 1
+        print(y)
+
+test standalone:
+    val z = old_func(42)
+    print(z)

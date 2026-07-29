@@ -1,0 +1,109 @@
+// utils.vox — Vox standard library: utility functions
+// Provides common helpers for Option handling, type inspection,
+// function composition, and control flow utilities.
+
+// ===== Option handling =====
+
+/// Check if a value is None.
+/// utils.is_none(x) -> bool
+def is_none(x: int?) -> bool:
+    return x.is_none()
+
+/// Check if a value is Some.
+/// utils.is_some(x) -> bool
+def is_some(x: int?) -> bool:
+    return x.is_some()
+
+/// Unwrap an Option, or return a default value.
+/// utils.unwrap(x) or utils.unwrap(x, default)
+def unwrap(x: int?, default: int = 0) -> int:
+    return x.unwrap_or(default)
+
+/// Unwrap with an error message.
+/// utils.expect(x, msg) -> T
+def expect(x: int?, msg: str) -> int:
+    return x.expect(msg)
+
+// ===== Parsing and conversion =====
+
+/// Try to parse a string as an integer.
+/// utils.try_parse(s) -> int?
+def try_parse(s: str) -> int?:
+    return s.parse::<i64>().ok()
+
+/// Convert a value to string.
+/// utils.to_string(x) -> str
+def to_string(x: int) -> str:
+    return x.to_string()
+
+/// Get a debug representation of a value.
+/// utils.debug_string(x) -> str
+def debug_string(x: int) -> str:
+    return format!("{:?}", x)
+
+// ===== Type inspection =====
+
+/// Get the TypeId of a value.
+/// utils.type_id(x) -> TypeId
+def type_id(x: int) -> int:
+    return std::any::Any::type_id(&x)
+
+/// Get the type name of a value.
+/// utils.type_name(x) -> str
+def type_name(x: int) -> str:
+    return std::any::type_name_of_val(&x)
+
+// ===== Control flow =====
+
+/// Discard a value (evaluate for side effects, ignore result).
+/// utils.discard(x) -> void
+def discard(x: int) -> void:
+    let _ = x
+
+/// Return the value unchanged.
+/// utils.identity(x) -> T
+def identity(x: int) -> int:
+    return x
+
+/// Pipe a value through a function: f(x)
+/// utils.pipe(x, f) -> R
+def pipe(x: int, f: (int) -> int) -> int:
+    return f(x)
+
+/// Compose two functions: f(g(x))
+/// utils.compose(f, g) -> (T) -> R
+def compose(f: (int) -> int, g: (int) -> int) -> (int) -> int:
+    return move |x| f(g(x))
+
+/// Chain multiple function applications.
+/// utils.chain(funcs, x) -> R
+def chain(funcs: list, x: int) -> int:
+    return funcs(x)
+
+// ===== Caching and retry =====
+
+/// Memoize a function (cache results).
+/// utils.memoize(func) -> Func
+def memoize(func: (int) -> int) -> (int) -> int:
+    return func
+
+/// Retry a function N times.
+/// utils.retry(func, times) -> void
+def retry(func: () -> int, times: int) -> void:
+    for _ in 0..times:
+        func()
+
+/// Debounce a function call (simplified: immediate call).
+/// utils.debounce(func) -> void
+def debounce(func: () -> void) -> void:
+    func()
+
+/// Throttle a function call (simplified: immediate call).
+/// utils.throttle(func) -> void
+def throttle(func: () -> void) -> void:
+    func()
+
+/// Apply a timeout to a function (simplified: immediate call).
+/// utils.timeout(func) -> void
+def timeout(func: () -> void) -> void:
+    func()

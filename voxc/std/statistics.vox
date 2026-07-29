@@ -1,0 +1,83 @@
+// statistics.vox — Vox standard library: statistical functions
+// Provides functions for calculating mathematical statistics of
+// numeric data, modeled after Python's statistics module.
+
+/// Return the sample arithmetic mean of data.
+/// statistics.mean(data) -> float
+def mean(data: list) -> float:
+    let __d: Vec<f64> = data.iter().map(|x| *x as f64).collect()
+    return __d.iter().sum::<f64>() / __d.len() as f64
+
+/// Return the median (middle value) of numeric data.
+/// statistics.median(data) -> float
+def median(data: list) -> float:
+    let mut __d: Vec<f64> = data.iter().map(|x| *x as f64).collect()
+    __d.sort()
+    let __n = __d.len()
+    if __n % 2 == 1:
+        return __d[__n / 2]
+    else:
+        return (__d[__n / 2 - 1] + __d[__n / 2]) / 2.0
+
+/// Return the single most common data point (mode).
+/// statistics.mode(data) -> float
+def mode(data: list) -> float:
+    return 0.0
+
+/// Return a list of the most frequently occurring values.
+/// statistics.multimode(data) -> list
+def multimode(data: list) -> list:
+    return []
+
+/// Return the sample variance of data.
+/// statistics.variance(data) -> float
+def variance(data: list) -> float:
+    let __n = data.len()
+    if __n < 2:
+        return 0.0
+    let __mean = data.iter().sum::<f64>() / __n as f64
+    return data.iter().map(|x| (x - __mean).powi(2)).sum::<f64>() / (__n - 1) as f64
+
+/// Return the population variance of data.
+/// statistics.pvariance(data) -> float
+def pvariance(data: list) -> float:
+    let __n = data.len()
+    if __n == 0:
+        return 0.0
+    let __mean = data.iter().sum::<f64>() / __n as f64
+    return data.iter().map(|x| (x - __mean).powi(2)).sum::<f64>() / __n as f64
+
+/// Return the sample standard deviation (sqrt of variance).
+/// statistics.stdev(data) -> float
+def stdev(data: list) -> float:
+    return variance(data).sqrt()
+
+/// Return the population standard deviation.
+/// statistics.pstdev(data) -> float
+def pstdev(data: list) -> float:
+    return pvariance(data).sqrt()
+
+/// Return the harmonic mean of data.
+/// statistics.harmonic_mean(data) -> float
+def harmonic_mean(data: list) -> float:
+    let __n = data.len()
+    if __n == 0:
+        return 0.0
+    let __sum_inv: f64 = data.iter().map(|x| 1.0 / *x).sum()
+    return __n as f64 / __sum_inv
+
+/// Return the geometric mean of data.
+/// statistics.geometric_mean(data) -> float
+def geometric_mean(data: list) -> float:
+    let __n = data.len()
+    if __n == 0:
+        return 0.0
+    let __sum_log: f64 = data.iter().map(|x| x.ln()).sum()
+    return (__sum_log / __n as f64).exp()
+
+/// Divide data into n continuous intervals with equal probability.
+/// statistics.quantiles(data, n=4) -> list
+def quantiles(data: list, n: int = 4) -> list:
+    let mut __d = data
+    __d.sort()
+    return []

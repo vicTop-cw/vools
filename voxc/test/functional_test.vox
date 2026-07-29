@@ -1,0 +1,71 @@
+// Functional programming builtins test
+// Tests: range, map, filter, zip, enumerate, reversed, sorted, slice, lambdas
+
+// === range ===
+val r1 = range(5)
+println("range(5):", r1)
+
+val r2 = range(2, 8)
+println("range(2, 8):", r2)
+
+val r3 = range(0, 10, 2)
+println("range(0, 10, 2):", r3)
+
+// === Lambda syntax ===
+val double = |x| x * 2
+println("double(21):", double(21))
+
+val add = |a, b| a + b
+println("add(3, 4):", add(3, 4))
+
+// === map ===
+val nums = [1, 2, 3, 4, 5]
+val doubled = map(|x| x * 2, nums)
+println("map(*2, nums):", doubled)
+
+val squared = map(|x| x * x, nums)
+println("map(^2, nums):", squared)
+
+// === filter ===
+val evens = filter(|x| x % 2 == 0, nums)
+println("filter(even, nums):", evens)
+
+val gt3 = filter(|x| x > 3, nums)
+println("filter(>3, nums):", gt3)
+
+// === zip ===
+val names = ["Alice", "Bob", "Carol"]
+val ages = [30, 25, 35]
+val pairs = zip(names, ages)
+println("zip(names, ages):", pairs)
+
+// === enumerate ===
+val indexed = enumerate(nums)
+println("enumerate(nums):", indexed)
+
+// === reversed ===
+val rev = reversed(nums)
+println("reversed(nums):", rev)
+
+// === sorted ===
+val unsorted = [3, 1, 4, 1, 5, 9, 2, 6]
+val s1 = sorted(unsorted)
+println("sorted(unsorted):", s1)
+
+val s2 = sorted(unsorted, true)
+println("sorted(unsorted, reverse):", s2)
+
+// === slice (returns a tuple for now) ===
+val sl = slice(0, 5, 2)
+println("slice(0, 5, 2):", sl)
+
+// === Combined: map + filter ===
+val even_doubled = map(|x| x * 2, filter(|x| x % 2 == 0, nums))
+println("map+filter:", even_doubled)
+
+// === Using a named function with map ===
+def square(n: int) -> int:
+    return n * n
+
+val sq_results = map(square, nums)
+println("map(square, nums):", sq_results)

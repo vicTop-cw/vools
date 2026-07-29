@@ -1,0 +1,67 @@
+// datetime.vox — Vox standard library: date and time types
+// Provides constructors for dates, times, datetimes, and timedeltas,
+// plus parsing and formatting utilities, modeled after Python's datetime module.
+
+// ===== Current time =====
+
+/// Current local date and time.
+/// datetime.now() -> datetime
+def now() -> datetime:
+    return chrono::Local::now()
+
+/// Current local date and time (alias of now).
+/// datetime.today() -> datetime
+def today() -> datetime:
+    return chrono::Local::now()
+
+/// Current UTC date and time.
+/// datetime.utcnow() -> datetime
+def utcnow() -> datetime:
+    return chrono::Utc::now()
+
+// ===== Constructors =====
+
+/// Construct a date from year, month, day.
+/// datetime.date(year, month, day) -> date
+def date(year: int, month: int, day: int) -> date:
+    return chrono::NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32).unwrap()
+
+/// Construct a time from hour, minute, second (defaults to 0).
+/// datetime.time(hour=0, minute=0, second=0) -> time
+def time(hour: int = 0, minute: int = 0, second: int = 0) -> time:
+    return chrono::NaiveTime::from_hms_opt(hour as u32, minute as u32, second as u32).unwrap()
+
+/// Construct a datetime from year, month, day, hour, minute, second.
+/// datetime.datetime(year, month, day, hour=0, minute=0, second=0) -> datetime
+def datetime(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0) -> datetime:
+    return chrono::NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32).unwrap()
+        .and_hms_opt(hour as u32, minute as u32, second as u32).unwrap()
+
+/// Construct a timedelta from days, seconds, microseconds.
+/// datetime.timedelta(days=0, seconds=0, microseconds=0) -> timedelta
+def timedelta(days: int = 0, seconds: int = 0, microseconds: int = 0) -> timedelta:
+    return chrono::Duration::days(days as i64) + chrono::Duration::seconds(seconds as i64) + chrono::Duration::microseconds(microseconds as i64)
+
+// ===== Parsing and formatting =====
+
+/// Parse a date string using a strptime format.
+/// datetime.strptime(date_string, format) -> datetime
+def strptime(date_string: str, format: str) -> datetime:
+    return chrono::NaiveDateTime::parse_from_str(date_string, format).unwrap()
+
+/// Format the current time using a strftime format string.
+/// datetime.strftime(format) -> str
+def strftime(format: str) -> str:
+    return chrono::Local::now().format(format).to_string()
+
+// ===== Timestamp conversion =====
+
+/// Convert a Unix timestamp to a local datetime.
+/// datetime.fromtimestamp(secs) -> datetime
+def fromtimestamp(secs: float) -> datetime:
+    return chrono::DateTime::from_timestamp(secs as i64, 0).map(|dt| dt.with_timezone(&chrono::Local)).unwrap_or_else(|| chrono::Local::now())
+
+/// Convert a Unix timestamp to a UTC datetime.
+/// datetime.utcfromtimestamp(secs) -> datetime
+def utcfromtimestamp(secs: float) -> datetime:
+    return chrono::DateTime::from_timestamp(secs as i64, 0).unwrap_or_else(|| chrono::Utc::now())

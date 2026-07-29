@@ -1,0 +1,997 @@
+{
+  "name": "phase2_all",
+  "statements": [
+    {
+      "node": "StructDef",
+      "span": {
+        "file": "test/phase2_all.vox",
+        "line": 1,
+        "col": 0,
+        "end_line": 1,
+        "end_col": 1
+      },
+      "name": "Point",
+      "generics": [],
+      "fields": [
+        {
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "x",
+          "type_annotation": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "int"
+          }
+        },
+        {
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "y",
+          "type_annotation": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "int"
+          }
+        }
+      ]
+    },
+    {
+      "node": "EnumDef",
+      "span": {
+        "file": "test/phase2_all.vox",
+        "line": 9,
+        "col": 0,
+        "end_line": 9,
+        "end_col": 1
+      },
+      "name": "Color",
+      "generics": [],
+      "variants": [
+        {
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "Red"
+        },
+        {
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "Green"
+        },
+        {
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "Blue"
+        },
+        {
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "RGB",
+          "data": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "int"
+          }
+        }
+      ]
+    },
+    {
+      "node": "ClassDef",
+      "span": {
+        "file": "test/phase2_all.vox",
+        "line": 16,
+        "col": 0,
+        "end_line": 16,
+        "end_col": 1
+      },
+      "name": "Animal",
+      "parent": null,
+      "fields": [
+        {
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "name",
+          "type_annotation": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "str"
+          },
+          "mutable": false
+        },
+        {
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "age",
+          "type_annotation": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "int"
+          },
+          "mutable": false
+        }
+      ],
+      "methods": [
+        {
+          "node": "FnDef",
+          "span": {
+            "file": "test/phase2_all.vox",
+            "line": 18,
+            "col": 5,
+            "end_line": 18,
+            "end_col": 6
+          },
+          "name": "speak",
+          "generics": [],
+          "params": [
+            {
+              "name": "self",
+              "variadic": false
+            }
+          ],
+          "return_type": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "str"
+          },
+          "raises": null,
+          "where_clauses": [],
+          "body": [
+            {
+              "node": "ReturnStmt",
+              "span": {
+                "file": "test/phase2_all.vox",
+                "line": 20,
+                "col": 0,
+                "end_line": 20,
+                "end_col": 1
+              },
+              "value": {
+                "node": "MethodCall",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "receiver": {
+                  "node": "Ident",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "name": "self"
+                },
+                "method": "name",
+                "args": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "node": "TraitDef",
+      "span": {
+        "file": "test/phase2_all.vox",
+        "line": 23,
+        "col": 0,
+        "end_line": 23,
+        "end_col": 1
+      },
+      "name": "Show",
+      "generics": [],
+      "methods": [
+        {
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "show",
+          "params": [
+            {
+              "name": "self",
+              "variadic": false
+            }
+          ],
+          "return_type": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "void"
+          }
+        },
+        {
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "describe",
+          "params": [
+            {
+              "name": "self",
+              "variadic": false
+            }
+          ],
+          "return_type": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "str"
+          },
+          "default_body": [
+            {
+              "node": "ReturnStmt",
+              "span": {
+                "file": "test/phase2_all.vox",
+                "line": 26,
+                "col": 0,
+                "end_line": 26,
+                "end_col": 1
+              },
+              "value": {
+                "node": "Literal",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "value": {
+                  "kind": "String",
+                  "value": "object"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "node": "ImplBlock",
+      "span": {
+        "file": "test/phase2_all.vox",
+        "line": 29,
+        "col": 0,
+        "end_line": 29,
+        "end_col": 1
+      },
+      "trait_name": "Show",
+      "type_name": "Point",
+      "methods": [
+        {
+          "node": "FnDef",
+          "span": {
+            "file": "test/phase2_all.vox",
+            "line": 30,
+            "col": 0,
+            "end_line": 30,
+            "end_col": 1
+          },
+          "name": "show",
+          "generics": [],
+          "params": [
+            {
+              "name": "self",
+              "variadic": false
+            }
+          ],
+          "return_type": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "void"
+          },
+          "raises": null,
+          "where_clauses": [],
+          "body": [
+            {
+              "node": "ExprStmt",
+              "span": {
+                "file": "test/phase2_all.vox",
+                "line": 31,
+                "col": 0,
+                "end_line": 31,
+                "end_col": 1
+              },
+              "expr": {
+                "node": "Call",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "func": {
+                  "node": "Ident",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "name": "print"
+                },
+                "args": [
+                  {
+                    "node": "MethodCall",
+                    "span": {
+                      "file": "<unknown>",
+                      "line": 0,
+                      "col": 0,
+                      "end_line": 0,
+                      "end_col": 0
+                    },
+                    "receiver": {
+                      "node": "Ident",
+                      "span": {
+                        "file": "<unknown>",
+                        "line": 0,
+                        "col": 0,
+                        "end_line": 0,
+                        "end_col": 0
+                      },
+                      "name": "self"
+                    },
+                    "method": "x",
+                    "args": []
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "node": "ExtendDecl",
+      "span": {
+        "file": "test/phase2_all.vox",
+        "line": 34,
+        "col": 0,
+        "end_line": 34,
+        "end_col": 1
+      },
+      "target": "Show",
+      "for_type": "Color",
+      "generics": [],
+      "methods": [
+        {
+          "node": "FnDef",
+          "span": {
+            "file": "test/phase2_all.vox",
+            "line": 35,
+            "col": 0,
+            "end_line": 35,
+            "end_col": 1
+          },
+          "name": "show",
+          "generics": [],
+          "params": [
+            {
+              "name": "self",
+              "variadic": false
+            }
+          ],
+          "return_type": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "void"
+          },
+          "raises": null,
+          "where_clauses": [],
+          "body": [
+            {
+              "node": "ExprStmt",
+              "span": {
+                "file": "test/phase2_all.vox",
+                "line": 36,
+                "col": 0,
+                "end_line": 36,
+                "end_col": 1
+              },
+              "expr": {
+                "node": "Call",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "func": {
+                  "node": "Ident",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "name": "print"
+                },
+                "args": [
+                  {
+                    "node": "Literal",
+                    "span": {
+                      "file": "<unknown>",
+                      "line": 0,
+                      "col": 0,
+                      "end_line": 0,
+                      "end_col": 0
+                    },
+                    "value": {
+                      "kind": "String",
+                      "value": "color"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "node": "FnDef",
+      "span": {
+        "file": "test/phase2_all.vox",
+        "line": 39,
+        "col": 0,
+        "end_line": 39,
+        "end_col": 1
+      },
+      "name": "test_color",
+      "generics": [],
+      "params": [
+        {
+          "name": "c",
+          "variadic": false,
+          "type_annotation": {
+            "node": "Named",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "Color"
+          }
+        }
+      ],
+      "return_type": {
+        "node": "Named",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "name": "void"
+      },
+      "raises": null,
+      "where_clauses": [],
+      "body": [
+        {
+          "node": "MatchStmt",
+          "span": {
+            "file": "test/phase2_all.vox",
+            "line": 40,
+            "col": 0,
+            "end_line": 40,
+            "end_col": 1
+          },
+          "expr": {
+            "node": "Ident",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "c"
+          },
+          "arms": [
+            {
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "pattern": {
+                "node": "Ident",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "name": "Red"
+              },
+              "body": [
+                {
+                  "node": "ExprStmt",
+                  "span": {
+                    "file": "test/phase2_all.vox",
+                    "line": 41,
+                    "col": 7,
+                    "end_line": 41,
+                    "end_col": 8
+                  },
+                  "expr": {
+                    "node": "Call",
+                    "span": {
+                      "file": "<unknown>",
+                      "line": 0,
+                      "col": 0,
+                      "end_line": 0,
+                      "end_col": 0
+                    },
+                    "func": {
+                      "node": "Ident",
+                      "span": {
+                        "file": "<unknown>",
+                        "line": 0,
+                        "col": 0,
+                        "end_line": 0,
+                        "end_col": 0
+                      },
+                      "name": "print"
+                    },
+                    "args": [
+                      {
+                        "node": "Literal",
+                        "span": {
+                          "file": "<unknown>",
+                          "line": 0,
+                          "col": 0,
+                          "end_line": 0,
+                          "end_col": 0
+                        },
+                        "value": {
+                          "kind": "String",
+                          "value": "red"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "pattern": {
+                "node": "Ident",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "name": "Green"
+              },
+              "body": [
+                {
+                  "node": "ExprStmt",
+                  "span": {
+                    "file": "test/phase2_all.vox",
+                    "line": 42,
+                    "col": 9,
+                    "end_line": 42,
+                    "end_col": 10
+                  },
+                  "expr": {
+                    "node": "Call",
+                    "span": {
+                      "file": "<unknown>",
+                      "line": 0,
+                      "col": 0,
+                      "end_line": 0,
+                      "end_col": 0
+                    },
+                    "func": {
+                      "node": "Ident",
+                      "span": {
+                        "file": "<unknown>",
+                        "line": 0,
+                        "col": 0,
+                        "end_line": 0,
+                        "end_col": 0
+                      },
+                      "name": "print"
+                    },
+                    "args": [
+                      {
+                        "node": "Literal",
+                        "span": {
+                          "file": "<unknown>",
+                          "line": 0,
+                          "col": 0,
+                          "end_line": 0,
+                          "end_col": 0
+                        },
+                        "value": {
+                          "kind": "String",
+                          "value": "green"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "pattern": {
+                "node": "Wildcard",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                }
+              },
+              "body": [
+                {
+                  "node": "ExprStmt",
+                  "span": {
+                    "file": "test/phase2_all.vox",
+                    "line": 43,
+                    "col": 5,
+                    "end_line": 43,
+                    "end_col": 6
+                  },
+                  "expr": {
+                    "node": "Call",
+                    "span": {
+                      "file": "<unknown>",
+                      "line": 0,
+                      "col": 0,
+                      "end_line": 0,
+                      "end_col": 0
+                    },
+                    "func": {
+                      "node": "Ident",
+                      "span": {
+                        "file": "<unknown>",
+                        "line": 0,
+                        "col": 0,
+                        "end_line": 0,
+                        "end_col": 0
+                      },
+                      "name": "print"
+                    },
+                    "args": [
+                      {
+                        "node": "Literal",
+                        "span": {
+                          "file": "<unknown>",
+                          "line": 0,
+                          "col": 0,
+                          "end_line": 0,
+                          "end_col": 0
+                        },
+                        "value": {
+                          "kind": "String",
+                          "value": "other"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "node": "ComptimeBlock",
+      "span": {
+        "file": "test/phase2_all.vox",
+        "line": 46,
+        "col": 0,
+        "end_line": 46,
+        "end_col": 1
+      },
+      "body": [
+        {
+          "node": "ExprStmt",
+          "span": {
+            "file": "test/phase2_all.vox",
+            "line": 47,
+            "col": 0,
+            "end_line": 47,
+            "end_col": 1
+          },
+          "expr": {
+            "node": "Call",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "func": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "print"
+            },
+            "args": [
+              {
+                "node": "Literal",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "value": {
+                  "kind": "String",
+                  "value": "compile time"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "node": "FnDef",
+      "span": {
+        "file": "test/phase2_all.vox",
+        "line": 50,
+        "col": 0,
+        "end_line": 50,
+        "end_col": 1
+      },
+      "name": "main",
+      "generics": [],
+      "params": [],
+      "return_type": null,
+      "raises": null,
+      "where_clauses": [],
+      "body": [
+        {
+          "node": "VarDecl",
+          "span": {
+            "file": "test/phase2_all.vox",
+            "line": 51,
+            "col": 0,
+            "end_line": 51,
+            "end_col": 1
+          },
+          "mutable": false,
+          "name": "p",
+          "value": {
+            "node": "Call",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "func": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "Point"
+            },
+            "args": [
+              {
+                "node": "Literal",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "value": {
+                  "kind": "Int",
+                  "value": 0
+                }
+              },
+              {
+                "node": "Literal",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "value": {
+                  "kind": "Int",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "node": "ExprStmt",
+          "span": {
+            "file": "test/phase2_all.vox",
+            "line": 52,
+            "col": 0,
+            "end_line": 52,
+            "end_col": 1
+          },
+          "expr": {
+            "node": "MethodCall",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "receiver": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "p"
+            },
+            "method": "show",
+            "args": []
+          }
+        }
+      ]
+    }
+  ],
+  "span": {
+    "file": "test/phase2_all.vox",
+    "line": 4,
+    "col": 0,
+    "end_line": 4,
+    "end_col": 1
+  }
+}

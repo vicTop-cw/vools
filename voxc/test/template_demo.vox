@@ -1,0 +1,12 @@
+// Template demo
+template double(x):
+    __x__ + __x__
+
+template add(a, b):
+    __a__ + __b__
+
+val result1 = double(10)
+print(result1)
+
+val result2 = add(3, 7)
+print(result2)

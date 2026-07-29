@@ -1,0 +1,54 @@
+// Builtins and types test
+
+// Basic types
+val x: int = 42
+val y: float = 3.14
+val name: str = "hello"
+val flag: bool = true
+
+println(x)
+println(y)
+println(name)
+println(flag)
+
+// Type conversion
+val num_str = str(x)
+println("str(x):", num_str)
+
+val str_num = int(100)
+println("int(100):", str_num)
+
+val float_val = float(42)
+println("float(42):", float_val)
+
+// len
+val list = [1, 2, 3, 4, 5]
+val text = "abcde"
+println("len(list):", len(list))
+println("len(text):", len(text))
+
+// Option
+val opt_some: int? = Some(42)
+val opt_none: int? = None
+println("opt_some:", opt_some)
+println("opt_none:", opt_none)
+
+// Vec literal
+val numbers = [1, 2, 3]
+numbers.push(4)
+println("vec:", numbers)
+
+// Dict literal
+val map = {: name: "Alice", age: "30"}
+println("map:", map)
+
+// Set literal  
+val s = {1, 2, 3}
+println("set:", s)
+
+// Tuple
+val t = (1, "hello", 3.14)
+println("tuple:", t)
+
+// Multi-arg print
+println("multi", "args", "test")
