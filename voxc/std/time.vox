@@ -1,0 +1,73 @@
+// time.vox — Vox standard library: time access and conversions
+// Provides wall-clock and monotonic time queries, sleeping, and
+// simple time formatting, modeled after Python's time module.
+
+// ===== Wall-clock time =====
+
+/// Current Unix time in seconds (f64).
+/// time.time() -> float
+def time() -> float:
+    return std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64()
+
+/// Current Unix time in nanoseconds (i64).
+/// time.time_ns() -> int
+def time_ns() -> int:
+    return std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as i64
+
+// ===== Monotonic clock =====
+
+/// Monotonic seconds since process base.
+/// time.perf_counter() -> float
+def perf_counter() -> float:
+    return VOX_TIME_BASE.elapsed().as_secs_f64()
+
+/// Monotonic nanoseconds since process base.
+/// time.perf_counter_ns() -> int
+def perf_counter_ns() -> int:
+    return VOX_TIME_BASE.elapsed().as_nanos() as i64
+
+/// Monotonic seconds since process base.
+/// time.monotonic() -> float
+def monotonic() -> float:
+    return VOX_TIME_BASE.elapsed().as_secs_f64()
+
+/// Monotonic nanoseconds since process base.
+/// time.monotonic_ns() -> int
+def monotonic_ns() -> int:
+    return VOX_TIME_BASE.elapsed().as_nanos() as i64
+
+// ===== Sleeping =====
+
+/// Sleep for the given number of seconds.
+/// time.sleep(secs) -> void
+def sleep(secs: float) -> void:
+    std::thread::sleep(std::time::Duration::from_secs_f64(secs))
+
+// ===== Formatting =====
+
+/// Convert a Unix timestamp (or current time) to an ASCII string.
+/// time.ctime(secs?) -> str
+def ctime(secs: float = -1.0) -> str:
+    return chrono::Local::now().format("%a %b %e %H:%M:%S %Y").to_string()
+
+/// Format the current or given time using a strftime format string.
+/// time.strftime(fmt, secs?) -> str
+def strftime(fmt: str, secs: float = -1.0) -> str:
+    return chrono::Local::now().format(fmt).to_string()
+
+// ===== Conversion =====
+
+/// Convert a Unix timestamp to a local time value.
+/// time.localtime(secs?) -> datetime
+def localtime(secs: float = -1.0) -> datetime:
+    return chrono::Local::now()
+
+/// Convert a Unix timestamp to a UTC time value.
+/// time.gmtime(secs?) -> datetime
+def gmtime(secs: float = -1.0) -> datetime:
+    return chrono::Utc::now()
+
+/// Convert a local time value to a Unix timestamp.
+/// time.mktime(t) -> float
+def mktime(t: datetime) -> float:
+    return t.timestamp() as f64

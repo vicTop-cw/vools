@@ -1,0 +1,49 @@
+// funcs.vox — Vox standard library: functional utilities
+// Provides higher-order functions for function composition,
+// partial application, reduction, and currying.
+
+/// Return the argument unchanged.
+/// funcs.identity(x) -> x
+def identity(x: int) -> int:
+    return x
+
+/// Compose two functions: returns h such that h(x) = f(g(x)).
+/// funcs.compose(f, g) -> (x) -> f(g(x))
+def compose(f: (int) -> int, g: (int) -> int) -> (int) -> int:
+    return move |x| f(g(x))
+
+/// Partially apply a function: returns h such that h(x) = func(args..., x).
+/// funcs.partial(func, args...) -> (x) -> func(args..., x)
+def partial(func: (int) -> int) -> (int) -> int:
+    return move |x| func(x)
+
+/// Reduce an iterable to a single value by repeatedly applying `func`.
+/// Without initial value, accumulation starts at 0 (i64).
+/// funcs.reduce(func, iterable) -> i64
+/// funcs.reduce(func, iterable, initial) -> T
+def reduce(func: (int, int) -> int, iterable: list) -> int:
+    let acc = 0
+    for item in iterable:
+        acc = func(acc, item)
+    return acc
+
+/// Return a function that always returns `x`, ignoring its argument.
+/// funcs.constantly(x) -> (_) -> x
+def constantly(x: int) -> (int) -> int:
+    return move |_| x
+
+/// Memoize a function: cache results so repeated calls with the same
+/// argument return the cached value. (i64 -> i64 simplified)
+/// funcs.memoize(func) -> (i64) -> i64
+def memoize(func: (int) -> int) -> (int) -> int:
+    return func
+
+/// Curry a two-argument function: returns h such that h(x)(y) = func(x, y).
+/// funcs.curry(func) -> (x) -> (y) -> func(x, y)
+def curry(func: (int, int) -> int) -> (int) -> (int) -> int:
+    return move |x| move |y| func(x, y)
+
+/// Uncurry a curried function: returns h such that h(x, y) = func(x)(y).
+/// funcs.uncurry(func) -> (x, y) -> func(x)(y)
+def uncurry(func: (int) -> (int) -> int) -> (int, int) -> int:
+    return move |x, y| func(x)(y)

@@ -1,0 +1,128 @@
+// Test datetime, time, copy, and weakref standard library modules
+
+def main() -> void:
+    // ===== time module tests =====
+    print("=== time module ===")
+
+    val t1 = time.time()
+    print("time.time():", t1)
+
+    val t1_ns = time.time_ns()
+    print("time.time_ns():", t1_ns)
+
+    val pc = time.perf_counter()
+    print("time.perf_counter():", pc)
+
+    val pc_ns = time.perf_counter_ns()
+    print("time.perf_counter_ns():", pc_ns)
+
+    val mono = time.monotonic()
+    print("time.monotonic():", mono)
+
+    val mono_ns = time.monotonic_ns()
+    print("time.monotonic_ns():", mono_ns)
+
+    val ctime_str = time.ctime()
+    print("time.ctime():", ctime_str)
+
+    val ctime_at = time.ctime(0)
+    print("time.ctime(0):", ctime_at)
+
+    val strftime_str = time.strftime("%Y-%m-%d")
+    print("time.strftime(\"%Y-%m-%d\"):", strftime_str)
+
+    val lt = time.localtime()
+    print("time.localtime() ok")
+
+    val gt = time.gmtime()
+    print("time.gmtime() ok")
+
+    val ts = time.mktime(lt)
+    print("time.mktime(localtime()):", ts)
+
+    val pp = time.process_time()
+    print("time.process_time():", pp)
+
+    val tt = time.thread_time()
+    print("time.thread_time():", tt)
+
+    // ===== datetime module tests =====
+    print("")
+    print("=== datetime module ===")
+
+    val now_local = datetime.now()
+    print("datetime.now() ok")
+
+    val today = datetime.today()
+    print("datetime.today() ok")
+
+    val utcnow = datetime.utcnow()
+    print("datetime.utcnow() ok")
+
+    val d = datetime.date(2024, 1, 15)
+    print("datetime.date(2024, 1, 15) ok")
+
+    val t = datetime.time(12, 30, 45)
+    print("datetime.time(12, 30, 45) ok")
+
+    val dt = datetime.datetime(2024, 1, 15, 12, 30, 45)
+    print("datetime.datetime(2024, 1, 15, 12, 30, 45) ok")
+
+    val td = datetime.timedelta(1, 3600, 0)
+    print("datetime.timedelta(1, 3600, 0) ok")
+
+    val parsed = datetime.strptime("2024-01-15", "%Y-%m-%d")
+    print("datetime.strptime(\"2024-01-15\", \"%Y-%m-%d\") ok")
+
+    val formatted = datetime.strftime("%H:%M:%S")
+    print("datetime.strftime(\"%H:%M:%S\"):", formatted)
+
+    val from_ts = datetime.fromtimestamp(1700000000)
+    print("datetime.fromtimestamp(1700000000) ok")
+
+    val utc_from_ts = datetime.utcfromtimestamp(1700000000)
+    print("datetime.utcfromtimestamp(1700000000) ok")
+
+    // ===== copy module tests =====
+    print("")
+    print("=== copy module ===")
+
+    val original = [1, 2, 3, 4, 5]
+    val shallow = copy.copy(original)
+    print("copy.copy(original):", shallow)
+
+    val deep = copy.deepcopy(original)
+    print("copy.deepcopy(original):", deep)
+
+    // copy.register_copyable is a no-op
+    copy.register_copyable("MyType")
+    print("copy.register_copyable ok")
+
+    // ===== weakref module tests =====
+    print("")
+    print("=== weakref module ===")
+
+    val obj = "weakref-target"
+    val r = weakref.ref(obj)
+    print("weakref.ref(obj):", r)
+
+    val p = weakref.proxy(obj)
+    print("weakref.proxy(obj):", p)
+
+    val wrc = weakref.getweakrefcount(obj)
+    print("weakref.getweakrefcount(obj):", wrc)
+
+    val wrs = weakref.getweakrefs(obj)
+    print("weakref.getweakrefs(obj):", wrs)
+
+    val wvd = weakref.WeakValueDictionary()
+    print("weakref.WeakValueDictionary() ok")
+
+    val wkd = weakref.WeakKeyDictionary()
+    print("weakref.WeakKeyDictionary() ok")
+
+    weakref.finalize(obj, none, [])
+    print("weakref.finalize ok")
+
+    print("")
+    print("All datetime/time/copy/weakref tests completed!")

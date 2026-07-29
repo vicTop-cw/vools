@@ -1,0 +1,94 @@
+// Math and collection builtins test
+// Exercises all new builtins added to the Rust codegen.
+
+// === Math builtins ===
+val neg_int: int = -10
+val neg_float: float = -3.14
+
+println("abs(-10):", abs(neg_int))
+println("abs(-3.14):", abs(neg_float))
+println("abs(42):", abs(42))
+
+println("round(3.7):", round(3.7))
+println("round(3.2):", round(3.2))
+println("round(3.14159, 2):", round(3.14159, 2))
+println("round(3.14159, 4):", round(3.14159, 4))
+
+println("pow(2, 10):", pow(2, 10))
+println("pow(5, 3):", pow(5, 3))
+println("pow(2.0, 0.5):", pow(2.0, 0.5))
+println("pow(10.0, 3.0):", pow(10.0, 3.0))
+
+println("divmod(17, 5):", divmod(17, 5))
+println("divmod(20, 7):", divmod(20, 7))
+
+println("min(3, 1):", min(3, 1))
+println("min(3, 1, 2):", min(3, 1, 2))
+println("min(10, 5, 8, 2, 7):", min(10, 5, 8, 2, 7))
+
+println("max(3, 1):", max(3, 1))
+println("max(3, 1, 2):", max(3, 1, 2))
+println("max(10, 5, 8, 2, 7):", max(10, 5, 8, 2, 7))
+
+val nums = [1, 2, 3, 4, 5]
+println("sum([1,2,3,4,5]):", sum(nums))
+println("sum([10, 20, 30]):", sum([10, 20, 30]))
+
+println("floor(3.7):", floor(3.7))
+println("floor(3.2):", floor(3.2))
+println("ceil(3.7):", ceil(3.7))
+println("ceil(3.2):", ceil(3.2))
+
+// === Character builtins ===
+println("chr(65):", chr(65))
+println("chr(97):", chr(97))
+println("chr(48):", chr(48))
+
+println("ord('A'):", ord('A'))
+println("ord('a'):", ord('a'))
+println("ord('0'):", ord('0'))
+
+println("hex(255):", hex(255))
+println("hex(16):", hex(16))
+println("oct(8):", oct(8))
+println("oct(64):", oct(64))
+println("bin(10):", bin(10))
+println("bin(255):", bin(255))
+
+// === Collection builtins ===
+println("all([1, 1, 1]):", all([1, 1, 1]))
+println("all([1, 0, 1]):", all([1, 0, 1]))
+println("any([0, 0, 1]):", any([0, 0, 1]))
+println("any([0, 0, 0]):", any([0, 0, 0]))
+
+// iter / next
+val iter_src = [10, 20, 30]
+val it = iter(iter_src)
+println("next(iter([10,20,30])):", next(it))
+
+// === Format ===
+println("format():", format("hello", "world"))
+println("format(42):", format(42))
+
+// === Bool truthiness ===
+println("bool(0):", bool(0))
+println("bool(42):", bool(42))
+println("bool(true):", bool(true))
+println("bool(false):", bool(false))
+println("bool('nonempty'):", bool("nonempty"))
+println("bool(''):", bool(""))
+println("bool([1,2,3]):", bool([1, 2, 3]))
+println("bool([]):", bool([]))
+
+// === I/O builtins (commented out to avoid blocking / side effects) ===
+// val name = input("What is your name? ")
+// println("Hello,", name)
+// val f = open("test_output.txt", "w")
+// val fr = open("Cargo.toml", "r")
+
+// === Combined usage ===
+val values = [3, 1, 4, 1, 5, 9, 2, 6]
+println("sum of values:", sum(values))
+println("min of 3 literals:", min(7, 3, 5))
+println("pow(sum([1,2]), 3):", pow(sum([1, 2]), 3))
+println("hex(255) + bin(10):", hex(255), bin(10))

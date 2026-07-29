@@ -1,0 +1,156 @@
+// operators.vox — Vox standard library: functional operator equivalents
+// Provides functional equivalents of Python's operator module,
+// allowing operators to be used as first-class functions.
+
+// ===== Arithmetic operations =====
+
+/// Return a + b.
+/// operators.add(a, b) -> T
+def add(a: int, b: int) -> int:
+    return a + b
+
+/// Return a - b.
+/// operators.sub(a, b) -> T
+def sub(a: int, b: int) -> int:
+    return a - b
+
+/// Return a * b.
+/// operators.mul(a, b) -> T
+def mul(a: int, b: int) -> int:
+    return a * b
+
+/// Return a / b (true division).
+/// operators.truediv(a, b) -> float
+def truediv(a: int, b: int) -> float:
+    return a / b
+
+/// Return a // b (floor division).
+/// operators.floordiv(a, b) -> int
+def floordiv(a: int, b: int) -> int:
+    return (a / b) as i64
+
+/// Return a % b.
+/// operators.mod(a, b) -> T
+def mod(a: int, b: int) -> int:
+    return a % b
+
+/// Return a ** b.
+/// operators.pow(a, b) -> float
+def pow(a: float, b: float) -> float:
+    return a.powf(b)
+
+// ===== Unary operations =====
+
+/// Return -a.
+/// operators.neg(a) -> T
+def neg(a: int) -> int:
+    return -a
+
+/// Return +a.
+/// operators.pos(a) -> T
+def pos(a: int) -> int:
+    return a
+
+/// Return abs(a).
+/// operators.abs(a) -> T
+def abs(a: int) -> int:
+    return a.abs()
+
+/// Return ~a (bitwise inversion).
+/// operators.inv(a) / operators.invert(a) -> T
+def inv(a: int) -> int:
+    return !a
+
+// ===== Bitwise operations =====
+
+/// Return a << b.
+/// operators.lshift(a, b) -> T
+def lshift(a: int, b: int) -> int:
+    return a << b
+
+/// Return a >> b.
+/// operators.rshift(a, b) -> T
+def rshift(a: int, b: int) -> int:
+    return a >> b
+
+/// Return a & b.
+/// operators.and_(a, b) -> T
+def and_(a: int, b: int) -> int:
+    return a & b
+
+/// Return a | b.
+/// operators.or_(a, b) -> T
+def or_(a: int, b: int) -> int:
+    return a | b
+
+/// Return a ^ b.
+/// operators.xor(a, b) -> T
+def xor(a: int, b: int) -> int:
+    return a ^ b
+
+// ===== Sequence operations =====
+
+/// Return a + b for sequences (concatenation).
+/// operators.concat(a, b) -> str
+def concat(a: str, b: str) -> str:
+    return a + b
+
+/// Return b in a (containment test).
+/// operators.contains(a, b) -> bool
+def contains(a: list, b: int) -> bool:
+    return a.contains(&b)
+
+/// Return True if obj is truthy.
+/// operators.truth(obj) -> bool
+def truth(obj: int) -> bool:
+    return obj != 0 && obj != false
+
+/// Return a is b (identity test).
+/// operators.is_(a, b) -> bool
+def is_(a: int, b: int) -> bool:
+    return std::ptr::eq(&a, &b)
+
+/// Return a is not b.
+/// operators.is_not(a, b) -> bool
+def is_not(a: int, b: int) -> bool:
+    return !std::ptr::eq(&a, &b)
+
+/// Return obj converted to an integer index.
+/// operators.index(obj) -> usize
+def index(obj: int) -> int:
+    return obj as usize
+
+// ===== Functional utilities =====
+
+/// Return a callable that fetches item at index.
+/// operators.itemgetter(index) -> fn
+def itemgetter(index: int) -> () -> void:
+    return move |obj: Vec<_>| obj[index as usize].clone()
+
+/// Return a callable that fetches the named attribute.
+/// operators.attrgetter(name) -> fn
+def attrgetter(name: str) -> () -> void:
+    return move |obj| obj.name.clone()
+
+/// Return a callable that calls the named method.
+/// operators.methodcaller(name) -> fn
+def methodcaller(name: str) -> () -> void:
+    return move |obj| obj.name()
+
+/// Compare two values using a string operator.
+/// operators.comparison(a, b, op) -> bool
+def comparison(a: int, b: int, op: str) -> bool:
+    if op == "==":
+        return a == b
+    elif op == "!=":
+        return a != b
+    elif op == "<":
+        return a < b
+    elif op == ">":
+        return a > b
+    elif op == "<=":
+        return a <= b
+    elif op == ">=":
+        return a >= b
+    else:
+        return false

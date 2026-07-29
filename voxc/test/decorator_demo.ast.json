@@ -1,0 +1,280 @@
+{
+  "name": "decorator_demo",
+  "statements": [
+    {
+      "node": "DecoratedStmt",
+      "span": {
+        "file": "test/decorator_demo.vox",
+        "line": 2,
+        "col": 0,
+        "end_line": 2,
+        "end_col": 1
+      },
+      "decorators": [
+        "deprecated"
+      ],
+      "stmt": {
+        "node": "FnDef",
+        "span": {
+          "file": "test/decorator_demo.vox",
+          "line": 2,
+          "col": 1,
+          "end_line": 2,
+          "end_col": 2
+        },
+        "name": "old_func",
+        "generics": [],
+        "params": [
+          {
+            "name": "x",
+            "variadic": false,
+            "type_annotation": {
+              "node": "Named",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "int"
+            }
+          }
+        ],
+        "return_type": {
+          "node": "Named",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "int"
+        },
+        "raises": null,
+        "where_clauses": [],
+        "body": [
+          {
+            "node": "ReturnStmt",
+            "span": {
+              "file": "test/decorator_demo.vox",
+              "line": 4,
+              "col": 0,
+              "end_line": 4,
+              "end_col": 1
+            },
+            "value": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "x"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "node": "DecoratedStmt",
+      "span": {
+        "file": "test/decorator_demo.vox",
+        "line": 6,
+        "col": 0,
+        "end_line": 6,
+        "end_col": 1
+      },
+      "decorators": [
+        "inline",
+        "cold"
+      ],
+      "stmt": {
+        "node": "FnDef",
+        "span": {
+          "file": "test/decorator_demo.vox",
+          "line": 7,
+          "col": 1,
+          "end_line": 7,
+          "end_col": 2
+        },
+        "name": "rarely_used",
+        "generics": [],
+        "params": [],
+        "return_type": null,
+        "raises": null,
+        "where_clauses": [],
+        "body": [
+          {
+            "node": "ExprStmt",
+            "span": {
+              "file": "test/decorator_demo.vox",
+              "line": 9,
+              "col": 0,
+              "end_line": 9,
+              "end_col": 1
+            },
+            "expr": {
+              "node": "Call",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "func": {
+                "node": "Ident",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "name": "print"
+              },
+              "args": [
+                {
+                  "node": "Literal",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "value": {
+                    "kind": "String",
+                    "value": "rarely"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "node": "FnDef",
+      "span": {
+        "file": "test/decorator_demo.vox",
+        "line": 11,
+        "col": 0,
+        "end_line": 11,
+        "end_col": 1
+      },
+      "name": "main",
+      "generics": [],
+      "params": [],
+      "return_type": null,
+      "raises": null,
+      "where_clauses": [],
+      "body": [
+        {
+          "node": "VarDecl",
+          "span": {
+            "file": "test/decorator_demo.vox",
+            "line": 12,
+            "col": 0,
+            "end_line": 12,
+            "end_col": 1
+          },
+          "mutable": false,
+          "name": "r",
+          "value": {
+            "node": "Call",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "func": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "old_func"
+            },
+            "args": [
+              {
+                "node": "Literal",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "value": {
+                  "kind": "Int",
+                  "value": 42
+                }
+              }
+            ]
+          }
+        },
+        {
+          "node": "ExprStmt",
+          "span": {
+            "file": "test/decorator_demo.vox",
+            "line": 13,
+            "col": 0,
+            "end_line": 13,
+            "end_col": 1
+          },
+          "expr": {
+            "node": "Call",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "func": {
+              "node": "Ident",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "print"
+            },
+            "args": [
+              {
+                "node": "Ident",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "name": "r"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "span": {
+    "file": "test/decorator_demo.vox",
+    "line": 2,
+    "col": 0,
+    "end_line": 2,
+    "end_col": 1
+  }
+}

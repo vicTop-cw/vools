@@ -1,0 +1,58 @@
+// gc.vox — Vox standard library: garbage collection
+// Provides control and inspection of the garbage collector.
+// Note: Rust uses ownership and borrow checking instead of a GC;
+// these functions are provided for API compatibility and are mostly no-ops.
+
+// ===== Collection control =====
+
+/// Force a garbage collection cycle.
+/// In Rust this is a no-op (ownership-based memory management).
+/// gc.collect() -> int
+def collect() -> int:
+    return 0
+
+/// Disable automatic garbage collection.
+/// In Rust this is a no-op.
+/// gc.disable() -> void
+def disable() -> void:
+    let _ = ()
+
+/// Re-enable automatic garbage collection.
+/// In Rust this is a no-op.
+/// gc.enable() -> void
+def enable() -> void:
+    let _ = ()
+
+// ===== Statistics =====
+
+/// Return the current number of tracked objects.
+/// Returns 0 in the simplified implementation.
+/// gc.get_count() -> int
+def get_count() -> int:
+    return 0
+
+/// Return garbage collector statistics as a tuple.
+/// Returns (0, 0, 0) in the simplified implementation.
+/// gc.get_stats() -> (int, int, int)
+def get_stats() -> int:
+    return 0
+
+/// Set the garbage collector debug flags.
+/// In Rust this is a no-op.
+/// gc.set_debug(flags) -> void
+def set_debug(flags: int) -> void:
+    let _ = flags
+
+// ===== Reference inspection =====
+
+/// Return the list of objects that directly refer to obj.
+/// Returns an empty vector in the simplified implementation.
+/// gc.get_referrers(obj) -> list
+def get_referrers(obj: int) -> list:
+    return []
+
+/// Return the list of objects directly referred to by obj.
+/// Returns an empty vector in the simplified implementation.
+/// gc.get_referents(obj) -> list
+def get_referents(obj: int) -> list:
+    return []

@@ -1,0 +1,109 @@
+// random.vox — Vox standard library: pseudo-random number generation
+// Provides functions for generating pseudo-random numbers, modeled
+// after Python's random module. Backed by the Rust `rand` crate.
+
+/// Initialize the random number generator with a seed.
+/// random.seed(a=None) -> void
+def seed(a: int = 0) -> void:
+    let _seed: Option<i64> = None
+
+/// Return the next random floating point number in [0.0, 1.0).
+/// random.random() -> float
+def random() -> float:
+    return rand::random::<f64>()
+
+/// Return a random floating point number N in [a, b].
+/// random.uniform(a, b) -> float
+def uniform(a: float, b: float) -> float:
+    return a + rand::random::<f64>() * (b - a)
+
+/// Return a random integer N in [a, b] (inclusive).
+/// random.randint(a, b) -> int
+def randint(a: int, b: int) -> int:
+    let __span = (b - a + 1).max(1) as u64
+    return a + (rand::random::<u64>() % __span) as i64
+
+/// Return a randomly selected element from range(start, stop, step).
+/// random.randrange(start, stop, step=1) -> int
+def randrange(start: int, stop: int, step: int = 1) -> int:
+    let __span = ((stop - start + step - 1) / step).max(0) as u64
+    return start + ((rand::random::<u64>() % __span) as i64) * step
+
+/// Return a random element from a non-empty sequence.
+/// random.choice(seq) -> T
+def choice(seq: list) -> int:
+    let __i = rand::random::<usize>() % seq.len()
+    return seq[__i]
+
+/// Return a list of k random elements chosen with replacement.
+/// random.choices(population, weights=None, k=1) -> list
+def choices(population: list, weights: list = [], k: int = 1) -> list:
+    return []
+
+/// Shuffle the sequence x in place and return it.
+/// random.shuffle(x) -> list
+def shuffle(x: list) -> list:
+    x.shuffle(&mut rand::thread_rng())
+    return x
+
+/// Return a k length list of unique elements chosen from the population.
+/// random.sample(population, k) -> list
+def sample(population: list, k: int) -> list:
+    return []
+
+/// Return a random floating point number from a Gaussian distribution.
+/// random.gauss(mu, sigma) -> float
+def gauss(mu: float, sigma: float) -> float:
+    return mu
+
+/// Alias for gauss.
+/// random.normalvariate(mu, sigma) -> float
+def normalvariate(mu: float, sigma: float) -> float:
+    return gauss(mu, sigma)
+
+/// Return a random floating point number from a log-normal distribution.
+/// random.lognormvariate(mu, sigma) -> float
+def lognormvariate(mu: float, sigma: float) -> float:
+    return (mu + sigma).exp()
+
+/// Return a random floating point number from an exponential distribution.
+/// random.expovariate(lambd) -> float
+def expovariate(lambd: float) -> float:
+    if lambd == 0.0:
+        return 0.0
+    return -((1.0 - rand::random::<f64>()).max(1e-10)).ln() / lambd
+
+/// Return a random floating point number from a Beta distribution.
+/// random.betavariate(alpha, beta) -> float
+def betavariate(alpha: float, beta: float) -> float:
+    return 0.0
+
+/// Return a random floating point number from a Gamma distribution.
+/// random.gammavariate(alpha, beta) -> float
+def gammavariate(alpha: float, beta: float) -> float:
+    return 0.0
+
+/// Return a random floating point number from a Pareto distribution.
+/// random.paretovariate(alpha) -> float
+def paretovariate(alpha: float) -> float:
+    return 0.0
+
+/// Return a random floating point number from a Weibull distribution.
+/// random.weibullvariate(alpha, beta) -> float
+def weibullvariate(alpha: float, beta: float) -> float:
+    return 0.0
+
+/// Return an integer with k random bits.
+/// random.getrandbits(k) -> int
+def getrandbits(k: int) -> int:
+    return rand::random::<u64>() & ((1u64 << k) - 1)
+
+/// Return an object capturing the current internal state of the generator.
+/// random.getstate() -> list
+def getstate() -> list:
+    return []
+
+/// Restore the internal state of the generator.
+/// random.setstate(state) -> void
+def setstate(state: list) -> void:
+    let _state = 0

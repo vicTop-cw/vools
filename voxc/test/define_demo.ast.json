@@ -1,0 +1,258 @@
+{
+  "name": "define_demo",
+  "statements": [
+    {
+      "node": "DefineDecl",
+      "span": {
+        "file": "test/define_demo.vox",
+        "line": 1,
+        "col": 0,
+        "end_line": 1,
+        "end_col": 1
+      },
+      "name": "Sortable",
+      "generics": [
+        {
+          "name": "T",
+          "bounds": []
+        }
+      ],
+      "constraints": {
+        "props": [
+          [
+            "cmp",
+            {
+              "node": "FnType",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "params": [
+                {
+                  "node": "Named",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "name": "T"
+                },
+                {
+                  "node": "Named",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "name": "T"
+                }
+              ],
+              "return_type": {
+                "node": "Named",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "name": "int"
+              }
+            }
+          ]
+        ],
+        "statics": [],
+        "typemethods": [],
+        "instancemethods": [
+          [
+            "sort",
+            {
+              "node": "FnType",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "params": [
+                {
+                  "node": "Named",
+                  "span": {
+                    "file": "<unknown>",
+                    "line": 0,
+                    "col": 0,
+                    "end_line": 0,
+                    "end_col": 0
+                  },
+                  "name": "self"
+                }
+              ],
+              "return_type": {
+                "node": "Named",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "name": "void"
+              }
+            }
+          ]
+        ],
+        "check": null
+      }
+    },
+    {
+      "node": "DefineDecl",
+      "span": {
+        "file": "test/define_demo.vox",
+        "line": 8,
+        "col": 0,
+        "end_line": 8,
+        "end_col": 1
+      },
+      "name": "_InternalCheck",
+      "generics": [
+        {
+          "name": "T",
+          "bounds": []
+        }
+      ],
+      "constraints": {
+        "props": [
+          [
+            "name",
+            {
+              "node": "Named",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "name": "str"
+            }
+          ]
+        ],
+        "statics": [
+          [
+            "create",
+            {
+              "node": "FnType",
+              "span": {
+                "file": "<unknown>",
+                "line": 0,
+                "col": 0,
+                "end_line": 0,
+                "end_col": 0
+              },
+              "params": [],
+              "return_type": {
+                "node": "Named",
+                "span": {
+                  "file": "<unknown>",
+                  "line": 0,
+                  "col": 0,
+                  "end_line": 0,
+                  "end_col": 0
+                },
+                "name": "T"
+              }
+            }
+          ]
+        ],
+        "typemethods": [],
+        "instancemethods": [],
+        "check": null
+      }
+    },
+    {
+      "node": "VarDecl",
+      "span": {
+        "file": "test/define_demo.vox",
+        "line": 14,
+        "col": 0,
+        "end_line": 14,
+        "end_col": 1
+      },
+      "mutable": false,
+      "name": "x",
+      "value": {
+        "node": "Literal",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "value": {
+          "kind": "Int",
+          "value": 42
+        }
+      }
+    },
+    {
+      "node": "ExprStmt",
+      "span": {
+        "file": "test/define_demo.vox",
+        "line": 15,
+        "col": 0,
+        "end_line": 15,
+        "end_col": 1
+      },
+      "expr": {
+        "node": "Call",
+        "span": {
+          "file": "<unknown>",
+          "line": 0,
+          "col": 0,
+          "end_line": 0,
+          "end_col": 0
+        },
+        "func": {
+          "node": "Ident",
+          "span": {
+            "file": "<unknown>",
+            "line": 0,
+            "col": 0,
+            "end_line": 0,
+            "end_col": 0
+          },
+          "name": "print"
+        },
+        "args": [
+          {
+            "node": "Ident",
+            "span": {
+              "file": "<unknown>",
+              "line": 0,
+              "col": 0,
+              "end_line": 0,
+              "end_col": 0
+            },
+            "name": "x"
+          }
+        ]
+      }
+    }
+  ],
+  "span": {
+    "file": "test/define_demo.vox",
+    "line": 2,
+    "col": 0,
+    "end_line": 2,
+    "end_col": 1
+  }
+}

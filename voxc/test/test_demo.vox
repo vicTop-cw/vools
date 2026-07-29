@@ -1,0 +1,16 @@
+// Test suite and test keyword demo
+suite math_tests:
+    test add_two_numbers:
+        val a = 1
+        val b = 2
+        val result = a + b
+        print(result)
+
+    test multiply:
+        val x = 3
+        val y = 4
+        val result = x * y
+        print(result)
+
+test standalone_test:
+    print("Hello from standalone test")

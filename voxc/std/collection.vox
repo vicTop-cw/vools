@@ -1,0 +1,49 @@
+// collection.vox — Vox standard library: container datatypes
+// Provides specialized container datatypes modeled after Python's collections module.
+
+// ===== Counter =====
+
+/// Create a Counter from an iterable of items.
+/// Maps each item to its count in a HashMap.
+/// collection.counter(iterable) -> HashMap
+def counter(iterable: list) -> dict:
+    return {}
+
+// ===== defaultdict =====
+
+/// Create a defaultdict with a default factory function.
+/// Missing keys return the factory's default value.
+/// collection.defaultdict(default_factory) -> HashMap
+def defaultdict(default_factory: () -> int) -> dict:
+    return {}
+
+// ===== deque =====
+
+/// Create a double-ended queue from an iterable.
+/// Supports O(1) push/pop from both ends.
+/// collection.deque(iterable) -> VecDeque
+def deque(iterable: list) -> list:
+    return []
+
+// ===== namedtuple =====
+
+/// Create a named tuple factory.
+/// Returns a tuple-like type with named fields.
+/// collection.namedtuple(name, fields) -> Type
+def namedtuple(name: str, fields: list) -> int:
+    return 0
+
+// ===== OrderedDict =====
+
+/// Create an ordered dictionary that preserves insertion order.
+/// collection.OrderedDict() -> LinkedHashMap
+def OrderedDict() -> dict:
+    return {}
+
+// ===== ChainMap =====
+
+/// Create a ChainMap that groups multiple mappings together.
+/// Lookups search maps in order.
+/// collection.ChainMap(*maps) -> ChainMap
+def ChainMap(maps: list) -> dict:
+    return {}

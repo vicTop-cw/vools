@@ -1,0 +1,205 @@
+{
+  "scopeName": "source.vox",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.vox",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.vox",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.interpolated.vox",
+          "begin": "f\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.vox",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.raw.vox",
+          "match": "r\"[^\"]*\""
+        },
+        {
+          "name": "string.quoted.double.vox",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.vox",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.vox",
+          "match": "'(\\\\.|[^'\\\\])'"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.vox",
+          "match": "\\b0[xX][0-9a-fA-F][0-9a-fA-F_]*\\b"
+        },
+        {
+          "name": "constant.numeric.binary.vox",
+          "match": "\\b0[bB][01][01_]*\\b"
+        },
+        {
+          "name": "constant.numeric.octal.vox",
+          "match": "\\b0[oO][0-7][0-7_]*\\b"
+        },
+        {
+          "name": "constant.numeric.float.vox",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.vox",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.conditional.vox",
+          "match": "\\b(if|else|match|when)\\b"
+        },
+        {
+          "name": "keyword.control.loop.vox",
+          "match": "\\b(for|while|loop|break|continue|yield)\\b"
+        },
+        {
+          "name": "keyword.control.exception.vox",
+          "match": "\\b(try|catch|finally|defer|guard|raises)\\b"
+        },
+        {
+          "name": "keyword.control.vox",
+          "match": "\\b(return|as|is|in|not|and|or|where)\\b"
+        },
+        {
+          "name": "keyword.operator.vox",
+          "match": "\\b(prefix|infix|suffix|nthfix|pairfix)\\b"
+        },
+        {
+          "name": "storage.type.vox",
+          "match": "\\b(val|var)\\b"
+        },
+        {
+          "name": "storage.type.function.vox",
+          "match": "\\bdef\\b"
+        },
+        {
+          "name": "storage.type.class.vox",
+          "match": "\\b(class|trait|struct|enum)\\b"
+        },
+        {
+          "name": "storage.modifier.vox",
+          "match": "\\b(pub|override|abstract|static|self|super)\\b"
+        },
+        {
+          "name": "storage.type.meta.vox",
+          "match": "\\b(import|template|define|macro|external|comptime|type)\\b"
+        },
+        {
+          "name": "keyword.control.async.vox",
+          "match": "\\b(async|await|spawn|go)\\b"
+        },
+        {
+          "name": "constant.language.boolean.vox",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.vox",
+          "match": "\\b(Int|Float|String|Bool|Void|Any)\\b"
+        },
+        {
+          "name": "support.type.generic.vox",
+          "match": "\\b(Option|Result|List|Dict|Tuple|Iter|Fn)\\b"
+        },
+        {
+          "name": "support.type.self.vox",
+          "match": "\\b(Self|Type)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.vox",
+          "match": "\\+=|-=|\\*=|/=|%=|="
+        },
+        {
+          "name": "keyword.operator.comparison.vox",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.vox",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.arrow.vox",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.access.vox",
+          "match": "::|\\.\\.|\\?\\.|\\?\\?"
+        },
+        {
+          "name": "keyword.operator.arithmetic.vox",
+          "match": "\\+|\\-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.decorator.vox",
+          "match": "@"
+        },
+        {
+          "name": "punctuation.separator.vox",
+          "match": "[,;:\\.]"
+        },
+        {
+          "name": "punctuation.bracket.vox",
+          "match": "[{}\\[\\]\\(\\)]"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "entity.name.function.vox",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+        },
+        {
+          "name": "variable.other.vox",
+          "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

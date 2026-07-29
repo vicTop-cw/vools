@@ -27,7 +27,7 @@ def test_overwrite_mode():
         temp_path = f.name
 
     try:
-        @bridge.decorator(only_code=True, output_file=temp_path, write_mode='overwrite')
+        @bridge.decorator(mode='ONLY_CODE', output_file=temp_path, write_mode='overwrite')
         def test_func(x: int) -> int:
             return "Return x * 2"
 
@@ -61,7 +61,7 @@ def test_append_mode():
         temp_path = f.name
 
     try:
-        @bridge.decorator(only_code=True, output_file=temp_path, write_mode='append')
+        @bridge.decorator(mode='ONLY_CODE', output_file=temp_path, write_mode='append')
         def append_func(a: int, b: int) -> int:
             return "Return a + b"
 
@@ -98,7 +98,7 @@ def test_insert_mode():
         temp_path = f.name
 
     try:
-        @bridge.decorator(only_code=True, output_file=temp_path, write_mode='insert:3')
+        @bridge.decorator(mode='ONLY_CODE', output_file=temp_path, write_mode='insert:3')
         def insert_func(x: int) -> int:
             return "Return x + 1"
 
@@ -141,7 +141,7 @@ def test_replace_mode():
         temp_path = f.name
 
     try:
-        @bridge.decorator(only_code=True, output_file=temp_path, write_mode='replace:2-4')
+        @bridge.decorator(mode='ONLY_CODE', output_file=temp_path, write_mode='replace:2-4')
         def replace_func(x: int) -> int:
             return "Return x * 3"
 
@@ -175,7 +175,7 @@ def test_prefix_suffix():
 
     bridge = FbcBridge()
 
-    @bridge.decorator(only_code=True, prefix="' PREFIX HEADER\n", suffix="' SUFFIX FOOTER\n")
+    @bridge.decorator(mode='ONLY_CODE', prefix="' PREFIX HEADER\n", suffix="' SUFFIX FOOTER\n")
     def prefix_suffix_func(x: int) -> int:
         return "Return x + 10"
 
@@ -200,7 +200,7 @@ def test_deps_included():
     def helper(x: int) -> int:
         return "Return x * 2"
 
-    @bridge.decorator(only_code=True, deps=[helper])
+    @bridge.decorator(mode='ONLY_CODE', deps=[helper])
     def main_func(x: int) -> int:
         return "Return helper(x) + 1"
 
@@ -225,7 +225,7 @@ def test_module_code_included():
 
     bridge = FbcBridge()
 
-    @bridge.decorator(only_code=True, module_code="' Module level code\nConst MY_CONST = 42\n")
+    @bridge.decorator(mode='ONLY_CODE', module_code="' Module level code\nConst MY_CONST = 42\n")
     def func_with_module(x: int) -> int:
         return "Return x + MY_CONST"
 
@@ -271,7 +271,7 @@ def test_only_code_no_output_file_returns_code():
 
     bridge = FbcBridge()
 
-    @bridge.decorator(only_code=True)
+    @bridge.decorator(mode='ONLY_CODE')
     def simple_func(x: int) -> int:
         return "Return x * 5"
 
@@ -294,7 +294,7 @@ def test_async_only_code():
 
     bridge = FbcBridge()
 
-    @bridge.decorator(only_code=True, async_mode=True)
+    @bridge.decorator(mode='ONLY_CODE', async_mode=True)
     async def async_func(x: int) -> int:
         return "Return x + 100"
 
@@ -323,7 +323,7 @@ def test_async_only_code_with_file():
         temp_path = f.name
 
     try:
-        @bridge.decorator(only_code=True, async_mode=True, output_file=temp_path)
+        @bridge.decorator(mode='ONLY_CODE', async_mode=True, output_file=temp_path)
         async def async_file_func(x: int) -> int:
             return "Return x * 7"
 

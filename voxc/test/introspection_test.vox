@@ -1,0 +1,63 @@
+// Introspection builtins test
+// Exercises the 13 Python-style introspection functions:
+//   dir, help, repr, id, hash, callable, isinstance, issubclass,
+//   hasattr, getattr, setattr, vars, globals, locals
+
+// --- dir(x) : list attribute/member names ---
+val s: str = "hello"
+println("dir(str):", dir(s))
+
+val nums = [1, 2, 3]
+println("dir(list):", dir(nums))
+
+val n: int = 42
+println("dir(int):", dir(n))
+
+val b: bool = true
+println("dir(bool):", dir(b))
+
+// --- help(x) : print help text (returns unit) ---
+help(s)
+help(nums)
+
+// --- repr(x) : debug-style string ---
+println("repr(str):", repr(s))
+println("repr(int):", repr(n))
+println("repr(list):", repr(nums))
+
+// --- id(x) : object identity (address-based) ---
+val i1 = id(s)
+val i2 = id(nums)
+println("id(str):", i1)
+println("id(list):", i2)
+
+// --- hash(x) : hash value ---
+val h1 = hash(s)
+val h2 = hash(n)
+println("hash(str):", h1)
+println("hash(int):", h2)
+
+// --- callable(x) : always false in static Vox (simplified) ---
+println("callable(str):", callable(s))
+println("callable(int):", callable(n))
+
+// --- isinstance(x, type) : runtime type check ---
+println("isinstance(s, str):", isinstance(s, str))
+println("isinstance(n, int):", isinstance(n, int))
+println("isinstance(n, str):", isinstance(n, str))
+
+// --- issubclass(t1, t2) : always false (simplified) ---
+println("issubclass(int, int):", issubclass(int, int))
+
+// --- hasattr(x, name) : always false (simplified) ---
+println("hasattr(s, 'len'):", hasattr(s, "len"))
+
+// --- vars(x), globals(), locals() : empty namespace maps ---
+val v = vars(s)
+println("vars(str):", v)
+
+val g = globals()
+println("globals():", g)
+
+val l = locals()
+println("locals():", l)

@@ -1,0 +1,106 @@
+// Test utils, ctypes, logging, and abc standard library modules
+
+def main() -> void:
+    // ===== utils module tests =====
+    val opt_some: int? = Some(42)
+    val opt_none: int? = None
+
+    print("utils.is_none(Some(42)):", utils.is_none(opt_some))
+    print("utils.is_none(None):", utils.is_none(opt_none))
+    print("utils.is_some(Some(42)):", utils.is_some(opt_some))
+
+    print("utils.unwrap(opt_some):", utils.unwrap(opt_some))
+    print("utils.unwrap(opt_none, 99):", utils.unwrap(opt_none, 99))
+
+    print("utils.expect(opt_some, \"missing\"):", utils.expect(opt_some, "missing"))
+
+    // Parsing
+    print("utils.try_parse(\"123\"):", utils.try_parse("123"))
+
+    // Conversion
+    print("utils.to_string(42):", utils.to_string(42))
+    print("utils.debug_string(42):", utils.debug_string(42))
+
+    // Type inspection
+    print("utils.type_name(42):", utils.type_name(42))
+
+    // Control flow
+    utils.discard(42)
+    print("utils.identity(42):", utils.identity(42))
+
+    // Function composition
+    val doubled = utils.pipe(21, |x| x * 2)
+    print("utils.pipe(21, x*2):", doubled)
+
+    val composed = utils.compose(|x| x + 1, |x| x * 2)
+    print("utils.compose(+1, *2)(5):", composed(5))
+
+    // ===== ctypes module tests =====
+    print("ctypes.sizeof(c_int):", ctypes.sizeof(ctypes.c_int))
+    print("ctypes.sizeof(c_long):", ctypes.sizeof(ctypes.c_long))
+    print("ctypes.sizeof(c_float):", ctypes.sizeof(ctypes.c_float))
+    print("ctypes.sizeof(c_double):", ctypes.sizeof(ctypes.c_double))
+    print("ctypes.sizeof(c_bool):", ctypes.sizeof(ctypes.c_bool))
+    print("ctypes.sizeof(c_int8):", ctypes.sizeof(ctypes.c_int8))
+    print("ctypes.sizeof(c_int64):", ctypes.sizeof(ctypes.c_int64))
+    print("ctypes.sizeof(c_uint8):", ctypes.sizeof(ctypes.c_uint8))
+    print("ctypes.sizeof(c_size_t):", ctypes.sizeof(ctypes.c_size_t))
+
+    // Cast
+    val casted = ctypes.cast(42, ctypes.c_int)
+    print("ctypes.cast(42, c_int):", casted)
+
+    // Addressof
+    val x = 42
+    val addr = ctypes.addressof(x)
+    print("ctypes.addressof(x):", addr)
+
+    // Buffer creation
+    val buf = ctypes.create_string_buffer("hello")
+    print("ctypes.create_string_buffer(\"hello\"):", buf)
+
+    // ===== logging module tests =====
+    logging.debug("Debug message")
+    logging.info("Info message")
+    logging.warning("Warning message")
+    logging.warn("Warn message")
+    logging.error("Error message")
+    logging.critical("Critical message")
+    logging.fatal("Fatal message")
+
+    // Log with custom level
+    logging.log(20, "Log at INFO level")
+
+    // Configuration
+    logging.basicConfig(logging.DEBUG)
+    logging.disable(logging.DEBUG)
+
+    // Level name lookup
+    print("logging.getLevelName(10):", logging.getLevelName(10))
+    print("logging.getLevelName(20):", logging.getLevelName(20))
+    print("logging.getLevelName(40):", logging.getLevelName(40))
+
+    // Logger
+    val logger = logging.getLogger("test")
+    print("logging.getLogger(\"test\"):", logger)
+
+    // Handlers
+    val sh = logging.StreamHandler()
+    val fh = logging.FileHandler("app.log")
+    val fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+
+    // Level constants
+    print("logging.DEBUG:", logging.DEBUG)
+    print("logging.INFO:", logging.INFO)
+    print("logging.WARNING:", logging.WARNING)
+    print("logging.ERROR:", logging.ERROR)
+    print("logging.CRITICAL:", logging.CRITICAL)
+
+    // ===== abc module tests =====
+    val token = abc.get_cache_token()
+    print("abc.get_cache_token():", token)
+
+    // Register a virtual subclass (simplified)
+    abc.register(0)
+
+    print("All utils/ctypes/logging/abc tests completed!")

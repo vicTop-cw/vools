@@ -1,0 +1,121 @@
+// math_cmath_numbers_test.vox — test for math, cmath, numbers, decimals, fractions stdlib
+
+// ===== math module: constants =====
+println("=== math constants ===")
+println("math.pi =", math.pi)
+println("math.e =", math.e)
+println("math.tau =", math.tau)
+println("math.inf =", math.inf)
+println("math.nan =", math.nan)
+
+// ===== math module: basic functions =====
+println("\n=== math basic functions ===")
+println("math.sqrt(16) =", math.sqrt(16.0))
+println("math.sqrt(2) =", math.sqrt(2.0))
+println("math.cbrt(27) =", math.cbrt(27.0))
+println("math.abs(-5.5) =", math.abs(-5.5))
+println("math.fabs(-3.14) =", math.fabs(-3.14))
+println("math.ceil(3.2) =", math.ceil(3.2))
+println("math.floor(3.8) =", math.floor(3.8))
+println("math.trunc(3.9) =", math.trunc(3.9))
+println("math.round(3.5) =", math.round(3.5))
+
+// ===== math module: trigonometry =====
+println("\n=== math trigonometry ===")
+println("math.sin(0) =", math.sin(0.0))
+println("math.cos(0) =", math.cos(0.0))
+println("math.tan(0) =", math.tan(0.0))
+println("math.pi/2 sin =", math.sin(math.pi / 2.0))
+println("math.asin(1) =", math.asin(1.0))
+println("math.acos(1) =", math.acos(1.0))
+println("math.atan(1) =", math.atan(1.0))
+
+// ===== math module: hyperbolic =====
+println("\n=== math hyperbolic ===")
+println("math.sinh(0) =", math.sinh(0.0))
+println("math.cosh(0) =", math.cosh(0.0))
+println("math.tanh(0) =", math.tanh(0.0))
+
+// ===== math module: power and log =====
+println("\n=== math power and log ===")
+println("math.pow(2, 10) =", math.pow(2.0, 10.0))
+println("math.exp(1) =", math.exp(1.0))
+println("math.log(math.e) =", math.log(math.e))
+println("math.log2(8) =", math.log2(8.0))
+println("math.log10(1000) =", math.log10(1000.0))
+
+// ===== math module: number theory =====
+println("\n=== math number theory ===")
+println("math.gcd(12, 18) =", math.gcd(12, 18))
+println("math.lcm(4, 6) =", math.lcm(4, 6))
+println("math.factorial(5) =", math.factorial(5))
+println("math.comb(10, 3) =", math.comb(10, 3))
+println("math.perm(5, 2) =", math.perm(5, 2))
+println("math.isqrt(16) =", math.isqrt(16))
+
+// ===== math module: classification =====
+println("\n=== math classification ===")
+println("math.isnan(nan) =", math.isnan(math.nan))
+println("math.isinf(inf) =", math.isinf(math.inf))
+println("math.isfinite(1.0) =", math.isfinite(1.0))
+println("math.isclose(1.0, 1.000000001) =", math.isclose(1.0, 1.000000001))
+
+// ===== math module: angle conversion =====
+println("\n=== math angle conversion ===")
+println("math.degrees(pi) =", math.degrees(math.pi))
+println("math.radians(180) =", math.radians(180.0))
+
+// ===== math module: special functions =====
+println("\n=== math special functions ===")
+println("math.gamma(5) =", math.gamma(5.0))
+println("math.lgamma(5) =", math.lgamma(5.0))
+println("math.erf(1) =", math.erf(1.0))
+println("math.erfc(1) =", math.erfc(1.0))
+
+// ===== cmath module: constants =====
+println("\n=== cmath constants ===")
+println("cmath.pi =", cmath.pi)
+println("cmath.e =", cmath.e)
+println("cmath.j =", cmath.j)
+
+// ===== cmath module: complex functions =====
+println("\n=== cmath functions ===")
+val z = cmath.rect(2.0, math.pi / 4.0)
+println("cmath.rect(2, pi/4) =", z)
+println("cmath.phase(j) =", cmath.phase(cmath.j))
+println("cmath.polar(1+1j) =", cmath.polar(z))
+println("cmath.sqrt(-1) =", cmath.sqrt(cmath.rect(-1.0, 0.0)))
+println("cmath.exp(0) =", cmath.exp(cmath.rect(0.0, 0.0)))
+println("cmath.log(1) =", cmath.log(cmath.rect(1.0, 0.0)))
+println("cmath.isnan(nan+1j) =", cmath.isnan(cmath.rect(0.0/0.0, 1.0)))
+
+// ===== numbers module =====
+println("\n=== numbers module ===")
+println("numbers.Number =", numbers.Number)
+println("numbers.Complex =", numbers.Complex)
+println("numbers.Real =", numbers.Real)
+println("numbers.Rational =", numbers.Rational)
+println("numbers.Integral =", numbers.Integral)
+
+// ===== decimals module =====
+println("\n=== decimals module ===")
+val d1 = decimals.Decimal("3.14")
+val d2 = decimals.Decimal("2.86")
+println("d1 =", d1)
+println("d2 =", d2)
+println("d1 + d2 =", d1 + d2)
+println("decimals.MAX_PREC =", decimals.MAX_PREC)
+println("decimals.getcontext() =", decimals.getcontext())
+
+// ===== fractions module =====
+println("\n=== fractions module ===")
+val f1 = fractions.Fraction(1, 3)
+val f2 = fractions.Fraction(1, 6)
+println("f1 = Fraction(1,3) =", f1)
+println("f2 = Fraction(1,6) =", f2)
+println("f1 + f2 =", f1 + f2)
+println("f1 - f2 =", f1 - f2)
+println("f1 * f2 =", f1 * f2)
+println("fractions.gcd(12, 18) =", fractions.gcd(12, 18))
+
+println("\n=== All math/cmath/numbers/decimals/fractions tests passed ===")

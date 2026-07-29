@@ -1,0 +1,102 @@
+// logging.vox — Vox standard library: logging module
+// Provides leveled logging to stderr, file, or custom handlers.
+// Modeled after Python's logging module.
+
+// ===== Logging level constants =====
+
+val NOTSET: int = 0
+val DEBUG: int = 10
+val INFO: int = 20
+val WARNING: int = 30
+val WARN: int = 30
+val ERROR: int = 40
+val CRITICAL: int = 50
+val FATAL: int = 50
+
+// ===== Basic logging functions =====
+
+/// Log a message at DEBUG level.
+/// logging.debug(msg)
+def debug(msg: str) -> void:
+    eprintln!("[DEBUG] {}", msg)
+
+/// Log a message at INFO level.
+/// logging.info(msg)
+def info(msg: str) -> void:
+    eprintln!("[INFO] {}", msg)
+
+/// Log a message at WARNING level.
+/// logging.warning(msg)
+def warning(msg: str) -> void:
+    eprintln!("[WARNING] {}", msg)
+
+/// Alias for logging.warning.
+/// logging.warn(msg)
+def warn(msg: str) -> void:
+    eprintln!("[WARNING] {}", msg)
+
+/// Log a message at ERROR level.
+/// logging.error(msg)
+def error(msg: str) -> void:
+    eprintln!("[ERROR] {}", msg)
+
+/// Log a message at CRITICAL level.
+/// logging.critical(msg)
+def critical(msg: str) -> void:
+    eprintln!("[CRITICAL] {}", msg)
+
+/// Alias for logging.critical.
+/// logging.fatal(msg)
+def fatal(msg: str) -> void:
+    eprintln!("[CRITICAL] {}", msg)
+
+/// Log a message at a custom level.
+/// logging.log(level, msg)
+def log(level: int, msg: str) -> void:
+    eprintln!("[{}] {}", level, msg)
+
+// ===== Configuration =====
+
+/// Configure the root logger (simplified).
+/// logging.basicConfig(level=INFO, format=..., filename=...)
+def basicConfig(level: int = 20, format: str = "", filename: str = "") -> void:
+    pass
+
+/// Get a named logger.
+/// logging.getLogger(name) -> Logger
+def getLogger(name: str = "root") -> int:
+    return 0
+
+/// Disable logging below a certain level.
+/// logging.disable(level)
+def disable(level: int) -> void:
+    pass
+
+// ===== Level name management =====
+
+/// Register a custom level name.
+/// logging.addLevelName(level, name)
+def addLevelName(level: int, name: str) -> void:
+    pass
+
+/// Get the name for a level number.
+/// logging.getLevelName(level) -> str
+def getLevelName(level: int) -> str:
+    return "NOTSET"
+
+// ===== Handler and formatter classes =====
+
+/// Stream handler for logging to stderr/stdout.
+class StreamHandler:
+    def __init__(self, stream: int = 0):
+        pass
+
+/// File handler for logging to a file.
+class FileHandler:
+    def __init__(self, filename: str, mode: str = "a"):
+        pass
+
+/// Formatter for log message layout.
+class Formatter:
+    def __init__(self, fmt: str = "", datefmt: str = ""):
+        pass

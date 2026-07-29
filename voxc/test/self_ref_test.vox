@@ -1,0 +1,52 @@
+// Self-referential type test + inspect/reflect verification
+
+// 链表节点 — 自引用类型
+// Vox 端直接写 Node，编译器自动生成 Option<Box<Node>>
+struct Node:
+    value: int
+    next: Node?
+
+// 普通结构体（非自引用）
+struct Point:
+    x: int
+    y: int
+
+enum Color:
+    Red
+    Green
+    Blue
+
+trait Show:
+    def show(self) -> void
+
+impl Show for Point:
+    def show(self) -> void:
+        print("point")
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+def main() -> void:
+    // inspect 测试
+    print(inspect.signature(add))
+    print(inspect.lineno(add))
+    print(inspect.getfile(add))
+
+    // reflect 测试 — Point
+    print(reflect.type_name(Point))
+    print(reflect.fields(Point))
+    print(reflect.is_struct(Point))
+    print(reflect.has_trait(Point, Show))
+
+    // reflect 测试 — Color
+    print(reflect.is_enum(Color))
+    print(reflect.variants(Color))
+
+    // reflect 测试 — Node（自引用类型）
+    print(reflect.type_name(Node))
+    print(reflect.fields(Node))
+
+    // 自引用类型使用
+    var p = Point(1, 2)
+    print(p.x)
+    print(add(3, 4))

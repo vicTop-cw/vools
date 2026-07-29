@@ -1,0 +1,58 @@
+// sys.vox — Vox standard library: system and interpreter functions
+// Provides process control, interpreter state, and standard streams,
+// modeled after Python's sys module.
+
+// ===== Process control =====
+
+/// Exit the program with a status code.
+/// sys.exit(code=0) -> void
+def exit(code: int = 0) -> void:
+    std::process::exit(code)
+
+/// Get the current recursion limit (fixed at 128 in Vox).
+/// sys.getrecursionlimit() -> int
+def getrecursionlimit() -> int:
+    return 128
+
+/// Set the recursion limit (no-op in Rust backend).
+/// sys.setrecursionlimit(n) -> void
+def setrecursionlimit(n: int) -> void:
+    let _ = n
+
+// ===== Interpreter state (attributes) =====
+
+/// Command-line arguments (excluding program name).
+/// sys.argv -> list[str]
+val argv: list[str] = std::env::args().collect()
+
+/// The platform identifier ("windows" or "linux").
+/// sys.platform -> str
+val platform: str = if cfg!(windows) { "windows" } else { "linux" }
+
+/// The Vox interpreter version string.
+/// sys.version -> str
+val version: str = "Vox 0.1.0"
+
+/// Standard input stream.
+/// sys.stdin -> stdin
+val stdin = std::io::stdin()
+
+/// Standard output stream.
+/// sys.stdout -> stdout
+val stdout = std::io::stdout()
+
+/// Standard error stream.
+/// sys.stderr -> stderr
+val stderr = std::io::stderr()
+
+/// Module search path (simplified).
+/// sys.path -> list[str]
+val path: list[str] = ["."]
+
+/// Loaded modules registry (simplified, empty).
+/// sys.modules -> dict
+val modules = HashMap::new()
+
+/// Maximum integer value.
+/// sys.maxsize -> int
+val maxsize: int = i64::MAX

@@ -1,0 +1,81 @@
+{
+  "name": "vox-language",
+  "displayName": "Vox Language Support",
+  "description": "Vox language syntax highlighting, snippets, and keybindings",
+  "version": "0.1.0",
+  "publisher": "vools",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:vox"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "vox",
+        "aliases": ["Vox", "vox"],
+        "extensions": [".vox"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "vox",
+        "scopeName": "source.vox",
+        "path": "./syntaxes/vox.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "vox.run",
+        "title": "Vox: Run Current File"
+      },
+      {
+        "command": "vox.compile",
+        "title": "Vox: Compile Current File"
+      },
+      {
+        "command": "vox.showAst",
+        "title": "Vox: Show AST"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "vox.run",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v",
+        "when": "editorLangId == vox"
+      },
+      {
+        "command": "vox.compile",
+        "key": "ctrl+shift+b",
+        "when": "editorLangId == vox"
+      },
+      {
+        "command": "vox.showAst",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "editorLangId == vox"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "vox",
+        "path": "./snippets/vox.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "vox-icons",
+        "label": "Vox File Icons",
+        "path": "./icons/vox-icon-theme.json"
+      }
+    ]
+  }
+}

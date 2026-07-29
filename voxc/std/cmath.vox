@@ -1,0 +1,159 @@
+// cmath.vox — Vox standard library: complex math functions
+// Provides mathematical functions for complex numbers,
+// modeled after Python's cmath module.
+
+// ===== Constants =====
+
+/// The mathematical constant pi.
+/// cmath.pi -> float
+val pi: float = 3.141592653589793
+
+/// The mathematical constant e.
+/// cmath.e -> float
+val e: float = 2.718281828459045
+
+/// The mathematical constant tau (2*pi).
+/// cmath.tau -> float
+val tau: float = 6.283185307179586
+
+/// Positive infinity.
+/// cmath.inf -> float
+val inf: float = 1.0 / 0.0
+
+/// Not a Number (NaN).
+/// cmath.nan -> float
+val nan: float = 0.0 / 0.0
+
+/// The imaginary unit (0+1j).
+/// cmath.j -> complex
+val j = VoxComplex::new(0.0, 1.0)
+
+// ===== Power and logarithmic functions =====
+
+/// Return the square root of complex z.
+/// cmath.sqrt(z) -> complex
+def sqrt(z: complex) -> complex:
+    return VoxComplex::sqrt(&z)
+
+/// Return e raised to the power z.
+/// cmath.exp(z) -> complex
+def exp(z: complex) -> complex:
+    return VoxComplex::exp(&z)
+
+/// Return the natural logarithm of z.
+/// cmath.log(z) -> complex
+def log(z: complex) -> complex:
+    return VoxComplex::log(&z)
+
+/// Return the base-10 logarithm of z.
+/// cmath.log10(z) -> complex
+def log10(z: complex) -> complex:
+    return VoxComplex::log10(&z)
+
+/// Return z raised to the power w.
+/// cmath.pow(z, w) -> complex
+def pow(z: complex, w: complex) -> complex:
+    return VoxComplex::pow(&z, &w)
+
+// ===== Trigonometric functions =====
+
+/// Return the sine of complex z.
+/// cmath.sin(z) -> complex
+def sin(z: complex) -> complex:
+    return VoxComplex::sin(&z)
+
+/// Return the cosine of complex z.
+/// cmath.cos(z) -> complex
+def cos(z: complex) -> complex:
+    return VoxComplex::cos(&z)
+
+/// Return the tangent of complex z.
+/// cmath.tan(z) -> complex
+def tan(z: complex) -> complex:
+    return VoxComplex::tan(&z)
+
+/// Return the arc sine of complex z.
+/// cmath.asin(z) -> complex
+def asin(z: complex) -> complex:
+    return VoxComplex::asin(&z)
+
+/// Return the arc cosine of complex z.
+/// cmath.acos(z) -> complex
+def acos(z: complex) -> complex:
+    return VoxComplex::acos(&z)
+
+/// Return the arc tangent of complex z.
+/// cmath.atan(z) -> complex
+def atan(z: complex) -> complex:
+    return VoxComplex::atan(&z)
+
+// ===== Hyperbolic functions =====
+
+/// Return the hyperbolic sine of complex z.
+/// cmath.sinh(z) -> complex
+def sinh(z: complex) -> complex:
+    return VoxComplex::sinh(&z)
+
+/// Return the hyperbolic cosine of complex z.
+/// cmath.cosh(z) -> complex
+def cosh(z: complex) -> complex:
+    return VoxComplex::cosh(&z)
+
+/// Return the hyperbolic tangent of complex z.
+/// cmath.tanh(z) -> complex
+def tanh(z: complex) -> complex:
+    return VoxComplex::tanh(&z)
+
+/// Return the inverse hyperbolic sine of complex z.
+/// cmath.asinh(z) -> complex
+def asinh(z: complex) -> complex:
+    return VoxComplex::asinh(&z)
+
+/// Return the inverse hyperbolic cosine of complex z.
+/// cmath.acosh(z) -> complex
+def acosh(z: complex) -> complex:
+    return VoxComplex::acosh(&z)
+
+/// Return the inverse hyperbolic tangent of complex z.
+/// cmath.atanh(z) -> complex
+def atanh(z: complex) -> complex:
+    return VoxComplex::atanh(&z)
+
+// ===== Polar conversion =====
+
+/// Return the phase (argument) of complex z in radians.
+/// cmath.phase(z) -> float
+def phase(z: complex) -> float:
+    return VoxComplex::phase(&z)
+
+/// Return the polar representation (r, theta) of complex z.
+/// cmath.polar(z) -> (float, float)
+def polar(z: complex) -> (float, float):
+    return VoxComplex::polar(&z)
+
+/// Return the complex number from polar coordinates r, theta.
+/// cmath.rect(r, theta) -> complex
+def rect(r: float, theta: float) -> complex:
+    return VoxComplex::rect(r, theta)
+
+// ===== Classification =====
+
+/// Return True if either the real or imaginary part is NaN.
+/// cmath.isnan(z) -> bool
+def isnan(z: complex) -> bool:
+    return VoxComplex::isnan(&z)
+
+/// Return True if either the real or imaginary part is infinite.
+/// cmath.isinf(z) -> bool
+def isinf(z: complex) -> bool:
+    return VoxComplex::isinf(&z)
+
+/// Return True if both real and imaginary parts are finite.
+/// cmath.isfinite(z) -> bool
+def isfinite(z: complex) -> bool:
+    return VoxComplex::isfinite(&z)
+
+/// Return True if a and b are close.
+/// cmath.isclose(a, b) -> bool
+def isclose(a: complex, b: complex) -> bool:
+    return VoxComplex::isclose(&a, &b)

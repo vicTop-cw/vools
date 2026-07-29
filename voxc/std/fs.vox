@@ -1,0 +1,57 @@
+// fs.vox — Vox standard library: file system operations
+// Provides high-level file reading, writing, copying, and moving,
+// modeled after common file I/O patterns.
+
+// ===== File reading =====
+
+/// Read the entire contents of a file as a string.
+/// fs.read_file(path) -> str
+def read_file(path: str) -> str:
+    return std::fs::read_to_string(path).unwrap()
+
+// ===== File writing =====
+
+/// Write content to a file (overwrites existing content).
+/// fs.write_file(path, content) -> void
+def write_file(path: str, content: str) -> void:
+    std::fs::write(path, content).unwrap()
+
+/// Append content to a file (creates if it does not exist).
+/// fs.append_file(path, content) -> void
+def append_file(path: str, content: str) -> void:
+    use std::io::Write
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .unwrap()
+    f.write_all(content.as_bytes()).unwrap()
+
+// ===== File copying and moving =====
+
+/// Copy a file from src to dst.
+/// fs.copy(src, dst) -> void
+def copy(src: str, dst: str) -> void:
+    std::fs::copy(src, dst).unwrap()
+
+/// Move/rename a file from src to dst.
+/// fs.move_file(src, dst) -> void
+def move_file(src: str, dst: str) -> void:
+    std::fs::rename(src, dst).unwrap()
+
+// ===== File queries =====
+
+/// Check if a path exists (file or directory).
+/// fs.exists(path) -> bool
+def exists(path: str) -> bool:
+    return std::path::Path::new(&path).exists()
+
+/// Check if a path is a regular file.
+/// fs.is_file(path) -> bool
+def is_file(path: str) -> bool:
+    return std::path::Path::new(&path).is_file()
+
+/// Check if a path is a directory.
+/// fs.is_dir(path) -> bool
+def is_dir(path: str) -> bool:
+    return std::path::Path::new(&path).is_dir()

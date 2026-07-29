@@ -1,0 +1,121 @@
+// Test sys, os, and fs standard library modules
+
+def main() -> void:
+    // ===== sys module tests =====
+    print("=== sys module ===")
+
+    // sys attributes
+    print("sys.platform:", sys.platform)
+    print("sys.version:", sys.version)
+    print("sys.maxsize:", sys.maxsize)
+    print("sys.argv count:", len(sys.argv))
+    print("sys.path:", sys.path)
+
+    // sys methods
+    print("sys.getrecursionlimit():", sys.getrecursionlimit())
+    sys.setrecursionlimit(256)
+    print("After sys.setrecursionlimit(256)")
+
+    // ===== os module tests =====
+    print("")
+    print("=== os module ===")
+
+    // os attributes
+    print("os.sep:", os.sep)
+    print("os.linesep:", os.linesep)
+    print("os.name:", os.name)
+
+    // Working directory
+    val cwd = os.getcwd()
+    print("os.getcwd():", cwd)
+
+    // Directory listing
+    val entries = os.listdir(".")
+    print("os.listdir(\".\") count:", len(entries))
+
+    // Environment variables
+    val path_env = os.getenv("PATH", "")
+    print("os.getenv(\"PATH\") length:", len(path_env))
+
+    val home_env = os.getenv("HOME", "not set")
+    print("os.getenv(\"HOME\", \"not set\"):", home_env)
+
+    // Directory creation and removal
+    os.mkdir("__test_os_dir__")
+    print("After os.mkdir(\"__test_os_dir__\")")
+
+    val test_entries = os.listdir(".")
+    print("'__test_os_dir__' in listing:", "__test_os_dir__" in test_entries)
+
+    os.rmdir("__test_os_dir__")
+    print("After os.rmdir(\"__test_os_dir__\")")
+
+    // makedirs and rename
+    os.makedirs("__test_os_nested__/deep")
+    print("After os.makedirs(\"__test_os_nested__/deep\")")
+    os.rename("__test_os_nested__", "__test_os_renamed__")
+    print("After os.rename to __test_os_renamed__")
+
+    // ===== os.path submodule tests =====
+    print("")
+    print("=== os.path submodule ===")
+
+    print("os.path.exists(\".\"):", os.path.exists("."))
+    print("os.path.exists(\"nonexistent_file\"):", os.path.exists("nonexistent_file"))
+    print("os.path.isfile(\".\"):", os.path.isfile("."))
+    print("os.path.isdir(\".\"):", os.path.isdir("."))
+
+    val joined = os.path.join("parent", "child")
+    print("os.path.join(\"parent\", \"child\"):", joined)
+
+    val base = os.path.basename("/a/b/c.txt")
+    print("os.path.basename(\"/a/b/c.txt\"):", base)
+
+    val dir_part = os.path.dirname("/a/b/c.txt")
+    print("os.path.dirname(\"/a/b/c.txt\"):", dir_part)
+
+    val parts = os.path.split("/a/b/c.txt")
+    print("os.path.split(\"/a/b/c.txt\"):", parts)
+
+    // Cleanup nested dir
+    os.rmdir("__test_os_renamed__/deep")
+    os.rmdir("__test_os_renamed__")
+
+    // ===== fs module tests =====
+    print("")
+    print("=== fs module ===")
+
+    // Write and read a file
+    fs.write_file("__test_fs.txt", "Hello, fs module!")
+    print("After fs.write_file(\"__test_fs.txt\", ...)")
+
+    val content = fs.read_file("__test_fs.txt")
+    print("fs.read_file(\"__test_fs.txt\"):", content)
+
+    // Append to file
+    fs.append_file("__test_fs.txt", "\nAppended line.")
+    val content2 = fs.read_file("__test_fs.txt")
+    print("After fs.append_file, content:", content2)
+
+    // File queries
+    print("fs.exists(\"__test_fs.txt\"):", fs.exists("__test_fs.txt"))
+    print("fs.is_file(\"__test_fs.txt\"):", fs.is_file("__test_fs.txt"))
+    print("fs.is_dir(\"__test_fs.txt\"):", fs.is_dir("__test_fs.txt"))
+
+    // Copy and move
+    fs.copy("__test_fs.txt", "__test_fs_copy.txt")
+    print("After fs.copy")
+    print("fs.exists(\"__test_fs_copy.txt\"):", fs.exists("__test_fs_copy.txt"))
+
+    fs.move_file("__test_fs_copy.txt", "__test_fs_moved.txt")
+    print("After fs.move_file")
+    print("fs.exists(\"__test_fs_moved.txt\"):", fs.exists("__test_fs_moved.txt"))
+    print("fs.exists(\"__test_fs_copy.txt\"):", fs.exists("__test_fs_copy.txt"))
+
+    // Cleanup
+    os.remove("__test_fs.txt")
+    os.remove("__test_fs_moved.txt")
+    print("Cleanup done")
+
+    print("")
+    print("All sys/os/fs tests completed!")

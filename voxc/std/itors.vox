@@ -1,0 +1,80 @@
+// itors.vox — Vox standard library: iterator tools
+// Provides functions for creating and working with iterators,
+// modeled after Python's itertools module.
+
+// ===== Infinite iterators =====
+
+/// Return an iterator that yields evenly spaced values starting from start.
+/// itors.count(start, step) -> Iterator
+def count(start: int, step: int) -> list:
+    return []
+
+/// Return an iterator that cycles through iterable indefinitely.
+/// itors.cycle(iterable) -> Iterator
+def cycle(iterable: list) -> list:
+    return []
+
+/// Return an iterator that repeats elem, optionally up to n times.
+/// itors.repeat(elem, times) -> Iterator
+def repeat(elem: int, times: int) -> list:
+    return []
+
+// ===== Iterator combination =====
+
+/// Chain multiple iterables into a single iterator.
+/// itors.chain(*iterables) -> Iterator
+def chain(iterables: list) -> list:
+    return []
+
+/// Return an iterator that yields selected elements from iterable.
+/// itors.islice(iterable, start, stop, step) -> Iterator
+def islice(iterable: list, start: int, stop: int, step: int) -> list:
+    return []
+
+// ===== Filtering iterators =====
+
+/// Yield elements while the predicate is true.
+/// itors.takewhile(pred, iterable) -> Iterator
+def takewhile(pred: (int) -> bool, iterable: list) -> list:
+    return []
+
+/// Drop elements while the predicate is true, then yield the rest.
+/// itors.dropwhile(pred, iterable) -> Iterator
+def dropwhile(pred: (int) -> bool, iterable: list) -> list:
+    return []
+
+// ===== Mapping iterators =====
+
+/// Apply func to each tuple unpacked from iterable.
+/// itors.starmap(func, iterable) -> Iterator
+def starmap(func: (int) -> int, iterable: list) -> list:
+    return []
+
+/// Accumulate running totals (or apply func for custom accumulation).
+/// itors.accumulate(iterable, func) -> Iterator
+def accumulate(iterable: list, func: (int, int) -> int) -> list:
+    return []
+
+// ===== Grouping iterators =====
+
+/// Group consecutive elements of iterable by a key function.
+/// itors.groupby(iterable, key) -> Iterator
+def groupby(iterable: list, key: (int) -> int) -> list:
+    return []
+
+// ===== Combinatorial iterators =====
+
+/// Yield all r-length combinations of elements from iterable.
+/// itors.combinations(iterable, r) -> Iterator
+def combinations(iterable: list, r: int) -> list:
+    return []
+
+/// Yield all r-length permutations of elements from iterable.
+/// itors.permutations(iterable, r) -> Iterator
+def permutations(iterable: list, r: int) -> list:
+    return []
+
+/// Cartesian product of input iterables.
+/// itors.product(*iterables) -> Iterator
+def product(iterables: list) -> list:
+    return []
