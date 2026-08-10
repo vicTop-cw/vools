@@ -4,10 +4,35 @@ vools - Python 函数式编程工具集
 一个强大的 Python 函数式编程工具集，提供装饰器、函数式编程工具、数据处理工具等。
 """
 
+import pkgutil
+
+# 允许 vools-rx / vools-bridges 等子包作为同一 vools 命名空间下的独立分发包被合并
+__path__ = pkgutil.extend_path(__path__, __name__)
+
+import subprocess
+
+# ============================================================================
+# 全局 subprocess 编码兼容：Windows 下子进程输出可能包含非 UTF-8 字节
+# 对 text=True/universal_newlines=True 的 Popen 调用默认使用 errors='replace'
+# 注意：该修补需要幂等，因为 tests/bridge/test_imports.py 会 reload(vools)
+# ============================================================================
+
+if not hasattr(subprocess.Popen.__init__, '_vools_patched'):
+    _original_popen_init = subprocess.Popen.__init__
+
+    def _popen_init(self, *args, **kwargs):
+        if kwargs.get('text') or kwargs.get('universal_newlines'):
+            if 'errors' not in kwargs:
+                kwargs['errors'] = 'replace'
+        return _original_popen_init(self, *args, **kwargs)
+
+    _popen_init._vools_patched = True
+    subprocess.Popen.__init__ = _popen_init
+
 import importlib
 from typing import Any
 
-__version__ = "0.7.1"
+__version__ = "0.7.2"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
@@ -39,7 +64,8 @@ from .decorators import (
     overload, overcurry, overloads,
     OverloadManager, OverloadMode, reset_registry,
     Priority, AllowSyncName, Strict, Ambiguous,
-    curry, curry_class, rself
+    curry, curry_class, rself,
+    flex_pos
 )
 
 # ============================================================================
@@ -187,15 +213,6 @@ _lazy_modules = {
     'RuleStatus': '.task',
     'rule': '.task',
 
-    # 响应式模块
-    'reactive': '.reactive',
-    'Observable': '.reactive',
-    'Subject': '.reactive',
-    'BehaviorSubject': '.reactive',
-    'ReplaySubject': '.reactive',
-    'AsyncSubject': '.reactive',
-    'ops': '.reactive',
-
     # 编码模块
     'encoding': '.encoding',
     'Encoder': '.encoding',
@@ -247,16 +264,8 @@ _lazy_modules = {
 DATA_AVAILABLE = True
 OOP_AVAILABLE = True
 DATETIME_AVAILABLE = True
-
-# ============================================================================
-# Bridge 跨语言桥接子包
-# ============================================================================
-
-try:
-    from . import bridge
-    BRIDGE_AVAILABLE = True
-except Exception:
-    BRIDGE_AVAILABLE = False
+BRIDGE_AVAILABLE = False
+REACTIVE_AVAILABLE = False
 
 VIC_AVAILABLE = True
 
@@ -277,6 +286,24 @@ def __getattr__(name: str) -> Any:
         elif name == 'VDate':
             from .datetime.vdate_class import VDate as _cls
             return _cls
+
+    if name == 'bridge':
+        global BRIDGE_AVAILABLE
+        try:
+            module = importlib.import_module('.bridge', package='vools')
+            BRIDGE_AVAILABLE = True
+            return module
+        except Exception:
+            raise AttributeError("vools.bridge is not installed; use pip install 'vools[bridges]' or pip install vools-bridges")
+
+    if name == 'reactive':
+        global REACTIVE_AVAILABLE
+        try:
+            module = importlib.import_module('.reactive', package='vools')
+            REACTIVE_AVAILABLE = True
+            return module
+        except Exception:
+            raise AttributeError("vools.reactive is not installed; use pip install 'vools[rx]' or pip install vools-rx")
 
     if name in _lazy_modules:
         module_path = _lazy_modules[name]

@@ -207,8 +207,12 @@ def safe_eval(expr: str, vars: Optional[Dict[str, Any]] = None) -> Any:
 # Rust 加速版本的 safe_eval
 # =============================================================================
 
-# 导入 shim（shim 不引用 vools 子包，避免循环导入）
-from ..bridge.rust import safe_eval_shim as _safe_eval_shim
+# 导入 shim（shim 不引用 vools 子包，避免循环导入）。
+# 当 vools-bridges 未安装时回退到 None，保证核心 safe_eval 仍然可用。
+try:
+    from ..bridge.rust import safe_eval_shim as _safe_eval_shim
+except Exception:
+    _safe_eval_shim = None
 
 
 def _safe_eval_rust_impl(expr: str, vars: Optional[Dict[str, Any]] = None, timeout_ms: int = 1000) -> Any:
@@ -232,7 +236,7 @@ def _safe_eval_rust_impl(expr: str, vars: Optional[Dict[str, Any]] = None, timeo
         SafeEvalError: 当表达式包含不安全内容时
     """
     # 检查 Rust 是否可用
-    if not _safe_eval_shim.is_rust_available():
+    if _safe_eval_shim is None or not _safe_eval_shim.is_rust_available():
         raise SafeEvalError("Rust 桥接库不可用")
 
     # 编译表达式为 VM 指令
@@ -296,7 +300,7 @@ def safe_eval_rust(expr: str, vars: Optional[Dict[str, Any]] = None, timeout_ms:
 
 def is_rust_safe_eval_available() -> bool:
     """检查 Rust 安全沙箱是否可用"""
-    return _safe_eval_shim.is_rust_available()
+    return _safe_eval_shim is not None and _safe_eval_shim.is_rust_available()
 
 
 DANGEROUS_PATTERNS = [

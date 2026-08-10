@@ -19,7 +19,7 @@ import itertools
 __all__ = ['Pipe', 'Ops', 'O', 'Seq', 'P', 'X', 'Y', 'NONE', 'arrow_func', 'g', 'iif', 'ConditionBuilder', 'LazyProperty'
     , '_', 'magic', 'f', 'to_holder', 'F', 'flip', 'apply', 'hd', 'box', 'Box', 'setattr_box'
     , 'waiter', 'for_', 'foreach', 'for_p', 'build', 'build_text',
-    'Result', 'Success', 'Failure', 'success', 'failure', 'safe']  + [f"_{i}" for i in range(1, 21)]
+    'Result', 'Success', 'Failure', 'success', 'failure', 'safe', 'pipeable']  + [f"_{i}" for i in range(1, 21)]
 
 # 导入 arrow_func
 from .arrow_func import arrow_func, g
@@ -41,8 +41,8 @@ from .result import Result, Success, Failure, success, failure, safe
 # 导入 Seq 和 NONE
 from ..data import Seq, NONE
 
-# 导入 O（Ops 实例）
-from .pipe_ops import O
+# 导入 O（Ops 实例）和 pipe_ops.P（与本地 P 不同，功能更丰富）
+from .pipe_ops import O, P as _OpsP
 
 
 # ============================================================================
@@ -287,6 +287,134 @@ class Ops:
         """执行副作用"""
         func(x)
         return x
+
+
+# ============================================================================
+# pipeable - 管道适配器
+# ============================================================================
+
+# 所有 Pipe/P 变体的类型元组，用于 isinstance 检测
+_PIPE_TYPES = (Pipe, P, _OpsP)
+
+
+class pipeable:
+    """管道适配器：包装数据使其 | 和 >> 操作符优先走 Pipe/P 路径。
+
+    Python 运算符解析规则：``data | pipe`` 时，Python 优先调用
+    ``type(data).__or__(data, pipe)``，只有当它返回 NotImplemented 时，
+    才会尝试 ``type(pipe).__ror__(pipe, data)``。
+
+    由于 Seq、VList、NONE 等类型的 __or__/__rshift__ 不返回 NotImplemented，
+    导致 Pipe/P 的 __ror__/__rrshift__ 永远不会被调用。pipeable 包装器
+    拦截管道操作符，确保优先路由到 Pipe/P。
+
+    示例:
+        >>> from vools.data import Seq
+        >>> seq = Seq([1, 2, 3])
+        >>> pipeable(seq) | Pipe(sum)    # 绕过 Seq.__or__，走 Pipe.__ror__
+        6
+        >>> pipeable(seq) | P(sum)      # 也支持 P
+        6
+    """
+
+    __slots__ = ('_data',)
+
+    def __init__(self, data):
+        # 避免双重包装：pipeable(pipeable(x)) → pipeable(x)
+        if isinstance(data, pipeable):
+            data = data._data
+        self._data = data
+
+    # ---- 管道操作符：优先路由到 Pipe/P ----
+
+    def __or__(self, other):
+        """拦截 | 操作符，优先走 Pipe/P 的 __ror__"""
+        if isinstance(other, _PIPE_TYPES):
+            return other.__ror__(self._data)
+        try:
+            return self._data.__or__(other)
+        except AttributeError:
+            return NotImplemented
+
+    def __ror__(self, other):
+        """反向 | 操作符：Pipe(func) | pipeable(data)"""
+        if isinstance(other, _PIPE_TYPES):
+            return other.__ror__(self._data)
+        try:
+            return self._data.__ror__(other) if hasattr(self._data, '__ror__') else NotImplemented
+        except AttributeError:
+            return NotImplemented
+
+    def __rshift__(self, other):
+        """拦截 >> 操作符，优先走 Pipe/P 的 __rrshift__"""
+        if isinstance(other, _PIPE_TYPES):
+            if hasattr(other, '__rrshift__'):
+                return other.__rrshift__(self._data)
+            return other.__ror__(self._data)
+        try:
+            return self._data.__rshift__(other)
+        except AttributeError:
+            return NotImplemented
+
+    def __rrshift__(self, other):
+        """反向 >> 操作符：Pipe(func) >> pipeable(data)"""
+        if isinstance(other, _PIPE_TYPES):
+            if hasattr(other, '__rrshift__'):
+                return other.__rrshift__(self._data)
+            return other.__ror__(self._data)
+        try:
+            return self._data.__rrshift__(other) if hasattr(self._data, '__rrshift__') else NotImplemented
+        except AttributeError:
+            return NotImplemented
+
+    # ---- 迭代与容器协议 ----
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
+
+    def __getitem__(self, item):
+        return self._data[item]
+
+    def __contains__(self, item):
+        return item in self._data
+
+    # ---- 布尔与比较 ----
+
+    def __bool__(self):
+        return bool(self._data)
+
+    def __eq__(self, other):
+        if isinstance(other, pipeable):
+            return self._data == other._data
+        return self._data == other
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return hash(self._data)
+
+    # ---- 表示 ----
+
+    def __repr__(self):
+        return f"pipeable({self._data!r})"
+
+    def __str__(self):
+        return str(self._data)
+
+    # ---- 解包 ----
+
+    def unwrap(self):
+        """返回被包装的原始数据"""
+        return self._data
+
+    # ---- 属性代理 ----
+
+    def __getattr__(self, name):
+        return getattr(self._data, name)
 
 
 
