@@ -290,7 +290,7 @@ class Itor:
         self._iterable = iterable          # 原始可迭代对象
         self._iterator: Optional[Iterator] = None
         self._state = ItorState.PENDING
-        self._lock = threading.Lock()      # 保护内部状态与链表的互斥锁
+        self._lock = threading.RLock()     # 保护内部状态与链表的互斥锁（RLock 避免条件回调内访问 state 等属性时自死锁）
         self._pause_event = threading.Event()
         self._pause_event.set()            # 初始为非暂停状态
 
@@ -366,8 +366,13 @@ class Itor:
         if jump is None and jump_when is None:
             raise ValueError("jump 和 jump_when 不能同时为 None")
 
-        if not isinstance(jump, Node) and jump is not None:
-            if isinstance(jump, (str, bytes)):
+        if not isinstance(jump, Node):
+            if jump is None:
+                # 条件插队时 None 表示插入 None 值；无条件的空插队直接忽略
+                if jump_when is None:
+                    return self
+                jump = Node(None)
+            elif isinstance(jump, (str, bytes)):
                 jump = Node(jump)
             elif isinstance(jump, Iterable):
                 converted = Node.from_iter(jump)
@@ -383,8 +388,7 @@ class Itor:
 
             if jump_when is None:
                 # 紧急插队：将 jump 链表整体插入到 dummy 之后
-                if jump is not None:
-                    self._insert_jump_chain(jump)
+                self._insert_jump_chain(jump)
             else:
                 # 条件插队：暂存，等待条件满足时插入
                 self._conditional_jumps.append((jump, jump_when))
@@ -605,9 +609,6 @@ class Itor:
                 if self._state == ItorState.STOPPED or self._stop_requested:
                     raise StopIteration
 
-            # 处理条件插队
-            self._process_conditional_jumps()
-
             # 获取下一个产出节点
             node = self._get_next_node()
             if node is None:
@@ -626,6 +627,9 @@ class Itor:
                 # 应用历史策略
                 if self._history_strategy:
                     self._history_strategy(self)
+
+            # 处理条件插队，为下一次产出做准备
+            self._process_conditional_jumps()
 
             return val
 
@@ -762,7 +766,7 @@ class Itor:
         """restore from serialization state, recreate non-serializable fields"""
         self.__dict__.update(state)
         import threading
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._pause_event = threading.Event()
         self._pause_event.set()
         self._iterator = None

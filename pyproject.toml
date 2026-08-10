@@ -46,23 +46,9 @@ serialize = [
     "msgpack>=1.0",
     "orjson>=3.9",
 ]
-nim = [
-    # 编译 Nim 加速模块需要这些依赖
-    # 不会强制安装，DLL 不存在时自动回退 Python
-]
-freebasic = [
-    # 编译 FreeBASIC 加速模块需要这些依赖
-    # 不会强制安装，fbc64 不在 PATH 时 fbc 装饰器调用将抛错
-]
-mojo = [
-    # 编译 Mojo 加速模块需要这些依赖
-    # 不会强制安装，mojo 不在 PATH 时 @mojo 装饰器调用将抛错
-    # 需在 WSL Linux 内安装 Modular Mojo 1.0b1（curl https://get.modular.com | sh -）
-]
-rust = [
-    # 编译 Rust 加速模块需要这些依赖
-    # 不会强制安装，cargo 不在 PATH 时 @rust 装饰器调用将抛错
-]
+rx = ["vools-rx==0.7.2"]
+bridges = ["vools-bridges==0.7.2"]
+all = ["vools-rx==0.7.2", "vools-bridges==0.7.2"]
 cli = [
     "typer>=0.12.0",
     "typing-extensions>=4.0.0",
@@ -93,6 +79,8 @@ exclude = [
     "vools.dll32._python32.*",
     "vools.dll32._dlls",
     "vools.dll32._dlls.*",
+    "vools.bridge*",
+    "vools.reactive*",
 ]
 
 [tool.setuptools.dynamic]
@@ -155,11 +143,11 @@ version = { attr = "vools.__version__" }
 # ============ pytest ============
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# 默认运行纯 Python 核心测试：functional, decorators, data, curried, oop, core, serialize, task, datetime, utils, reactive（不含 monitoring）
-# 默认不运行（需要外部资源/平台特定）：bridge, dll32, xl, monitoring, reactive/monitoring, benchmarks, archive, other
+# 默认运行纯 Python 核心测试：functional, decorators, data, curried, oop, core, serialize, task, datetime, utils
+# 默认不运行（需要外部资源/平台特定）：dll32, xl, monitoring, benchmarks, archive, other
 # 如需运行全部测试，使用: pytest --override-ini="addopts=--tb=short -q"
-# 如需运行特定子目录，使用: pytest tests/bridge/ 或 pytest tests/reactive/
-addopts = "--tb=short -q --ignore=tests/bridge --ignore=tests/dll32 --ignore=tests/xl --ignore=tests/monitoring --ignore=tests/reactive/monitoring --ignore=tests/benchmarks --ignore=tests/archive --ignore=tests/other --ignore=tests/__rust__ --ignore=tests/__persist__ --ignore=tests/__pycache__"
+# 如需运行特定子项目测试，使用: pytest bridges/tests/ 或 pytest rx/tests/
+addopts = "--tb=short -q --ignore=tests/dll32 --ignore=tests/xl --ignore=tests/monitoring --ignore=tests/benchmarks --ignore=tests/archive --ignore=tests/other --ignore=tests/__rust__ --ignore=tests/__persist__ --ignore=tests/__pycache__"
 markers = [
     "integration: 标记集成测试（依赖外部资源，如剪贴板、文件系统、键鼠）",
     "windows_only: 仅在 Windows 上可运行的测试",

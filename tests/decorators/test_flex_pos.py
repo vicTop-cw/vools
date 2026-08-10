@@ -137,7 +137,9 @@ class TestBasicPlaceholders(unittest.TestCase):
         @flex_pos
         def name():
             f = map(_, data, _)
-            return list(f(lambda x, y: x + y, [10, 20, 30]))
+            # return list(f(lambda x, y: x + y, [10, 20, 30]))
+            t = _ + _
+            return list(f(t, [10, 20, 30]))
 
         self.assertEqual(name(), [11, 22, 33])
 
@@ -881,6 +883,20 @@ class TestHighPressure(unittest.TestCase):
         self.assertEqual(e.base(2)(3), 5)
         self.assertEqual(e.extra(4, y=3), 12)
 
+    def test_by_user_request(self):
+        """A user on Gitter asked for this, so here it is."""
+
+        @flex_pos
+        def foo(pre,_,__):
+            print(pre, args, kwargs)
+            f = _ * 3
+            print([f(i) for i in range(5)])
+            for k,v in kwargs.items():
+                print(k,v,f(v))
+            return list(map(f,args))
+        lst = foo('hello', 1, 2, 3, k1=4, k2=5)
+        print(lst)
+        self.assertEqual(lst, [3, 6, 9])
 
 if __name__ == '__main__':
     unittest.main()

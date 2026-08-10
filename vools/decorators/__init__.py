@@ -80,6 +80,9 @@ from .curried import (
     curried_apply,
 )
 
+#灵活的占位符
+from .flex_pos import flex_pos
+
 __all__ = [
     # 缓存
     'memorize',
@@ -178,6 +181,7 @@ __all__ = [
     'flip',
     'apply',
     'curried_apply',
+    'flex_pos'
 ]
 
 # 向后兼容：extend 装饰器（原 decorators.extend，现移至 oop.method_extend）

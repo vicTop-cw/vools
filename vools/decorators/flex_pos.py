@@ -442,7 +442,7 @@ def _globals_of(target, caller_frame=None):
     return env
 
 
-def _get_source(target):
+def _get_source(target, caller_frame=None):
     """Return source text for *target* with Python 3.6 / eval fallbacks.
 
     ``inspect.getsource`` can fail when the definition was loaded through
@@ -498,7 +498,64 @@ def _get_source(target):
             if 1 <= start <= len(cached):
                 return ''.join(cached[start - 1:])
 
+    # Fallback 3: eval/exec context (Linkis / Spark / Jupyter).  Try to
+    # locate the source through the module's ``__file__``.
+    result = _try_module_file(target)
+    if result is not None:
+        return result
+
+    # Fallback 4: eval context -- source might be registered in linecache
+    # with a frame-specific filename.  Try the caller frame's code object.
+    if caller_frame is not None:
+        try:
+            frame_file = caller_frame.f_code.co_filename
+            frame_lines = linecache.getlines(frame_file)
+            if frame_lines:
+                tree = ast.parse(''.join(frame_lines))
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        if node.name == target.__name__:
+                            start_ln = getattr(node, 'lineno', 1)
+                            end_ln = getattr(node, 'end_lineno', start_ln + len(node.body) * 10)
+                            return ''.join(frame_lines[start_ln - 1:end_ln])
+        except Exception:
+            pass
+
     return None
+
+
+def _try_module_file(target):
+    """Return source from the module file that contains *target*."""
+    result = None
+    try:
+        module = sys.modules.get(target.__module__)
+        if module and getattr(module, '__file__', None):
+            filename = module.__file__
+            if filename not in ('<string>', '<stdin>', '<input>', None):
+                with open(filename, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                tree = ast.parse(''.join(lines))
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        if node.name == target.__name__ and hasattr(node, 'lineno'):
+                            start = node.lineno
+                            try:
+                                end = node.end_lineno
+                            except AttributeError:
+                                end = start + len(node.body) * 10
+                            result_lines = []
+                            for i in range(start - 1, min(end, len(lines))):
+                                result_lines.append(lines[i])
+                            for i in range(end, min(end + 999, len(lines))):
+                                stripped = lines[i].strip()
+                                if stripped and not stripped.startswith((' ', '\t', ')', ']', '}')):
+                                    break
+                                result_lines.append(lines[i])
+                            result = ''.join(result_lines)
+                            break
+    except Exception:
+        pass
+    return result
 
 
 def flex_pos(target):
@@ -521,7 +578,7 @@ def flex_pos(target):
     """
     caller_frame = sys._getframe(1)
     is_class = isinstance(target, type)
-    source = _get_source(target)
+    source = _get_source(target, caller_frame)
     if source is None:
         raise TypeError(
             'flex_pos: could not retrieve source for {0!r}. '

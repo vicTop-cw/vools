@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vools-bridges"
+version = "0.7.2"
+authors = [
+    { name = "Victor", email = "victortop921129@gmail.com" },
+]
+description = "vools 跨语言桥接子包"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.6"
+dependencies = [
+    "vools>=0.7.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["vools.bridge*"]
+
+[tool.setuptools.package-data]
+"vools.bridge" = [
+    "README.md",
+    "*/README.md",
+    "freebasic/compiler/expand/*.txt",
+    "freebasic/inc/**/*.bi",
+    "freebasic/libs/win64/gui/*.a",
+    "freebasic/libs/win64/gui/*.json",
+    "freebasic/modules/*.bas",
+    "nim/*.nim",
+    "nim/*.bat",
+    "nim/*.sh",
+    "nim/operators/*.nim",
+    "nim/operators/*.bat",
+    "rust/safe_eval/**/*",
+    "scala/operators/*.scala",
+    "scala/operators/*.bat",
+    "scala/operators/*.jar",
+    "kotlin/operators/*.kt",
+    "kotlin/operators/*.bat",
+    "csharp/api/**/*.py",
+    "vbnet/api/**/*.py",
+]
