@@ -13,6 +13,7 @@ jobs:
       url: https://pypi.org/p/vools
     permissions:
       contents: read
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -24,10 +25,10 @@ jobs:
           python-version: "3.12"
           cache: 'pip'
 
-      - name: Install build and twine
+      - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install build twine
+          pip install build
 
       - name: Build vools core package
         run: python -m build
@@ -40,9 +41,20 @@ jobs:
         working-directory: ./rx
         run: python -m build
 
-      - name: Publish packages to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          python -m twine upload dist/* bridges/dist/* rx/dist/*
+      - name: Publish vools core to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+
+      - name: Publish vools-bridges to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: bridges/dist/
+          skip-existing: true
+
+      - name: Publish vools-rx to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: rx/dist/
+          skip-existing: true
