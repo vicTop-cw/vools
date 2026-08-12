@@ -142,7 +142,6 @@ _lazy_modules = {
     'trd': '.decorators',
     'proc': '.decorators',
     'extend': '.decorators',
-    'smart_partial': '.decorators',
     'delay_curry': '.decorators',
 
     'Pipe': '.functional',
@@ -163,11 +162,9 @@ _lazy_modules = {
     'pipe': '.utils',
 
     'shotcut': '.decorators',
-    'shotcutEx': '.decorators',
     'hoder': '.utils',
     'Hoder': '.utils',
     'timeit': '.decorators',
-    'asyncify': '.decorators',
     'safe': '.decorators',
     'throttle': '.decorators',
     'debounce': '.decorators',
@@ -178,7 +175,6 @@ _lazy_modules = {
     'with_timeout': '.decorators',
     'validate': '.decorators',
     'rate_limit': '.decorators',
-    'log_calls': '.decorators',
     'cache_with_ttl': '.decorators',
     'hybrid_method': '.decorators',
     'classproperty': '.decorators',
@@ -190,10 +186,6 @@ _lazy_modules = {
     'oop': '.oop',
     'calltype': '.oop',
 
-    'vicTools': '.vic',
-    'vicDate': '.vic',
-    'vicText': '.vic',
-    'vicList': '.vic',
 
     'datetime': '.datetime',
 
@@ -369,7 +361,6 @@ __all__ = [
     'trd',
     'proc',
     'extend',
-    'smart_partial',
     'delay_curry',
     'overload',
     'OverloadManager', 'OverloadMode', 'reset_registry',
@@ -410,11 +401,9 @@ __all__ = [
     'pipe',
 
     'shotcut',
-    'shotcutEx',
     'hoder',
     'Hoder',
     'timeit',
-    'asyncify',
     'safe',
     'throttle',
     'debounce',
@@ -425,7 +414,6 @@ __all__ = [
     'with_timeout',
     'validate',
     'rate_limit',
-    'log_calls',
     'cache_with_ttl',
     'hybrid_method',
     'classproperty',
@@ -438,10 +426,6 @@ __all__ = [
     'calltype',
     'OOP_AVAILABLE',
 
-    'vicTools',
-    'vicDate',
-    'vicText',
-    'vicList',
 
     'vDate',
     'get_week',

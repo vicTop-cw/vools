@@ -12,12 +12,13 @@ print(f"Available exports: {len(vools.__all__)} items")
 
 # 测试装饰器
 print("\n=== 测试装饰器 ===")
-from vools import memorize, once, lazy, smart_partial, overload
+# smart_partial 已从 vools 移除（死 API，无实现）
+from vools import memorize, once, lazy, overload
 
 print(f"memorize: {memorize}")
 print(f"once: {once}")
 print(f"lazy: {lazy}")
-print(f"smart_partial: {smart_partial}")    
+# smart_partial 已移除
 print(f"overload: {overload}")
 
 print("[OK] 装饰器导入成功")
