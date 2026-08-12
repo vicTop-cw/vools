@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vools-xl"
-version = "0.7.3"
+version = "0.7.4"
 authors = [
     { name = "Victor", email = "victortop921129@gmail.com" },
 ]
