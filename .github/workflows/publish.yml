@@ -53,6 +53,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          password: ${{ secrets.PYPI_TOKEN }}
           skip-existing: true
 
       - name: Publish vools-bridges to PyPI
@@ -60,6 +61,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: bridges/dist/
+          password: ${{ secrets.PYPI_TOKEN }}
           skip-existing: true
 
       - name: Publish vools-rx to PyPI
@@ -67,6 +69,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: rx/dist/
+          password: ${{ secrets.PYPI_TOKEN }}
           skip-existing: true
 
       - name: Publish vools-dll32 to PyPI
@@ -74,6 +77,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dll32/dist/
+          password: ${{ secrets.PYPI_TOKEN }}
           skip-existing: true
 
       - name: Publish vools-xl to PyPI
@@ -81,4 +85,5 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: xl/dist/
+          password: ${{ secrets.PYPI_TOKEN }}
           skip-existing: true
