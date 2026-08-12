@@ -130,6 +130,7 @@ voxc/voxc-rs/target_*/
 
 # Nim build artifacts
 *.dll
+!xl/vools/xl/_dlls/libxl.dll
 *.dll.a
 *.lib
 *.exp

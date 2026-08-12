@@ -96,21 +96,36 @@ _gzip_decompress_impl = None
 _zlib_compress_impl = None
 _zlib_decompress_impl = None
 
-try:
-    from vools.bridge.nim.compress_shim import (
-        gzip_compress as _nim_gzip_compress,
-        gzip_decompress as _nim_gzip_decompress,
-        zlib_compress as _nim_zlib_compress,
-        zlib_decompress as _nim_zlib_decompress,
-        is_nim_compress_available as _nim_compress_available,
-    )
-    if _nim_compress_available():
-        _gzip_compress_impl = _nim_gzip_compress
-        _gzip_decompress_impl = _nim_gzip_decompress
-        _zlib_compress_impl = _nim_zlib_compress
-        _zlib_decompress_impl = _nim_zlib_decompress
-except ImportError:
-    pass
+# Nim 压缩 shim 延迟加载：避免 import vools 或调用 b64encode 等编码函数时
+# 预加载 vools.bridge 子包，否则 vools.BRIDGE_AVAILABLE 标志翻转逻辑失效。
+_nim_compress_loaded = False
+
+
+def _load_nim_compress():
+    """延迟加载 Nim 压缩实现（首次需要时导入 vools.bridge）。"""
+    global _gzip_compress_impl, _gzip_decompress_impl
+    global _zlib_compress_impl, _zlib_decompress_impl, _nim_compress_loaded
+    if _nim_compress_loaded:
+        return
+    _nim_compress_loaded = True
+    try:
+        from vools.bridge.nim.compress_shim import (
+            gzip_compress as _nim_gzip_compress,
+            gzip_decompress as _nim_gzip_decompress,
+            zlib_compress as _nim_zlib_compress,
+            zlib_decompress as _nim_zlib_decompress,
+            is_nim_compress_available as _nim_compress_available,
+        )
+        if _nim_compress_available():
+            _gzip_compress_impl = _nim_gzip_compress
+            _gzip_decompress_impl = _nim_gzip_decompress
+            _zlib_compress_impl = _nim_zlib_compress
+            _zlib_decompress_impl = _nim_zlib_decompress
+            # bridge 已实际可用：同步标志，保持 BRIDGE_AVAILABLE 语义一致
+            import vools as _v
+            _v.BRIDGE_AVAILABLE = True
+    except ImportError:
+        pass
 
 # Python fallback 实现
 def _py_gzip_compress(data, level=9):
@@ -137,11 +152,29 @@ def _py_zlib_decompress(data):
     import zlib
     return zlib.decompress(data)
 
-# 最终函数绑定（Nim 优先，否则 Python）
-gzip_compress = _gzip_compress_impl if _gzip_compress_impl else _py_gzip_compress
-gzip_decompress = _gzip_decompress_impl if _gzip_decompress_impl else _py_gzip_decompress
-zlib_compress = _zlib_compress_impl if _zlib_compress_impl else _py_zlib_compress
-zlib_decompress = _zlib_decompress_impl if _zlib_decompress_impl else _py_zlib_decompress
+# 最终函数绑定（Nim 优先，否则 Python）——通过延迟加载避免预加载 vools.bridge
+def gzip_compress(data, level=9):
+    _load_nim_compress()
+    f = _gzip_compress_impl if _gzip_compress_impl else _py_gzip_compress
+    return f(data, level=level)
+
+
+def gzip_decompress(data):
+    _load_nim_compress()
+    f = _gzip_decompress_impl if _gzip_decompress_impl else _py_gzip_decompress
+    return f(data)
+
+
+def zlib_compress(data, level=9):
+    _load_nim_compress()
+    f = _zlib_compress_impl if _zlib_compress_impl else _py_zlib_compress
+    return f(data, level=level)
+
+
+def zlib_decompress(data):
+    _load_nim_compress()
+    f = _zlib_decompress_impl if _zlib_decompress_impl else _py_zlib_decompress
+    return f(data)
 
 
 def compress(data, method='gzip', **kwargs):
