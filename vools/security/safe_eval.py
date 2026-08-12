@@ -222,6 +222,9 @@ def _load_safe_eval_shim():
     try:
         from ..bridge.rust import safe_eval_shim as _shim
         _safe_eval_shim = _shim
+        # bridge 已实际可用：同步标志，保持 BRIDGE_AVAILABLE 语义一致
+        import vools as _v
+        _v.BRIDGE_AVAILABLE = True
     except Exception:
         _safe_eval_shim = None
     return _safe_eval_shim

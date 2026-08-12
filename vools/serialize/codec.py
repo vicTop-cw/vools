@@ -381,19 +381,31 @@ def _pickle_decode_py(data: bytes) -> Any:
     return pickle.loads(data)
 
 
-# 尝试导入 Nim 桥接函数
+# Nim 桥接函数延迟加载：避免 import vools.serialize 时预加载 vools.bridge 子包，
+# 否则 vools.BRIDGE_AVAILABLE 标志翻转逻辑失效。
 _nim_pickle_encode = None
 _nim_pickle_decode = None
+_nim_pickle_loaded = False
 
-try:
-    from ..bridge.nim import nim_pickle_encode as _nim_encode
-    from ..bridge.nim import nim_pickle_decode as _nim_decode
-    if callable(_nim_encode):
-        _nim_pickle_encode = _nim_encode
-    if callable(_nim_decode):
-        _nim_pickle_decode = _nim_decode
-except ImportError:
-    pass
+
+def _load_nim_pickle():
+    """延迟加载 Nim pickle 桥接（首次需要时导入 vools.bridge）。"""
+    global _nim_pickle_encode, _nim_pickle_decode, _nim_pickle_loaded
+    if _nim_pickle_loaded:
+        return
+    _nim_pickle_loaded = True
+    try:
+        from ..bridge.nim import nim_pickle_encode as _nim_encode
+        from ..bridge.nim import nim_pickle_decode as _nim_decode
+        if callable(_nim_encode):
+            _nim_pickle_encode = _nim_encode
+        if callable(_nim_decode):
+            _nim_pickle_decode = _nim_decode
+            # bridge 已实际可用：同步标志，保持 BRIDGE_AVAILABLE 语义一致
+            import vools as _v
+            _v.BRIDGE_AVAILABLE = True
+    except ImportError:
+        pass
 
 
 def pickle_encode(obj: Any, protocol: int = pickle.HIGHEST_PROTOCOL) -> bytes:
@@ -410,6 +422,7 @@ def pickle_encode(obj: Any, protocol: int = pickle.HIGHEST_PROTOCOL) -> bytes:
     Returns:
         序列化的 bytes
     """
+    _load_nim_pickle()
     # Nim 版本返回 None 如果不可用
     if _nim_pickle_encode is not None:
         result = _nim_pickle_encode(obj)
@@ -431,6 +444,7 @@ def pickle_decode(data: bytes) -> Any:
     Returns:
         反序列化后的对象
     """
+    _load_nim_pickle()
     if _nim_pickle_decode is not None:
         result = _nim_pickle_decode(data)
         if result is not None:

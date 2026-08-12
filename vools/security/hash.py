@@ -49,6 +49,9 @@ def _load_nim_impls() -> None:
         _nim_md5_impl = _md5_impl
         _nim_sha1_impl = _sha1_impl
         _nim_available = True
+        # bridge 已实际可用：同步标志，保持 BRIDGE_AVAILABLE 语义一致
+        import vools as _v
+        _v.BRIDGE_AVAILABLE = True
     except ImportError:
         _nim_available = False
 
