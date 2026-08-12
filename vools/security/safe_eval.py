@@ -209,10 +209,22 @@ def safe_eval(expr: str, vars: Optional[Dict[str, Any]] = None) -> Any:
 
 # 导入 shim（shim 不引用 vools 子包，避免循环导入）。
 # 当 vools-bridges 未安装时回退到 None，保证核心 safe_eval 仍然可用。
-try:
-    from ..bridge.rust import safe_eval_shim as _safe_eval_shim
-except Exception:
-    _safe_eval_shim = None
+# 注意：必须延迟导入，避免 import vools 时预加载 vools.bridge 子包，
+# 否则 vools.BRIDGE_AVAILABLE 标志的翻转逻辑永远不执行。
+_safe_eval_shim = None
+
+
+def _load_safe_eval_shim():
+    """延迟加载 Rust safe_eval shim（首次需要时导入 vools.bridge）。"""
+    global _safe_eval_shim
+    if _safe_eval_shim is not None:
+        return _safe_eval_shim
+    try:
+        from ..bridge.rust import safe_eval_shim as _shim
+        _safe_eval_shim = _shim
+    except Exception:
+        _safe_eval_shim = None
+    return _safe_eval_shim
 
 
 def _safe_eval_rust_impl(expr: str, vars: Optional[Dict[str, Any]] = None, timeout_ms: int = 1000) -> Any:
@@ -236,16 +248,17 @@ def _safe_eval_rust_impl(expr: str, vars: Optional[Dict[str, Any]] = None, timeo
         SafeEvalError: 当表达式包含不安全内容时
     """
     # 检查 Rust 是否可用
-    if _safe_eval_shim is None or not _safe_eval_shim.is_rust_available():
+    _shim = _load_safe_eval_shim()
+    if _shim is None or not _shim.is_rust_available():
         raise SafeEvalError("Rust 桥接库不可用")
 
     # 编译表达式为 VM 指令
-    instructions, compile_err = _safe_eval_shim.compile_to_instructions(expr)
+    instructions, compile_err = _shim.compile_to_instructions(expr)
     if compile_err:
         raise SafeEvalError(compile_err)
 
     # 执行指令
-    result = _safe_eval_shim.eval_instructions(instructions, timeout_ms)
+    result = _shim.eval_instructions(instructions, timeout_ms)
 
     if not result.get("ok", False):
         error = result.get("error", {})
@@ -300,7 +313,8 @@ def safe_eval_rust(expr: str, vars: Optional[Dict[str, Any]] = None, timeout_ms:
 
 def is_rust_safe_eval_available() -> bool:
     """检查 Rust 安全沙箱是否可用"""
-    return _safe_eval_shim is not None and _safe_eval_shim.is_rust_available()
+    _shim = _load_safe_eval_shim()
+    return _shim is not None and _shim.is_rust_available()
 
 
 DANGEROUS_PATTERNS = [

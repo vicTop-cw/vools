@@ -8,6 +8,10 @@ import sys
 import os
 import asyncio
 import tempfile
+import pytest
+
+# vools-bridges 为可选子包：未安装时跳过本文件全部用例，避免根测试套件硬失败
+pytest.importorskip("vools.bridge.freebasic")
 from vools.bridge.freebasic import FbcBridge
 from vools.core.asyncio_compat import run as asyncio_run
 

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vools-xl"
+version = "0.7.2"
+authors = [
+    { name = "Victor", email = "victortop921129@gmail.com" },
+]
+description = "vools Excel 操作子包"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.6"
+dependencies = [
+    "vools>=0.7.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["vools.xl*"]
+
+[tool.setuptools.package-data]
+"vools.xl" = [
+    "README.md",
+    "*/README.md",
+    "_dlls/*.dll",
+]

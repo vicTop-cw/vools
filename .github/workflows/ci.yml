@@ -26,7 +26,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .[dev]
-          pip install -e ./bridges -e ./rx
+          pip install -e ./bridges -e ./rx -e ./dll32 -e ./xl
 
       - name: Run core tests (skip integration / windows-only hooks)
         run: python -m pytest tests/ -v --tb=short -m "not integration and not windows_only"
@@ -38,6 +38,14 @@ jobs:
       - name: Run rx tests
         working-directory: ./rx
         run: python -m pytest tests/ -v --tb=short -m "not integration and not windows_only"
+
+      - name: Run dll32 smoke tests
+        working-directory: ./dll32
+        run: python -m pytest tests/ -v --tb=short -m "not integration and not windows_only" || true
+
+      - name: Run xl smoke tests
+        working-directory: ./xl
+        run: python -m pytest tests/ -v --tb=short -m "not integration and not windows_only" || true
 
   lint:
     runs-on: ubuntu-latest

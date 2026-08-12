@@ -48,7 +48,9 @@ serialize = [
 ]
 rx = ["vools-rx==0.7.2"]
 bridges = ["vools-bridges==0.7.2"]
-all = ["vools-rx==0.7.2", "vools-bridges==0.7.2"]
+dll32 = ["vools-dll32==0.7.2"]
+xl = ["vools-xl==0.7.2"]
+all = ["vools-rx==0.7.2", "vools-bridges==0.7.2", "vools-dll32==0.7.2", "vools-xl==0.7.2"]
 cli = [
     "typer>=0.12.0",
     "typing-extensions>=4.0.0",
@@ -75,10 +77,8 @@ include = ["vools*"]
 exclude = [
     "vools.__pycache__",
     "vools.*.__pycache__",
-    "vools.dll32._python32",
-    "vools.dll32._python32.*",
-    "vools.dll32._dlls",
-    "vools.dll32._dlls.*",
+    "vools.dll32*",
+    "vools.xl*",
     "vools.bridge*",
     "vools.reactive*",
 ]
@@ -94,50 +94,8 @@ version = { attr = "vools.__version__" }
     "lib/*.so",
     "lib/windows/*.dll",
     "lib/linux/*.so",
-    "xl/_dlls/*.dll",
-]
-"vools.dll32" = [
-    "_dlls/*.dll",
-    "_dlls/*.tlb",
-    "_dlls/*.ocx",
-    "_python32/python.exe",
-    "_python32/pythonw.exe",
-    "_python32/python3.dll",
-    "_python32/python3*.dll",
-    "_python32/python3*.pyd",
-    "_python32/python3*.zip",
-    "_python32/python3*._pth",
-    "_python32/vcruntime140.dll",
-    "_python32/sqlite3.dll",
-    "_python32/pyexpat.pyd",
-    "_python32/select.pyd",
-    "_python32/unicodedata.pyd",
-    "_python32/winsound.pyd",
-    "_python32/_asyncio.pyd",
-    "_python32/_bz2.pyd",
-    "_python32/_ctypes.pyd",
-    "_python32/_decimal.pyd",
-    "_python32/_distutils_findvs.pyd",
-    "_python32/_elementtree.pyd",
-    "_python32/_hashlib.pyd",
-    "_python32/_lzma.pyd",
-    "_python32/_msi.pyd",
-    "_python32/_multiprocessing.pyd",
-    "_python32/_overlapped.pyd",
-    "_python32/_socket.pyd",
-    "_python32/_sqlite3.pyd",
-    "_python32/_ssl.pyd",
-    "_python32/__init__.py",
-    "_python32/python32_launcher.py",
-]
-
-[tool.setuptools.exclude-package-data]
-"vools.dll32" = [
-    "_python32/Lib/**/*",
-    "_python32/Lib/*",
-    "_python32/**/__pycache__/*",
-    "_python32/**/*.pyc",
-    "_python32/**/*.pyo",
+    "data/*.dll",
+    "data/*.so",
 ]
 
 # ============ pytest ============
@@ -147,7 +105,7 @@ testpaths = ["tests"]
 # 默认不运行（需要外部资源/平台特定）：dll32, xl, monitoring, benchmarks, archive, other
 # 如需运行全部测试，使用: pytest --override-ini="addopts=--tb=short -q"
 # 如需运行特定子项目测试，使用: pytest bridges/tests/ 或 pytest rx/tests/
-addopts = "--tb=short -q --ignore=tests/dll32 --ignore=tests/xl --ignore=tests/monitoring --ignore=tests/benchmarks --ignore=tests/archive --ignore=tests/other --ignore=tests/__rust__ --ignore=tests/__persist__ --ignore=tests/__pycache__"
+addopts = "--tb=short -q --ignore=tests/monitoring --ignore=tests/benchmarks --ignore=tests/archive --ignore=tests/other --ignore=tests/__rust__ --ignore=tests/__persist__ --ignore=tests/__pycache__"
 markers = [
     "integration: 标记集成测试（依赖外部资源，如剪贴板、文件系统、键鼠）",
     "windows_only: 仅在 Windows 上可运行的测试",

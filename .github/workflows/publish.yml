@@ -41,6 +41,14 @@ jobs:
         working-directory: ./rx
         run: python -m build
 
+      - name: Build vools-dll32 package
+        working-directory: ./dll32
+        run: python -m build
+
+      - name: Build vools-xl package
+        working-directory: ./xl
+        run: python -m build
+
       - name: Publish vools core to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -57,4 +65,16 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: rx/dist/
+          skip-existing: true
+
+      - name: Publish vools-dll32 to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dll32/dist/
+          skip-existing: true
+
+      - name: Publish vools-xl to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: xl/dist/
           skip-existing: true
