@@ -101,7 +101,8 @@ debug/
 dev_tools/
 
 # Local config / secrets
-vools/config.py
+# vools/config.py is a REQUIRED library module (imported by vools.data.seq etc.),
+# keep it tracked; do NOT ignore it.
 .env
 .env.local
 
