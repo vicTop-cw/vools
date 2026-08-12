@@ -56,24 +56,28 @@ jobs:
           skip-existing: true
 
       - name: Publish vools-bridges to PyPI
+        if: always()
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: bridges/dist/
           skip-existing: true
 
       - name: Publish vools-rx to PyPI
+        if: always()
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: rx/dist/
           skip-existing: true
 
       - name: Publish vools-dll32 to PyPI
+        if: always()
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dll32/dist/
           skip-existing: true
 
       - name: Publish vools-xl to PyPI
+        if: always()
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: xl/dist/
