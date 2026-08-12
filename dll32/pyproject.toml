@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vools-dll32"
+version = "0.7.2"
+authors = [
+    { name = "Victor", email = "victortop921129@gmail.com" },
+]
+description = "vools 32-bit DLL / COM / Python 互操作子包"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.6"
+dependencies = [
+    "vools>=0.7.1",
+]
+
+# 显式列出包（避免 setuptools find 将 _python32 嵌入的第三方 site-packages
+# 误当作 vools.dll32 子包全量打入 wheel）
+[tool.setuptools]
+packages = [
+    "vools.dll32",
+    "vools.dll32._core",
+    "vools.dll32._dlls",
+    "vools.dll32._lib",
+    "vools.dll32._lib.clr",
+    "vools.dll32._lib.com",
+    "vools.dll32._signatures",
+    "vools.dll32.examples",
+]
+
+[tool.setuptools.package-data]
+"vools.dll32" = [
+    "README.md",
+    "*/README.md",
+    "_dlls/*.dll",
+    "_dlls/*.tlb",
+    "_dlls/*.ocx",
+    "_python32/python.exe",
+    "_python32/pythonw.exe",
+    "_python32/python3.dll",
+    "_python32/python3*.dll",
+    "_python32/python3*.pyd",
+    "_python32/python3*.zip",
+    "_python32/python3*._pth",
+    "_python32/vcruntime140.dll",
+    "_python32/sqlite3.dll",
+    "_python32/pyexpat.pyd",
+    "_python32/select.pyd",
+    "_python32/unicodedata.pyd",
+    "_python32/winsound.pyd",
+    "_python32/_asyncio.pyd",
+    "_python32/_bz2.pyd",
+    "_python32/_ctypes.pyd",
+    "_python32/_decimal.pyd",
+    "_python32/_distutils_findvs.pyd",
+    "_python32/_elementtree.pyd",
+    "_python32/_hashlib.pyd",
+    "_python32/_lzma.pyd",
+    "_python32/_msi.pyd",
+    "_python32/_multiprocessing.pyd",
+    "_python32/_overlapped.pyd",
+    "_python32/_socket.pyd",
+    "_python32/_sqlite3.pyd",
+    "_python32/_ssl.pyd",
+    "_python32/__init__.py",
+    "_python32/python32_launcher.py",
+]
+
+[tool.setuptools.exclude-package-data]
+"vools.dll32" = [
+    "_python32/Lib/**",
+    "_python32/Lib/**/*",
+    "_python32/Scripts/**",
+    "_python32/Scripts/**/*",
+    "_python32/**/__pycache__/**",
+    "_python32/**/*.pyc",
+    "_python32/**/*.pyo",
+    "get-pip.py",
+]

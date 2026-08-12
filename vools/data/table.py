@@ -1900,7 +1900,12 @@ class Table(Seq):
 
             table = Table.read_excel('data.xlsx')
         """
-        from ..xl import Book
+        try:
+            from ..xl import Book
+        except ImportError as exc:
+            raise ImportError(
+                "vools.xl is not installed; use pip install 'vools[xl]' or pip install vools-xl"
+            ) from exc
 
         if not os.path.exists(filename):
             raise FileNotFoundError(f'File not found: {filename}')
@@ -1974,7 +1979,12 @@ class Table(Seq):
 
             table.write_excel('output.xlsx')
         """
-        from ..xl import Book
+        try:
+            from ..xl import Book
+        except ImportError as exc:
+            raise ImportError(
+                "vools.xl is not installed; use pip install 'vools[xl]' or pip install vools-xl"
+            ) from exc
 
         with Book() as book:
             sheet = book.add_sheet(sheet_name)

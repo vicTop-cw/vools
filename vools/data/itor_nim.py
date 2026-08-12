@@ -54,6 +54,7 @@ class NimItor:
         self._queue = deque()
         self._jump_queue = deque()
         self._source_exhausted = False
+        self._started = False
 
         self._handle = self._dll.newItor()
 
@@ -61,7 +62,15 @@ class NimItor:
     def state(self) -> ItorState:
         if self._handle is None:
             return ItorState.STOPPED
-        return ItorState(self._dll.state(self._handle))
+        dll_state = self._dll.state(self._handle)
+        if dll_state == ItorState.STOPPED.value:
+            return ItorState.STOPPED
+        if dll_state == ItorState.PAUSED.value:
+            return ItorState.PAUSED
+        # DLL 无法区分 PENDING / ITERRING，由 Python 端维护起始标志
+        if self._source_exhausted and not self._queue and not self._jump_queue:
+            return ItorState.STOPPED
+        return ItorState.ITERRING if self._started else ItorState.PENDING
 
     def send(self, jump: Any, jump_when: Optional[Callable[['NimItor'], bool]] = None) -> 'NimItor':
         if jump_when is not None:
@@ -109,6 +118,10 @@ class NimItor:
 
     def __next__(self) -> Any:
         while True:
+            # 已停止的迭代器立即终止（无论队列中是否还有缓存值）
+            if self._handle is not None and self._dll.state(self._handle) == ItorState.STOPPED.value:
+                raise StopIteration
+
             if self._jump_queue:
                 return self._jump_queue.popleft()
 
@@ -120,6 +133,7 @@ class NimItor:
 
             if self._iterator is None:
                 self._iterator = iter(self._iterable)
+                self._started = True
 
             try:
                 item = next(self._iterator)

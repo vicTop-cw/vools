@@ -3,6 +3,20 @@ vools.serialize 单元测试
 """
 
 import pytest
+
+# vools-rx 为可选子包：未安装时跳过 Reactive 序列化测试
+try:
+    import vools.reactive as _vools_rx
+    _rx_available = True
+except ImportError:
+    _rx_available = False
+
+# msgpack 为可选依赖（vools[serialize]）：未安装时跳过 msgpack 后端测试
+try:
+    import msgpack
+    _msgpack_available = True
+except ImportError:
+    _msgpack_available = False
 from vools.serialize import (
     Serializer,
     dumps,
@@ -225,6 +239,7 @@ class TestNoneSentinelSerialization:
         restored = s.loads(data)
         assert restored is NONE
 
+    @pytest.mark.skipif(not _msgpack_available, reason="msgpack 未安装，跳过 msgpack 后端测试")
     def test_none_with_msgpack_backend(self):
         """测试 NONE 使用 msgpack 后端"""
         from vools.serialize.sentinel import NONE
@@ -448,6 +463,7 @@ class TestSerializationBackwardCompatibility:
             deserialize_callable('NonExistentHandler', s.dumps({'key': 'value'}), s)
 
 
+@pytest.mark.skipif(not _rx_available, reason="vools-rx 未安装，跳过 Reactive 序列化测试")
 class TestReactiveSerialization:
     """测试 Reactive 类（Subject 族）的序列化"""
 

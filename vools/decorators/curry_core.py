@@ -215,6 +215,25 @@ class CurryDescriptor:
         Returns:
             如果 instance 为 None 返回 Curried，否则返回绑定后的 Curried
         """
+        # classmethod 委托场景：Python 的 classmethod.__get__ 会把类本身作为
+        # instance 传给 descriptor（instance is owner），此时需将第一个参数 (cls)
+        # 绑定为 owner 并从 required_args 中剔除。
+        is_classmethod_delegation = (
+            owner is not None
+            and isinstance(instance, type)
+            and instance is owner
+            and isinstance(getattr(owner, '__dict__', {}).get(self._name), classmethod)
+        )
+        if is_classmethod_delegation:
+            bound_func = self.func.__get__(owner, owner)
+            pre_attrs = self.pre_attrs.copy()
+            required_args = pre_attrs.get('required_args', [])
+            params = pre_attrs.get('params', {})
+            if required_args:
+                first = required_args[0]
+                pre_attrs['required_args'] = required_args[1:]
+                pre_attrs['params'] = {k: v for k, v in params.items() if k != first}
+            return Curried(bound_func, is_strict=self.is_strict, delaied=self.delaied, **pre_attrs)
         if instance is None:
             return Curried(self.func, is_strict=self.is_strict, delaied=self.delaied, **self.pre_attrs)
         bound_func = self.func.__get__(instance, owner)

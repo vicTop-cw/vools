@@ -28,16 +28,29 @@ __all__ = [
 
 # 优先使用 Nim 桥接库（来自 vools.bridge.nim.crypto）
 # crypto.py 已经正确实现了 _nim_sha256/_py_sha256 的自动切换
-try:
-    from ..bridge.nim import sha256 as _nim_sha256_impl
-    from ..bridge.nim import md5 as _nim_md5_impl
-    from ..bridge.nim import sha1 as _nim_sha1_impl
-    _nim_available = True
-except ImportError:
-    _nim_sha256_impl = None
-    _nim_md5_impl = None
-    _nim_sha1_impl = None
-    _nim_available = False
+# 注意：必须延迟导入，避免 import vools 时预加载 vools.bridge 子包，
+# 否则 vools.BRIDGE_AVAILABLE 标志的翻转逻辑永远不执行。
+_nim_available = False
+_nim_sha256_impl = None
+_nim_md5_impl = None
+_nim_sha1_impl = None
+
+
+def _load_nim_impls() -> None:
+    """延迟加载 Nim 桥接实现（仅在需要时导入 vools.bridge）。"""
+    global _nim_available, _nim_sha256_impl, _nim_md5_impl, _nim_sha1_impl
+    if _nim_available:
+        return
+    try:
+        from ..bridge.nim import sha256 as _sha256_impl
+        from ..bridge.nim import md5 as _md5_impl
+        from ..bridge.nim import sha1 as _sha1_impl
+        _nim_sha256_impl = _sha256_impl
+        _nim_md5_impl = _md5_impl
+        _nim_sha1_impl = _sha1_impl
+        _nim_available = True
+    except ImportError:
+        _nim_available = False
 
 
 def _py_sha256_hex(data: bytes) -> str:

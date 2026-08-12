@@ -266,6 +266,8 @@ OOP_AVAILABLE = True
 DATETIME_AVAILABLE = True
 BRIDGE_AVAILABLE = False
 REACTIVE_AVAILABLE = False
+DLL32_AVAILABLE = False
+XL_AVAILABLE = False
 
 VIC_AVAILABLE = True
 
@@ -304,6 +306,24 @@ def __getattr__(name: str) -> Any:
             return module
         except Exception:
             raise AttributeError("vools.reactive is not installed; use pip install 'vools[rx]' or pip install vools-rx")
+
+    if name == 'dll32':
+        global DLL32_AVAILABLE
+        try:
+            module = importlib.import_module('.dll32', package='vools')
+            DLL32_AVAILABLE = True
+            return module
+        except Exception:
+            raise AttributeError("vools.dll32 is not installed; use pip install 'vools[dll32]' or pip install vools-dll32")
+
+    if name == 'xl':
+        global XL_AVAILABLE
+        try:
+            module = importlib.import_module('.xl', package='vools')
+            XL_AVAILABLE = True
+            return module
+        except Exception:
+            raise AttributeError("vools.xl is not installed; use pip install 'vools[xl]' or pip install vools-xl")
 
     if name in _lazy_modules:
         module_path = _lazy_modules[name]
