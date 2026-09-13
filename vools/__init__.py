@@ -185,7 +185,11 @@ _lazy_modules = {
     'mixer': '.oop',
     'oop': '.oop',
     'calltype': '.oop',
+    'derive': '.oop',
+    'create_derive': '.oop',
+    'clone': '.oop',
 
+    'md': '.md',
 
     'datetime': '.datetime',
 
@@ -425,7 +429,10 @@ __all__ = [
     'oop',
     'calltype',
     'OOP_AVAILABLE',
-
+    'derive',
+    'create_derive',
+    'clone',
+    'md',
 
     'vDate',
     'get_week',
@@ -554,4 +561,3 @@ if _sys.version_info < (3, 7):
             globals()[_vk] = _vv
     except Exception:
         pass
-

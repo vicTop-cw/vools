@@ -19,7 +19,7 @@
 
 ## 功能概述
 
-- **统一接口**：所有 27 种语言使用相同的装饰器 API，学习成本低
+- **统一接口**：所有 31 种语言使用相同的装饰器 API，学习成本低
 - **即时代码**：函数体即目标语言代码，无需额外源文件
 - **智能编译**：7 种编译模式（CompileMode），支持缓存、强制重编、变更感知等
 - **编译追踪**：基于 SQLite 的 CompileTracker，持久化编译记录与代码变更检测
@@ -34,7 +34,7 @@
 
 ## 支持的语言
 
-`vools.bridge` 目前支持 **27 种编程语言**：
+`vools.bridge` 目前支持 **31 种编程语言**：
 
 | 语言       | 装饰器               | 异步支持 | 语言类型     | 测试数 | 状态   |
 |------------|----------------------|----------|-------------|--------|--------|
@@ -69,6 +69,10 @@
 | TypeScript | `@ts`, `@typescript` | 是       | interpreted | 13     | ✅ 完整 |
 | Erlang     | `@erlang`            | 是       | beam        | —      | ✅ 完整 |
 | Elixir     | `@elixir`            | 是       | beam        | —      | ✅ 完整 |
+| Tnr        | `@tnr`               | 是       | interpreted | 19     | ✅ 完整 |
+| LZ         | `@lz`                | 是       | interpreted | 10     | ✅ 完整 |
+| 兹         | `@zi`                | 是       | interpreted | 10     | ✅ 完整 |
+| Cypy       | `@cypy`              | 是       | interpreted | 10     | ✅ 完整 |
 
 > 所有语言均已接入 `LangBridge` 抽象基类和统一装饰器接口，并通过 `LangType` 枚举标识语言类型。异步支持通过 `async_mode=True` 参数或专用 `@{lang}_async` 装饰器提供。各语言详细文档见 `bridge/{lang}/README.md`。
 
@@ -625,10 +629,14 @@ vools/bridge/
 ├── typescript/            # TypeScript 语言桥接
 ├── powershell/            # PowerShell 语言桥接
 ├── vbscript/              # VBScript 语言桥接
-├── shell/                 # Shell 语言桥接
-├── erlang/                # Erlang 语言桥接
-├── elixir/                # Elixir 语言桥接
-└── haskell/               # Haskell 语言桥接
+    ├── shell/                 # Shell 语言桥接
+    ├── erlang/                # Erlang 语言桥接
+    ├── elixir/                # Elixir 语言桥接
+    ├── haskell/               # Haskell 语言桥接
+    ├── tnr/                   # Tnr 张量语言桥接（阶段A）
+    ├── lz/                    # LZ 系统编程语言桥接（阶段A）
+    ├── zi/                    # 兹中文语言桥接（→BEAM，阶段A）
+    └── cypy/                  # Cypy Python-like 语言桥接（→Cython，阶段A）
 ```
 
 ### 各语言模块典型结构

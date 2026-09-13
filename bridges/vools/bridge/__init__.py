@@ -29,8 +29,13 @@ LangBridge 统一接口：
 - probe: 编译器自动探测模块
 - auto_discovery: 一键自动发现与配置
 - _base: LangBridge 抽象基类 + FunctionParser / DepResolver 工具类
-- c / cpp / nim / go / cangjie / rust / mojo / csharp / java / scala / ruby / julia / r / freebasic / typescript / vbnet / perl / lua / zig / kotlin / swift / php / dart / powershell / vbscript / shell: 各语言桥接实现
+- c / cpp / nim / go / cangjie / rust / mojo / csharp / java / scala / ruby / julia / r / freebasic / typescript / vbnet / perl / lua / zig / kotlin / swift / php / dart / powershell / vbscript / shell / tnr: 各语言桥接实现
 """
+
+# 预加载 asyncio：Loomy python-runtime 3.13 下，asyncio 首次导入在
+# 延迟加载子模块（__getattr__ -> from . import xxx）路径中可能部分初始化，
+# 导致 _base.py 的 import asyncio 报 base_events 未定义。提前完整加载以规避。
+import asyncio  # noqa: F401
 
 from .core.loader import LibraryLoader, SharedLibrary, load_library, load_from_path, is_available
 from .core.types import CTypeMapper, CompileMode, LangType
@@ -219,6 +224,14 @@ __all__ = [
     'shell',
     'sh',
     'bash',
+    # tnr 桥接
+    'tnr',
+    # lz 桥接
+    'lz',
+    # zi 桥接
+    'zi',
+    # cypy 桥接
+    'cypy',
 ]
 
 # 延迟导入子模块，避免导入失败影响整体
@@ -251,6 +264,10 @@ _dart_loaded = False
 _powershell_loaded = False
 _vbscript_loaded = False
 _shell_loaded = False
+_tnr_loaded = False
+_lz_loaded = False
+_zi_loaded = False
+_cypy_loaded = False
 
 
 def _load_c():
@@ -697,6 +714,84 @@ def _load_shell():
     return _shell_loaded
 
 
+def _load_tnr():
+    """延迟加载 Tnr 模块
+
+    注意：使用 importlib.import_module 而非 `from . import tnr`——
+    Python 3.12+ 下 from . import 的 IMPORT_FROM 会触发本包 __getattr__，
+    导致无限递归（既有语言模块的共同坑，新语言统一规避）。
+    """
+    global _tnr_loaded
+    if not _tnr_loaded:
+        try:
+            import importlib
+            tnr = importlib.import_module('.tnr', __package__)
+            globals()['tnr'] = tnr.tnr
+            globals()['tnr_bridge'] = tnr.tnr_bridge
+            globals()['TnrBridge'] = tnr.TnrBridge
+            globals()['tnr_compiler_available'] = tnr.tnr_compiler_available
+            globals()['compile_and_run'] = tnr.compile_and_run
+            _tnr_loaded = True
+        except Exception:
+            _tnr_loaded = False
+    return _tnr_loaded
+
+
+def _load_lz():
+    """延迟加载 LZ 模块（importlib 方式，规避 __getattr__ 递归）"""
+    global _lz_loaded
+    if not _lz_loaded:
+        try:
+            import importlib
+            lz = importlib.import_module('.lz', __package__)
+            globals()['lz'] = lz.lz
+            globals()['lz_bridge'] = lz.lz_bridge
+            globals()['LzBridge'] = lz.LzBridge
+            globals()['lz_compiler_available'] = lz.lz_compiler_available
+            globals()['rustc_available'] = lz.rustc_available
+            _lz_loaded = True
+        except Exception:
+            _lz_loaded = False
+    return _lz_loaded
+
+
+def _load_zi():
+    """延迟加载 兹（zi）模块（importlib 方式，规避 __getattr__ 递归）"""
+    global _zi_loaded
+    if not _zi_loaded:
+        try:
+            import importlib
+            zi = importlib.import_module('.zi', __package__)
+            globals()['zi'] = zi.zi
+            globals()['zi_bridge'] = zi.zi_bridge
+            globals()['ZiBridge'] = zi.ZiBridge
+            globals()['zi_compiler_available'] = zi.zi_compiler_available
+            globals()['compile_and_run'] = zi.compile_and_run
+            _zi_loaded = True
+        except Exception:
+            _zi_loaded = False
+    return _zi_loaded
+
+
+def _load_cypy():
+    """延迟加载 Cypy 模块（importlib 方式，规避 __getattr__ 递归）"""
+    global _cypy_loaded
+    if not _cypy_loaded:
+        try:
+            import importlib
+            cypy = importlib.import_module('.cypy', __package__)
+            globals()['cypy'] = cypy.cypy
+            globals()['cypy_bridge'] = cypy.cypy_bridge
+            globals()['CypyBridge'] = cypy.CypyBridge
+            globals()['cypy_compiler_available'] = cypy.cypy_compiler_available
+            globals()['cypy_run_available'] = cypy.cypy_run_available
+            globals()['compile_and_run'] = cypy.compile_and_run
+            _cypy_loaded = True
+        except Exception:
+            _cypy_loaded = False
+    return _cypy_loaded
+
+
 def __getattr__(name):
     """延迟加载属性"""
     if name in ('c', 'load_dll', 'call_func', 'c_dll', 'CDLLWrapper'):
@@ -842,6 +937,26 @@ def __getattr__(name):
 
     if name in ('shell', 'sh', 'bash', 'shell_compiler_available', 'bash_compiler_available'):
         if _load_shell():
+            return globals().get(name)
+        raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
+
+    if name in ('tnr', 'tnr_bridge', 'TnrBridge', 'tnr_compiler_available', 'compile_and_run'):
+        if _load_tnr():
+            return globals().get(name)
+        raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
+
+    if name in ('lz', 'lz_bridge', 'LzBridge', 'lz_compiler_available', 'rustc_available'):
+        if _load_lz():
+            return globals().get(name)
+        raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
+
+    if name in ('zi', 'zi_bridge', 'ZiBridge', 'zi_compiler_available'):
+        if _load_zi():
+            return globals().get(name)
+        raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
+
+    if name in ('cypy', 'cypy_bridge', 'CypyBridge', 'cypy_compiler_available', 'cypy_run_available'):
+        if _load_cypy():
             return globals().get(name)
         raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
 

@@ -19,7 +19,10 @@ Python 函数式编程工具集根包。
 | `reactive` | 响应式编程 |
 | `recorder` | 操作录制 |
 | `security` | 安全求值 |
+| `md` | Markdown 处理（解析/生成/HTML转换/工具函数） |
 | `serialize` | 序列化 |
+| `sql` | SQL 工具 |
+| `sys` | 系统工具 |
 | `task` | 任务队列 + DAG + 规则引擎 |
 | `utils` | 通用工具 |
 

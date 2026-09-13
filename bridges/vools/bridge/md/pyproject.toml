@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vools-bridge-md"
+version = "0.5.0"
+description = "Markdown 即代码：让 .md 文件成为可直接运行的多语言脚本"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "vools"}]
+requires-python = ">=3.6"
+keywords = ["markdown", "bridge", "multi-language", "executable"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "black", "flake8", "mypy"]
+docs = ["mkdocs", "mkdocs-material"]
+lua = ["lupa"]
+toml = ["tomli", "tomli-w"]
+yaml = ["PyYAML"]
+
+[project.urls]
+Homepage = "https://github.com/vools/vools-bridge-md"
+Repository = "https://github.com/vools/vools-bridge-md"
+Documentation = "https://vools.github.io/vools-bridge-md/"
+Issues = "https://github.com/vools/vools-bridge-md/issues"
+
+[tool.setuptools.packages.find]
+include = ["vools.bridge.md*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.black]
+line-length = 120
+target-version = ["py36", "py37", "py38", "py39", "py310", "py311", "py312"]
+
+[tool.flake8]
+max-line-length = 120
+extend-ignore = ["E203", "W503"]
+
+[tool.mypy]
+python_version = "3.6"
+ignore_missing_imports = true
