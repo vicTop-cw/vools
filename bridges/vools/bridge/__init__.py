@@ -36,6 +36,7 @@ LangBridge 统一接口：
 # 延迟加载子模块（__getattr__ -> from . import xxx）路径中可能部分初始化，
 # 导致 _base.py 的 import asyncio 报 base_events 未定义。提前完整加载以规避。
 import asyncio  # noqa: F401
+import importlib
 
 from .core.loader import LibraryLoader, SharedLibrary, load_library, load_from_path, is_available
 from .core.types import CTypeMapper, CompileMode, LangType
@@ -275,7 +276,7 @@ def _load_c():
     global _c_loaded
     if not _c_loaded:
         try:
-            from . import c
+            c = importlib.import_module('.c', __package__)
             globals()['c'] = c
             globals()['load_dll'] = c.load_dll
             globals()['call_func'] = c.call_func
@@ -292,7 +293,7 @@ def _load_nim():
     global _nim_loaded
     if not _nim_loaded:
         try:
-            from . import nim
+            nim = importlib.import_module('.nim', __package__)
             globals()['nim'] = nim.nim
             globals()['compile_and_run'] = nim.compile_and_run
             globals()['nim_compiler_available'] = nim.nim_compiler_available
@@ -308,7 +309,7 @@ def _load_rust():
     global _rust_loaded
     if not _rust_loaded:
         try:
-            from . import rust
+            rust = importlib.import_module('.rust', __package__)
             globals()['rust'] = rust
             _rust_loaded = True
         except Exception:
@@ -321,7 +322,7 @@ def _load_cpp():
     global _cpp_loaded
     if not _cpp_loaded:
         try:
-            from . import cpp
+            cpp = importlib.import_module('.cpp', __package__)
             globals()['cpp'] = cpp.cpp
             globals()['cpp_compiler_available'] = cpp.cpp_compiler_available
             globals()['get_cpp_compiler_info'] = cpp.get_cpp_compiler_info
@@ -339,7 +340,7 @@ def _load_csharp():
     global _csharp_loaded
     if not _csharp_loaded:
         try:
-            from . import csharp
+            csharp = importlib.import_module('.csharp', __package__)
             globals()['csharp'] = csharp
             _csharp_loaded = True
         except Exception:
@@ -352,7 +353,7 @@ def _load_mojo():
     global _mojo_loaded
     if not _mojo_loaded:
         try:
-            from . import mojo
+            mojo = importlib.import_module('.mojo', __package__)
             globals()['mojo'] = mojo
             _mojo_loaded = True
         except Exception:
@@ -365,7 +366,7 @@ def _load_freebasic():
     global _freebasic_loaded
     if not _freebasic_loaded:
         try:
-            from . import freebasic
+            freebasic = importlib.import_module('.freebasic', __package__)
             globals()['freebasic'] = freebasic
             _freebasic_loaded = True
         except Exception:
@@ -378,7 +379,7 @@ def _load_scala():
     global _scala_loaded
     if not _scala_loaded:
         try:
-            from . import scala
+            scala = importlib.import_module('.scala', __package__)
             globals()['scala'] = scala
             _scala_loaded = True
         except Exception:
@@ -391,7 +392,7 @@ def _load_java():
     global _java_loaded
     if not _java_loaded:
         try:
-            from . import java
+            java = importlib.import_module('.java', __package__)
             globals()['java'] = java
             _java_loaded = True
         except Exception:
@@ -404,7 +405,7 @@ def _load_cangjie():
     global _cangjie_loaded
     if not _cangjie_loaded:
         try:
-            from . import cangjie
+            cangjie = importlib.import_module('.cangjie', __package__)
             globals()['cangjie'] = cangjie.cangjie
             globals()['cjc_compiler_available'] = cangjie.cjc_compiler_available
             _cangjie_loaded = True
@@ -418,7 +419,7 @@ def _load_go():
     global _go_loaded
     if not _go_loaded:
         try:
-            from . import go
+            go = importlib.import_module('.go', __package__)
             globals()['go'] = go
             globals()['go_compiler_available'] = go.go_compiler_available
             globals()['is_go_available'] = go.is_go_available
@@ -433,7 +434,7 @@ def _load_r():
     global _r_loaded
     if not _r_loaded:
         try:
-            from . import r
+            r = importlib.import_module('.r', __package__)
             globals()['r'] = r.r
             globals()['r_compiler_available'] = r.r_compiler_available
             _r_loaded = True
@@ -447,7 +448,7 @@ def _load_julia():
     global _julia_loaded
     if not _julia_loaded:
         try:
-            from . import julia
+            julia = importlib.import_module('.julia', __package__)
             globals()['julia'] = julia
             globals()['julia_compiler_available'] = julia.julia_compiler_available
             globals()['is_julia_available'] = julia.is_julia_available
@@ -516,7 +517,7 @@ def _load_ruby():
     global _ruby_loaded
     if not _ruby_loaded:
         try:
-            from . import ruby
+            ruby = importlib.import_module('.ruby', __package__)
             globals()['ruby'] = ruby.ruby
             globals()['ruby_compiler_available'] = ruby.ruby_compiler_available
             globals()['is_ruby_available'] = ruby.is_ruby_available
@@ -531,7 +532,7 @@ def _load_typescript():
     global _typescript_loaded
     if not _typescript_loaded:
         try:
-            from . import typescript
+            typescript = importlib.import_module('.typescript', __package__)
             globals()['typescript'] = typescript.typescript
             globals()['ts'] = typescript.ts
             globals()['ts_compiler_available'] = typescript.ts_compiler_available
@@ -548,7 +549,7 @@ def _load_vbnet():
     global _vbnet_loaded
     if not _vbnet_loaded:
         try:
-            from . import vbnet
+            vbnet = importlib.import_module('.vbnet', __package__)
             globals()['vbnet'] = vbnet.vbnet
             globals()['vb'] = vbnet.vb
             globals()['vbnet_compiler_available'] = vbnet.vbnet_compiler_available
@@ -567,7 +568,7 @@ def _load_perl():
     global _perl_loaded
     if not _perl_loaded:
         try:
-            from . import perl
+            perl = importlib.import_module('.perl', __package__)
             globals()['perl'] = perl.perl
             globals()['pl'] = perl.pl
             globals()['perl_compiler_available'] = perl.perl_compiler_available
@@ -582,7 +583,7 @@ def _load_lua():
     global _lua_loaded
     if not _lua_loaded:
         try:
-            from . import lua
+            lua = importlib.import_module('.lua', __package__)
             globals()['lua'] = lua.lua
             globals()['luae'] = lua.luae
             globals()['lua_compiler_available'] = lua.lua_compiler_available
@@ -597,7 +598,7 @@ def _load_zig():
     global _zig_loaded
     if not _zig_loaded:
         try:
-            from . import zig
+            zig = importlib.import_module('.zig', __package__)
             globals()['zig'] = zig.zig
             globals()['zigc'] = zig.zigc
             globals()['zig_compiler_available'] = zig.zig_compiler_available
@@ -612,7 +613,7 @@ def _load_kotlin():
     global _kotlin_loaded
     if not _kotlin_loaded:
         try:
-            from . import kotlin
+            kotlin = importlib.import_module('.kotlin', __package__)
             globals()['kotlin'] = kotlin.kotlin
             globals()['kt'] = kotlin.kt
             globals()['kotlin_compiler_available'] = kotlin.kotlin_compiler_available
@@ -627,7 +628,7 @@ def _load_swift():
     global _swift_loaded
     if not _swift_loaded:
         try:
-            from . import swift
+            swift = importlib.import_module('.swift', __package__)
             globals()['swift'] = swift.swift
             globals()['swiftc'] = swift.swiftc
             globals()['swift_compiler_available'] = swift.swift_compiler_available
@@ -642,7 +643,7 @@ def _load_php():
     global _php_loaded
     if not _php_loaded:
         try:
-            from . import php
+            php = importlib.import_module('.php', __package__)
             globals()['php'] = php.php
             globals()['phpe'] = php.phpe
             globals()['php_compiler_available'] = php.php_compiler_available
@@ -657,7 +658,7 @@ def _load_dart():
     global _dart_loaded
     if not _dart_loaded:
         try:
-            from . import dart
+            dart = importlib.import_module('.dart', __package__)
             globals()['dart'] = dart.dart
             globals()['dartexe'] = dart.dartexe
             globals()['dart_compiler_available'] = dart.dart_compiler_available
@@ -672,7 +673,7 @@ def _load_powershell():
     global _powershell_loaded
     if not _powershell_loaded:
         try:
-            from . import powershell
+            powershell = importlib.import_module('.powershell', __package__)
             globals()['powershell'] = powershell.powershell
             globals()['ps'] = powershell.ps
             globals()['powershell_compiler_available'] = powershell.powershell_compiler_available
@@ -687,7 +688,7 @@ def _load_vbscript():
     global _vbscript_loaded
     if not _vbscript_loaded:
         try:
-            from . import vbscript
+            vbscript = importlib.import_module('.vbscript', __package__)
             globals()['vbscript'] = vbscript.vbscript
             globals()['vbs'] = vbscript.vbs
             globals()['vbscript_compiler_available'] = vbscript.vbscript_compiler_available
@@ -702,7 +703,7 @@ def _load_shell():
     global _shell_loaded
     if not _shell_loaded:
         try:
-            from . import shell
+            shell = importlib.import_module('.shell', __package__)
             globals()['shell'] = shell.shell
             globals()['sh'] = shell.sh
             globals()['bash'] = shell.bash
@@ -790,6 +791,27 @@ def _load_cypy():
         except Exception:
             _cypy_loaded = False
     return _cypy_loaded
+
+
+_md_loaded = False
+
+
+def _load_md():
+    """延迟加载 Markdown 桥接模块（importlib 方式，规避 __getattr__ 递归）"""
+    global _md_loaded
+    if not _md_loaded:
+        try:
+            md = importlib.import_module('.md', __package__)
+            globals()['md'] = md
+            globals()['parse_md'] = md.parse_md
+            globals()['run_md'] = md.run_md
+            globals()['run_block'] = md.run_block
+            globals()['ParsedMD'] = md.ParsedMD
+            globals()['CodeBlock'] = md.CodeBlock
+            _md_loaded = True
+        except Exception:
+            _md_loaded = False
+    return _md_loaded
 
 
 def __getattr__(name):
@@ -957,6 +979,11 @@ def __getattr__(name):
 
     if name in ('cypy', 'cypy_bridge', 'CypyBridge', 'cypy_compiler_available', 'cypy_run_available'):
         if _load_cypy():
+            return globals().get(name)
+        raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
+
+    if name in ('md', 'parse_md', 'run_md', 'run_block', 'ParsedMD', 'CodeBlock'):
+        if _load_md():
             return globals().get(name)
         raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
 
