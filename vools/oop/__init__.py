@@ -11,25 +11,29 @@ from .extend import clone, g, arrow_func
 from .selector import overloads, Overloads, Selector
 from .calltype import CallableType, get_callable_type, create_fake
 from .mixer import Mixer, Mixer_, attr_Enum
+from .derive import create_derive,derive
 
 __all__ = [
     # 从 extend 导出
     'clone',
     'g',
     'arrow_func',
-    
+
     # 从 selector 导出
     'overloads',
     'Overloads',
     'Selector',
-    
+
     # 从 calltype 导出
     'CallableType',
     'get_callable_type',
     'create_fake',
-    
+
     # 从 mixer 导出
     'Mixer',
     'Mixer_',
     'attr_Enum',
+    # 从 derive 导出
+    'create_derive',
+    'derive'
 ]

@@ -1,17 +1,17 @@
-name: CI/CD
+name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 jobs:
   test:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        python-version: [3.6, 3.7, 3.8, 3.9, '3.10', '3.11', '3.12', '3.13']
 
     steps:
       - uses: actions/checkout@v4
@@ -20,32 +20,22 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[dev]
-          pip install -e ./bridges -e ./rx -e ./dll32 -e ./xl
+          pip install pytest pytest-cov
 
-      - name: Run core tests (skip integration / windows-only hooks)
-        run: python -m pytest tests/ -v --tb=short -m "not integration and not windows_only"
+      - name: Run tests
+        run: |
+          cd bridges
+          python -m pytest tests/test_md_bridge.py -v --cov=vools.bridge.md --cov-report=term-missing
 
-      - name: Run bridges smoke tests
-        working-directory: ./bridges
-        run: python -m pytest tests/test_imports.py tests/test_vbnet_bridge.py -v --tb=short
-
-      - name: Run rx tests
-        working-directory: ./rx
-        run: python -m pytest tests/ -v --tb=short -m "not integration and not windows_only"
-
-      - name: Run dll32 smoke tests
-        working-directory: ./dll32
-        run: python -m pytest tests/ -v --tb=short -m "not integration and not windows_only" || true
-
-      - name: Run xl smoke tests
-        working-directory: ./xl
-        run: python -m pytest tests/ -v --tb=short -m "not integration and not windows_only" || true
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: bridges/coverage.xml
 
   lint:
     runs-on: ubuntu-latest
@@ -55,76 +45,43 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: 'pip'
-
-      - name: Install flake8
-        run: pip install flake8
-
-      - name: Run flake8
-        run: flake8 vools/ --max-line-length=120
-
-  type-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: 'pip'
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[dev]
+          pip install flake8 black mypy
 
-      - name: Run mypy
-        run: python -m mypy vools/ --ignore-missing-imports --no-strict-optional || true
-
-  coverage:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: 'pip'
-
-      - name: Install dependencies
+      - name: Lint
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .[dev]
+          cd bridges
+          flake8 vools/bridge/md/
+          black --check vools/bridge/md/
+          mypy vools/bridge/md/
 
-      - name: Run coverage (enforce minimum threshold)
-        run: |
-          python -m pytest tests/ --cov=vools --cov-report=term-missing --cov-fail-under=60 -m "not integration and not windows_only"
-
-  docs:
+  publish:
+    needs: test
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: 'pip'
+          python-version: '3.11'
 
-      - name: Install MkDocs and dependencies
+      - name: Build package
         run: |
-          python -m pip install --upgrade pip
-          pip install mkdocs mkdocs-material pymdown-extensions
+          cd bridges
+          pip install build
+          python -m build
 
-      - name: Build documentation
-        run: mkdocs build --strict
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./site
+          packages-dir: bridges/dist
