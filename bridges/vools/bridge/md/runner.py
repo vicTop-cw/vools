@@ -605,6 +605,10 @@ def _execute_block(
     workdir = context.get('workdir', os.getcwd())
 
     if lang == "python":
+        # 块级 prelude 指令（```python prelude=none）优先于 config（docs/33 §Phase 1）
+        block_prelude = block.directives.get('prelude')
+        if block_prelude is not None:
+            config = {**config, 'prelude': block_prelude}
         return _execute_python(block.content, context, config, args)
 
     if lang in ("shell", "bash", "sh"):
@@ -613,11 +617,79 @@ def _execute_block(
     return _execute_via_bridge(block, context, config, timeout)
 
 
+# ── prelude：md python 块自动导入（Actus docs/33 §Phase 1）──
+
+_PRELUDE_STDLIB_MODULES = (
+    'json', 'os', 're', 'sys', 'math', 'random', 'time',
+    'datetime', 'pathlib', 'shutil', 'subprocess',
+    'itertools', 'collections', 'functools',
+)
+
+_PRELUDE_VOOLS_MODULES = (
+    'vools.functional', 'vools.data', 'vools.utils',
+)
+
+
+def _build_prelude_env(config: Dict) -> Dict[str, Any]:
+    """构造 md python 块的 prelude 环境（自动导入，零 import 书写）。
+
+    默认注入：
+    - vools.actus 全量公开 API（execute/validate/trust/vault/... 直接可用）
+    - 常用标准库模块（json/os/re/... 以模块对象注入）
+    - vools 常用子库（functional/data/utils，以短名注入）
+    - Actus 运行时上下文：__actus_params（解析 ACTUS_PARAMS 环境变量）、
+      __actus_result（结果输出通道占位）
+
+    开关：config['prelude'] = 'none' 跳过注入（纯净环境）。
+    注入名仅为默认值，块内同名赋值可遮蔽；单项导入失败静默降级，不阻断执行。
+    """
+    if str(config.get('prelude', 'auto')).lower() in ('none', 'off', 'false'):
+        return {}
+
+    prelude: Dict[str, Any] = {}
+
+    for modname in _PRELUDE_STDLIB_MODULES:
+        try:
+            prelude[modname] = __import__(modname)
+        except Exception:
+            pass
+
+    try:
+        import vools.actus as _actus
+        names = getattr(_actus, '__all__', None) or [
+            n for n in dir(_actus) if not n.startswith('_')]
+        for n in names:
+            if hasattr(_actus, n):
+                prelude[n] = getattr(_actus, n)
+    except Exception:
+        pass
+
+    for modname in _PRELUDE_VOOLS_MODULES:
+        try:
+            mod = __import__(modname, fromlist=['*'])
+            prelude[modname.rsplit('.', 1)[-1]] = mod
+        except Exception:
+            pass
+
+    raw = os.environ.get('ACTUS_PARAMS')
+    params: Any = {}
+    if raw:
+        try:
+            params = json.loads(raw)
+        except Exception:
+            params = raw
+    prelude['__actus_params'] = params
+    prelude['__actus_result'] = {}
+
+    return prelude
+
+
 def _execute_python(content: str, context: Dict, config: Dict, args: Optional[str]) -> tuple[str, str, int]:
     """执行 Python 代码。"""
     try:
         import io
         exec_env = dict(context.get('env', {}))
+        exec_env.update(_build_prelude_env(config))
         exec_env['__md_config'] = config
 
         if args:
