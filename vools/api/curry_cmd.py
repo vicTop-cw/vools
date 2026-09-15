@@ -96,3 +96,11 @@ def curry_func(
 
 if __name__ == "__main__":
     typer.run(call)
+
+
+__all__ = [
+    'call',
+    'curry_app',
+    'curry_func',
+    'parse_lambda_or_func'
+]

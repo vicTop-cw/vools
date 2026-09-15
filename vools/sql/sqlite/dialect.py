@@ -164,3 +164,8 @@ class SqliteDialect(Dialect):
             True
         """
         return True
+
+
+__all__ = [
+    'SqliteDialect'
+]

@@ -249,3 +249,8 @@ class PostgresConnection(Connection):
             驱动名称（'psycopg2' 或 'psycopg'），未连接时为 None
         """
         return self._driver_name
+
+
+__all__ = [
+    'PostgresConnection'
+]

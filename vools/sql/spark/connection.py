@@ -498,3 +498,8 @@ class SparkConnection(Connection):
             f"master={self._master!r}, "
             f"status={status})"
         )
+
+
+__all__ = [
+    'SparkConnection'
+]

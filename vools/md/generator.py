@@ -54,8 +54,8 @@ def _node_to_md(node, indent: int = 0) -> str:
 
     elif isinstance(node, MdList):
         lines = []
-        for item in node.items:
-            marker = f'{item.index}.' if node.ordered else '-'
+        for idx, item in enumerate(node.items, 1):
+            marker = f'{idx}.' if node.ordered else '-'
             if item.checked is not None:
                 mark = '[x]' if item.checked else '[ ]'
                 item_text = ''.join(_inline_to_text(c) for c in item.children)
@@ -109,3 +109,9 @@ def generate_to_file(ast, filepath: str) -> str:
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(md_text)
     return filepath
+
+
+__all__ = [
+    'generate',
+    'generate_to_file'
+]

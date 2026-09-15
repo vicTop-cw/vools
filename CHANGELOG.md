@@ -2,6 +2,70 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [0.7.7] - 2026-09-15
+
+### 🆕 新特性
+
+- **`.actus.schema.md` 动作格式规范** — 定义硬性约定格式规范（ACTUS_SCHEMA_SPEC.md），替代 JSON 配置
+- **双格式兼容** — 同时支持旧格式（`#!cfg JSON`）和新格式（`.actus.schema.md` YAML front-matter）
+- **新增 md 子库测试** — 6 个测试文件覆盖 parser/generator/html/utils/advanced/ecosystem 全模块
+- **新增 actus 测试** — 10 个测试文件覆盖 model/trust/eventbus/vault/security/dependency/registry/sandbox/workflow/executor
+- **新增 sql 测试** — 4 个测试文件覆盖 builder/types/sqlite_dialect/dialect_registry
+- **新增 serialize 测试** — 6 个测试文件覆盖 core/backends/sentinel/type_registry/context/config
+- **新增 concurrent 测试** — 8 个测试文件覆盖 futures/queues/threading_mod/delegates/multiprocessing_mod
+
+### 🐛 修复
+
+- **修复 `md/generator.py` 有序列表生成** — `item.index` 不存在属性错误，改为 `enumerate` 计数
+- **修复 `md/parser.py` 标签提取** — 支持 `# tag: xxx` 新格式标签解析
+- **修复 `md/parser.py` 代码块指令分离** — 正确分离 fence 指令与块内 `#!` 指令
+
+### 🔧 项目整理
+
+- **统一 `__all__` 导出** — 为全库 60 个缺少 `__all__` 的文件补充了标准导出声明
+- **修复 57 处 `__all__` 语法错误** — 将 `__all__ = [...)` 修正为 `__all__ = [...]`
+- **去除 2 处 BOM 头** — `sys/compile_cmd.py` 和 `sql/spark/scala_bridge.py` 的 UTF-8 BOM 导致编译失败
+- **修复 `scaffold.py` 无效转义序列** — docstring 中的 `\.` 改为 raw string
+- **清理 `actus/__init__.py` `__all__`** — 将 21 行中文注释从列表中移出，改为分组变量聚合
+- **补全 2 个子包 README** — `actus/README.md` 和 `concurrent/README.md`
+- **修正 README 中 bridge/ 描述** — 明确 bridge 已拆分为独立分发包 `vools-bridges`
+- **CHANGELOG 与版本号同步** — 补齐 0.7.2~0.7.6 记录
+
+## [0.7.6] - 2026-09-12
+
+### 🐛 修复
+
+- **修复 bridge 懒加载递归** — `importlib` 导入时避免循环依赖
+- **新增 md bridge loader** — 支持 Markdown 文件中的桥接加载
+
+## [0.7.5] - 2026-09-10
+
+### 🐛 修复
+
+- **修复 bridge 标志和 xl DLL** — 所有 bridge 导入改为懒加载，跟踪 libxl.dll
+
+## [0.7.4] - 2026-09-09
+
+### 🔧 打包
+
+- **跟踪 vools/config.py** — 确保打包时包含必需模块
+
+## [0.7.3] - 2026-09-08
+
+### 🔧 发布
+
+- **API 修复** — 移除死导出（smart_partial/shotcutEx/asyncify/log_calls）
+
+## [0.7.2] - 2026-09-06
+
+### 🔧 架构
+
+- **拆分子包** — bridge/reactive 拆分为独立分发包
+- **修复测试** — 适配子包拆分后的测试结构
+- **验证 API** — 确保拆分后 API 兼容
+
 ## [0.7.1] - 2026-07-29
 
 ### 🐛 修复

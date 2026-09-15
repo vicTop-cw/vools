@@ -43,3 +43,8 @@ class DialectConfig:
         self.name = self.name.lower()
         if not self.driver:
             raise ValueError("driver must not be empty")
+
+
+__all__ = [
+    'DialectConfig'
+]

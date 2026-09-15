@@ -150,3 +150,9 @@ def to_html_file(source, filepath: str) -> str:
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(full_html)
     return filepath
+
+
+__all__ = [
+    'to_html',
+    'to_html_file'
+]

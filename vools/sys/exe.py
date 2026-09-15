@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.sys.exe - 可执行文件装饰器模块
 
 提供 ``@exe`` 装饰器，将 Python 函数映射为外部可执行文件调用。
@@ -319,3 +319,8 @@ async def _run_async(
         executor,
         lambda: _run_sync(func, exe_path, args, kwargs, fallback),
     )
+
+
+__all__ = [
+    'exe'
+]

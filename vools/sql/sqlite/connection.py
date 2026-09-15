@@ -212,3 +212,8 @@ class SqliteConnection(Connection):
         """
         status = 'connected' if self._connected else 'closed'
         return f"SqliteConnection(database={self._database!r}, status={status})"
+
+
+__all__ = [
+    'SqliteConnection'
+]

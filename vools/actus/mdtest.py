@@ -26,6 +26,7 @@ import shutil
 import sys
 import tempfile
 import traceback
+import types
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -56,6 +57,14 @@ def _unescape_code(code: str) -> str:
 # ═══════════════════════════════════════════════════════
 
 BOOTSTRAP_SOURCE = '''
+# 对齐原 tests/conftest.py：cwd 与 engine/ 注入 sys.path（engine 存在时）
+import os as _os, sys as _sys
+_cwd = _os.getcwd()
+for _p in (_cwd, _os.path.join(_cwd, 'engine')):
+    if _os.path.isdir(_p) and _p not in _sys.path:
+        _sys.path.insert(0, _p)
+
+
 @pytest.fixture()
 def action_repo(tmp_path):
     """隔离临时动作仓库，返回 (actions_dir, meta_dir)。"""
@@ -181,7 +190,7 @@ def extract_cases(md_path: str) -> List[Dict[str, Any]]:
     for block in parsed.blocks:
         dirs = block.directives or {}
         if 'setup' in dirs and 'test' not in dirs:
-            pending_setup = block.content
+            pending_setup = _unescape_code(block.content)
             continue
         if 'test' not in dirs:
             continue
@@ -190,7 +199,7 @@ def extract_cases(md_path: str) -> List[Dict[str, Any]]:
             name = f'{base}::block{block.index}'
         cases.append({
             'name': name,
-            'code': block.content,
+            'code': _unescape_code(block.content),
             'file': md_path,
             'index': block.index,
             'skip': 'skip' in dirs,
@@ -202,6 +211,35 @@ def extract_cases(md_path: str) -> List[Dict[str, Any]]:
 # ═══════════════════════════════════════════════════════
 # 执行
 # ═══════════════════════════════════════════════════════
+
+
+class _BufferedStdout:
+    """sys.stdout 替身：StringIO + .buffer 适配。
+
+    被测代码（如 MCPServer 默认构造取 sys.stdout.buffer）在 mdtest
+    截获 stdout 后仍需 buffer 接口，这里以 TextIOWrapper 包装补齐。
+    """
+
+    def __init__(self, inner: io.StringIO):
+        self._inner = inner
+        self.buffer = io.BytesIO()
+
+    def write(self, s):
+        self._inner.write(s)
+        try:
+            self.buffer.write(s.encode('utf-8', errors='replace'))
+        except Exception:
+            pass
+        return len(s)
+
+    def flush(self):
+        pass
+
+    def getvalue(self):
+        return self._inner.getvalue()
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
 
 
 def run_case(case: Dict[str, Any], config: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -227,12 +265,20 @@ def run_case(case: Dict[str, Any], config: Dict[str, Any] = None) -> Dict[str, A
 
     # 先注册 conftest 等价夹具（setup 中的同名定义可覆盖）
     reset_fixtures()
-    bootstrap = exec(BOOTSTRAP_SOURCE, exec_env)
+    exec(BOOTSTRAP_SOURCE, exec_env)
 
-    stdout_buf = io.StringIO()
+    # 合成 conftest 模块：迁移文件中的 `from conftest import GOOD_ACTION` 可用
+    conftest_mod = types.ModuleType('conftest')
+    conftest_mod.GOOD_ACTION = exec_env['GOOD_ACTION']
+    conftest_mod.action_repo = None  # 夹具经 _call 解析，模块层仅暴露常量
+    exec_env['conftest'] = conftest_mod
+
+    stdout_buf = _BufferedStdout(io.StringIO())
     old_stdout, old_stderr = sys.stdout, sys.stderr
     old_pytest_mod = sys.modules.get('pytest')
+    old_conftest_mod = sys.modules.get('conftest')
     sys.modules['pytest'] = pytest
+    sys.modules['conftest'] = conftest_mod
     try:
         sys.stdout = stdout_buf
         sys.stderr = stdout_buf
@@ -257,6 +303,10 @@ def run_case(case: Dict[str, Any], config: Dict[str, Any] = None) -> Dict[str, A
             sys.modules['pytest'] = old_pytest_mod
         else:
             sys.modules.pop('pytest', None)
+        if old_conftest_mod is not None:
+            sys.modules['conftest'] = old_conftest_mod
+        else:
+            sys.modules.pop('conftest', None)
         _cleanup_fixture_env(exec_env)
 
 

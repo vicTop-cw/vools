@@ -16,7 +16,7 @@ BLOCK_DIRECTIVE_KEYS: set[str] = {
     "run", "compile", "only-code", "skip",
     "export", "import", "env", "workdir",
     "args", "stdin", "timeout", "tag", "output",
-    "breakpoint", "bp", "prelude", "test", "setup",
+    "breakpoint", "bp", "prelude", "test", "setup", "name",
 }
 
 # ═══════════════════════════════════════════════════════

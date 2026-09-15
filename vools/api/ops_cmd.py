@@ -110,3 +110,13 @@ def sum_op(
 
 if __name__ == "__main__":
     typer.run(pipe)
+
+
+__all__ = [
+    'filter_op',
+    'map_op',
+    'ops_app',
+    'parse_lambda',
+    'pipe',
+    'sum_op'
+]
