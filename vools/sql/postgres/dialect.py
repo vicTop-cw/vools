@@ -168,3 +168,8 @@ class PostgresDialect(Dialect):
             pass
 
         return False
+
+
+__all__ = [
+    'PostgresDialect'
+]

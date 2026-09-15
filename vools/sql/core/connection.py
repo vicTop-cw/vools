@@ -191,3 +191,8 @@ class Connection(abc.ABC):
                 self.close()
         except Exception:
             pass
+
+
+__all__ = [
+    'Connection'
+]

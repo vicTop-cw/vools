@@ -565,3 +565,19 @@ def load_config(file_path: Optional[str] = None) -> int:
         加载的配置项数量
     """
     return manager.load_config(file_path)
+
+
+__all__ = [
+    'DialectManager',
+    'create_dialect',
+    'get_config',
+    'get_dialect',
+    'is_available',
+    'list_available',
+    'list_dialects',
+    'load_config',
+    'manager',
+    'register_dialect',
+    'save_config',
+    'set_config'
+]

@@ -429,3 +429,9 @@ class ResultSet:
             True 表示有行，False 表示无行
         """
         return len(self._rows) > 0
+
+
+__all__ = [
+    'ResultSet',
+    'Row'
+]

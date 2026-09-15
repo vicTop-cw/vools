@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.sql.spark.scala_bridge - Scala 桥接模块
 
 提供 PySpark 与 Scala/Java 的互操作能力，

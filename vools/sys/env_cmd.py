@@ -93,3 +93,8 @@ class EnvCommands:
                 print("目录为空或无动态库文件")
         else:
             print("目录不存在")
+
+
+__all__ = [
+    'EnvCommands'
+]

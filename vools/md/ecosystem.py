@@ -670,3 +670,19 @@ def compliance_score(markdown_text: str, spec: str = 'gfm') -> float:
     weights = {'error': 20, 'warning': 10, 'info': 5}
     total_deduction = sum(weights.get(i.severity, 5) for i in issues)
     return max(0.0, 100.0 - total_deduction)
+
+
+__all__ = [
+    'ComplianceIssue',
+    'PreviewServer',
+    'TemplateContext',
+    'check_compliance',
+    'compliance_report',
+    'compliance_score',
+    'markdown_to_docx',
+    'markdown_to_pdf',
+    'markdown_to_pdf_via_cli',
+    'render_template',
+    'render_template_file',
+    'start_preview_server'
+]

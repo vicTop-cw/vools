@@ -140,12 +140,14 @@ obs.pipe(
 print(result)  # [4, 8]
 ```
 
-### 编译器自动发现
+### 编译器自动发现（独立包 vools-bridges）
+
+> 需要先安装：`pip install vools-bridges`
 
 自动探测本机和 WSL 环境中所有已安装的编译器，无需手动配置 PATH。
 
 ```python
-from vools.bridge import discover_all, get_discovery_report, configure_from_discovery
+from vools_bridges import discover_all, get_discovery_report, configure_from_discovery
 
 # 一键发现所有编译器（本机 + WSL）
 result = discover_all(include_wsl=True)
@@ -157,7 +159,7 @@ print(get_discovery_report())
 configure_from_discovery(include_wsl=True)
 
 # 检查特定语言是否可用
-from vools.bridge import get_helper
+from vools_bridges import get_helper
 nim_helper = get_helper('nim')
 if nim_helper.is_available():
     print(f"Nim 编译器路径: {nim_helper.get_compiler_path()}")
@@ -215,48 +217,35 @@ echo doubled # @[2, 4, 6]
 ```
 vools/
 ├── api/             # CLI 命令行接口
-├── bridge/          # 多语言桥接（30+ 种语言）+ 编译器自动发现
-│   ├── core/        # 桥接核心（CompileMode、CompileTracker、LangType、类型系统）
-│   ├── probe.py     # 编译器探测模块
-│   ├── manager.py   # 配置管理模块
-│   ├── auto_discovery.py  # 一键发现入口
-│   ├── scala/       # Scala 桥接 + 隐式操作符
-│   ├── kotlin/      # Kotlin 桥接 + 隐式操作符
-│   ├── nim/         # Nim 桥接 + 隐式操作符
-│   ├── c/           # C 桥接
-│   ├── cpp/         # C++ 桥接
-│   ├── csharp/      # C# 桥接
-│   ├── dart/        # Dart 桥接
-│   ├── elixir/      # Elixir 桥接
-│   ├── erlang/      # Erlang 桥接
-│   ├── freebasic/   # FreeBASIC 桥接
-│   ├── go/          # Go 桥接
-│   ├── haskell/     # Haskell 桥接
-│   ├── java/        # Java 桥接
-│   ├── julia/       # Julia 桥接
-│   ├── lua/         # Lua 桥接
-│   ├── mojo/        # Mojo 桥接
-│   ├── moonbit/     # MoonBit 桥接
-│   ├── perl/        # Perl 桥接
-│   ├── php/         # PHP 桥接
-│   ├── powershell/  # PowerShell 桥接
-│   ├── r/           # R 桥接
-│   ├── ruby/        # Ruby 桥接
-│   ├── rust/        # Rust 桥接
-│   ├── shell/       # Shell 桥接
-│   ├── swift/       # Swift 桥接
-│   ├── typescript/  # TypeScript 桥接
-│   ├── vbnet/       # VB.NET 桥接
-│   ├── vbscript/    # VBScript 桥接
-│   ├── zig/         # Zig 桥接
-│   └── cangjie/     # 仓颉桥接
-dev-tools/           # 开发辅助脚本和实验性代码
-tests/               # 测试目录（按模块组织）
-examples/            # 使用示例
-docs/                # 文档
+├── actus/           # Actus 动作引擎核心（执行器/工作流/注册表/安全）
+├── concurrent/      # 并发工具集（跨语言桥接委托/队列/线程）
+├── data/            # 增强数据类型（VList/VText/VDate/Table/Qax）
+├── decorators/      # 装饰器（memorize/once/retry/curry/overload/flex_pos）
+├── functional/      # 函数式编程（Seq/Ops/Box/iif/pipe/placeholder）
+├── md/              # Markdown 处理（解析/生成/HTML/模板/预览）
+├── oop/             # 面向对象工具（extend/calltype/method_extend）
+├── reactive/        # 响应式编程（Observable/Subject）
+├── serialize/       # 序列化（codec/json/msgpack/pickle）
+├── sql/             # SQL 引擎（SQLite/PostgreSQL/Spark/方言/构建器）
+├── sys/             # 系统命令（cmd/dll/compile/run/env/fire）
+├── task/            # 任务调度（队列/工作池/线程池/DAG）
+├── utils/           # 工具函数（cache/tools/funcs）
+├── config.py        # 全局配置
+└──                  # bridges/ 已拆分为独立分发包 vools-bridges
 ```
 
-## API 概览
+> `bridge/` 子包已拆分为独立分发包 **vools-bridges**（`pip install vools-bridges`），
+> 通过 `pip install vools[bridges]` 安装后使用 `import vools_bridges`。
+
+## 详细文档
+
+- [用户指南](USER_GUIDE.md)
+- [快速入门](docs/getting-started/quickstart.md)
+- [函数式编程](docs/functional/index.md)
+- [响应式编程](docs/reactive/index.md)
+- [装饰器](docs/core/decorators.md)
+- [多语言桥接](docs/bridge/index.md)（独立包 vools-bridges）
+- [跨语言操作符](docs/scala_nim_kotlin-implicit-operators/README.md)
 
 ### 装饰器
 
@@ -312,7 +301,7 @@ docs/                # 文档
 
 ## 性能对比
 
-vools 通过桥接 Nim/Rust/Go 等编译型语言，为高频核心函数提供可选的高性能实现。以下是典型硬件上的基准测试结果（实际数据因硬件而异）：
+vools 通过 **vools-bridges** 独立包桥接 Nim/Rust/Go 等编译型语言，为高频核心函数提供可选的高性能实现。以下是典型硬件上的基准测试结果（实际数据因硬件而异）：
 
 | 模块 | 函数 | 纯 Python | 桥接加速 | 提升倍数 |
 |------|------|----------|----------|---------|

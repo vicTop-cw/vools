@@ -44,3 +44,9 @@ def _get_none_singleton():
 
 # 全局单例
 NONE = NoneSentinel()
+
+
+__all__ = [
+    'NONE',
+    'NoneSentinel'
+]

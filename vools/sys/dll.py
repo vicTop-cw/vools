@@ -419,3 +419,8 @@ async def _run_async(
             arg_ctypes, ret_ctype, ret_py_type, params, fallback
         ),
     )
+
+
+__all__ = [
+    'dll'
+]

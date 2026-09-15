@@ -322,3 +322,16 @@ def to_plain_text(markdown_text: str) -> str:
     """
     return strip_markdown(markdown_text)
 
+
+__all__ = [
+    'count_words',
+    'extract_code_blocks',
+    'extract_metadata',
+    'find_headings',
+    'generate_toc',
+    'generate_toc_markdown',
+    'strip_markdown',
+    'to_json',
+    'to_org_mode',
+    'to_plain_text'
+]

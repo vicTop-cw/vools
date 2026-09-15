@@ -65,3 +65,8 @@ class RunCommands:
         print("\n用法示例:")
         print("  vools sys run --python script.py --args 'arg1 arg2'")
         print("  vools sys run --shell 'dir' --args '/b'")
+
+
+__all__ = [
+    'RunCommands'
+]

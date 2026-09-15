@@ -420,3 +420,10 @@ def sql_module(dialect=None, connection=None, auto_convert=True):
         return cls
 
     return decorator
+
+
+__all__ = [
+    'sql_func_name',
+    'sql_function',
+    'sql_module'
+]

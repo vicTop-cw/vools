@@ -147,3 +147,8 @@ class DllCommands:
             print(f"错误: 未知 DLL '{dll_name}'")
             print(f"可用 DLL: {', '.join(_NIM_DLLS.keys())}")
             sys.exit(1)
+
+
+__all__ = [
+    'DllCommands'
+]

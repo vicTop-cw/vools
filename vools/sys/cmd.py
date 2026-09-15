@@ -414,3 +414,8 @@ async def _run_async(
         executor,
         lambda: _run_sync(func, cmd_str, shell, args, kwargs, fallback),
     )
+
+
+__all__ = [
+    'cmd'
+]

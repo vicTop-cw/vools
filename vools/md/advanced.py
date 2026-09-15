@@ -598,3 +598,25 @@ def generate_reference_table(refs: List[CrossReference]) -> str:
         lines.append(f'| {ref.text} | `{ref.ref_label}` | {resolved} | {target} |')
 
     return '\n'.join(lines)
+
+
+__all__ = [
+    'CrossReference',
+    'THEMES',
+    'ast_to_mermaid',
+    'ast_to_tree',
+    'benchmark_full_pipeline',
+    'benchmark_generate',
+    'benchmark_parse',
+    'benchmark_report',
+    'benchmark_to_html',
+    'export_html_theme',
+    'extract_cross_references',
+    'generate_reference_table',
+    'get_theme',
+    'list_themes',
+    'render_html_with_theme',
+    'resolve_cross_references',
+    'stream_parse',
+    'stream_parse_stats'
+]

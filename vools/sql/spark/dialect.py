@@ -174,3 +174,8 @@ class SparkSqlDialect(Dialect):
             return True
         except ImportError:
             return False
+
+
+__all__ = [
+    'SparkSqlDialect'
+]

@@ -1,4 +1,4 @@
-﻿"""
+"""
 vools.sys.compile_cmd - 编译器调用子命令
 
 提供 --lang, --file, --output 选项。
@@ -161,3 +161,8 @@ class CompileCommands:
             sys.exit(1)
         
         self._compilers[lang](file, output)
+
+
+__all__ = [
+    'CompileCommands'
+]

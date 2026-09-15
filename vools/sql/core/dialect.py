@@ -171,3 +171,12 @@ def has_dialect(name: str) -> bool:
         是否已注册
     """
     return name.lower() in _DIALECT_REGISTRY
+
+
+__all__ = [
+    'Dialect',
+    'get_dialect',
+    'has_dialect',
+    'list_dialects',
+    'register_dialect'
+]

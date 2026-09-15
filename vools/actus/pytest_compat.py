@@ -166,7 +166,8 @@ def resolve_fixture(name: str, env: Dict[str, Any]) -> Any:
         fn = _FIXTURE_REGISTRY[name]
         memo[name] = None  # 环路护栏
         kwargs = {p: resolve_fixture(p, env)
-                  for p in inspect.signature(fn).parameters}
+                  for p in inspect.signature(fn).parameters
+                  if p != 'self'}  # 类级 fixture 的 self 不是夹具
         val = fn(**kwargs)
         memo[name] = val
         return val

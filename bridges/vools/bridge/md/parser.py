@@ -147,8 +147,25 @@ def _extract_blocks_builtin(text: str) -> List[tuple]:
         if i < len(lines):
             i += 1
 
-        content = '\n'.join(content_lines)
-        blocks.append((language, directive_str, content))
+        # 从 code 内容中提取 # tag: xxx 标签（.actus.schema.md 新格式）
+        actual_content = []
+        tag_directives = []
+        for line in content_lines:
+            stripped = line.strip()
+            if stripped.startswith('# tag:') or stripped.startswith('#tag:'):
+                tag_value = stripped.split(':', 1)[1].strip() if ':' in stripped else ''
+                if tag_value:
+                    tag_directives.append(f'tag={tag_value}')
+            else:
+                actual_content.append(line)
+
+        # 合并 fence 指令和 tag 指令
+        all_directives = directive_str
+        if tag_directives:
+            all_directives = (directive_str + ' ' + ' '.join(tag_directives)).strip()
+
+        content = '\n'.join(actual_content)
+        blocks.append((language, all_directives, content))
 
     return blocks
 
@@ -178,7 +195,7 @@ def _extract_blocks_vools_md(text: str) -> List[tuple]:
             else:
                 language = lang_raw
 
-            # 从 code 中分离指令行（块内 #! 指令）
+            # 从 code 中分离指令行（块内 #! 指令 或 # tag: xxx 标签）
             lines = node.code.split('\n')
             directive_parts = []
             if fence_directives:
@@ -186,8 +203,15 @@ def _extract_blocks_vools_md(text: str) -> List[tuple]:
             content_lines = []
 
             for line in lines:
-                if line.strip().startswith('#!'):
-                    directive_parts.append(line.strip())
+                stripped = line.strip()
+                if stripped.startswith('#!'):
+                    directive_parts.append(stripped)
+                elif stripped.startswith('# tag:') or stripped.startswith('#tag:'):
+                    # 新格式 .actus.schema.md: # tag: main → tag=main 指令
+                    tag_value = stripped.split(':', 1)[1].strip() if ':' in stripped else ''
+                    if tag_value:
+                        directive_parts.append(f'tag={tag_value}')
+                    content_lines.append(line)
                 else:
                     content_lines.append(line)
 
