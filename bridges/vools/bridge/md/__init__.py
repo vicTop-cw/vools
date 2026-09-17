@@ -23,6 +23,14 @@ from .runner import (
     resolve_imports,
     scan_library, build_library_manifest, load_library_manifest,
 )
+from .webview2 import (
+    render_webview2, generate_html_file,
+    send_to_webview, execute_script_in_webview,
+    close_webview_window, get_active_webview_windows,
+    get_webview2_mode,
+    WebView2Config, WebView2Event, WebView2Result,
+    WebView2Manager, WebView2Mode, WebView2Theme, WebView2EventType,
+)
 from .errors import (
     MDBridgeError, MDParseError, MDDirectiveError,
     MDConfigError, MDDepsError, MDManifestError,
@@ -54,6 +62,13 @@ __all__ = [
     'run_multiple_md', 'run_library',
     'resolve_imports',
     'scan_library', 'build_library_manifest', 'load_library_manifest',
+    # webview2 (WebView2 GUI 渲染)
+    'render_webview2', 'generate_html_file',
+    'send_to_webview', 'execute_script_in_webview',
+    'close_webview_window', 'get_active_webview_windows',
+    'get_webview2_mode',
+    'WebView2Config', 'WebView2Event', 'WebView2Result',
+    'WebView2Manager', 'WebView2Mode', 'WebView2Theme', 'WebView2EventType',
     # errors
     'MDBridgeError', 'MDParseError', 'MDDirectiveError',
     'MDConfigError', 'MDDepsError', 'MDManifestError',

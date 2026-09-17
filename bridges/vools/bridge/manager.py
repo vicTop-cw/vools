@@ -895,6 +895,15 @@ def _register_builtin_languages():
         return
     _initialized = True
 
+    # Python - 总是可用，不需要编译器
+    manager.register(LanguageConfig(
+        name='python',
+        compiler='python',
+        compiler_paths=[],
+        runtime_paths=[],
+        env_setup=False,
+    ))
+
     # C (gcc/clang) - 特殊，C 不需要编译器路径，它直接调用系统工具
     manager.register(LanguageConfig(
         name='c',
@@ -1531,6 +1540,49 @@ class LanguageCompilerHelper:
             )
         return result
 
+    def execute_code(self, code: str, func_name: str = "__main__") -> Any:
+        """
+        执行代码块（用于 md runner）
+
+        参数：
+            code: 源代码字符串
+            func_name: 函数名
+
+        返回：
+            执行结果
+
+        异常：
+            RuntimeError: 执行失败
+        """
+        from ._base import FunctionSpec
+        
+        # 获取 bridge 实例
+        bridge = get_bridge(self.name)
+        if not bridge:
+            # 尝试使用 manager 获取
+            bridge = getattr(manager, f'_{self.name}_bridge', None)
+        
+        if not bridge:
+            raise RuntimeError(f"Bridge for '{self.name}' not available")
+        
+        # 构建函数规范
+        spec = FunctionSpec(
+            name=func_name,
+            body=code,
+            args=(),
+            ret_type=None,
+            module_code=None,
+            dependencies=[]
+        )
+        
+        # 编译/打包代码
+        lib_path = bridge._compile_or_package(code, func_name)
+        
+        # 执行代码
+        result = bridge._call_or_execute(lib_path, func_name, (), None)
+        
+        return result
+
 
 def get_helper(name: str) -> LanguageCompilerHelper:
     """
@@ -1543,6 +1595,148 @@ def get_helper(name: str) -> LanguageCompilerHelper:
         LanguageCompilerHelper 实例
     """
     return LanguageCompilerHelper(name)
+
+
+# ═══════════════════════════════════════════════════════
+# Bridge 实例获取（用于 md runner 执行代码块）
+# ═══════════════════════════════════════════════════════
+
+_BRIDGE_CACHE: Dict[str, Any] = {}
+_BRIDGE_LOCK = threading.Lock()
+
+
+def get_bridge(name: str) -> Optional[Any]:
+    """
+    获取语言的 Bridge 实例
+
+    参数：
+        name: 语言名称
+
+    返回：
+        Bridge 实例（如 NimBridge, RustBridge 等），不存在返回 None
+    """
+    name = name.lower()
+    
+    with _BRIDGE_LOCK:
+        if name in _BRIDGE_CACHE:
+            return _BRIDGE_CACHE[name]
+        
+        bridge = None
+        
+        # 动态导入对应语言的 bridge
+        try:
+            if name == 'nim':
+                from .nim.compiler import _nim_bridge
+                bridge = _nim_bridge
+            elif name == 'c':
+                from .c.__init__ import _c_bridge
+                bridge = _c_bridge
+            elif name == 'cpp':
+                from .cpp.__init__ import _cpp_bridge
+                bridge = _cpp_bridge
+            elif name == 'rust':
+                from .rust.compiler import _rust_bridge
+                bridge = _rust_bridge
+            elif name == 'go':
+                from .go.compiler import _go_bridge
+                bridge = _go_bridge
+            elif name == 'python':
+                # Python 不需要 bridge，直接执行
+                pass
+            elif name in ('shell', 'bash', 'sh'):
+                from .shell.compiler import _shell_bridge
+                bridge = _shell_bridge
+            elif name == 'csharp':
+                from .csharp.compiler import _csharp_bridge
+                bridge = _csharp_bridge
+            elif name == 'java':
+                from .java.compiler import _java_bridge
+                bridge = _java_bridge
+            elif name == 'kotlin':
+                from .kotlin.compiler import _kotlin_bridge
+                bridge = _kotlin_bridge
+            elif name == 'scala':
+                from .scala.compiler import _scala_bridge
+                bridge = _scala_bridge
+            elif name == 'julia':
+                from .julia.compiler import _julia_bridge
+                bridge = _julia_bridge
+            elif name == 'r':
+                from .r.compiler import _r_bridge
+                bridge = _r_bridge
+            elif name == 'ruby':
+                from .ruby.compiler import _ruby_bridge
+                bridge = _ruby_bridge
+            elif name == 'lua':
+                from .lua.compiler import _lua_bridge
+                bridge = _lua_bridge
+            elif name == 'perl':
+                from .perl.compiler import _perl_bridge
+                bridge = _perl_bridge
+            elif name == 'php':
+                from .php.compiler import _php_bridge
+                bridge = _php_bridge
+            elif name == 'typescript':
+                from .typescript.compiler import _ts_bridge
+                bridge = _ts_bridge
+            elif name == 'elixir':
+                from .elixir.compiler import _elixir_bridge
+                bridge = _elixir_bridge
+            elif name == 'erlang':
+                from .erlang.compiler import _erlang_bridge
+                bridge = _erlang_bridge
+            elif name == 'swift':
+                from .swift.compiler import _swift_bridge
+                bridge = _swift_bridge
+            elif name == 'zig':
+                from .zig.compiler import _zig_bridge
+                bridge = _zig_bridge
+            elif name == 'dart':
+                from .dart.compiler import _dart_bridge
+                bridge = _dart_bridge
+            elif name == 'haskell':
+                from .haskell.compiler import _haskell_bridge
+                bridge = _haskell_bridge
+            elif name == 'powershell':
+                from .powershell.compiler import _powershell_bridge
+                bridge = _powershell_bridge
+            elif name == 'vbscript':
+                from .vbscript.compiler import _vbscript_bridge
+                bridge = _vbscript_bridge
+            elif name == 'vbnet':
+                from .vbnet.compiler import _vbnet_bridge
+                bridge = _vbnet_bridge
+            elif name == 'freebasic':
+                from .freebasic.compiler import _fbc_bridge
+                bridge = _fbc_bridge
+            elif name == 'cangjie':
+                from .cangjie.compiler import _cj_bridge
+                bridge = _cj_bridge
+            elif name == 'mojo':
+                from .mojo.compiler import _mojo_bridge
+                bridge = _mojo_bridge
+            elif name == 'moonbit':
+                from .moonbit.compiler import _moonbit_bridge
+                bridge = _moonbit_bridge
+            elif name == 'tnr':
+                from .tnr.compiler import _tnr_bridge
+                bridge = _tnr_bridge
+            elif name == 'lz':
+                from .lz.compiler import _lz_bridge
+                bridge = _lz_bridge
+            elif name == 'zi':
+                from .zi.compiler import _zi_bridge
+                bridge = _zi_bridge
+            elif name == 'cypy':
+                from .cypy.compiler import _cypy_bridge
+                bridge = _cypy_bridge
+        except ImportError:
+            pass
+        
+        if bridge:
+            _BRIDGE_CACHE[name] = bridge
+        
+        return bridge
 
 
 # 导出

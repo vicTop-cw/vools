@@ -614,6 +614,10 @@ def _execute_block(
     if lang in ("shell", "bash", "sh"):
         return _execute_shell(block.content, context, config, workdir, timeout, args)
 
+    # webview2: WebView2 GUI 渲染
+    if lang in ("webview2", "webview", "htmlview"):
+        return _execute_webview2(block, context, config)
+
     return _execute_via_bridge(block, context, config, timeout)
 
 
@@ -756,7 +760,7 @@ def _execute_shell(
 
 
 def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: int) -> tuple[str, str, int]:
-    """通过 bridge helper 执行代码。"""
+    """通过 bridge helper 执行代码 - 支持所有 31 种桥接语言。"""
     try:
         from vools.bridge import get_helper
         helper = get_helper(block.language)
@@ -775,6 +779,42 @@ def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: 
         return "", f"{block.language} bridge 未安装", 1
     except Exception as e:
         return "", str(e), 1
+
+
+# ── webview2: WebView2 GUI 渲染 ──
+
+def _execute_webview2(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+) -> tuple[str, str, int]:
+    """
+    执行 webview2 代码块，渲染 GUI。
+
+    支持指令：
+    - title: 窗口标题
+    - width: 窗口宽度
+    - height: 窗口高度
+    - resizable: 是否可调整大小 (true/false)
+    - blocking: 是否阻塞等待 (true/false)
+    - html: 外部 HTML 文件路径
+    - inject: 注入的 JS 代码
+
+    Returns:
+        (stdout, stderr, exit_code)
+    """
+    try:
+        from .webview2 import execute_webview2_block
+        return execute_webview2_block(
+            block.content,
+            block.directives,
+            context,
+            context.get('build_dir', '.mdbuild')
+        )
+    except ImportError as e:
+        return "", f"webview2 模块导入失败: {e}", 1
+    except Exception as e:
+        return "", f"webview2 执行错误: {e}", 1
 
 
 # ═══════════════════════════════════════════════════════

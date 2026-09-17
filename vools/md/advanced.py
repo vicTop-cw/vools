@@ -1,3 +1,4 @@
+# AI生成
 """
 vools.md 高级功能模块
 
@@ -226,7 +227,7 @@ def ast_to_tree(ast, indent: str = '') -> str:
             if node.italic: tags.append('I')
             if node.code: tags.append('C')
             if node.link: tags.append(f'L:{node.link}')
-            tag_str = f'[{''.join(tags)}]' if tags else ''
+            tag_str = f'[{"".join(tags)}]' if tags else ''
             return f'InlineText{tag_str}({node.text!r})'
         else:
             return type(node).__name__
