@@ -145,3 +145,9 @@ class NimItor:
         if self._handle is not None:
             self._dll.freeItor(self._handle)
             self._handle = None
+
+
+__all__ = [
+    'ItorState',
+    'NimItor'
+]

@@ -3,12 +3,12 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vools"
-dynamic = ["version"]
+name = "vools-actus"
+version = "0.7.0"
 authors = [
     { name = "Victor", email = "victortop921129@gmail.com" },
 ]
-description = "Python 函数式编程工具集"
+description = "Actus 动作引擎 - 工作流自动化与动作编排"
 readme = "README.md"
 license = { file = "LICENSE" }
 classifiers = [
@@ -30,6 +30,7 @@ classifiers = [
 ]
 requires-python = ">=3.6"
 dependencies = [
+    "vools>=0.7.0",
 ]
 
 [project.optional-dependencies]
@@ -40,25 +41,6 @@ dev = [
     "isort>=5.12",
     "flake8>=6.0",
     "mypy>=1.0",
-    "pre-commit>=3.0",
-]
-serialize = [
-    "msgpack>=1.0",
-    "orjson>=3.9",
-]
-rx = ["vools-rx==0.7.6"]
-bridges = ["vools-bridges==0.7.6"]
-bridge-md = ["vools-bridge-md==0.5.0"]
-actus = ["vools-actus==0.7.0"]
-dll32 = ["vools-dll32==0.7.6"]
-xl = ["vools-xl==0.7.6"]
-all = [
-    "vools-rx==0.7.6",
-    "vools-bridges==0.7.6",
-    "vools-bridge-md==0.5.0",
-    "vools-actus==0.7.0",
-    "vools-dll32==0.7.6",
-    "vools-xl==0.7.6",
 ]
 cli = [
     "typer>=0.12.0",
@@ -71,9 +53,13 @@ docs = [
     "pymdown-extensions>=10.0",
     "mkdocs-minify-plugin>=0.8",
 ]
+serialize = [
+    "msgpack>=1.0",
+    "orjson>=3.9",
+]
 
 [project.scripts]
-vools = "vools.__main__:main"
+actus = "vools.actus.cli:main"
 
 [project.urls]
 "Homepage" = "https://github.com/vicTop-cw/vools"
@@ -83,39 +69,22 @@ vools = "vools.__main__:main"
 # ============ setuptools: 自动发现所有包 ============
 [tool.setuptools.packages.find]
 include = ["vools*"]
-exclude = [
-    "vools.__pycache__",
-    "vools.*.__pycache__",
-    "vools.dll32*",
-    "vools.xl*",
-    "vools.bridge*",
-    "vools.actus*",
-    "vools.reactive*",
-]
 
 [tool.setuptools.dynamic]
-version = { attr = "vools.__version__" }
+version = { attr = "vools.actus.__version__" }
 
 [tool.setuptools.package-data]
-"vools" = [
+"vools.actus" = [
     "config.template.py",
     "*.md",
-    "lib/*.dll",
-    "lib/*.so",
-    "lib/windows/*.dll",
-    "lib/linux/*.so",
-    "data/*.dll",
-    "data/*.so",
+    "templates/*",
+    "static/*",
 ]
 
 # ============ pytest ============
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# 默认运行纯 Python 核心测试：functional, decorators, data, curried, oop, core, serialize, task, datetime, utils
-# 默认不运行（需要外部资源/平台特定）：dll32, xl, monitoring, benchmarks, archive, other
-# 如需运行全部测试，使用: pytest --override-ini="addopts=--tb=short -q"
-# 如需运行特定子项目测试，使用: pytest bridges/tests/ 或 pytest rx/tests/
-addopts = "--tb=short -q --ignore=tests/monitoring --ignore=tests/benchmarks --ignore=tests/archive --ignore=tests/other --ignore=tests/__rust__ --ignore=tests/__persist__ --ignore=tests/__pycache__"
+addopts = "--tb=short -q"
 markers = [
     "integration: 标记集成测试（依赖外部资源，如剪贴板、文件系统、键鼠）",
     "windows_only: 仅在 Windows 上可运行的测试",
@@ -126,10 +95,9 @@ asyncio_mode = "auto"
 
 # ============ coverage ============
 [tool.coverage.run]
-source = ["vools"]
+source = ["vools.actus"]
 omit = [
-    "vools/__main__.py",
-    "vools/*/__init__.py",
+    "vools/actus/__init__.py",
 ]
 
 [tool.coverage.report]
@@ -143,7 +111,7 @@ output = "coverage.xml"
 # ============ black ============
 [tool.black]
 line-length = 120
-target-version = ["py39", "py310", "py311", "py312"]
+target-version = ["py39", "py310", "py311", "py312", "py313"]
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -167,10 +135,8 @@ profile = "black"
 line-length = 120
 multi_line_output = 3
 include_trailing_comma = true
-force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
-skip = ["__pycache__", ".venv", "build", "dist", ".git", ".pytest_cache", ".mypy_cache", "Temp", "debug", "dev_tools"]
 
 # ============ flake8 ============
 [tool.flake8]
@@ -188,8 +154,6 @@ exclude = [
     "Temp",
     "debug",
     "dev_tools",
-    ".trae",
-    ".workbuddy",
 ]
 
 # ============ mypy ============
@@ -201,25 +165,3 @@ no_implicit_optional = true
 strict_optional = true
 show_error_codes = true
 ignore_missing_imports = true
-exclude = [
-    'Temp/',
-    'debug/',
-    'dev_tools/',
-    'analysis/',
-    'guide/',
-    'examples/',
-    'autopypi/',
-    'changelog/',
-    '.workbuddy/',
-    '.trae/',
-    '.atomcode/',
-    '.run/',
-    'tests/',
-]
-
-[[tool.mypy.overrides]]
-module = "vools.*"
-disallow_untyped_defs = false
-
-# ============ MANIFEST.in 等效: 明确 dist 包含内容 ============
-# 此处省略 MANIFEST.in；setuptools 默认会包含 README.md / LICENSE / pyproject.toml

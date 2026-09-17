@@ -57,6 +57,7 @@ from .manager import (
     get_compiler,
     get_compiler_executable,
     get_helper,
+    get_bridge,
     get_version,
     setup_runtime,
     list_languages,

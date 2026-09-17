@@ -19,6 +19,38 @@ cd bridges
 pip install -e .
 ```
 
+## 核心功能
+
+### 1. 支持 31 种桥接语言
+
+| 类型 | 语言 |
+|------|------|
+| **编译型** | C, C++, Nim, Rust, Go, 仓颉, Mojo, MoonBit, Zig, Swift, Dart, Haskell, C#, VB.NET, Java, Scala, Kotlin, FreeBASIC |
+| **解释型** | Python, Shell/Bash, Julia, R, Lua, Perl, Ruby, PHP, TypeScript, PowerShell, VBScript, Erlang, Elixir, Tnr, LZ, Zi, Cypy |
+| **GUI 渲染** | WebView2 (Chromium 内核) |
+
+### 2. WebView2 GUI 渲染
+
+在 Markdown 中嵌入 **WebView2 (Chromium)** 控件，渲染 GUI 并支持事件交互。
+
+> **重要**：这不是旧的 IE WebBrowser，而是 **Edge Chromium 内核**！
+
+```markdown
+```webview2 title="我的应用" width=800 height=600
+<!DOCTYPE html>
+<html>
+<body>
+  <button onclick="sendToPython('clicked')">点击我</button>
+  <script>
+    function sendToPython(msg) {
+      window.chrome.webview.postMessage({ type: 'event', data: msg });
+    }
+  </script>
+</body>
+</html>
+```
+```
+
 ## 快速上手
 
 ```markdown
@@ -106,6 +138,65 @@ for block in parsed.blocks:
 | `#!output <file>` | 输出文件 |
 | `#!breakpoint` | 断点调试 |
 
+### WebView2 专用指令
+
+| 指令 | 说明 | 默认值 |
+|------|------|--------|
+| `title` | 窗口标题 | "WebView2 Window" |
+| `width` | 窗口宽度 | 800 |
+| `height` | 窗口高度 | 600 |
+| `resizable` | 是否可调整大小 | true |
+| `blocking` | 是否阻塞等待 | true |
+| `devtools` | 是否启用开发者工具 | false |
+| `theme` | 主题 (light/dark/blue/minimal) | light |
+| `html` | 外部 HTML 文件 | - |
+| `inject` | 注入的 JS 代码 | - |
+
+## WebView2 JS API
+
+### 发送消息到 Python
+
+```javascript
+// 基本发送
+sendToPython('event', { foo: 'bar' });
+
+// 带回调的发送
+sendToPython('request', { id: 1 }, function(response) {
+    console.log('收到回调:', response);
+});
+```
+
+### 接收来自 Python 的消息
+
+```javascript
+// 方式 1: 回调函数
+window.onPythonMessage = function(data) {
+    console.log('收到:', data);
+};
+
+// 方式 2: 事件监听
+window.addEventListener('pythonMessage', function(e) {
+    console.log('收到:', e.detail);
+});
+```
+
+### 便捷 API
+
+```javascript
+// 触发事件
+triggerEvent('click', { x: 100, y: 200 });
+
+// 等待页面就绪
+window.webview.ready().then(function() {
+    console.log('页面已就绪');
+});
+
+// 发送消息（别名）
+window.webview.send('message', data);
+window.webview.onMessage(callback);
+window.webview.trigger('eventName', data);
+```
+
 ## 增量构建
 
 基于 `block_hash` 对比：
@@ -192,10 +283,13 @@ result = run_md("script.md", parallel=True)
 
 ## 示例
 
-- `examples/hello.md` — Hello World
-- `examples/pipeline.md` — 数据管道
-- `examples/multi_language.md` — 多语言混合
-- `examples/library.md` — 库级示例
+| 文件 | 说明 |
+|------|------|
+| `examples/hello.md` | Hello World |
+| `examples/pipeline.md` | 数据管道 |
+| `examples/multi_language.md` | 多语言混合 |
+| `examples/library.md` | 库级示例 |
+| `examples/webview2.md` | WebView2 GUI 渲染示例 |
 
 ## 产物目录
 
@@ -205,6 +299,35 @@ result = run_md("script.md", parallel=True)
 ├── artifacts/      编译产物
 ├── sources/        展开的源码
 └── tmp/            运行中间文件
+```
+
+## 依赖安装
+
+### WebView2 (Chromium)
+
+```bash
+pip install pythonnet  # 原生 SDK（推荐）
+# 或
+pip install pywebview   # 轻量级方案
+```
+
+> **注意**：Windows 10/11 已预装 WebView2 运行时。
+
+### 其他桥接语言
+
+根据需要安装对应的编译器：
+
+```bash
+# Nim
+curl https://nim-lang.org/choosenim/init.sh -sSf | sh
+
+# Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Go
+go version  # 检查是否已安装
+
+# 其他语言...
 ```
 
 ## 许可证

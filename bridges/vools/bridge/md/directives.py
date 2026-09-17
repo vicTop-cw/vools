@@ -17,6 +17,9 @@ BLOCK_DIRECTIVE_KEYS: set[str] = {
     "export", "import", "env", "workdir",
     "args", "stdin", "timeout", "tag", "output",
     "breakpoint", "bp", "prelude", "test", "setup", "name",
+    # webview2 指令
+    "title", "width", "height", "resizable", "fullscreen", "blocking",
+    "html", "inject",
 }
 
 # ═══════════════════════════════════════════════════════

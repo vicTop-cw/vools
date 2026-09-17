@@ -1,0 +1,310 @@
+{"timestamp": 1789451169.9799418, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451169.9841518, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451169.985075, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451169.9886348, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451169.9894698, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451170.0579991, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451170.0617845, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451170.065402, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451170.0700002, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451170.0753691, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451235.2911065, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451235.2943063, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451235.2950358, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451235.2996857, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451235.3005445, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451235.3487597, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451235.3524168, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451235.3557625, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451235.3602002, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451235.3681104, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451355.4173589, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451355.4217246, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451355.4226727, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451355.426402, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451355.427292, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451355.4801726, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451355.48411, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451355.487263, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451355.4905288, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451355.4957678, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451434.842994, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451434.8479598, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451434.849718, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451434.8537364, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451434.8544796, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451434.8935144, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451434.8979783, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451434.9018934, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451434.9053433, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451434.9114318, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451459.4756668, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451459.478985, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451459.480244, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451459.483554, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451459.4845905, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451459.5284412, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451459.532165, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451459.5360348, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451459.5403445, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451459.5473115, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451491.2280257, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451491.2314572, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451491.2322516, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451491.2352765, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451491.2361271, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451491.2774386, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451491.280523, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451491.2836978, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451491.2870922, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451491.292316, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451512.0163877, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451512.020014, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451512.0208747, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451512.0244417, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451512.0255983, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451512.0688438, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451512.0723996, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451512.0758722, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451512.079011, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451512.0836716, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451615.2884333, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451615.2914765, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451615.2922232, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451615.2951658, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451615.295907, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451615.3391173, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451615.343122, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451615.346538, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451615.349505, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451615.3546584, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451682.8834116, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451682.88841, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451682.8914285, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451682.8985002, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451682.8992214, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451682.934357, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451682.937284, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451682.9400938, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451682.9435039, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451682.9486096, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451702.3070672, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451702.3101082, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451702.3109467, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451702.3145604, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451702.315747, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451702.349885, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451702.3529158, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451702.3558629, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451702.3590226, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451702.36467, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451712.905329, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451712.9091477, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451712.9102921, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451712.9152372, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451712.9161143, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451712.9496503, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451712.9537206, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451712.9576619, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451712.961077, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451712.9668388, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451897.024557, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789451897.0283766, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451897.0292552, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451897.0328617, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789451897.033701, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789451897.0677068, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451897.0705948, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789451897.074721, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789451897.0775285, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789451897.0816522, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789452021.9436498, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789452021.9455323, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789452021.9458663, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789452021.9472535, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789452021.9475434, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789452021.9631882, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789452021.9649448, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789452021.9667504, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789452021.968169, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789452021.9703069, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789452552.3793876, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789452552.3860915, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789452552.3875895, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789452552.3926, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789452552.3938642, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789452552.429593, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789452552.433046, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789452552.4373024, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789452552.4413028, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789452552.4465096, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789452680.4834032, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789452680.4971583, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789452680.498072, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789452680.5015407, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789452680.5025115, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789452680.5395827, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789452680.5434048, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789452680.5470064, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789452680.550436, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789452680.5564692, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789453517.7368815, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789453517.7514403, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789453517.7534244, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789453517.7577424, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789453517.7593503, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789453517.8083527, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789453517.8117177, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789453517.8151462, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789453517.8182046, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789453517.8257399, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789453596.2158134, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789453596.2223496, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789453596.223826, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789453596.2292259, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789453596.2316697, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789453596.2925532, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789453596.298812, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789453596.3035457, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789453596.3069623, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789453596.3130798, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789453730.9844103, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789453730.988013, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789453730.9889975, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789453730.992181, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789453730.9930182, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789453731.0397258, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789453731.0484245, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789453731.0555785, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789453731.0640228, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789453731.083297, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789454125.4564872, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789454125.4599652, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789454125.460908, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789454125.464515, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789454125.465635, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789454125.507222, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789454125.511445, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789454125.5168884, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789454125.5213747, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789454125.5281098, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789454602.5858388, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789454602.5882592, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789454602.5888908, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789454602.5910523, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789454602.591583, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789454602.6103504, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789454602.6122217, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789454602.6138895, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789454602.6156275, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789454602.6181724, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789455917.0506492, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789455917.0582557, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789455917.0598197, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789455917.0641475, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789455917.0649664, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789455917.1283927, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789455917.1334045, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789455917.1409342, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789455917.147174, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789455917.1561334, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789456005.215781, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789456005.222065, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789456005.222913, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789456005.22677, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789456005.2280369, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789456005.2658174, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789456005.2701542, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789456005.2741604, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789456005.2783058, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789456005.2847373, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789456077.9032273, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789456077.9103708, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789456077.9115841, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789456077.9162948, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789456077.9199212, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789456077.9655201, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789456077.9705935, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789456077.9738674, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789456077.977606, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789456077.9836655, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789459992.5069442, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789459992.5103927, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789459992.510795, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789459992.5124583, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789459992.5127716, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789459992.5424492, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789459992.5439699, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789459992.5454466, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789459992.5469222, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789459992.54997, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789460082.3922076, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789460082.3979805, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789460082.3991687, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789460082.4045587, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789460082.4051402, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789460082.4410071, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789460082.4442427, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789460082.4477167, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789460082.4508657, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789460082.4559941, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789460149.2255692, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789460149.2286758, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789460149.2292337, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789460149.230975, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789460149.2312949, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789460149.2520196, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789460149.2541528, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789460149.2568872, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789460149.258323, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789460149.2629776, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461188.6189556, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789461188.6335435, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789461188.6343567, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789461188.6364572, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789461188.6367753, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789461188.664244, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461188.6679268, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789461188.670983, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789461188.6737695, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461188.6771305, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461253.7709627, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789461253.7735198, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789461253.7738764, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789461253.7753675, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789461253.7756557, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789461253.7923408, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461253.7952552, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789461253.7969213, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789461253.7984183, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461253.801659, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461319.0005927, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789461319.0026686, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789461319.0029829, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789461319.0046318, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789461319.0051446, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789461319.0250335, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461319.026749, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789461319.0286207, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789461319.030085, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461319.0324118, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461381.7484362, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789461381.7514915, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789461381.7518444, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789461381.754444, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789461381.7551606, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789461381.782442, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461381.787181, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789461381.7924118, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789461381.7975252, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461381.804387, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461463.4577286, "action_id": "test", "event_type": "scan", "details": {"safe": true}, "success": true}
+{"timestamp": 1789461463.4662607, "action_id": "action_a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789461463.4681408, "action_id": "action_b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789461463.478438, "action_id": "a", "event_type": "scan", "details": {}, "success": true}
+{"timestamp": 1789461463.480364, "action_id": "b", "event_type": "scan", "details": {}, "success": false}
+{"timestamp": 1789461463.528821, "action_id": "test.safe", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461463.5322685, "action_id": "test.code", "event_type": "security_scan", "details": {"safe": false, "issues": ["危险命令模式: os\\.system\\s*\\("], "warnings": []}, "success": false}
+{"timestamp": 1789461463.5355017, "action_id": "test.action", "event_type": "sensitive_output", "details": {"count": 1, "patterns": ["password\\s*[:=]\\s*\\S+"]}, "success": false}
+{"timestamp": 1789461463.5387123, "action_id": "a", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
+{"timestamp": 1789461463.544234, "action_id": "test.fn", "event_type": "security_scan", "details": {"safe": true, "issues": [], "warnings": []}, "success": true}
