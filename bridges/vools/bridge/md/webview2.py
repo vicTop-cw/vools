@@ -711,7 +711,7 @@ class WebView2Manager:
                     result.error = proc.stderr
             else:
                 proc = subprocess.Popen(cmd)
-                self._active_windows[block_id] = {{'proc': proc, 'config': config}}
+                self._active_windows[block_id] = {'proc': proc, 'config': config}
                 result.status = "ok"
                 
         except subprocess.TimeoutExpired:
