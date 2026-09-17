@@ -54,6 +54,11 @@ class Action:
         return self.meta.get('tags', [])
 
     @property
+    def cached_artifacts(self) -> list:
+        """缓存的编译产物路径列表（dll, exe, so 等）。"""
+        return self.meta.get('cached_artifacts', [])
+
+    @property
     def deps(self) -> list:
         """动作依赖列表（原始值）。"""
         return self.meta.get('deps', [])
@@ -83,6 +88,7 @@ class Action:
             'deps': self.deps,
             'path': self.path,
             'sha256': self.sha256,
+            'cached_artifacts': self.cached_artifacts,
         }
 
 
