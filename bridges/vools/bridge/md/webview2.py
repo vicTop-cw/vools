@@ -659,7 +659,7 @@ class WebView2Manager:
                     height=config.height,
                     resizable=config.resizable,
                 )
-                self._active_windows[block_id] = {{'window': window, 'config': config}}
+                self._active_windows[block_id] = {'window': window, 'config': config}
                 result.status = "ok"
             
             result.events = events
