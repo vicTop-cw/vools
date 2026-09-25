@@ -288,12 +288,28 @@ class SignatureVerifier:
                 return {"status": "error", "message": "Signature verification failed"}
 
         except ImportError:
-            # 退化：HMAC 验证（需要公钥 = 私钥）
+            # 退化：HMAC 验证（对称密钥 —— 与 sign_file 保持一致）
+            # 注意：sign_file 退化时用的是私钥字节作 HMAC key，这里必须同样
+            # 用私钥（而非公钥）才能往返一致。
             import hmac
+            if public_key is None or not isinstance(public_key, bytes) \
+                    or len(public_key) != 32:
+                # 尝试加载公钥
+                if public_key is None:
+                    public_key = self._key_manager.load_public_key(key_name)
+            # 退化场景下需要对称密钥：优先私钥字节
+            secret = self._key_manager.load_private_key(key_name)
+            if isinstance(secret, bytes):
+                expected = hmac.new(secret, message, hashlib.sha256).digest()
+                if hmac.compare_digest(sig_bytes, expected):
+                    return {"status": "ok", "signer": sig_data.get("signer"),
+                            "algorithm": "hmac-sha256-fallback"}
+            # 兜底：若传入的 public_key 实际是共享密钥（老行为）
             if isinstance(public_key, bytes):
                 expected = hmac.new(public_key, message, hashlib.sha256).digest()
                 if hmac.compare_digest(sig_bytes, expected):
-                    return {"status": "ok", "signer": sig_data.get("signer"), "algorithm": "hmac-sha256"}
+                    return {"status": "ok", "signer": sig_data.get("signer"),
+                            "algorithm": "hmac-sha256"}
             return {"status": "error", "message": "Signature verification failed (fallback)"}
 
     @staticmethod
