@@ -24,8 +24,36 @@ from .errors import ActionError
 from .model import Action, parse_cfg_from_file
 from .constants import TRUST_LEVELS
 
-_SCHEMA_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)))), 'contracts', 'action.schema.json')
+def _resolve_schema_path() -> str:
+    """定位 action.schema.json。
+
+    contracts/ 保留在 Actus 仓库（docs/32 迁移约定：仓库只留 .md/.json），
+    而本模块已迁入 vools.actus，故不能仅按模块相对路径推断。
+    优先级：
+      1. ACTUS_REPO_ROOT/contracts/action.schema.json
+      2. 模块相对路径（自带 contracts/ 时）
+      3. 从 CWD 向上回溯找 contracts/action.schema.json
+    """
+    candidates = []
+    root = os.environ.get('ACTUS_REPO_ROOT')
+    if root:
+        candidates.append(os.path.join(root, 'contracts', 'action.schema.json'))
+    candidates.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), 'contracts', 'action.schema.json'))
+    cur = os.path.abspath(os.getcwd())
+    for _ in range(6):
+        candidates.append(os.path.join(cur, 'contracts', 'action.schema.json'))
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return candidates[0]
+
+
+_SCHEMA_PATH = _resolve_schema_path()
 
 _schema_cache = None
 
