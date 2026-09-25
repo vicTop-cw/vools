@@ -292,10 +292,27 @@ def validate_graph(actions: Dict[str, Action]) -> None:
 
     检测到环即抛 ActionError(dependency_cycle)，附环路径；
     缺失依赖抛 ActionError(dependency_missing)。
+
+    注意：`system:`/`lang:`/`mcp:`/`action:`/`pip:`/`npm:` 等运行时依赖
+    不在 actions 图中，由 DependencyResolver 在执行期按三策略处理，此处跳过
+    （与 Actus engine/actuscore/validate.py 保持一致）。
     """
+    # 非 action 的依赖（构建产物、系统命令、语言包、MCP server 等），由 DependencyResolver 运行时校验
+    _KNOWN_BUILD_PREFIXES = ("cs_", "build:")
+    _KNOWN_RUNTIME_PREFIXES = ("system:", "lang:", "mcp:", "action:", "pip:", "npm:")
+
+    def _is_build_dep(dep: str) -> bool:
+        return any(dep.startswith(p) or dep == p.rstrip(":") for p in _KNOWN_BUILD_PREFIXES)
+
+    def _is_runtime_dep(dep: str) -> bool:
+        """运行时依赖（系统命令/语言包/MCP/action）：跳过图存在性校验。"""
+        return any(dep.startswith(p) for p in _KNOWN_RUNTIME_PREFIXES)
+
     # 存在性
     for aid, a in actions.items():
         for dep in a.meta.get('deps', []) or []:
+            if _is_build_dep(dep) or _is_runtime_dep(dep):
+                continue  # 运行时依赖不在 actions 图中，由 DependencyResolver 校验
             if dep not in actions:
                 raise ActionError(
                     'dependency_missing',

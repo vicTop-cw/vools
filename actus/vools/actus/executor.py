@@ -115,12 +115,61 @@ def execute(action_id: str, params: dict = None,
         action_obj = load_and_validate(get_action(action_id, actions_dir).path)
         if action_obj.dependencies:
             resolver = DependencyResolver(actions_root=actions_dir)
-            all_ok, dep_msgs = resolver.resolve(action_obj.dependencies, auto_install=False)
-            dep_check = {"satisfied": all_ok, "messages": dep_msgs}
-            if not all_ok and not force:
+            dep_states = []
+            lazy_hints = []
+            hard_missing = []
+            for dep in action_obj.dependencies:
+                chk = resolver.check_dep(dep)
+                dep_type = getattr(getattr(dep, 'type', ''), 'value', getattr(dep, 'type', ''))
+                strategy = getattr(getattr(dep, 'strategy', None), 'value', None)
+                ephemeral_cmd = getattr(chk, 'ephemeral_cmd', '')
+                dep_states.append({
+                    'name': dep.name,
+                    'type': dep_type,
+                    'strategy': strategy,
+                    'required': dep.required,
+                    'satisfied': chk.satisfied,
+                    'message': chk.message,
+                    'fix_command': chk.fix_command,
+                    'ephemeral_cmd': ephemeral_cmd,
+                })
+                if chk.satisfied:
+                    continue
+                # D3 懒加载：hint/ephemeral/download 策略不硬失败，仅附提示
+                actionable = bool(
+                    chk.fix_command or ephemeral_cmd
+                    or getattr(chk, 'download_url', '')
+                )
+                if strategy is not None:
+                    lazy = strategy != 'fail'
+                else:
+                    lazy = actionable or dep_type in (
+                        'system', 'python', 'npm', 'lang', 'mcp')
+                if lazy:
+                    lazy_hints.append({
+                        'name': chk.name,
+                        'type': dep_type,
+                        'strategy': strategy,
+                        'message': chk.message,
+                        'fix_command': chk.fix_command,
+                        'ephemeral_cmd': ephemeral_cmd,
+                    })
+                elif dep.required:
+                    hard_missing.append({'name': chk.name, 'message': chk.message})
+            dep_check = {
+                'satisfied': not hard_missing,
+                'deps': dep_states,
+                'lazy': lazy_hints,
+                'missing': hard_missing,
+            }
+            if hard_missing and not force:
                 result = {
                     "status": "failed",
-                    "error": {"code": "deps_missing", "message": "依赖未满足，可使用 force=True 强制执行"},
+                    "error": {
+                        "code": "deps_missing",
+                        "message": "必需依赖缺失，可使用 force=True 强制执行",
+                        "details": {"missing": hard_missing},
+                    },
                     "deps": dep_check
                 }
                 return result
@@ -148,6 +197,9 @@ def execute(action_id: str, params: dict = None,
     def finish(result: dict) -> dict:
         # 先补全 exec_id 再落盘，保证记录里的 result 自含标识
         result['exec_id'] = exec_id
+        # D3：懒加载策略缺失的依赖不阻断执行，以提示形式随结果返回
+        if dep_check and dep_check.get('lazy'):
+            result['deps_hints'] = dep_check['lazy']
         record['result'] = result
         # ── 释放并发槽位 ──
         if record.get('concurrency', {}).get('max', 0) > 0:
