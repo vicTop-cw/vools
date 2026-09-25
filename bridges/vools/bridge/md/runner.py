@@ -695,6 +695,8 @@ def _execute_python(content: str, context: Dict, config: Dict, args: Optional[st
         exec_env = dict(context.get('env', {}))
         exec_env.update(_build_prelude_env(config))
         exec_env['__md_config'] = config
+        exec_env['__name__'] = '__md_block__'
+        exec_env['__builtins__'] = __builtins__
 
         if args:
             exec_env['__md_args'] = args.split()
@@ -714,7 +716,11 @@ def _execute_python(content: str, context: Dict, config: Dict, args: Optional[st
             sys.stderr = stderr_buf
             if stdin_buf is not None:
                 sys.stdin = stdin_buf
-            exec(content, {'__name__': '__md_block__', '__builtins__': __builtins__}, exec_env)
+            # 单命名空间执行：prelude 注入的模块/符号必须作为模块级全局可见，
+            # 否则块内 def 的函数 __globals__ 指向 globals 而看不到 prelude
+            # （曾用 exec(code, globals, exec_env) 双字典，导致 `def main(): base64...`
+            #  在函数体内解析不到 base64 → NameError，docs/33 Phase 1 prelude 失效）。
+            exec(content, exec_env)
             exit_code = 0
         finally:
             sys.stdout = old_stdout
