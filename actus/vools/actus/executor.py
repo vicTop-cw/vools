@@ -15,6 +15,7 @@ __all__ = ['execute', 'preview', 'new_exec_id']
 import json
 import os
 import secrets
+import threading
 from datetime import datetime, timezone, timedelta
 
 from .errors import ActionError
@@ -28,6 +29,12 @@ from .concurrency import get_manager
 from .dependency import get_resolver, DependencyResolver
 
 _TZ = timezone(timedelta(hours=8))
+
+# 并行工作流安全：进程级 os.environ 注入串行化锁。
+# 工作流并行层用 ThreadPoolExecutor 同进程并发提交节点，而参数经 os.environ
+# 传给 vools 子进程；无锁时同层节点互相覆盖参数。锁范围仅覆盖「注入 → run_md
+# 启动子进程」区间，不覆盖子进程内部并发。
+_ENV_LOCK = threading.RLock()
 
 _STATUS_MAP = {
     'succeeded': 'ok',
@@ -474,43 +481,48 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
     from . import vault as vault_mod
     from .indexer import _repo_root
 
-    # 参数注入：写入临时环境文件，vools config env 携带 ACTUS_PARAMS
-    os.environ['ACTUS_PARAMS'] = json.dumps(params, ensure_ascii=False)
-    os.environ['ACTUS_EXEC_ID'] = exec_id
-    # 引擎定位环境：动作代码（如 loop_prompt 的会话留痕）经此解析引擎状态目录，
-    # 测试经 meta_dir 覆盖即可整体隔离，不污染真实仓库。
-    os.environ['ACTUS_REPO_ROOT'] = _repo_root()
-    os.environ['ACTUS_META_DIR'] = meta_dir or os.path.join(_repo_root(), '_meta')
+    # 持锁完成「注入 → 子进程启动」，避免并行节点互相覆盖进程级环境。
+    _ENV_LOCK.acquire()
+    try:
+        # 参数注入：写入临时环境文件，vools config env 携带 ACTUS_PARAMS
+        os.environ['ACTUS_PARAMS'] = json.dumps(params, ensure_ascii=False)
+        os.environ['ACTUS_EXEC_ID'] = exec_id
+        # 引擎定位环境：动作代码（如 loop_prompt 的会话留痕）经此解析引擎状态目录，
+        # 测试经 meta_dir 覆盖即可整体隔离，不污染真实仓库。
+        os.environ['ACTUS_REPO_ROOT'] = _repo_root()
+        os.environ['ACTUS_META_DIR'] = meta_dir or os.path.join(_repo_root(), '_meta')
 
-    # secrets 自动注入（docs/10 §D2）：解析动作的 secrets 字段，注入环境变量
-    secrets_config = action.meta.get('secrets') or []
-    if secrets_config:
-        try:
-            resolved_secrets = vault_mod.resolve_secrets(secrets_config, meta_dir=meta_dir or '')
-            for env_name, env_value in resolved_secrets.items():
-                if env_value:  # 只注入非空值，避免覆盖已有环境变量
-                    os.environ[env_name] = env_value
-        except Exception:
-            # secrets 注入失败不阻断执行，动作代码自行处理缺失密钥
-            pass
+        # secrets 自动注入（docs/10 §D2）：解析动作的 secrets 字段，注入环境变量
+        secrets_config = action.meta.get('secrets') or []
+        if secrets_config:
+            try:
+                resolved_secrets = vault_mod.resolve_secrets(secrets_config, meta_dir=meta_dir or '')
+                for env_name, env_value in resolved_secrets.items():
+                    if env_value:  # 只注入非空值，避免覆盖已有环境变量
+                        os.environ[env_name] = env_value
+            except Exception:
+                # secrets 注入失败不阻断执行，动作代码自行处理缺失密钥
+                pass
 
-    if sandboxed:
-        # docs/07 §5：沙箱动作强制落入 jail 根，环境变量指示边界
-        build_dir = sbx.prepare(artifacts_dir, exec_id)
-        os.environ.update(sbx.sandbox_env(build_dir))
-    else:
-        # build_dir 落 artifacts/<action_id>/<version>/<exec_id>/（docs/08 §6）。
-        # 每个 exec 独立目录：避免并发同动作时 vools manifest 原子 rename
-        # 在 Windows 上互踩（PermissionError 竞态），同时满足 docs/08 §4 并发语义。
-        build_dir = os.path.join(artifacts_dir, action.id,
-                                 action.meta.get('version', '0.0.0'), exec_id)
+        if sandboxed:
+            # docs/07 §5：沙箱动作强制落入 jail 根，环境变量指示边界
+            build_dir = sbx.prepare(artifacts_dir, exec_id)
+            os.environ.update(sbx.sandbox_env(build_dir))
+        else:
+            # build_dir 落 artifacts/<action_id>/<version>/<exec_id>/（docs/08 §6）。
+            # 每个 exec 独立目录：避免并发同动作时 vools manifest 原子 rename
+            # 在 Windows 上互踩（PermissionError 竞态），同时满足 docs/08 §4 并发语义。
+            build_dir = os.path.join(artifacts_dir, action.id,
+                                     action.meta.get('version', '0.0.0'), exec_id)
 
-    report = run_md(
-        action.path,
-        only=[action.entry] if action.entry else None,
-        force=force or True,  # 动作语义：每次执行都是新 exec，不做块级缓存复用
-        build_dir=build_dir,
-    )
+        report = run_md(
+            action.path,
+            only=[action.entry] if action.entry else None,
+            force=force or True,  # 动作语义：每次执行都是新 exec，不做块级缓存复用
+            build_dir=build_dir,
+        )
+    finally:
+        _ENV_LOCK.release()
 
     blocks = []
     all_ok = True
