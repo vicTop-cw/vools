@@ -1,0 +1,83 @@
+"""cost.py — 成本账本（阶段 4）。
+
+追踪每次云端 API 调用的成本，支持预算告警。
+"""
+
+import json
+import os
+from datetime import datetime
+from typing import Dict, List, Optional
+
+__all__ = ['record_cost', 'get_cost_summary', 'check_budget', 'COSTS_DIR']
+
+COSTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), '_meta', 'costs')
+
+
+def _ensure_dir():
+    os.makedirs(COSTS_DIR, exist_ok=True)
+
+
+def record_cost(action_id: str, provider: str, cost_usd: float,
+                tokens: int = 0, model: str = "", extra: dict = None):
+    """记录一次成本调用。"""
+    _ensure_dir()
+    today = datetime.now().strftime('%Y-%m')
+    filepath = os.path.join(COSTS_DIR, f'{today}.jsonl')
+    entry = {
+        'timestamp': datetime.now().isoformat(),
+        'action_id': action_id,
+        'provider': provider,
+        'cost_usd': cost_usd,
+        'tokens': tokens,
+        'model': model,
+    }
+    if extra:
+        entry.update(extra)
+    with open(filepath, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
+
+def get_cost_summary(month: str = None) -> dict:
+    """获取月度成本汇总。"""
+    _ensure_dir()
+    if month is None:
+        month = datetime.now().strftime('%Y-%m')
+    filepath = os.path.join(COSTS_DIR, f'{month}.jsonl')
+    total = 0.0
+    calls = 0
+    by_provider = {}
+    if not os.path.exists(filepath):
+        return {'month': month, 'total_usd': 0, 'calls': 0, 'by_provider': {}}
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                cost = entry.get('cost_usd', 0)
+                total += cost
+                calls += 1
+                provider = entry.get('provider', 'unknown')
+                if provider not in by_provider:
+                    by_provider[provider] = {'usd': 0, 'calls': 0}
+                by_provider[provider]['usd'] += cost
+                by_provider[provider]['calls'] += 1
+            except Exception:
+                continue
+    return {'month': month, 'total_usd': round(total, 6), 'calls': calls, 'by_provider': by_provider}
+
+
+def check_budget(month_limit_usd: float = 10.0) -> dict:
+    """检查是否超出预算，返回状态。"""
+    summary = get_cost_summary()
+    total = summary['total_usd']
+    over = total > month_limit_usd
+    return {
+        'budget_usd': month_limit_usd,
+        'spent_usd': total,
+        'remaining_usd': round(max(0, month_limit_usd - total), 6),
+        'over_budget': over,
+        'usage_pct': round(total / month_limit_usd * 100, 2) if month_limit_usd > 0 else 0,
+    }

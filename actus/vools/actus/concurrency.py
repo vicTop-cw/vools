@@ -24,7 +24,9 @@ class ActionSlot:
 
 class ConcurrencyManager:
     _instance = None
-    _lock = threading.Lock()
+    # RLock：reset() 持锁期间会经 __new__ 再次加锁重建实例，
+    # 用非重入 Lock 会同线程死锁（回归：full pytest 挂起 / CLI clear 挂起）
+    _lock = threading.RLock()
 
     def __new__(cls):
         if cls._instance is None:

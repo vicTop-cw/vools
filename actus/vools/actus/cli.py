@@ -44,10 +44,10 @@ def main(argv=None) -> int:
 
     if args.command == 'mcp':
         if args.transport == 'sse':
-            from actus.mcp_sse import serve_sse
+            from .mcp_sse import serve_sse
             serve_sse(port=args.port)
         else:
-            from actus.mcp_server import serve
+            from .mcp_server import serve
             serve()
         return 0
 

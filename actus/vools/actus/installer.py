@@ -127,6 +127,18 @@ class ActionInstaller:
             "action_count": len(index.get("actions", []))
         }
 
+    def _inside_install_dir(self, install_name: str) -> bool:
+        """安装名解析后必须**严格落在** install_dir 之内。
+
+        三条边共用这把尺子（BUG-0019 的删、BUG-0020 的写、以及读侧的 get_install_path）：
+        - realpath 之后再比，顺带挡住软链/junction 指到外面的情形；
+        - 用 startswith(root + sep) 而不是允许 `== root` —— 否则 name='.' 会把自己
+          所在的整棵安装目录当成「一个仓库」删掉（这条是在写 quick win 时自查出来的）。
+        """
+        root = os.path.realpath(self._install_dir)
+        real = os.path.realpath(os.path.join(self._install_dir, install_name))
+        return real.startswith(root + os.sep)
+
     def uninstall(self, repo_url: str = None, name: str = None) -> dict:
         """卸载已安装的动作仓库。
 
@@ -142,6 +154,12 @@ class ActionInstaller:
             return {"status": "error", "message": "Must provide repo_url or name"}
 
         target_dir = os.path.join(self._install_dir, install_name)
+        # 安装名是调用方直接给的字符串：url 那条路有 _url_to_install_name 清洗，这条路没有。
+        # 越界的 name 能把安装目录之外的树 rmtree 掉（BUG-0019）—— 尺子抽成 _inside_install_dir，
+        # uninstall / set_scope / get_scope / get_install_path 共用（BUG-0020 是同族的写侧）。
+        if not self._inside_install_dir(install_name):
+            return {"status": "error",
+                    "message": f"安装名会越出安装目录，已拒绝: {install_name}"}
         if not os.path.isdir(target_dir):
             return {"status": "error", "message": f"Not installed: {install_name}"}
 
@@ -285,6 +303,8 @@ class ActionInstaller:
         install_name = name or (self._url_to_install_name(repo_url) if repo_url else None)
         if not install_name:
             return None
+        if not self._inside_install_dir(install_name):
+            return None
 
         target_dir = os.path.join(self._install_dir, install_name)
         if os.path.isdir(target_dir):
@@ -342,6 +362,9 @@ class ActionInstaller:
         install_name = name or (self._url_to_install_name(repo_url) if repo_url else None)
         if not install_name:
             return None
+        # 读侧同样不许越界：拿别人目录里的 .actus.scope 也是把权限边界读错了地方
+        if not self._inside_install_dir(install_name):
+            return None
 
         scope_path = os.path.join(self._install_dir, install_name, ".actus.scope")
         if os.path.isfile(scope_path):
@@ -353,6 +376,9 @@ class ActionInstaller:
         """设置已安装仓库的 scope。"""
         install_name = name or (self._url_to_install_name(repo_url) if repo_url else None)
         if not install_name:
+            return False
+        # BUG-0020：scope 是权限配置，写到安装目录之外等于把权限边界落错地方
+        if not self._inside_install_dir(install_name):
             return False
 
         target_dir = os.path.join(self._install_dir, install_name)

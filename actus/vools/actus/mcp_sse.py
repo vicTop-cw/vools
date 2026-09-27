@@ -16,7 +16,7 @@ import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from io import BytesIO
 
-from actus.mcp_server import MCPServer
+from .mcp_server import MCPServer
 
 
 class _SseWriter:

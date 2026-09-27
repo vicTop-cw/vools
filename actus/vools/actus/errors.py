@@ -10,7 +10,6 @@ ERROR_CODES = [
     'language_unavailable', 'internal',
 ]
 
-
 class ActionError(Exception):
     """携带结构化错误码的统一异常。
 
@@ -28,3 +27,4 @@ class ActionError(Exception):
     def to_payload(self) -> dict:
         """转为 docs/03 §7.2 的 error 载荷。"""
         return {'code': self.code, 'message': self.message, 'details': self.details}
+

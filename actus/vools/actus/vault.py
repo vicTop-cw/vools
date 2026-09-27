@@ -6,17 +6,22 @@
 加密策略：
 - 首选 Fernet（cryptography 库）
 - 回退 XOR + HMAC-SHA256（无外部依赖）
-- 主密钥从环境变量 ACTUS_VAULT_KEY 获取，缺省为随机生成（仅当前会话有效）
+- 主密钥从环境变量 ACTUS_VAULT_KEY 获取；没有时生成一把**临时密钥**，
+  它只在本进程内有效。密文要长期存，临时密钥存不了 —— 所以落盘入口
+  （CLI `vault set` / MCP actus_vault_set）在 Vault.ephemeral_key 为真时一律拒绝写入，
+  而不是回一个「ok」再把永远解不开的密文留在磁盘上（BUG-0009）。
 
 API：
 - set(key, value, scope='global') → 加密存储
 - get(key, scope='global') → 解密返回
+- inspect(key, scope='global') → 'ok' | 'absent' | 'undecryptable'（钥匙错不得谎报成不存在）
 - delete(key, scope='global') → 删除
 - list(scope=None) → 列出密钥元数据
 - resolve_secrets(action) → 解析动作的 secrets 字段并注入实际值
 """
 
-__all__ = ['Vault', 'set_key', 'get_key', 'delete_key', 'list_keys', 'resolve_secrets']
+__all__ = ['Vault', 'default_meta_dir', 'set_key', 'get_key', 'delete_key',
+           'list_keys', 'resolve_secrets']
 
 import hashlib
 import hmac
@@ -105,6 +110,9 @@ def _make_backend(master_key: str):
 
 # ── 保险库 ──
 
+_EPHEMERAL_MASTER_KEYS = set()   # 本进程自造过的临时主密钥（一次性，落盘即作废）
+
+
 class Vault:
     """密钥保险库。
 
@@ -124,9 +132,15 @@ class Vault:
 
         if master_key is None:
             master_key = os.environ.get('ACTUS_VAULT_KEY')
+        # 「本进程用没用过自造钥匙」必须跨实例认得出来：临时钥匙会写回
+        # os.environ，同进程下一次 Vault() 从环境里读到它，看着像用户配的钥匙 ——
+        # 于是长驻 MCP server 里的第二次 set 又会把永远解不开的密文落盘。
+        self.ephemeral_key = master_key in _EPHEMERAL_MASTER_KEYS
         if not master_key:
             # 生成临时密钥（仅当前会话有效）
             master_key = secrets.token_hex(32)
+            _EPHEMERAL_MASTER_KEYS.add(master_key)
+            self.ephemeral_key = True
             os.environ['ACTUS_VAULT_KEY'] = master_key
 
         self._backend = _make_backend(master_key)
@@ -189,6 +203,21 @@ class Vault:
             return self._backend.decrypt(encrypted)
         except Exception:
             return None
+
+    def inspect(self, key: str, scope: str = 'global') -> str:
+        """密钥的可读性状态：'ok' | 'absent' | 'undecryptable'。
+
+        get() 把「没写过」和「写了但当前主密钥解不开」都返回 None，入口只能回一句
+        not_found；而这两件事用户该做的动作完全相反（重新 set vs 去找对的主密钥）。
+        """
+        encrypted = self._keys_data.get(scope, {}).get(key)
+        if encrypted is None:
+            return 'absent'
+        try:
+            self._backend.decrypt(encrypted)
+        except Exception:
+            return 'undecryptable'
+        return 'ok'
 
     def delete(self, key: str, scope: str = 'global') -> bool:
         """删除密钥。
@@ -264,10 +293,29 @@ class Vault:
 _vault_singleton: Optional[Vault] = None
 
 
+def default_meta_dir() -> str:
+    """便捷函数缺省 meta_dir 时的落点：仓库的 _meta，绝不落到 cwd。
+
+    调用方（executor 注入 secrets 时传的是 `meta_dir or ''`）给空串是常态。旧写法
+    `os.path.join('', 'vault')` 得到相对路径 'vault'，于是在**当时的 cwd** 长出一个
+    空保险库目录，密钥静默解析成 ''（仓库根实测长出过 vault/，见 BUG-0010）。
+    """
+    root = os.environ.get('ACTUS_REPO_ROOT') or ''
+    if not root:
+        try:
+            from .indexer import _repo_root
+            root = _repo_root() or ''
+        except Exception:                       # noqa: BLE001 - 拿不到仓库根就走 cwd 绝对路径
+            root = ''
+    if not root:
+        root = os.getcwd()
+    return os.path.join(root, '_meta')
+
+
 def _get_vault(meta_dir: str) -> Vault:
     global _vault_singleton
     if _vault_singleton is None:
-        _vault_singleton = Vault(meta_dir)
+        _vault_singleton = Vault(meta_dir or default_meta_dir())
     return _vault_singleton
 
 

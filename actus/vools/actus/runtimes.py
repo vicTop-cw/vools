@@ -36,6 +36,14 @@ import time
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple
 
+from .process_state import PROCESS_STATE_LOCK
+
+# 进程级全局（os.environ / sys.stdout / sys.stderr / sys.stdin / sys.argv）的改写窗口
+# 必须整段互斥：PythonRuntime 是**进程内 exec**，两个节点并行时各自的注入会互相看见，
+# 还原还会踩掉别人的现场（BUG-0018，与 BUG-0008 同族同形状，只是换了执行路径）。
+# 锁本体不在这里定义：executor 注入环境时改的是同一份 os.environ，两把锁等于没有锁 ——
+# 统一用 process_state.PROCESS_STATE_LOCK（BUG-0023），RLock 允许同线程重入。
+
 
 class RuntimeBackend(ABC):
     """运行时后端基类。"""
@@ -73,6 +81,12 @@ class PythonRuntime(RuntimeBackend):
         return True  # Actus 本身就用 Python，必然可用
 
     def execute(self, code: str, context: Dict) -> Tuple[str, str, int]:
+        # 整段进程级改写纳入互斥（BUG-0018）；真正的改写逻辑留在 _execute_exclusive 里，
+        # 拆两层是为了让「锁的边界」在代码形状上就看得见。
+        with PROCESS_STATE_LOCK:
+            return self._execute_exclusive(code, context)
+
+    def _execute_exclusive(self, code: str, context: Dict) -> Tuple[str, str, int]:
         exec_env = dict(context.get('env', {}))
         exec_env['__name__'] = '__actus_block__'
         exec_env['__builtins__'] = __builtins__
@@ -308,7 +322,16 @@ class RustRuntime(RuntimeBackend):
     aliases = ['rs']
 
     def is_available(self) -> bool:
-        return shutil.which('rustc') is not None
+        if shutil.which('rustc') is None:
+            return False
+        # rustup shim 在 PATH 但未配置默认工具链时（rustup could not choose a
+        # version of rustc to run），which 命中但编译必败——试运行验证工具链真实可用。
+        try:
+            probe = subprocess.run(['rustc', '--version'], capture_output=True,
+                                   text=True, timeout=15)
+            return probe.returncode == 0
+        except Exception:
+            return False
 
     def execute(self, code: str, context: Dict) -> Tuple[str, str, int]:
         workdir = context.get('workdir', os.getcwd())
