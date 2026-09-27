@@ -39,7 +39,10 @@ dependencies = [
     # 与 executor 的逐块执行都 import vools.bridge.md.*。这些符号来自已发布的
     # vools-bridges（主包 vools 只把它放在 [bridges] extras 里，装了 vools 也没有），
     # 所以必须是硬依赖。
-    "vools-bridges>=0.7.6",
+    # 下限 0.7.7：mdtest.py 直取 `_build_prelude_env`，实测已发布的 0.7.6 wheel 里
+    # 没有这个符号（解包 grep vools/bridge/md/runner.py = 0），装 0.7.6 会让
+    # `import vools.actus.mdtest` 直接 ImportError。
+    "vools-bridges>=0.7.7",
 ]
 
 [project.optional-dependencies]
