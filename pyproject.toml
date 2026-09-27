@@ -47,16 +47,20 @@ serialize = [
     "orjson>=3.9",
 ]
 rx = ["vools-rx==0.7.6"]
-bridges = ["vools-bridges==0.7.6"]
-bridge-md = ["vools-bridge-md==0.5.0"]
-actus = ["vools-actus==0.7.0"]
+# vools.bridge.md 实际由 vools-bridges 分发：`vools-bridge-md`(0.5.0) 从未发布到 PyPI
+# （实测 pypi.org/pypi/vools-bridge-md/json → 404），照原名 pin 会让 vools[bridge-md]
+# 和 vools[all] 一起装不出来。这一项改成指向真正携带该模块的包。
+bridges = ["vools-bridges==0.7.7"]
+bridge-md = ["vools-bridges==0.7.7"]
+# actus 从未发布过 0.7.0（打包元数据坏在 [tool.setuptools.dynamic]，wheel 永远停在 0.7.0
+# 且没人传过），这里的 ==0.7.0 是悬空 pin。随 0.7.8 一起修正。
+actus = ["vools-actus==0.7.8"]
 dll32 = ["vools-dll32==0.7.6"]
 xl = ["vools-xl==0.7.6"]
 all = [
     "vools-rx==0.7.6",
-    "vools-bridges==0.7.6",
-    "vools-bridge-md==0.5.0",
-    "vools-actus==0.7.0",
+    "vools-bridges==0.7.7",
+    "vools-actus==0.7.8",
     "vools-dll32==0.7.6",
     "vools-xl==0.7.6",
 ]
