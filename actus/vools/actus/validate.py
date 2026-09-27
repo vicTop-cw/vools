@@ -355,10 +355,6 @@ def load_and_validate(path: str) -> Action:
     return action
 
 
-# ---------------------------------------------------------------------------
-# .actus.schema.md 新格式校验（形式 B）
-# ---------------------------------------------------------------------------
-
 def validate_schema_md(action: Action) -> List[str]:
     """校验 .actus.schema.md 格式的动作（形式 B）。
 
