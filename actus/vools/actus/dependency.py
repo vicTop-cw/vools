@@ -3,40 +3,74 @@
 职责：
 - 解析动作的 deps 字段
 - 检查依赖是否满足（编译产物存在、版本匹配）
-- 自动构建/安装缺失依赖
+- 懒加载策略：hint（提示）→ ephemeral（临时执行）→ download（下载安装）
 - 依赖图拓扑排序
 - 循环依赖检测
 - MCP 工具 + CLI 集成
+- 启动自检：actus doctor
 """
 
 import json
 import os
 import subprocess
 import sys
+import shutil
 from typing import Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass, field
+from enum import Enum
 from collections import deque
+
+
+class DepStrategy(Enum):
+    """依赖懒加载策略。"""
+    HINT = "hint"           # 提示安装命令，不硬失败
+    EPHEMERAL = "ephemeral"  # pipx/npx 临时执行
+    DOWNLOAD = "download"   # 下载单文件到 _meta/tools/
+    FAIL = "fail"           # 硬失败（默认）
+
+
+class DepType(Enum):
+    """依赖类型。"""
+    BUILTIN = "builtin"     # 引擎内
+    SYSTEM = "system"       # 系统命令
+    LANG = "lang"           # pip/npm 包（统一为 lang:pkg）
+    MCP = "mcp"             # MCP server
+    ACTION = "action"       # 其他动作
+    CS_BUILD = "cs_build"   # C# 构建产物
 
 
 @dataclass
 class Dependency:
     """单个依赖定义。"""
-    name: str                    # 依赖名称（如 "cs_forms", "cs_tools", "python:requests"）
-    type: str                    # 类型: "action" | "python" | "npm" | "system" | "cs_build"
+    name: str                    # 依赖名称（如 "cs_forms", "pandoc", "requests"）
+    type: DepType = DepType.ACTION  # 类型
     required: bool = True        # 是否必需
     min_version: str = ""        # 最低版本
+    strategy: DepStrategy = DepStrategy.HINT  # 懒加载策略
     build_command: str = ""      # 构建命令（cs_build 类型）
     build_check: str = ""        # 构建产物检查路径
+    lang_manager: str = ""       # 包管理器：pip / npm（lang 类型）
     @property
     def fix_command(self) -> str:
         """自动修复命令（兼容属性访问）。"""
-        if self.type == "cs_build":
+        if self.type == DepType.CS_BUILD:
             return self.build_command
-        elif self.type == "python":
+        elif self.type == DepType.LANG:
+            if self.lang_manager == "npm":
+                return f"npm install {self.name}"
             return f"pip install {self.name}"
-        elif self.type == "npm":
-            return f"npm install {self.name}"
+        elif self.type == DepType.SYSTEM:
+            return f"安装系统工具: {self.name}"
         return ""
+
+    @property
+    def ephemeral_command(self) -> Optional[str]:
+        """临时执行命令（ephemeral 策略）。"""
+        if self.type == DepType.LANG:
+            if self.lang_manager == "npm":
+                return f"npx {self.name}"
+            return f"pipx run {self.name}"
+        return None
 
 
 @dataclass
@@ -45,6 +79,7 @@ class DepCheckResult:
     name: str
     satisfied: bool
     message: str
+    strategy: DepStrategy = DepStrategy.FAIL
     auto_fixable: bool = False
     fix_command: str = ""           # 自动修复命令（pip install / npm install / 构建命令）
     ephemeral_cmd: str = ""         # 临时执行命令（pipx run / npx）
@@ -78,13 +113,27 @@ class DependencyResolver:
             if isinstance(d, str):
                 deps.append(self._parse_dep_string(d))
             elif isinstance(d, dict):
+                dep_type = d.get("type", "action")
+                if isinstance(dep_type, str):
+                    try:
+                        dep_type = DepType(dep_type)
+                    except ValueError:
+                        dep_type = DepType.ACTION
+                strategy = d.get("strategy", "hint")
+                if isinstance(strategy, str):
+                    try:
+                        strategy = DepStrategy(strategy)
+                    except ValueError:
+                        strategy = DepStrategy.HINT
                 deps.append(Dependency(
                     name=d.get("name", ""),
-                    type=d.get("type", "action"),
+                    type=dep_type,
                     required=d.get("required", True),
                     min_version=d.get("min_version", ""),
+                    strategy=strategy,
                     build_command=d.get("build_command", ""),
-                    build_check=d.get("build_check", "")
+                    build_check=d.get("build_check", ""),
+                    lang_manager=d.get("lang_manager", "pip")
                 ))
         return deps
 
@@ -92,26 +141,31 @@ class DependencyResolver:
         """解析依赖字符串。
 
         格式：
-        - "cs_forms" → C# 构建依赖
-        - "cs_tools" → C# 构建依赖
-        - "python:requests" → Python 包
-        - "npm:shiki" → npm 包
-        - "system:git" → 系统命令
+        - "builtin:xxx" → 引擎内依赖
+        - "system:pandoc" → 系统命令
+        - "pip:requests" → Python 包（lang 类型）
+        - "npm:shiki" → npm 包（lang 类型）
+        - "mcp:server" → MCP server
         - "action:actus.system.dialog_alert" → 其他动作
+        - "cs_forms" / "cs_tools" → C# 构建依赖
         """
-        if dep_str.startswith("python:"):
-            return Dependency(name=dep_str[7:], type="python")
-        elif dep_str.startswith("npm:"):
-            return Dependency(name=dep_str[4:], type="npm")
+        if dep_str.startswith("builtin:"):
+            return Dependency(name=dep_str[8:], type=DepType.BUILTIN)
         elif dep_str.startswith("system:"):
-            return Dependency(name=dep_str[7:], type="system")
+            return Dependency(name=dep_str[7:], type=DepType.SYSTEM, strategy=DepStrategy.HINT)
+        elif dep_str.startswith("pip:"):
+            return Dependency(name=dep_str[4:], type=DepType.LANG, lang_manager="pip", strategy=DepStrategy.EPHEMERAL)
+        elif dep_str.startswith("npm:"):
+            return Dependency(name=dep_str[4:], type=DepType.LANG, lang_manager="npm", strategy=DepStrategy.EPHEMERAL)
+        elif dep_str.startswith("mcp:"):
+            return Dependency(name=dep_str[4:], type=DepType.MCP, strategy=DepStrategy.HINT)
         elif dep_str.startswith("action:"):
-            return Dependency(name=dep_str[7:], type="action")
+            return Dependency(name=dep_str[7:], type=DepType.ACTION)
         elif dep_str.startswith("cs_") or dep_str in ("cs_forms", "cs_tools"):
             return self._build_cs_dep(dep_str)
         else:
             # 默认作为 action 依赖
-            return Dependency(name=dep_str, type="action")
+            return Dependency(name=dep_str, type=DepType.ACTION)
 
     def _build_cs_dep(self, name: str) -> Dependency:
         """构建 C# 依赖定义。"""
@@ -119,19 +173,19 @@ class DependencyResolver:
         if name == "cs_forms":
             exe_path = os.path.join(build_dir, "Dialogs", "net8.0-windows", "actus-dialogs.exe")
             return Dependency(
-                name=name, type="cs_build",
+                name=name, type=DepType.CS_BUILD,
                 build_command=f"cd {self._actions_root}/system/{name} && scripts/hot_reload.bat build",
                 build_check=exe_path
             )
         elif name == "cs_tools":
             exe_path = os.path.join(build_dir, "DesktopTools", "net8.0-windows", "actus-tools.exe")
             return Dependency(
-                name=name, type="cs_build",
+                name=name, type=DepType.CS_BUILD,
                 build_command=f"cd {self._actions_root}/system/{name} && scripts/hot_reload.bat build",
                 build_check=exe_path
             )
         else:
-            return Dependency(name=name, type="cs_build", build_check=build_dir)
+            return Dependency(name=name, type=DepType.CS_BUILD, build_check=build_dir)
 
     def check_dep(self, dep: Dependency) -> DepCheckResult:
         """检查单个依赖是否满足。"""
@@ -144,16 +198,18 @@ class DependencyResolver:
 
     def _do_check(self, dep: Dependency) -> DepCheckResult:
         """实际检查逻辑。"""
-        if dep.type == "cs_build":
+        if dep.type == DepType.CS_BUILD:
             return self._check_cs_build(dep)
-        elif dep.type == "python":
-            return self._check_python_pkg(dep)
-        elif dep.type == "npm":
-            return self._check_npm_pkg(dep)
-        elif dep.type == "system":
+        elif dep.type == DepType.LANG:
+            return self._check_lang_pkg(dep)
+        elif dep.type == DepType.SYSTEM:
             return self._check_system_cmd(dep)
-        elif dep.type == "action":
+        elif dep.type == DepType.ACTION:
             return self._check_action(dep)
+        elif dep.type == DepType.BUILTIN:
+            return self._check_builtin(dep)
+        elif dep.type == DepType.MCP:
+            return self._check_mcp(dep)
         else:
             return DepCheckResult(dep.name, False, f"unknown dep type: {dep.type}")
 
@@ -170,17 +226,30 @@ class DependencyResolver:
             )
         return DepCheckResult(dep.name, False, "未知构建目标")
 
-    def _check_python_pkg(self, dep: Dependency) -> DepCheckResult:
+    def _check_lang_pkg(self, dep: Dependency) -> DepCheckResult:
+        """检查语言包（pip/npm）。"""
+        if dep.lang_manager == "npm":
+            return self._check_npm_pkg(dep)
+        return self._check_pip_pkg(dep)
+
+    def _check_pip_pkg(self, dep: Dependency) -> DepCheckResult:
         """检查 Python 包。"""
         try:
             __import__(dep.name)
-            return DepCheckResult(dep.name, True, f"Python 包 {dep.name} 已安装")
+            return DepCheckResult(
+                dep.name, True,
+                f"Python 包 {dep.name} 已安装",
+                strategy=dep.strategy,
+                ephemeral_cmd=f"pipx run {dep.name}"
+            )
         except ImportError:
             return DepCheckResult(
                 dep.name, False,
                 f"Python 包 {dep.name} 未安装",
+                strategy=dep.strategy,
                 auto_fixable=True,
-                fix_command=f"pip install {dep.name}"
+                fix_command=f"pip install {dep.name}",
+                ephemeral_cmd=f"pipx run {dep.name}"
             )
 
     def _check_npm_pkg(self, dep: Dependency) -> DepCheckResult:
@@ -191,15 +260,27 @@ class DependencyResolver:
                 pkg = json.load(f)
             deps = pkg.get("dependencies", {})
             if dep.name in deps:
-                return DepCheckResult(dep.name, True, f"npm 包 {dep.name} 已声明")
+                return DepCheckResult(
+                    dep.name, True,
+                    f"npm 包 {dep.name} 已声明",
+                    strategy=dep.strategy,
+                    ephemeral_cmd=f"npx {dep.name}"
+                )
         node_modules = os.path.join(os.path.dirname(pkg_json), "node_modules", dep.name)
         if os.path.isdir(node_modules):
-            return DepCheckResult(dep.name, True, f"npm 包 {dep.name} 已安装")
+            return DepCheckResult(
+                dep.name, True,
+                f"npm 包 {dep.name} 已安装",
+                strategy=dep.strategy,
+                ephemeral_cmd=f"npx {dep.name}"
+            )
         return DepCheckResult(
             dep.name, False,
             f"npm 包 {dep.name} 未安装",
+            strategy=dep.strategy,
             auto_fixable=True,
-            fix_command=f"cd engine/actuscore/_shiki && npm install {dep.name}"
+            fix_command=f"cd engine/actuscore/_shiki && npm install {dep.name}",
+            ephemeral_cmd=f"npx {dep.name}"
         )
 
     def _check_system_cmd(self, dep: Dependency) -> DepCheckResult:
@@ -221,7 +302,53 @@ class DependencyResolver:
                 )
         except Exception:
             pass
+
+        # 检查是否在 _meta/tools/ 中
+        tools_dir = os.path.join(self._actions_root, "..", "_meta", "tools")
+        tool_path = os.path.join(tools_dir, dep.name)
+        if os.path.exists(tool_path) or os.path.exists(tool_path + ".exe"):
+            return DepCheckResult(
+                dep.name, True,
+                f"系统命令 {dep.name} 在 _meta/tools/ 中可用",
+                strategy=dep.strategy
+            )
+
+        # 根据策略处理
+        if dep.strategy == DepStrategy.HINT:
+            return DepCheckResult(
+                dep.name, False,
+                f"系统命令 {dep.name} 未找到",
+                strategy=dep.strategy,
+                auto_fixable=True,
+                fix_command=f"安装 {dep.name} 或添加到 PATH"
+            )
+        elif dep.strategy == DepStrategy.DOWNLOAD:
+            return DepCheckResult(
+                dep.name, False,
+                f"系统命令 {dep.name} 未找到，需下载到 _meta/tools/",
+                strategy=dep.strategy,
+                auto_fixable=True
+            )
         return DepCheckResult(dep.name, False, f"系统命令 {dep.name} 未找到")
+
+    def _check_builtin(self, dep: Dependency) -> DepCheckResult:
+        """检查引擎内依赖。"""
+        # 检查 engine/actuscore/ 中是否存在对应模块
+        core_dir = os.path.join(os.path.dirname(__file__))
+        module_path = os.path.join(core_dir, f"{dep.name}.py")
+        if os.path.exists(module_path):
+            return DepCheckResult(dep.name, True, f"引擎内依赖 {dep.name} 存在")
+        return DepCheckResult(dep.name, False, f"引擎内依赖 {dep.name} 不存在")
+
+    def _check_mcp(self, dep: Dependency) -> DepCheckResult:
+        """检查 MCP server。"""
+        # MCP server 需要在配置中声明，这里仅做存在性检查
+        # 实际调用时通过 stdio 或 SSE 连接
+        return DepCheckResult(
+            dep.name, True,
+            f"MCP server {dep.name} 需运行时连接",
+            strategy=dep.strategy
+        )
 
     def _check_action(self, dep: Dependency) -> DepCheckResult:
         """检查动作依赖。"""
@@ -341,6 +468,56 @@ class DependencyResolver:
                 return r.returncode == 0
         except Exception:
             return False
+
+    def try_ephemeral(self, dep: Dependency) -> Tuple[bool, str]:
+        """尝试 ephemeral 策略执行。
+
+        返回: (是否成功, 输出)
+        """
+        if dep.type == DepType.LANG:
+            if dep.lang_manager == "npm":
+                cmd = f"npx {dep.name}"
+            else:
+                cmd = f"pipx run {dep.name}"
+            try:
+                r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                return r.returncode == 0, r.stdout + r.stderr
+            except FileNotFoundError:
+                return False, f"ephemeral 工具不可用: {cmd}"
+            except Exception as e:
+                return False, str(e)
+        return False, f"类型 {dep.type} 不支持 ephemeral 策略"
+
+    def try_download(self, dep: Dependency) -> Tuple[bool, str]:
+        """尝试 download 策略下载工具到 _meta/tools/。
+
+        返回: (是否成功, 输出)
+        """
+        if dep.type != DepType.SYSTEM:
+            return False, f"类型 {dep.type} 不支持 download 策略"
+
+        tools_dir = os.path.join(self._actions_root, "..", "_meta", "tools")
+        os.makedirs(tools_dir, exist_ok=True)
+
+        # 预定义下载映射（可扩展）
+        download_map = {
+            "pandoc": "https://github.com/jgm/pandoc/releases/download/3.1.11/pandoc-3.1.11-windows-x86_64.zip",
+            "jq": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-windows-amd64.exe",
+        }
+
+        if dep.name not in download_map:
+            return False, f"无预定义下载地址: {dep.name}"
+
+        url = download_map[dep.name]
+        dest = os.path.join(tools_dir, dep.name + ".exe")
+
+        try:
+            import urllib.request
+            urllib.request.urlretrieve(url, dest)
+            os.chmod(dest, 0o755)
+            return True, f"已下载到 {dest}"
+        except Exception as e:
+            return False, f"下载失败: {e}"
 
     def topological_sort(self, actions: Dict[str, List[str]]) -> Tuple[bool, List[str]]:
         """拓扑排序，检测循环依赖。
@@ -586,12 +763,3 @@ if __name__ == "__main__":
     resolver = DependencyResolver()
     print(f"Actions root: {resolver._actions_root}")
     print(f"Build root: {resolver._build_root}")
-
-
-__all__ = [
-    'DepCheckResult',
-    'Dependency',
-    'DependencyResolver',
-    'check_action_deps',
-    'get_resolver'
-]
