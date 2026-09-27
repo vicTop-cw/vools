@@ -196,7 +196,7 @@ class MCPServer:
 
     # ── 工具层 ──
     def _list_tools(self) -> list:
-        import vools.actus
+        import vools.actus as actuscore
         idx = actuscore.load_index()
         tools = []
         for aid, brief in idx['actions'].items():
@@ -932,7 +932,7 @@ class MCPServer:
         uri = params.get('uri', '')
 
         if uri == 'actus://index':
-            import vools.actus
+            import vools.actus as actuscore
             idx = actuscore.load_index()
             return {
                 'contents': [{
@@ -1000,7 +1000,7 @@ class MCPServer:
     def _call_tool(self, params: dict) -> dict:
         name = params.get('name', '')
         args = params.get('arguments') or {}
-        import vools.actus
+        import vools.actus as actuscore
 
         def text_result(payload: dict, is_error: bool = False) -> dict:
             return {
@@ -1357,7 +1357,7 @@ class MCPServer:
             return _handle_preview(args)
 
         # 动作工具：反查 action id
-        import vools.actus as _a
+        import vools.actus as actuscore
         from vools.actus.indexer import load_index as _li
         target = None
         for aid in _li()['actions']:

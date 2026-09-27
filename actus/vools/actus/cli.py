@@ -29,6 +29,7 @@
 """
 import json
 import sys
+from pathlib import Path
 
 __all__ = ['main']
 
@@ -548,10 +549,13 @@ def _build_parser():
 
 
 def _dispatch(args) -> int:
-    import vools.actus
+    import vools.actus as actuscore
+    # vools.actus 包没有把 indexer.build_index 转出来（Actus 侧 actuscore/__init__.py 有），
+    # 直取子模块，否则 scan / validate 两条命令一调用就 AttributeError。
+    from vools.actus.indexer import build_index
 
     if args.command == 'scan':
-        idx = actuscore.build_index()
+        idx = build_index()
         n = sum(1 for a in idx['actions'].values() if a.get('status') == 'valid')
         _out({'status': 'ok', 'data': {
             'total': len(idx['actions']), 'valid': n,
@@ -573,7 +577,7 @@ def _dispatch(args) -> int:
 
     if args.command == 'validate':
         if not args.action_id:
-            idx = actuscore.build_index()
+            idx = build_index()
             bad = {aid: a.get('errors') for aid, a in idx['actions'].items()
                    if a.get('status') != 'valid'}
             _out({'status': 'ok', 'data': {'valid': not bad, 'invalid': bad}})
@@ -952,7 +956,7 @@ def _dispatch_triggers(args) -> int:
     meta_dir = _os.path.join(repo_root, '_meta')
 
     def _executor(trigger, event=None):
-        import vools.actus
+        import vools.actus as actuscore
         try:
             actuscore.execute(trigger.action_id, trigger.args or {})
         except Exception:
