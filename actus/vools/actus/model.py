@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 
 from .errors import ActionError
-from .frontmatter import strip_frontmatter, parse_action_metadata
 from .dependency import get_resolver
+from .frontmatter import strip_frontmatter, parse_action_metadata
 
 _REQUIRED = ('id', 'name', 'version', 'trust', 'entry')
 
@@ -79,6 +79,7 @@ class Action:
             'entry': self.meta.get('entry'),
             'platform': self.meta.get('platform'),
             'description': self.meta.get('description'),
+            'usage': self.meta.get('usage'),  # docs/10 §A.3：MCP 工具描述拼接用
             'author': self.meta.get('author'),
             'permissions': self.meta.get('permissions'),
             'args': self.meta.get('args'),

@@ -46,7 +46,9 @@ class DepCheckResult:
     satisfied: bool
     message: str
     auto_fixable: bool = False
-    fix_command: str = ""
+    fix_command: str = ""           # 自动修复命令（pip install / npm install / 构建命令）
+    ephemeral_cmd: str = ""         # 临时执行命令（pipx run / npx）
+    download_url: str = ""          # 下载 URL（download 策略）
 
 
 class DependencyResolver:
@@ -203,9 +205,20 @@ class DependencyResolver:
     def _check_system_cmd(self, dep: Dependency) -> DepCheckResult:
         """检查系统命令。"""
         try:
-            r = subprocess.run(["where", dep.name], capture_output=True, text=True, timeout=5)
-            if r.returncode == 0:
-                return DepCheckResult(dep.name, True, f"系统命令 {dep.name} 可用: {r.stdout.strip()}")
+            r = subprocess.run(
+                ["where", dep.name],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=5,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return DepCheckResult(
+                    dep.name, True,
+                    f"系统命令 {dep.name} 可用: {r.stdout.strip()}",
+                    strategy=dep.strategy
+                )
         except Exception:
             pass
         return DepCheckResult(dep.name, False, f"系统命令 {dep.name} 未找到")
@@ -230,7 +243,16 @@ class DependencyResolver:
         return [self.check_dep(d) for d in deps]
 
     def resolve(self, deps: List[Dependency], auto_install: bool = False) -> Tuple[bool, List[str]]:
-        """解析依赖，返回 (是否全部满足, 消息列表)。"""
+        """解析依赖，返回 (是否全部满足, 消息列表)。
+
+        三策略流程：
+        1. 检查依赖是否已满足
+        2. 不满足时按策略走：
+           - HINT: 仅提示安装命令（不硬失败）
+           - EPHEMERAL: 尝试 pipx/npx 临时运行
+           - DOWNLOAD: 下载单文件到 _meta/tools/
+        3. 全部满足 → True；任一必需依赖不满足 → False
+        """
         messages = []
         all_ok = True
 
@@ -238,13 +260,59 @@ class DependencyResolver:
             result = self.check_dep(dep)
             if result.satisfied:
                 messages.append(f"✅ {result.name}: {result.message}")
+                continue
+
+            # 依赖未满足，按策略处理
+            all_ok = False
+            strategy_label = {
+                DepStrategy.HINT: "💡 提示",
+                DepStrategy.EPHEMERAL: "⚡ 临时执行",
+                DepStrategy.DOWNLOAD: "📥 下载",
+                DepStrategy.FAIL: "❌ 缺失",
+            }.get(dep.strategy, "❌ 缺失")
+
+            messages.append(f"{strategy_label} {dep.name}: {result.message}")
+
+            # HINT 策略：输出安装命令
+            if dep.strategy == DepStrategy.HINT:
+                if result.fix_command:
+                    messages.append(f"   安装命令: {result.fix_command}")
+                if result.ephemeral_cmd:
+                    messages.append(f"   临时执行: {result.ephemeral_cmd}")
+
+            # EPHEMERAL 策略：尝试 pipx/npx 临时运行
+            elif dep.strategy == DepStrategy.EPHEMERAL:
+                if result.ephemeral_cmd:
+                    messages.append(f"   尝试临时执行: {result.ephemeral_cmd}")
+                    ok, output = self.try_ephemeral(dep)
+                    if ok:
+                        messages.append(f"   ✅ 临时执行成功（{output[:100]}）")
+                        all_ok = True  # 临时执行成功视为满足
+                        continue
+                    else:
+                        messages.append(f"   ⚠️ 临时执行失败: {output[:100]}")
+                # 降级到 hint
+                if result.fix_command:
+                    messages.append(f"   安装命令: {result.fix_command}")
+
+            # DOWNLOAD 策略：下载单文件到 _meta/tools/
+            elif dep.strategy == DepStrategy.DOWNLOAD:
+                ok, output = self.try_download(dep)
+                if ok:
+                    messages.append(f"   ✅ {output}")
+                    all_ok = True
+                else:
+                    messages.append(f"   ❌ 下载失败: {output}")
+                    if result.fix_command:
+                        messages.append(f"   备选安装: {result.fix_command}")
+
+            # FAIL 策略（默认）：硬失败
             else:
-                all_ok = False
-                messages.append(f"❌ {result.name}: {result.message}")
                 if auto_install and result.auto_fixable and result.fix_command:
                     messages.append(f"   🔧 自动修复: {result.fix_command}")
                     if self._try_fix(result):
                         messages.append(f"   ✅ 修复成功")
+                        all_ok = True
                     else:
                         messages.append(f"   ❌ 修复失败")
 
@@ -399,6 +467,118 @@ def check_action_deps(action_id: str, auto_install: bool = False) -> dict:
         "deps_satisfied": sum(1 for m in messages if m.startswith("✅")),
         "messages": messages
     }
+
+
+def doctor() -> dict:
+    """启动自检：输出各依赖状态与建议安装清单。"""
+    resolver = get_resolver()
+    results = {
+        "timestamp": __import__("datetime").datetime.now().isoformat(),
+        "checks": [],
+        "recommendations": [],
+        "summary": {"total": 0, "ok": 0, "warning": 0, "error": 0}
+    }
+
+    # 高频工具检查清单
+    recommended_tools = [
+        ("python", DepType.SYSTEM, "Python 解释器"),
+        ("git", DepType.SYSTEM, "Git 版本控制"),
+        ("jq", DepType.SYSTEM, "JSON 处理工具"),
+        ("pandoc", DepType.SYSTEM, "文档转换工具"),
+        ("node", DepType.SYSTEM, "Node.js 运行时"),
+        ("npm", DepType.SYSTEM, "npm 包管理器"),
+        ("pipx", DepType.SYSTEM, "Python 应用隔离运行"),
+    ]
+
+    for name, dep_type, desc in recommended_tools:
+        dep = Dependency(name=name, type=dep_type, strategy=DepStrategy.HINT)
+        result = resolver.check_dep(dep)
+        check_result = {
+            "name": name,
+            "type": dep_type.value,
+            "description": desc,
+            "satisfied": result.satisfied,
+            "message": result.message,
+            "strategy": result.strategy.value,
+            "fix_command": result.fix_command if result.auto_fixable else None,
+        }
+        results["checks"].append(check_result)
+        results["summary"]["total"] += 1
+        if result.satisfied:
+            results["summary"]["ok"] += 1
+        else:
+            if dep_type == DepType.SYSTEM:
+                results["summary"]["warning"] += 1
+                results["recommendations"].append(f"建议安装: {name} - {desc}")
+            else:
+                results["summary"]["error"] += 1
+
+    # 检查动作依赖
+    actions_index_path = os.path.join(resolver._actions_root, "..", "_meta", "actions.index.json")
+    if os.path.exists(actions_index_path):
+        try:
+            with open(actions_index_path) as f:
+                index = json.load(f)
+            for action_id, action_meta in index.get("actions", {}).items():
+                raw_deps = action_meta.get("deps", [])
+                deps = resolver.parse_deps(raw_deps)
+                for dep in deps:
+                    result = resolver.check_dep(dep)
+                    if not result.satisfied:
+                        results["recommendations"].append(
+                            f"动作 {action_id} 缺少依赖: {dep.name} ({dep.type.value})"
+                        )
+        except Exception:
+            pass
+
+    return results
+
+
+def print_doctor_report():
+    """打印 doctor 报告（展示三策略状态）。"""
+    results = doctor()
+    print("=" * 60)
+    print("Actus Doctor - 启动自检报告")
+    print("=" * 60)
+    print(f"时间: {results['timestamp']}")
+    print()
+
+    print("【依赖检查】")
+    for check in results["checks"]:
+        status = "✅" if check["satisfied"] else "⚠️"
+        strategy = check.get("strategy", "fail")
+        strategy_label = {
+            "hint": "💡 提示",
+            "ephemeral": "⚡ 临时执行",
+            "download": "📥 下载",
+            "fail": "❌ 缺失",
+        }.get(strategy, "❌ 缺失")
+
+        print(f"  {status} {check['name']} ({check['type']}) - {check['description']} [{strategy_label}]")
+        if not check["satisfied"]:
+            if check.get("fix_command"):
+                print(f"     安装命令: {check['fix_command']}")
+            if check.get("ephemeral_cmd"):
+                print(f"     临时执行: {check['ephemeral_cmd']}")
+    print()
+
+    print(f"【统计】总计: {results['summary']['total']} | 正常: {results['summary']['ok']} | 警告: {results['summary']['warning']} | 错误: {results['summary']['error']}")
+    print()
+
+    if results["recommendations"]:
+        print("【建议安装】")
+        for rec in results["recommendations"]:
+            print(f"  • {rec}")
+        print()
+
+    # 三策略说明
+    print("【三策略说明】")
+    print("  💡 HINT: 缺依赖时输出安装命令，不硬失败")
+    print("  ⚡ EPHEMERAL: 尝试 pipx/npx 临时运行")
+    print("  📥 DOWNLOAD: 下载单文件到 _meta/tools/")
+    print("  ❌ FAIL: 硬失败（默认行为）")
+    print()
+    print("=" * 60)
 
 
 if __name__ == "__main__":

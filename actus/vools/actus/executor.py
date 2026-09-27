@@ -20,7 +20,9 @@ from datetime import datetime, timezone, timedelta
 
 from .errors import ActionError
 from .model import Action
+from .process_state import PROCESS_STATE_LOCK
 from .validate import load_and_validate, validate_graph
+from .indexer import scan_actions
 from .trust import decide
 from . import records
 from .indexer import scan_actions
@@ -30,11 +32,22 @@ from .dependency import get_resolver, DependencyResolver
 
 _TZ = timezone(timedelta(hours=8))
 
-# 并行工作流安全：进程级 os.environ 注入串行化锁。
-# 工作流并行层用 ThreadPoolExecutor 同进程并发提交节点，而参数经 os.environ
-# 传给 vools 子进程；无锁时同层节点互相覆盖参数。锁范围仅覆盖「注入 → run_md
-# 启动子进程」区间，不覆盖子进程内部并发。
-_ENV_LOCK = threading.RLock()
+# 并发保护：ACTUS_PARAMS / ACTUS_EXEC_ID 等运行时上下文经进程级 os.environ
+# 传给 vools 子进程；工作流可并行提交同层节点（ThreadPoolExecutor）。不加锁时
+# 并发注入会互相覆盖（实测：data_pipeline 的 encode_a/encode_b 双双拿到同一份
+# params）。_run_blocks 在「注入 → run_md 启动子进程」期间持有本锁。
+# 锁本体在 process_state 里，与 runtimes.PythonRuntime 共用同一把（BUG-0023）——
+# 两条路径改的是同一份 os.environ，各持一把本地锁等于没锁。
+
+# 记录/回传里每块 stdout 的保留长度。**只**用于截断留痕，不参与出参解析
+# （解析用原文，见 _run_blocks）—— 两者共用一个字面量正是 BUG-0016 的形状。
+_STDOUT_KEEP = 4000
+
+# 入参嵌套深度上限（BUG-0017）。实测口径：仓库 23 份 Ω spec 的 74 组入参里，
+# 最深只有 2 层（tests/ 里的 params 字面量同样最深 2 层）—— 64 层是 32 倍余量，
+# 既挡得住「5000 层嵌套把 RecursionError 抛出入口」，又不会拒掉任何真实动作入参。
+# 只限深度不限节点数：爆栈只取决于嵌套深度，加节点上限等于凭白拒掉合法的大 payload。
+_MAX_PARAM_DEPTH = 64
 
 _STATUS_MAP = {
     'succeeded': 'ok',
@@ -100,6 +113,23 @@ def _inject_params_into_body(action: Action, params: dict) -> str:
     return action.body + bootstrap
 
 
+def _payload_depth(obj) -> int:
+    """求嵌套深度。**刻意用迭代而不是递归**：量深参的尺子如果自己也递归，
+    它就是第一个被同一份入参炸掉的东西（BUG-0017 的现场正是 json.dumps 递归爆栈）。
+    """
+    maxd = 0
+    stack = [(obj, 1)]
+    while stack:
+        cur, d = stack.pop()
+        if d > maxd:
+            maxd = d
+        if isinstance(cur, dict):
+            stack.extend((v, d + 1) for v in cur.values())
+        elif isinstance(cur, (list, tuple)):
+            stack.extend((v, d + 1) for v in cur)
+    return maxd
+
+
 def execute(action_id: str, params: dict = None,
             confirmed: bool = False, meta_dir: str = None,
             actions_dir: str = None, force: bool = False,
@@ -111,6 +141,23 @@ def execute(action_id: str, params: dict = None,
     全程留痕：_meta/runs/<exec_id>.json + status.json + 追加式日志。
     """
     params = params if params is not None else {}
+
+    # 入参深度闸门（BUG-0017）：位置必须在建 record 之前 —— record['params']、
+    # _validate_params 与 _run_blocks 里的 json.dumps(params) 都会把这份入参整个递归
+    # 走一遍，5000 层嵌套能让 RecursionError 从 PROCESS_STATE_LOCK 临界区里穿出出入口，
+    # 而引擎对外承诺的是 docs/03 §7.2 的结构化回执（CLI/MCP 拿到 traceback 就没法分流）。
+    depth = _payload_depth(params)
+    if depth > _MAX_PARAM_DEPTH:
+        return {
+            'status': 'failed',
+            'data': None,
+            'error': {
+                'code': 'param_invalid',
+                'message': f'入参嵌套过深（深度 {depth} > 上限 {_MAX_PARAM_DEPTH}），已按契约拒绝',
+                'details': {'depth': depth, 'max_depth': _MAX_PARAM_DEPTH},
+            },
+        }
+
     meta_dir, artifacts_dir = _meta_dirs(meta_dir, artifacts_dir)
     exec_id = new_exec_id()
 
@@ -223,15 +270,41 @@ def execute(action_id: str, params: dict = None,
             try:
                 omega_report = verify_output(spec_path, result)
                 result['omega'] = omega_report
-                if not omega_report.get('gate', {}).get('passed', True):
+                if omega_report.get('status') == 'spec_error':
+                    # 「无法评估」不是「过了门禁」（BUG-0015）。spec 不合格时 verify_output
+                    # 回的是 {'status':'spec_error','errors':[...]}，**没有 gate 键**，
+                    # 原先 `get('gate', {}).get('passed', True)` 的缺省 True 正好把它读成通过
+                    # —— 契约坏掉时金条八静默放行，比判错更糟因为它不留痕。
+                    errs = omega_report.get('errors') or []
+                    result['status'] = 'failed'
+                    result['error'] = {
+                        'code': 'omega_spec_invalid',
+                        'message': f"Ω 契约不可评估（spec 不合格）：{'; '.join(str(e) for e in errs[:3])}",
+                        'details': omega_report,
+                    }
+                elif not omega_report.get('gate', {}).get('passed', False):
+                    # 缺省值取 False：走到这里 gate 必然存在（pass/fail 两条都带），
+                    # 但万一将来新增第三种回包形状，宁可判不过也不放行。
                     result['status'] = 'failed'
                     result['error'] = {
                         'code': 'omega_gate_failed',
                         'message': f"Ω-gate 验证失败，准确率 {omega_report['gate'].get('accuracy', 0)}% < 100%",
                         'details': omega_report
                     }
-            except Exception:
-                pass  # spec 缺失或格式错误不阻塞执行
+            except Exception as e:
+                # 原本 `except Exception: pass` 把坏 spec 抹平成「这个动作没配 spec」——
+                # 两种情况的回执完全同形，调用方无从分辨。现在既留痕也判不过。
+                result['omega'] = {
+                    'status': 'spec_error',
+                    'errors': [f'{type(e).__name__}: {e}'],
+                    'spec_path': spec_path.replace(os.sep, '/'),
+                }
+                result['status'] = 'failed'
+                result['error'] = {
+                    'code': 'omega_spec_invalid',
+                    'message': f'Ω spec 加载失败：{type(e).__name__}: {e}',
+                    'details': result['omega'],
+                }
         record_path = records.write_run_record(meta_dir, record)
         result['record'] = record_path.replace(os.sep, '/')
         records.update_status(meta_dir, exec_id, action_id,
@@ -472,6 +545,42 @@ def _pending_ops(action: Action, params: dict) -> list:
     return ops
 
 
+def _sanitize_path_env() -> None:
+    """PATH 去重瘦身 + System32 前置（执行环境保障）。
+
+    背景：vools import 链会向 PATH 大量 prepend 编译器路径，把 PATH 撑过
+    cmd.exe 约 8191 字符的搜索缓冲，System32 被挤出搜索范围，动作里的
+    os.popen/subprocess 按相对名调用系统命令（如 wsl.exe）会报
+    "not recognized"。此处只做保序去重与前移，不删除任何已有目录。
+    """
+    path = os.environ.get('PATH', '')
+    if not path or len(path) <= 8000:
+        return
+    sys32 = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32')
+    seen, cleaned = set(), []
+    for it in path.split(';'):
+        k = it.strip().lower().rstrip('\\')
+        if k and k not in seen:
+            seen.add(k)
+            cleaned.append(it)
+    cleaned = [p for p in cleaned if p.strip().lower().rstrip('\\') != sys32.lower()]
+    cleaned.insert(0, sys32)
+    os.environ['PATH'] = ';'.join(cleaned)
+
+
+def _env_snapshot() -> dict:
+    return dict(os.environ)
+
+
+def _env_restore(snap: dict) -> None:
+    """把进程环境逐字回写到快照那一刻（先删新增，再复原改动/缺失）。"""
+    for key in [k for k in os.environ if k not in snap]:
+        del os.environ[key]
+    for key, value in snap.items():
+        if os.environ.get(key) != value:
+            os.environ[key] = value
+
+
 def _run_blocks(action: Action, params: dict, exec_id: str,
                 artifacts_dir: str, force: bool = False,
                 sandboxed: bool = False, meta_dir: str = None) -> dict:
@@ -481,9 +590,19 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
     from . import vault as vault_mod
     from .indexer import _repo_root
 
-    # 持锁完成「注入 → 子进程启动」，避免并行节点互相覆盖进程级环境。
-    _ENV_LOCK.acquire()
+    # 见模块顶部 PROCESS_STATE_LOCK：持锁完成「注入 → 子进程启动」，避免并行节点互相覆盖。
+    PROCESS_STATE_LOCK.acquire()
+    # 整份快照 + 逐字回写，而不是「记下我改过的那几个键」：执行期往进程环境写的东西
+    # 不止本函数列得出的那几个 —— 实测一次沙箱执行后残留 ACTUS_PARAMS / ACTUS_EXEC_ID /
+    # 动作 secrets / TMP 一组 / 被 _sanitize_path_env 改写的 PATH，逐键列举必然漏项。
+    # 快照点选在上面那些懒加载 import **之后**：vools 的 manager 首次加载时自己配置
+    # PATH 与自带工具链变量（FBC/FBC32/FBC_DIR），那是库级一次性初始化，每次执行都
+    # 回滚它会让下一次执行拿到半初始化环境（实测第二次起就不再出现，正说明它是一次性的）。
+    # owner 于 2026-09-26 授权改本文件（AGENTS.md §2 禁改区），回归锁见
+    # tests/test_env_isolation.py 与 Find_BUG/actus_2026q3/repro_env_01.py。
+    env_before = _env_snapshot()
     try:
+        _sanitize_path_env()
         # 参数注入：写入临时环境文件，vools config env 携带 ACTUS_PARAMS
         os.environ['ACTUS_PARAMS'] = json.dumps(params, ensure_ascii=False)
         os.environ['ACTUS_EXEC_ID'] = exec_id
@@ -522,11 +641,20 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
             build_dir=build_dir,
         )
     finally:
-        _ENV_LOCK.release()
+        # 还原必须在放锁之前：并行节点各自的注入不能互相看见，也不能看见中间态。
+        _env_restore(env_before)
+        PROCESS_STATE_LOCK.release()
 
     blocks = []
     all_ok = True
+    # 出参解析必须用**未截断**的入口块原文：先截尾再 json.loads，等于让长度策略改写出参
+    # 契约 —— 合法 JSON 被劈成尾巴后必然解不动，落进降级分支换成 {'output': 尾巴}，
+    # 声明过的出参键整个消失且不留痕迹（BUG-0016）。截断只留给记录与回传的那份。
+    entry_stdout_raw = ''
     for b in report.get('blocks', []):
+        raw_stdout = b.get('stdout') or ''
+        if action.entry in (b.get('tag') or []):
+            entry_stdout_raw = raw_stdout
         blocks.append({
             'index': b['index'],
             'language': b['language'],
@@ -534,7 +662,7 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
             'status': b['status'],
             'duration_ms': b['duration_ms'],
             'exit_code': b.get('exit_code'),
-            'stdout': (b.get('stdout') or '')[-4000:],
+            'stdout': raw_stdout[-_STDOUT_KEEP:],
             'stderr': (b.get('stderr') or '')[-2000:],
         })
         if b['status'] in ('failed', 'error', 'timeout'):
@@ -542,20 +670,29 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
 
     # 出参 data：入口块 stdout 优先尝试解析为 JSON（docs/03 §7.3.7）
     data = None
-    entry_block = next((b for b in blocks if action.entry in (b['tag'] or [])), None)
-    if entry_block and entry_block['stdout']:
+    stdout_truncated = False
+    if entry_stdout_raw:
+        stdout_truncated = len(entry_stdout_raw) > _STDOUT_KEEP
         try:
-            data = json.loads(entry_block['stdout'])
+            data = json.loads(entry_stdout_raw)
         except (json.JSONDecodeError, ValueError):
-            data = {'output': entry_block['stdout'].strip()}
+            data = {'output': entry_stdout_raw[-_STDOUT_KEEP:].strip()}
 
     if not all_ok:
         err_blocks = [b for b in blocks if b['status'] in ('failed', 'error', 'timeout')]
-        return {'status': 'failed', 'data': data, 'error': {
+        if sandboxed:
+            # docs/07 §5 的「执行完即回收」原本只挂在成功分支，于是反复失败的动作按次
+            # 累积 jail 目录（BUG-0012）。owner 裁决默认删：失败现场已经随下面的
+            # error.details.blocks 带出 stderr 尾段，排障不依赖目录是否还在。
+            sbx.cleanup(artifacts_dir, exec_id, keep=False)
+        failed = {'status': 'failed', 'data': data, 'error': {
             'code': 'internal',
             'message': f"块执行失败: block[{err_blocks[0]['index']}] {err_blocks[0]['status']}",
             'details': {'blocks': err_blocks},
         }}
+        if stdout_truncated:
+            failed['stdout_truncated'] = True
+        return failed
 
     # 产物收集：vools 报告中的 export 产物 + 块级 output 文件（docs/04 §3）
     arts = []
@@ -568,6 +705,10 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
                          'path': b['output_file'], 'hash': None, 'block': b['index']})
 
     result = {'status': 'ok', 'data': data, 'error': None, 'artifacts': arts}
+    if stdout_truncated:
+        # 出参形状保住了，但回传的记录侧 stdout 是截过的 —— 让调用方分得清
+        # 「动作真吐了 output 键」与「被长度策略截过」（BUG-0016）。
+        result['stdout_truncated'] = True
     if sandboxed:
         result['sandboxed'] = True
         result['sandbox_root'] = build_dir.replace(os.sep, '/')
