@@ -158,8 +158,12 @@ class ActionRegistry:
         返回:
             匹配的 RegistryEntry 列表（按相关度排序）。
         """
-        if not query:
-            results = list(self._entries.values())
+        # query 未指定（None）→ 仅按过滤参数筛选（空串 '' 仍走评分路径，
+        # 所有条目得 0 分 → 无匹配；旧实现 `not query` 把纯过滤调用短路成全量返回，
+        # 使 search(tags=[...]) 等纯过滤参数失效）
+        if query is None:
+            results = [e for e in self._entries.values()
+                       if self._filter_entry(e, category, author, tags)]
             return results[:limit]
 
         query_lower = query.lower()
@@ -168,11 +172,7 @@ class ActionRegistry:
         scored = []
         for entry in self._entries.values():
             # 硬过滤
-            if category and entry.category != category:
-                continue
-            if author and entry.author != author:
-                continue
-            if tags and not any(t in entry.tags for t in tags):
+            if not self._filter_entry(entry, category, author, tags):
                 continue
 
             score = self._score_entry(entry, query_lower, query_words)
@@ -183,6 +183,18 @@ class ActionRegistry:
         scored.sort(key=lambda x: x[0], reverse=True)
         results = [entry for _, entry in scored[:limit]]
         return results
+
+    @staticmethod
+    def _filter_entry(entry, category: str = None, author: str = None,
+                      tags: List[str] = None) -> bool:
+        """硬过滤：category / author / tags（tags 匹配任意一个）任一不满足即排除。"""
+        if category and entry.category != category:
+            return False
+        if author and entry.author != author:
+            return False
+        if tags and not any(t in entry.tags for t in tags):
+            return False
+        return True
 
     def _score_entry(self, entry: RegistryEntry,
                      query_lower: str, query_words: set) -> float:

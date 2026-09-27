@@ -18,12 +18,15 @@ __all__ = [
     'TriggerEngine',
     'CronScheduler',
     'FileWatcher',
+    'HotkeyListener',
     'parse_triggers',
     'validate_trigger',
 ]
 
+import json
 import os
 import re
+import sys
 import threading
 import time
 from typing import Callable, Dict, List, Optional
@@ -359,6 +362,160 @@ class FileWatcher:
 
 # ── 触发器引擎（统一入口） ──
 
+# ── 全局热键监听器 ──
+
+class HotkeyListener:
+    """全局热键触发器（Windows）。
+
+    底座 = user32.GetAsyncKeyState 轮询（与 vools _PollingKeyboardBackend
+    同一 API，零 vools 依赖，绕过 RegisterHotKey 的 ctypes 兼容性问题）。
+    用 50ms 轮询窗口跟踪修饰键状态，主键按下且全部修饰键就位时触发。
+
+    语义：
+    - add() 仅入队；start() 才启动轮询线程（与 cron/watch 同语义）；
+    - 非 win32 平台：start 时对每个热键记录 error，不抛出；
+    - 同一热键主键释放前不重复触发（MOD_NOREPEAT 等价）；
+    - 同一热键回调未结束前的重复触发被丢弃（防弹窗堆积）；
+    - 回调在独立 daemon 线程执行（不阻塞轮询线程）。
+    """
+
+    POLL_INTERVAL = 0.05  # 50ms，与 vools polling backend 对齐
+    VK_MOD_MAP = {
+        'ctrl': 0x11, 'control': 0x11,   # VK_CONTROL
+        'alt': 0x12, 'menu': 0x12,        # VK_MENU
+        'shift': 0x10,                     # VK_SHIFT
+        'win': 0x5B, 'lwin': 0x5B, 'rwin': 0x5C, 'meta': 0x5B,
+        'cmd': 0x5B,
+    }
+
+    def __init__(self):
+        self._entries: List[dict] = []
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+        self._inflight: Dict[int, bool] = {}
+        # 防抖：每 entry 记录上一周期主键是否已按下
+        self._key_was_down: Dict[int, bool] = {}
+
+    # ── 组合键解析 ──
+
+    @classmethod
+    def parse_combo(cls, key: str):
+        """'ctrl+alt+k' → (mod_vks: list, main_vk: int, 错误列表)。"""
+        errors = []
+        if not key or not isinstance(key, str):
+            return [], 0, ['热键组合为空']
+        parts = [p.strip().lower() for p in key.split('+') if p.strip()]
+        if not parts:
+            return [], 0, [f'热键组合非法: {key!r}']
+        try:
+            from vools.reactive.monitoring.keyboard import _name_to_vk_code
+        except Exception as e:
+            return [], 0, [f'vools 键盘底座不可用: {e}']
+        mod_vks = []
+        for p in parts[:-1]:
+            vk = cls.VK_MOD_MAP.get(p)
+            if vk is None:
+                errors.append(f'未知修饰键: {p}')
+            elif vk not in mod_vks:
+                mod_vks.append(vk)
+        main_vk = _name_to_vk_code(parts[-1])
+        if not main_vk:
+            errors.append(f'未知主键: {parts[-1]}')
+        return mod_vks, main_vk, errors
+
+    # ── 管理接口 ──
+
+    def add(self, trigger: Trigger, callback: Callable):
+        mod_vks, main_vk, errors = self.parse_combo(trigger.key or '')
+        with self._lock:
+            self._entries.append({
+                'trigger': trigger, 'callback': callback,
+                'mod_vks': mod_vks, 'main_vk': main_vk,
+                'errors': errors, 'armed': False,
+            })
+        return errors
+
+    def remove(self, action_id: str):
+        with self._lock:
+            self._entries = [e for e in self._entries
+                           if e['trigger'].action_id != action_id]
+
+    def start(self):
+        if self._running:
+            return
+        if sys.platform != 'win32':
+            with self._lock:
+                for e in self._entries:
+                    if not e['errors']:
+                        e['errors'] = ['热键监听仅支持 Windows']
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1)
+            self._thread = None
+        with self._lock:
+            self._entries.clear()
+            self._key_was_down.clear()
+            self._inflight.clear()
+
+    def status(self) -> dict:
+        with self._lock:
+            return {
+                'hotkeys': len(self._entries),
+                'armed': sum(1 for e in self._entries if not e['errors']),
+                'errors': sum(1 for e in self._entries if e['errors']),
+                'running': self._running,
+            }
+
+    # ── 轮询线程 ──
+
+    def _poll_loop(self):
+        import ctypes
+        _GetAsyncKeyState = ctypes.windll.user32.GetAsyncKeyState
+        while self._running:
+            with self._lock:
+                entries = list(enumerate(self._entries))
+            for idx, e in entries:
+                if e['errors'] or not e['main_vk']:
+                    continue
+                # 修饰键全部就位？
+                all_mods = all(_GetAsyncKeyState(vk) & 0x8000
+                               for vk in e['mod_vks'])
+                key_down = bool(_GetAsyncKeyState(e['main_vk']) & 0x8000)
+                was_down = self._key_was_down.get(idx, False)
+                self._key_was_down[idx] = key_down
+                # 下降沿：刚按下 → 触发（防抖）
+                if key_down and not was_down and all_mods:
+                    self._fire(idx)
+            time.sleep(self.POLL_INTERVAL)
+
+    def _fire(self, idx: int):
+        with self._lock:
+            if self._inflight.get(idx):
+                return
+            self._inflight[idx] = True
+            e = self._entries[idx] if idx < len(self._entries) else None
+        if e is None:
+            return
+
+        def _run():
+            try:
+                e['callback'](e['trigger'])
+            except Exception:
+                pass
+            finally:
+                with self._lock:
+                    self._inflight[idx] = False
+
+        threading.Thread(target=_run, daemon=True).start()
+
+
 class TriggerEngine:
     """触发器引擎：统一管理所有触发器类型。
 
@@ -380,10 +537,12 @@ class TriggerEngine:
         self._meta_dir = meta_dir
         self._cron = CronScheduler()
         self._watcher = FileWatcher()
+        self._hotkeys = HotkeyListener()
+        self._webhooks = None  # lazy: WebhookServer 创建时注入
         self._triggers: Dict[str, List[Trigger]] = {}
 
-    def add_trigger(self, trigger: Trigger):
-        """添加单个触发器。"""
+    def add_trigger(self, trigger: Trigger, _persist: bool = True):
+        """添加单个触发器（默认持久化到注册表；内部加载传 _persist=False）。"""
         if trigger.action_id not in self._triggers:
             self._triggers[trigger.action_id] = []
         self._triggers[trigger.action_id].append(trigger)
@@ -392,13 +551,63 @@ class TriggerEngine:
             self._cron.add(trigger, self._executor)
         elif trigger.ttype == 'watch':
             self._watcher.add(trigger, self._executor)
-        # webhook / hotkey / on_startup 由上层处理
+        elif trigger.ttype == 'hotkey':
+            self._hotkeys.add(trigger, self._executor)
+        elif trigger.ttype == 'webhook':
+            if self._webhooks is None:
+                self._init_webhooks()
+            self._webhooks.add(trigger, self._executor)
+        # on_startup 由 start() 处理
+        if _persist:
+            self.save_registry()
 
     def remove_trigger(self, action_id: str):
         """移除指定动作的所有触发器。"""
         self._triggers.pop(action_id, None)
         self._cron.remove(action_id)
         self._watcher.remove(action_id)
+        self._hotkeys.remove(action_id)
+        if self._webhooks is not None:
+            self._webhooks.remove(action_id)
+        self.save_registry()
+
+    # ── 注册表持久化（_meta/triggers.json，CLI 与 MCP 共享同一份）──
+
+    @property
+    def registry_path(self) -> str:
+        return os.path.join(self._meta_dir, 'triggers.json')
+
+    def save_registry(self):
+        """把运行时触发器写入注册表（meta_dir 为空或不可写时静默跳过）。"""
+        if not self._meta_dir:
+            return
+        data = {aid: [t.config for t in ts]
+                for aid, ts in self._triggers.items()}
+        try:
+            os.makedirs(self._meta_dir, exist_ok=True)
+            with open(self.registry_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def load_registry(self):
+        """从注册表加载动态注册的触发器（已存在的 action 不覆盖）。"""
+        path = self.registry_path
+        if not os.path.isfile(path):
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+        except (OSError, ValueError):
+            return
+        for aid, cfgs in data.items():
+            if aid in self._triggers:
+                continue
+            for cfg in cfgs or []:
+                try:
+                    self.add_trigger(Trigger(aid, cfg), _persist=False)
+                except Exception:
+                    pass
 
     def load_from_index(self, meta_dir: str = ''):
         """从索引加载所有带 triggers 的动作。"""
@@ -419,10 +628,23 @@ class TriggerEngine:
                     trigger = Trigger(aid, t_config)
                     self.add_trigger(trigger)
 
+    def _init_webhooks(self):
+        """懒初始化 WebhookServer（首次注册 webhook 触发器时创建）。"""
+        if self._webhooks is not None:
+            return
+        try:
+            from .webhook_server import WebhookServer
+            self._webhooks = WebhookServer()
+        except Exception:
+            pass  # webhook 依赖缺失时不阻断引擎
+
     def start(self):
         """启动引擎。"""
         self._cron.start()
         self._watcher.start()
+        self._hotkeys.start()
+        if self._webhooks is not None:
+            self._webhooks.start()
 
         # 触发 on_startup
         for triggers in self._triggers.values():
@@ -441,12 +663,17 @@ class TriggerEngine:
         """停止引擎。"""
         self._cron.stop()
         self._watcher.stop()
+        self._hotkeys.stop()
+        if self._webhooks is not None:
+            self._webhooks.stop()
 
     def status(self) -> dict:
         """获取引擎状态。"""
         return {
             'cron_jobs': len(self._cron._jobs),
             'watch_tasks': len(self._watcher._watches),
+            'hotkeys': self._hotkeys.status(),
+            'webhooks': self._webhooks.status() if self._webhooks else {},
             'total_triggers': sum(len(v) for v in self._triggers.values()),
         }
 
@@ -484,5 +711,9 @@ def validate_trigger(config: dict) -> List[str]:
     elif ttype == 'hotkey':
         if 'key' not in config:
             errors.append('hotkey 触发器缺少 key')
+
+    elif ttype == 'webhook':
+        if 'key' not in config:
+            errors.append('webhook 触发器缺少 key（event_type）')
 
     return errors

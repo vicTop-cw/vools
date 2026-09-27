@@ -6,7 +6,7 @@
 """
 
 __all__ = ['DEFAULT_IGNORE', 'fingerprint', 'clipboard_write',
-           'clipboard_clear', 'focus_window', 'run_playback']
+           'clipboard_clear', 'focus_window', 'run_playback', 'RUN_PLAYBACK']
 
 import fnmatch
 import hashlib
@@ -185,3 +185,33 @@ def run_playback(repo_root: str, macro_params: dict, meta_base: str,
     if payload.get('status') != 'ok' and outer.get('error'):
         payload.setdefault('message', outer['error'].get('message', '回放失败'))
     return payload
+
+
+def send_to_pipe(text: str, cmd: list, cwd: str = None,
+                 timeout: int = 30) -> dict:
+    """pipe 注入通道：把提示词直接写进 agent 子进程 stdin，回读 stdout。
+
+    与 paste 通道（剪贴板+键鼠回放）正交：不经桌面 UI，不抢焦点、
+    不占剪贴板，适合 agent CLI 支持 `--prompt -` 或纯 stdin 读取的场景。
+    返回 {ok, message?, stdout?, exit_code?}。
+    """
+    try:
+        proc = subprocess.run(
+            cmd, input=text, capture_output=True, text=True,
+            encoding='utf-8', timeout=timeout, cwd=cwd)
+        return {'ok': proc.returncode == 0, 'exit_code': proc.returncode,
+                'stdout': (proc.stdout or '')[-2000:],
+                **({'message': f'退出码 {proc.returncode}: '
+                              f'{(proc.stderr or "")[-300:]}'}
+                   if proc.returncode != 0 else {})}
+    except subprocess.TimeoutExpired:
+        return {'ok': False, 'message': f'agent stdin 写入超时（{timeout}s）'}
+    except FileNotFoundError:
+        return {'ok': False, 'message': f'agent 可执行文件不存在: {cmd[0]}'}
+    except Exception as e:  # noqa: BLE001 —— 注入通道失败不炸主循环
+        return {'ok': False, 'message': f'pipe 注入异常: {e}'}
+
+
+# 大写别名（loop_prompt.actus.md 导入名兼容）
+RUN_PLAYBACK = run_playback
+SEND_TO_PIPE = send_to_pipe

@@ -161,6 +161,9 @@ class WebhookReceiver:
         self._request_log: List[dict] = []
         self._log_lock = threading.Lock()
         self._running = False
+        # start_background() 与线程里 bind 之间的握手：见 start_background 的说明
+        self._ready = threading.Event()
+        self._start_error: Optional[BaseException] = None
 
     @property
     def stats(self) -> WebhookStats:
@@ -223,13 +226,17 @@ class WebhookReceiver:
 
     def start(self):
         """启动 Webhook 接收器（阻塞）。"""
-        self._stats.started_at = time.time()
-        self._running = True
-
         handler = self._make_handler()
+        # 先绑端口再置 _running：反过来会让 is_running 在「端口还没绑上」时就是 True，
+        # 而 bind 失败时线程直接死掉、_running 永远停在 True（finally 进不去）。
         self._server = HTTPServer(
             (self._config.host, self._config.port), handler
         )
+        self._stats.started_at = time.time()
+        self._running = True
+        # 就绪信号必须在 bind 成功后立刻发，不能等 start() 返回 —— serve_forever()
+        # 正常情况下永不返回，放在调用方 finally 里等于让 start_background 一直等到超时。
+        self._ready.set()
 
         print(f"🚀 Webhook 接收器启动: http://{self._config.host}:{self._config.port}")
         print(f"   已注册路由: {len(self._routes)}")
@@ -243,11 +250,36 @@ class WebhookReceiver:
         finally:
             self._running = False
 
-    def start_background(self) -> threading.Thread:
-        """启动 Webhook 接收器（后台非阻塞）。"""
-        self._thread = threading.Thread(target=self.start, daemon=True)
+    def start_background(self, timeout: float = 5.0) -> threading.Thread:
+        """启动 Webhook 接收器（后台非阻塞）。
+
+        返回时端口**已经**绑好、`is_running` 已为 True；绑不上（端口占用 / 权限不足）
+        或线程没能起来就直接抛，不返回一个「看着像起来了」的线程 —— 原先的写法把
+        bind 放在线程里、`_running` 也由线程置位，于是两个入口都撒谎：
+        调用后立刻读 `is_running` 可能是 False（线程还没被调度），
+        而立刻 `stop()` 会看到 `_server is None` 跳过 shutdown，随后线程自己 bind
+        成功并 serve_forever —— 接收器再也停不掉，且 stop() 已经打印过「已停止」。
+        """
+        self._ready.clear()
+        self._start_error = None
+        self._thread = threading.Thread(target=self._start_and_signal, daemon=True)
         self._thread.start()
+        if not self._ready.wait(timeout):
+            raise TimeoutError(
+                f"Webhook 接收器未能在 {timeout}s 内绑定 "
+                f"{self._config.host}:{self._config.port}")
+        if self._start_error is not None:
+            raise self._start_error
         return self._thread
+
+    def _start_and_signal(self):
+        """线程体：把 `start()` 的失败回传给等握手的调用方，不吞在线程里。"""
+        try:
+            self.start()
+        except BaseException as exc:  # noqa: BLE001 — 原样带回，由调用方决定怎么报
+            self._start_error = exc
+        finally:
+            self._ready.set()
 
     def stop(self):
         """停止 Webhook 接收器。"""

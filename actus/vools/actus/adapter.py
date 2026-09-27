@@ -128,12 +128,16 @@ class AdapterSpec:
 
 # ── 参数替换 ──────────────────────────────────────────────────────────────
 
-def _substitute_params(template: str, params: Dict) -> str:
-    """替换 ${param} 占位符。"""
+def _substitute_params(template: str, params: Dict, quote: bool = False) -> str:
+    """替换 ${param} 占位符。
+
+    quote=True 只该用于「模板自己写了 shell 元字符、确实要走 shell」的分支：
+    值被包成不可分裂的单元，值里的 `; | &` 就只是字符，不再能替命令开第二个动作（BUG-0013）。
+    """
     def replacer(match):
         key = match.group(1)
-        value = params.get(key, "")
-        return str(value)
+        value = str(params.get(key, ""))
+        return _quote_for_shell(value) if quote else value
     return re.sub(r"\$\{([^}]+)\}", replacer, template)
 
 
@@ -144,34 +148,107 @@ def _substitute_in_args(args: List[str], params: Dict) -> List[str]:
 
 # ── CLI 适配器 ────────────────────────────────────────────────────────────
 
+# ── CLI 适配器 ────────────────────────────────────────────────────────────
+
+# shell 元字符判定：反斜杠**不算**元字符。
+# 曾经集合里有 '\\'，于是 Windows 上每一条绝对路径（C:\\...）都被判成「要走 shell」，
+# 退化成字符串命令 —— 含空格的路径当场被切成 'C:\\Program'（BUG-0005），
+# 且把 ${param} 替换出来的值拼进 shell 字符串（注入面）。
+_SHELL_METACHARS = '|&;<>$`'
+
+
+def _executable_of(command: str) -> str:
+    """取 spec.command 里的可执行文件部分。
+
+    整串就是一个路径时按整串算 —— 裸 `.split()[0]` 会把含空格的真实路径切碎。
+    允许「路径 + 固定参数」的既有写法（actions/adapters/cli/pandoc.actus.md 用单 token，
+    测试与守卫用例用 sys.executable + --version）。
+    """
+    c = (command or '').strip()
+    if not c:
+        return ''
+    if os.path.isfile(c):
+        return c
+    # 模板里带 ${param} 时，占位符**之前**那段可能就是一个含空格的完整路径 ——
+    # shlex 会把反斜杠当转义吃掉（'E:\Program Files\x\python.exe' → 'E:Program'），
+    # 所以先按整段试一次文件存在性，再退回词法拆分。
+    m = re.search(r"\$\{[^}]+\}", c)
+    if m:
+        head = c[:m.start()].strip().strip('"\'')
+        if head and os.path.isfile(head):
+            return head
+    try:
+        parts = shlex.split(c)
+    except ValueError:                       # 引号不闭合等畸形写法
+        parts = c.split()
+    return parts[0] if parts else ''
+
+
+def _has_shell_metachars(text: str) -> bool:
+    return any(ch in text for ch in _SHELL_METACHARS)
+
+
+def _quote_for_shell(value: str) -> str:
+    """把要拼进 shell 命令字符串的值封成一个整体，元字符失去接单能力。
+
+    nt 上 shlex.quote 产出的是 POSIX 单引号，cmd.exe 不认 —— 所以按 subprocess
+    在 Windows 上的引号规则走（内嵌双引号转义）。
+    """
+    if os.name == "nt":
+        return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    return shlex.quote(value)
+
+
 class CLIAdapter:
     """CLI 适配器 — 包装任意命令行工具。"""
 
     def __init__(self, spec: AdapterSpec):
         self.spec = spec
 
+    def _check_command(self) -> Tuple[Any, bool]:
+        """把 spec.check 编译成 (可执行形式, 是否走 shell)。
+
+        先判 shell 元字符（管道/重定向是真 shell 写法，必须继续支持），再判
+        「check 就是 command 加固定参数」这种最常见写法：按前缀切出 argv，剩余部分做
+        词法拆分 —— 这样含空格的路径不会被当成两个 token。都不满足时整串按词法拆。
+        """
+        check = (self.spec.check or '').strip()
+        if _has_shell_metachars(check):
+            return check, True
+        exe = _executable_of(self.spec.command)
+        if exe and (check == exe or check.startswith(exe + ' ')):
+            rest = check[len(exe):].strip()
+            return ([exe] + (shlex.split(rest) if rest else [])), False
+        try:
+            argv = shlex.split(check)
+        except ValueError:
+            return check, True
+        return (argv or [check]), False
+
     def check_available(self) -> Tuple[bool, str]:
         """检查工具是否可用。"""
         if self.spec.check:
+            cmd, use_shell = self._check_command()
             try:
-                result = subprocess.run(self.spec.check, shell=True, capture_output=True, timeout=10)
+                result = subprocess.run(cmd, shell=use_shell, capture_output=True,
+                                        timeout=10)
                 return result.returncode == 0, ""
             except Exception as e:
                 return False, str(e)
 
-        # 默认检查：which 命令
-        cmd = self.spec.command.split()[0] if self.spec.command else ""
-        if not cmd:
+        # 默认检查：按可执行文件本身能不能定位
+        exe = _executable_of(self.spec.command)
+        if not exe:
             return False, "未指定命令"
-        if shutil.which(cmd):
+        if os.path.isfile(exe) or shutil.which(exe):
             return True, ""
-        return False, f"命令不可用: {cmd}"
+        return False, f"命令不可用: {exe}"
 
     def install_hint(self) -> str:
         """返回安装提示。"""
         if self.spec.install:
             return self.spec.install
-        cmd = self.spec.command.split()[0] if self.spec.command else self.spec.id
+        cmd = _executable_of(self.spec.command) or self.spec.id
         return f"请安装 {cmd} 后重试"
 
     def run(self, params: Dict = None, cwd: str = None) -> AdapterResult:
@@ -183,19 +260,40 @@ class CLIAdapter:
             return AdapterResult(False, stderr="未指定 command", returncode=-1)
 
         # 构建命令
-        cmd = _substitute_params(self.spec.command, params)
+        # 安全：shell 与否只由**模板**决定（BUG-0013）。旧写法先替换 ${param} 再判元字符，
+        # 于是入参里的 `;` 能把整条命令升级成 shell 语法、值又被原样拼进命令字符串 ——
+        # 这是 2f8c9e8（BUG-0005：反斜杠误判）同一面的另一条边。
+        # 判定用「扣掉 ${...} 之后的骨架」：占位符自己带 `$`，不扣就会把每一条带参命令
+        # 都误判成 shell —— 那正是旧写法犯的同一类错。走 shell 时值一律加引号。
+        template = self.spec.command
+        skeleton = re.sub(r"\$\{[^}]+\}", "", template)
+        use_shell = _has_shell_metachars(skeleton)
         args = _substitute_in_args(self.spec.args, params)
 
-        # 安全：移除 shell=True，除非命令包含 shell 特殊字符
-        use_shell = any(c in cmd for c in "|&;<>$`\\")
-
-        # 构建完整命令
         if use_shell:
-            full_cmd = cmd
-            if args:
-                full_cmd += " " + " ".join(shlex.quote(a) for a in args)
+            # 作者自己写了 shell 语法：值替换进来必须被引号包住，否则值能开第二个动作
+            cmd = _substitute_params(template, params, quote=True)
+            full_cmd = cmd + (" " + " ".join(_quote_for_shell(a) for a in args) if args else "")
         else:
-            full_cmd = [cmd] + args
+            # 按 argv 投递：切词只用**模板**，再逐 token 替换 ——
+            # 先替换再切词会把一个入参值拆成多个 argv（也才让旧写法的 shell 误判有机可乘）。
+            exe = _executable_of(template)
+            fixed_tail = shlex.split(template[len(exe):]) if (exe and template.strip() != exe) else []
+            tokens = ([exe] + fixed_tail) if exe else template.split()
+            full_cmd = [_substitute_params(t, params) for t in tokens] + args
+            cmd = " ".join(full_cmd)
+
+        # Windows shell 内建命令（echo/dir/type 等）不是可执行文件，直接 spawn 报
+        # WinError 2；PATH 里也找不到时改走 shell 执行。
+        # 只对「裸命令名」放行：含路径分隔符或空格的写法不是内建命令，走 shell 会把
+        # ${param} 替换出来的值原样拼进 shell 字符串（注入面），应当按 argv 执行并如实报错。
+        bare_command = (' ' not in cmd and os.path.sep not in cmd
+                        and '\\' not in cmd)
+        if (os.name == "nt" and not use_shell and exe and bare_command
+                and not os.path.isfile(exe) and shutil.which(exe) is None):
+            use_shell = True
+            # 这条路一旦转 shell，args 里的 ${param} 值同样不许裸拼（同 BUG-0013 的边）
+            full_cmd = cmd + ((" " + " ".join(_quote_for_shell(a) for a in args)) if args else "")
 
         logger.info(f"CLI 适配器执行: {full_cmd}")
 

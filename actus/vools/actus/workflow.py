@@ -21,11 +21,11 @@ import re
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from .errors import ActionError
 from .model import Action
-from . import execute as _execute
+from . import executor as _execute
 from . import records as _records
 
 
@@ -38,11 +38,17 @@ class DAGScheduler:
     - 串行执行（graph.parallel=false 时每层只执行一个节点）
     """
 
-    def __init__(self, nodes: List[Dict]):
+    def __init__(self, nodes: Union[List[Dict], Dict[str, Dict]]):
         """
         参数:
-            nodes: workflow.nodes 列表，每项至少含 id、action_id、depends（可选）。
+            nodes: 节点集合，接受两种形态 —— 缺陷③ 的根修法是「在消费点归一」：
+                - List[Dict]：`Workflow.raw_nodes`（schema 原样，validate() 用这个）
+                - Dict[str, Dict]：`Workflow.nodes`（`Workflow.__init__` 已按 id 归一，
+                  run() 用这个）
+                只在调用点 list() 会漏掉 validate() 那条 list 路径，故两种都在此喂饱。
         """
+        if isinstance(nodes, dict):
+            nodes = list(nodes.values())
         self.nodes = {n['id']: n for n in nodes}
         self._build_graph()
 
@@ -52,7 +58,7 @@ class DAGScheduler:
         self.in_degree: Dict[str, int] = {nid: 0 for nid in self.nodes}
 
         for nid, node in self.nodes.items():
-            for dep in node.get('depends', []) or []:
+            for dep in (node.get('depends') or node.get('deps') or []):
                 if dep in self.nodes:
                     self.adj[dep].add(nid)
                     self.in_degree[nid] += 1
@@ -115,6 +121,14 @@ class WorkflowExecutor:
         self.workflow = workflow
         self.meta_dir = meta_dir
         self.max_workers = max_workers
+        # graph.max_concurrency 是契约里显式声明的并行上限
+        # （contracts/action.schema.json:150；data_pipeline=4、workflow_linear=2 都在用），
+        # 而引擎此前根本不读它：动作写 2 也照 max_workers 跑，声明等于没写。
+        # 语义取「上限」而非「覆盖」：调用方给的 max_workers 仍可下调。
+        declared = (getattr(workflow, 'graph', None) or {}).get('max_concurrency')
+        self.declared_concurrency = declared if isinstance(declared, int) and declared > 0 else None
+        if self.declared_concurrency is not None:
+            self.max_workers = min(self.max_workers, self.declared_concurrency)
         self.confirmed = confirmed
         self._node_outputs: Dict[str, Dict] = {}
         self._node_status: Dict[str, str] = {}  # node_id -> ok/failed/skipped
@@ -143,7 +157,18 @@ class WorkflowExecutor:
         layers = scheduler.topological_sort()
         graph_cfg = self.workflow.graph or {}
         parallel = graph_cfg.get('parallel', True)
-        on_failure = graph_cfg.get('on_failure', 'abort')
+        # 失败策略：引擎原生键 on_failure（abort/continue/fallback）优先；契约
+        # （contracts/action.schema.json #/definitions/workflow_graph）与动作文件
+        # 用的是 fail_fast。二者此前各写各的 → 动作声明 fail_fast=false（意图
+        # 失败不中断）被引擎缺省 'abort' 静默掐断（缺陷⑨）。此处把契约键
+        # fail_fast 解释为引擎语义：True→abort、False→continue；仅在 on_failure
+        # 缺席时派生，两键都不写仍维持旧默认 'abort'（不改变既有工作流语义）。
+        on_failure = graph_cfg.get('on_failure')
+        if on_failure is None:
+            if 'fail_fast' in graph_cfg:
+                on_failure = 'abort' if graph_cfg.get('fail_fast') else 'continue'
+            else:
+                on_failure = 'abort'
 
         for layer in layers:
             if parallel:
@@ -235,8 +260,16 @@ class WorkflowExecutor:
             })
             return
 
-        # 解析参数（支持跨节点引用）
-        params = self._resolve_params(node.get('params', {}))
+        # 解析参数（支持跨节点引用）—— 收集器按节点新建，不挂 self（见 _resolve_params）
+        unparsable: List[Dict] = []
+        params = self._resolve_params(node.get('params', {}), unparsable)
+        if unparsable:
+            # 纯审计留痕：不带 status，不参与节点成败聚合，只保证「引用没解出来」这件事
+            # 在 records 里看得见 —— 否则又是一个静默降级点。
+            self._records.append({
+                'node_id': node_id,
+                'unparsable_refs': list(unparsable),
+            })
 
         # per-node 超时
         timeout_s = node.get('timeout_s')
@@ -248,15 +281,31 @@ class WorkflowExecutor:
                     import threading
                     result_holder = [None]
                     def _run():
-                        result_holder[0] = _execute.execute(action_id, params, confirmed=self.confirmed)
+                        result_holder[0] = _execute.execute(
+                            action_id, params, confirmed=self.confirmed,
+                            meta_dir=self.meta_dir)
                     t = threading.Thread(target=_run)
                     t.start()
                     t.join(timeout=timeout_s)
                     if t.is_alive():
+                        # Python 没法强杀线程：动作可能仍在写盘、弹窗、发请求。
+                        # 这里只如实留下「被放弃的线程还在跑」，不假装中断成功了。
+                        # （真正的取消协议是引擎级设计，需 owner 决策。）
+                        self._records.append({
+                            'node_id': node_id,
+                            'status': 'timeout',
+                            'timeout_s': timeout_s,
+                            'abandoned': True,
+                            'abandoned_thread': t.name,
+                            'message': f'节点执行超时 ({timeout_s}s)：线程 {t.name} 未被中断，'
+                                       f'其副作用仍可能在继续产生',
+                        })
                         raise TimeoutError(f'节点执行超时 ({timeout_s}s)')
                     result = result_holder[0]
                 else:
-                    result = _execute.execute(action_id, params, confirmed=self.confirmed)
+                    result = _execute.execute(action_id, params,
+                                              confirmed=self.confirmed,
+                                              meta_dir=self.meta_dir)
 
                 if result.get('status') == 'ok':
                     self._node_outputs[node_id] = result.get('data', {})
@@ -281,7 +330,9 @@ class WorkflowExecutor:
         fallback = node.get('fallback')
         if fallback:
             try:
-                result = _execute.execute(fallback, params, confirmed=self.confirmed)
+                result = _execute.execute(fallback, params,
+                                          confirmed=self.confirmed,
+                                          meta_dir=self.meta_dir)
                 if result.get('status') == 'ok':
                     self._node_outputs[node_id] = result.get('data', {})
                     self._node_status[node_id] = 'ok'
@@ -303,64 +354,233 @@ class WorkflowExecutor:
             'attempts': max_attempts,
         })
 
-    def _resolve_params(self, params: Dict) -> Dict:
-        """解析参数中的跨节点引用 $node.output.field。"""
-        resolved = {}
-        for k, v in params.items():
-            if isinstance(v, str) and v.startswith('$'):
-                resolved[k] = self._resolve_ref(v)
-            else:
-                resolved[k] = v
-        return resolved
+    # 跨节点引用：$node.field.sub / $node.list[0]
+    _REF_RE = re.compile(r'\$([A-Za-z_]\w*(?:\.\w[\w\-\[\]]*)*)')
+    # 「整串是不是引用」的形态判定：node_id 字符类与 _resolve_ref 的
+    # `^\$([a-zA-Z0-9_-]+)\.` 逐字对齐（notes_C2 §4：两套解析器的字符类必须一致，
+    # 否则同一条引用一处认一处不认，又是静默丢值）。
+    _REF_SHAPED_RE = re.compile(r'^\$[A-Za-z0-9_-]+\.')
+
+    def _resolve_params(self, params: Dict,
+                        unparsable: Optional[List[Dict]] = None) -> Dict:
+        """解析参数里的跨节点引用 $node.output.field。
+
+        覆盖三类位置：顶层、嵌套 dict/list、字符串内嵌（"p/$n1.out/f"）。原先只认
+        「顶层且整串以 $ 开头」，其余原样透传 —— 与刚在条件求值器上修掉的静默丢值
+        同一形状。内嵌替换只认引用根是 workflow 里的真实节点，避免把 "$100" 这类
+        字面美元文本吃掉。解不出的通过 out 参数 unparsable 回传，不静默留原样。
+        结构不变量：返回值的 key 集合与嵌套形状与入参逐字相同。
+
+        unparsable 由调用方按节点新建（每节点一份），不能挂 self：同层节点在
+        ThreadPoolExecutor 里并行解析，共享收集器会让 A 清空/读到 B 的引用，
+        把「哪个节点没解出来」记错 —— 留痕本身变成假账。传 None 的调用方
+        （诊断探针）只拿解析结果，不取审计。
+        """
+        return self._resolve_value(params, '$params', unparsable)
+
+    def _resolve_value(self, value: Any, where: str,
+                       unparsable: Optional[List[Dict]]) -> Any:
+        if isinstance(value, dict):
+            return {k: self._resolve_value(v, f'{where}.{k}', unparsable)
+                    for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._resolve_value(v, f'{where}[{i}]', unparsable)
+                    for i, v in enumerate(value)]
+        if isinstance(value, str):
+            return self._resolve_string(value, where, unparsable)
+        return value
+
+    def _is_known_ref(self, token: str) -> bool:
+        """引用根是否是绑定工作流里的真实节点。
+
+        没有绑定 DAG 时（诊断探针用 object.__new__ 造空壳 executor，只塞
+        _node_outputs/_node_status，见 repro_cond_02）无从判别根是否存在 ——
+        此时不拦，交给 _resolve_ref 照常解析，保持空壳用法可读（修复前即如此）。
+        """
+        nodes = getattr(getattr(self, 'workflow', None), 'nodes', None)
+        if not nodes:
+            return True
+        return token.lstrip('$').split('.')[0] in nodes
+
+    def _resolve_string(self, value: str, where: str,
+                        unparsable: Optional[List[Dict]]) -> Any:
+        if value.startswith('$') and '$' not in value[1:]:
+            # 只有引用形态（$node.field）才进解析；"$100"/"$"/"$.x" 这类字面美元
+            # 文本原样保留且不记账 —— 否则真实价格串会被刷成一片 unparsable 噪声，
+            # 把「引用写错了」这个可用信号埋掉。
+            if not self._REF_SHAPED_RE.match(value):
+                return value
+            if not self._is_known_ref(value):
+                self._note_unparsable(
+                    unparsable, where, value, '引用根不是本工作流的节点')
+                return value
+            return self._dereference(value, where, unparsable)
+        if '$' not in value:
+            return value
+
+        def sub(m):
+            token = m.group(0)
+            if not self._is_known_ref(token):
+                return token          # 字面美元文本，不吃
+            got = self._dereference(token, where, unparsable)
+            if got is None:
+                # 引用段落在散文里会被 _REF_RE 连字符续读（"$n1.result-post"），
+                # 取不到值时整段替换会写成字面 "null" —— 那是假值。保留原 token
+                # 并留痕，由审计面判，不把「没取到」伪装成「取到了 null」。
+                self._note_unparsable(
+                    unparsable, where, token,
+                    '内嵌引用解析结果为 None（字段不存在或值为 null）')
+                return token
+            return got if isinstance(got, str) else json.dumps(got, ensure_ascii=False)
+
+        return self._REF_RE.sub(sub, value)
+
+    def _note_unparsable(self, unparsable: Optional[List[Dict]], where: str,
+                         ref: str, reason: str) -> None:
+        if unparsable is not None:
+            unparsable.append({'path': where, 'ref': ref, 'reason': reason})
+
+    def _dereference(self, ref: str, where: str,
+                     unparsable: Optional[List[Dict]]) -> Any:
+        try:
+            return self._resolve_ref(ref)
+        except Exception as e:                        # noqa: BLE001
+            self._note_unparsable(
+                unparsable, where, ref, f'{type(e).__name__}: {e}')
+            return ref
 
     def _resolve_ref(self, ref: str) -> Any:
-        """解析 $node_id.path.to.field 引用。"""
-        # 格式: $node_id.field 或 $node_id.nested.field；
-        # 兼容 schema 文档（docs/10 §C.6）的 $node_id.output.field 写法 ——
-        # output 只是节点输出 data 的别名，统一剥掉前缀。
+        """解析 $node_id.path.to.field 引用。
+
+        存储形态：_node_outputs[node] = 该节点 exec 记录的 result.data
+        （JSON 打印动作 = 其 stdout 解析出的 dict；纯文本动作 = {'output': <text>}）。
+
+        $node.output 的两种真实语义（docs/10 §C.5/§C.6）：
+          ① data 含 'output' 键（动作打印 {"output": {...}} / 纯文本包装）
+             → 'output' 是真实字段，按字面 JSON 路径下钻；
+          ② data 不含 'output' 键（动作直接打印结果 JSON，如 {"result": ...}）
+             → 'output' 是 data 的别名（§C.5「从 result.data 取值」），剥掉前缀。
+        裸 $node.output = 整个节点输出（data 整体）。"""
         # node_id 只含字母数字下划线连字符（不含点），避免贪婪匹配
         match = re.match(r'^\$([a-zA-Z0-9_-]+)\.(.+)$', ref)
         if not match:
             return ref
-        field_path = match.group(2)
-        if field_path.startswith('output.') or field_path == 'output':
-            field_path = field_path[len('output.'):] if field_path != 'output' else ''
-            if not field_path:
-                return self._node_outputs.get(match.group(1))
-
         node_id = match.group(1)
+        field_path = match.group(2)
+        data = self._node_outputs.get(node_id)
 
-        output = self._node_outputs.get(node_id, {})
-        parts = field_path.split('.')
-        val = output
-        for p in parts:
+        # 裸 $node.output → 整个节点输出
+        if field_path == 'output':
+            return data
+
+        # $node.output.field → 形态①按字面键、形态②按别名剥前缀
+        if field_path.startswith('output.'):
+            rest = field_path[len('output.'):]
+            if isinstance(data, dict) and 'output' in data:
+                root = data['output']      # 形态①：'output' 是真实字段
+            else:
+                root = data if isinstance(data, dict) else {}  # 形态②：别名
+            return self._walk_path(root, rest)
+
+        # 通用路径 $node.a.b（非 output 前缀）
+        return self._walk_path(data if isinstance(data, dict) else {}, field_path)
+
+    @staticmethod
+    def _walk_path(root: Any, path: str) -> Any:
+        """沿 a.b.c 路径在 dict 上下钻；遇非 dict 或缺键返回 None。"""
+        val = root
+        for p in path.split('.'):
             if isinstance(val, dict):
                 val = val.get(p)
             else:
                 return None
         return val
 
+    @staticmethod
+    def _split_logical(expr: str, op: str) -> List[str]:
+        """按**引号外**的逻辑运算符（and/or，大小写不敏感）切分表达式。
+
+        引号内的 and/or 是字符串字面量的组成部分，不得当运算符 ——
+        例如 `$a.msg == "cats and dogs"` 必须整体作为一个比较项，
+        否则会被切成 `$a.msg == "cats` 与 `dogs"` 两段而误判。
+        """
+        target = op.lower()
+        low = expr.lower()
+        parts: List[str] = []
+        buf: List[str] = []
+        quote: Optional[str] = None
+        i, n = 0, len(expr)
+        while i < n:
+            ch = expr[i]
+            if quote:
+                buf.append(ch)
+                if ch == quote:
+                    quote = None
+                i += 1
+                continue
+            if ch in ('"', "'"):
+                quote = ch
+                buf.append(ch)
+                i += 1
+                continue
+            if low.startswith(target, i):
+                before = expr[i - 1] if i > 0 else ' '
+                j = i + len(target)
+                after = expr[j] if j < n else ' '
+                if not (before.isalnum() or before == '_') and \
+                   not (after.isalnum() or after == '_'):
+                    parts.append(''.join(buf).strip())
+                    buf = []
+                    i = j
+                    continue
+            buf.append(ch)
+            i += 1
+        parts.append(''.join(buf).strip())
+        return [p for p in parts if p]
+
+    def _note_condition_unparsable(self, condition: str) -> None:
+        """记录一条无法解析的 condition（best-effort，不影响结果 False）。"""
+        try:
+            self._records.append({
+                'node_id': None,
+                'status': 'warning',
+                'message': f'condition 无法解析（按 false 处理）: {condition}',
+            })
+        except Exception:  # noqa: BLE001
+            pass
+
     def _eval_condition(self, condition: str) -> bool:
-        """增强条件求值。
+        """增强条件求值 —— 引用取值统一复用 _resolve_ref/_walk_path。
 
         支持:
-        - $node.status == 'ok' / 'failed'
-        - $node.output.field == value / != value
-        - $node.output.field > value / < value (数值比较)
-        - $node.output.field contains value (字符串包含)
-        - 简单的 and / or 组合
+        - `$node.status == 'ok'` / `node.status == 'ok'`（`$` 前缀可选，
+          docs/10 §C.5 的裸写法与 `$` 写法同结果；`output.status` 亦按 status 取）
+        - `$node.output.field == value / != value / >= <= > < / contains value`
+          （field 允许点路径，由 _walk_path 下钻）
+        - and / or 组合（大小写不敏感，or 优先级低于 and，按引号外边界切分）
+
+        取不到值（节点不存在 / 路径不存在 / 值真的是 null）→ **一律 False**
+        （docs/10 §C.5 末条「条件引用不存在的节点 → 视为 false」）。这里绝不能
+        让 None 继续往下走：`str(None) != 'true'` 与 `'one' in str(None)` 都是
+        True，会把本该 skipped 的节点误放行执行（反向后果）。
         """
-        if ' and ' in condition:
-            return all(self._eval_condition(c.strip()) for c in condition.split(' and '))
-        if ' or ' in condition:
-            return any(self._eval_condition(c.strip()) for c in condition.split(' or '))
+        or_parts = self._split_logical(condition, 'or')
+        if len(or_parts) > 1:
+            return any(self._eval_condition(p) for p in or_parts)
+        and_parts = self._split_logical(condition, 'and')
+        if len(and_parts) > 1:
+            return all(self._eval_condition(p) for p in and_parts)
 
         # 多操作符支持: == != >= <= > < contains
+        # `$` 前缀可选（裸写法是 docs/10:413-415 与 schema 的写法，必须可用）；
+        # node_id 字符类与 _resolve_ref 的 `^\$([a-zA-Z0-9_-]+)\.` 对齐（不含点）。
         match = re.match(
-            r'^\$([a-zA-Z0-9_.-]+)\.([a-zA-Z0-9_.-]+)\s*(==|!=|>=|<=|>|<|contains)\s*(.+)$',
+            r'^\$?([A-Za-z0-9_-]+)\.([A-Za-z0-9_.-]+?)'
+            r'\s*(==|!=|>=|<=|>|<|contains)\s*(.+)$',
             condition
         )
         if not match:
+            self._note_condition_unparsable(condition)
             return False
 
         node_id = match.group(1)
@@ -368,12 +588,20 @@ class WorkflowExecutor:
         op = match.group(3)
         value = match.group(4).strip().strip("'\"")
 
-        actual = None
-        if field == 'status':
+        # 取值统一复用 _resolve_ref/_walk_path —— 条件侧不得自建扁平 `.get`，
+        # 否则 `$n.output.field` 的点路径与 output 别名都取不到值（同一引用
+        # 在 _resolve_params 侧能取到、在 condition 侧取不到，条件恒 false）。
+        if field in ('status', 'output.status'):
             actual = self._node_status.get(node_id)
         else:
-            output = self._node_outputs.get(node_id, {})
-            actual = output.get(field)
+            actual = self._resolve_ref(f'${node_id}.{field}')
+
+        # 取不到值（节点不存在 / 路径不存在 / 真值确为 null）→ 一律 false
+        # （docs/10 §C.5 末条：条件引用不存在的节点视为 false）。绝不能让 None
+        # 以 `str(None)` 继续参与 ==/!=/contains 比较 —— `str(None) != 'true'`
+        # 与 `'one' in str(None)` 都是 True，会把本该跳过的节点误放行（假阳性）。
+        if actual is None:
+            return False
 
         # 状态快捷算子
         if op == '==' and value == 'ok':
@@ -444,6 +672,8 @@ class Workflow:
                 norm['action_id'] = node.get('action', '')
             if 'params' not in norm and 'args' in norm:
                 norm['params'] = norm['args']
+            if 'depends' not in norm and 'deps' in norm:
+                norm['depends'] = norm['deps']
             self.nodes[nid] = norm
 
     def validate(self) -> List[str]:
@@ -465,7 +695,7 @@ class Workflow:
         # 检查依赖存在性
         for node in self.raw_nodes:
             nid = node.get('id', '')
-            for dep in node.get('depends', []) or []:
+            for dep in (node.get('depends') or node.get('deps') or []):
                 if dep not in ids:
                     errors.append(f'节点 {nid} 依赖不存在: {dep}')
 
@@ -489,13 +719,50 @@ def run_workflow(workflow_id: str, meta_dir: str,
                   max_workers: int = 4, confirmed: bool = True) -> Dict:
     """便捷入口：从动作 id 加载并执行工作流。"""
     from .model import parse_cfg_from_file
-    from .indexer import load_index
+    from .indexer import load_index, _repo_root
 
     idx = load_index(meta_dir)
     if workflow_id not in idx['actions']:
         raise ActionError('workflow_not_found', f'工作流不存在: {workflow_id}')
 
-    action_path = idx['actions'][workflow_id].get('file_path', '')
+    entry = idx['actions'][workflow_id]
+    # 索引条目字段是 'path'（build_index 写入）；'file_path' 仅为历史别名。
+    # _meta/actions.index.json 是 git 跟踪文件：仓库一旦搬家 / 克隆 / 改
+    # ACTUS_REPO_ROOT，索引里烧死的绝对路径即失效。故一律相对**当前**仓库根
+    # 重新锚定；锚不上就现扫 actions/ 重建真实路径，绝不照抄旧路径去 open。
+    raw_path = entry.get('path') or entry.get('file_path') or ''
+    repo_root = os.environ.get('ACTUS_REPO_ROOT') or _repo_root()
+
+    def _candidates(p: str):
+        out = []
+        if not p:
+            return out
+        if os.path.isabs(p):
+            out.append(p)
+            # 旧绝对路径：截取 'actions/...' 尾巴按当前根重锚
+            rel = p.replace('\\', '/')
+            k = rel.find('/actions/')
+            if k != -1:
+                out.append(os.path.join(repo_root, rel[k + 1:].replace('/', os.sep)))
+        else:
+            out.append(os.path.join(repo_root, p.replace('/', os.sep)))
+        return out
+
+    action_path = next((c for c in _candidates(raw_path) if os.path.isfile(c)), '')
+    if not action_path:
+        # 现扫重建：以当前根的 actions/ 为准取真实文件路径（只读，不落缓存）
+        try:
+            from .indexer import scan_actions
+            fresh = scan_actions(os.path.join(repo_root, 'actions'),
+                                 validate=False, use_cache=False).get(workflow_id)
+            fresh_path = getattr(fresh, 'path', '') if fresh is not None else ''
+            if fresh_path and os.path.isfile(fresh_path):
+                action_path = fresh_path
+        except Exception:  # noqa: BLE001
+            action_path = ''
+    if not action_path or not os.path.isfile(action_path):
+        raise ActionError('workflow_source_missing',
+                          f'工作流源文件不存在: {workflow_id} -> {raw_path!r}')
     action = parse_cfg_from_file(action_path)
     wf = Workflow(action)
 

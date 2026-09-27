@@ -35,10 +35,11 @@ def fnv1a64(data: str) -> str:
 def _find_omega_spec(action_id: str, actions_dir: str) -> Optional[str]:
     """查找动作对应的 spec 文件。
 
-    搜索路径优先级：
-    1. actions/private/omega/<action_id>.spec.json
-    2. actions/public/omega/<action_id>.spec.json
-    3. actions/**/omega/<action_id>.spec.json（递归）
+    搜索路径优先级（文件名可用全限定 id 或末段短名，如
+    `actus.private.jump_push` 也可命中 `jump_push.spec.json`）：
+    1. actions/private/omega/<name>.spec.json
+    2. actions/public/omega/<name>.spec.json
+    3. actions/**/omega/<name>.spec.json（递归）
     4. <action_dir>/<action_name>.spec.json（与动作文件同目录）
 
     actions_dir=None 时取仓库默认 actions/（CLI 直连路径不显式传参）。
@@ -46,26 +47,35 @@ def _find_omega_spec(action_id: str, actions_dir: str) -> Optional[str]:
     if not actions_dir:
         from .indexer import _repo_root
         actions_dir = os.path.join(_repo_root(), 'actions')
+    # 文件名候选：全限定 id，以及末段短名
+    names = [action_id]
+    short = action_id.rsplit('.', 1)[-1]
+    if short and short != action_id:
+        names.append(short)
+
     # 1. 标准 omega 目录
     for visibility in ("private", "public"):
-        spec_path = os.path.join(actions_dir, visibility, "omega", f"{action_id}.spec.json")
-        if os.path.isfile(spec_path):
-            return spec_path
+        for nm in names:
+            spec_path = os.path.join(actions_dir, visibility, "omega", f"{nm}.spec.json")
+            if os.path.isfile(spec_path):
+                return spec_path
 
     # 2. 递归搜索 omega 子目录
     for root, dirs, files in os.walk(actions_dir):
         if "omega" in dirs:
-            spec_path = os.path.join(root, "omega", f"{action_id}.spec.json")
-            if os.path.isfile(spec_path):
-                return spec_path
+            for nm in names:
+                spec_path = os.path.join(root, "omega", f"{nm}.spec.json")
+                if os.path.isfile(spec_path):
+                    return spec_path
 
     # 3. 与动作文件同目录
     action_file = _find_action_file(action_id, actions_dir)
     if action_file:
         action_dir = os.path.dirname(action_file)
-        spec_path = os.path.join(action_dir, f"{action_id}.spec.json")
-        if os.path.isfile(spec_path):
-            return spec_path
+        for nm in names:
+            spec_path = os.path.join(action_dir, f"{nm}.spec.json")
+            if os.path.isfile(spec_path):
+                return spec_path
 
     return None
 
@@ -89,16 +99,28 @@ def _find_action_file(action_id: str, actions_dir: str) -> Optional[str]:
 
 # ── Spec 加载与缓存 ──
 
-_spec_cache: Dict[str, dict] = {}
+# 缓存键是路径，但值带**文件签名**：长驻进程（MCP server / GUI）里改了 spec 文件必须立刻生效，
+# 否则门禁判的是磁盘上已经不存在的旧契约（BUG-0014）。签名取 (mtime_ns, size)；
+# 残留风险只剩「同一时钟刻度内改写且字节数恰好不变」这一格，比旧写法的「永远不失效」小两个数量级。
+_spec_cache: Dict[str, tuple] = {}
+
+
+def _spec_signature(spec_path: str):
+    st = os.stat(spec_path)
+    return (st.st_mtime_ns, st.st_size)
+
 
 def load_spec(spec_path: str, use_cache: bool = True) -> dict:
-    """加载 spec JSON 文件（带缓存）。"""
-    if use_cache and spec_path in _spec_cache:
-        return _spec_cache[spec_path]
+    """加载 spec JSON 文件（带缓存，文件一改即失效）。"""
+    sig = _spec_signature(spec_path)
+    if use_cache:
+        hit = _spec_cache.get(spec_path)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
     with open(spec_path, "r", encoding="utf-8") as f:
         spec = json.load(f)
     if use_cache:
-        _spec_cache[spec_path] = spec
+        _spec_cache[spec_path] = (sig, spec)
     return spec
 
 
@@ -260,16 +282,18 @@ def check_assertion(assertion: dict, actual: Any) -> Tuple[bool, str]:
 
     elif atype == "subset":
         allowed = assertion.get("value", [])
-        if isinstance(value, list):
-            extra = set(value) - set(allowed)
+        items = value if isinstance(value, list) else [value]
+        if value is not None and (isinstance(value, (list, str, int, float, bool))):
+            extra = set(items) - set(allowed)
             ok = len(extra) == 0
             return ok, f"字段 '{field}' 包含不允许的值: {extra}"
         return False, f"字段 '{field}' 不是数组，无法做 subset 检查"
 
     elif atype == "superset":
         required = assertion.get("value", [])
-        if isinstance(value, list):
-            missing = set(required) - set(value)
+        items = value if isinstance(value, list) else [value]
+        if value is not None and (isinstance(value, (list, str, int, float, bool))):
+            missing = set(required) - set(items)
             ok = len(missing) == 0
             return ok, f"字段 '{field}' 缺少必需的值: {missing}"
         return False, f"字段 '{field}' 不是数组，无法做 superset 检查"
