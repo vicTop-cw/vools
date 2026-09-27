@@ -32,7 +32,7 @@ if not hasattr(subprocess.Popen.__init__, '_vools_patched'):
 import importlib
 from typing import Any
 
-__version__ = "0.7.7"
+__version__ = "0.7.8"
 __author__ = "Victor"
 __license__ = "Apache 2.0"
 
