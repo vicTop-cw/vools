@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-09-27
+
+发出去的三个包：`vools 0.7.8`、`vools-bridges 0.7.7`、`vools-actus 0.7.8`
+（**`vools-actus` 是该发行名的第一次发布**，此前 PyPI 上 404）。
+
+### 🐛 修复
+
+- **`vools` 0.7.7 的 wheel 在 py3.11 上编译不过** — `md/advanced.py` 用了 py3.12 才允许的嵌套同引号
+  f-string。提版到 0.7.8 的直接原因（实测：0.7.7 wheel 在 3.11 上 `compile()` → SyntaxError，0.7.8 → OK）
+- **`vools-bridges` 0.7.6 缺 `_build_prelude_env`** — `actus/mdtest.py` 模块级直取该符号，按旧下限
+  装出来一 import 就炸；随 0.7.7 发出，`vools-actus` 的硬依赖下限同步抬到 `>=0.7.7`
+- **`vools/actus` 三个入口模块 AttributeError** — `cli.py` / `mcp_server.py` / `panel.py` 按
+  `actuscore.build_index()` 调用，但包命名空间没转 indexer 那个符号；改为直取子模块
+- **`bridges/md/webview2.py` 内嵌脚本** — 宿主分支 `f"…: {{e}}"` 把异常消息打成字面量；
+  SDK 与 pywebview 双缺失时 `sys.exit(1)` 连带杀掉宿主，改为回退默认浏览器。
+  注意模板内的 `{{x}}` 是**刻意双写**（渲染成 `{x}` 交给生成的脚本插值），不是转义 bug
+- **`vools-actus` wheel 里没有 License 元数据** — `actus/pyproject.toml` 声明了 `license = { file }`
+  而 `actus/LICENSE` 不存在；补根 LICENSE 的逐字节副本（三份 git blob 同号），不改授权意图
+
+### 📦 打包
+
+- **`vools-actus` 版本元数据** — 此前写死 0.7.0 又另写 `[tool.setuptools.dynamic]`，而 `[project]`
+  没有 `dynamic = ["version"]`、包里也没 `__version__` ⇒ setuptools 静默忽略 dynamic 段。
+  现在用静态版本，与主包对齐到 0.7.8
+- **三处装不出来的 extras pin** — `[actus]` 钉从未发布过的 `vools-actus==0.7.0`、
+  `[bridge-md]` 与 `[all]` 钉从未存在过的 `vools-bridge-md==0.5.0`（`vools.bridge.md` 实际由
+  vools-bridges 分发）。实测 `pip install --dry-run "vools[actus]==0.7.8"` 与 `vools[all]==0.7.8`
+  均可解析；已发布的 0.7.7 METADATA 里根本没有这两个 extra，所以 0.7.8 是首次对外提供
+
+### ✅ 验证
+
+- `tests/actus` + `tests/md` + 新增的 `tests/test_webview2_template_callsite.py`
+  = **287 passed / 0 failed**（QClaw CPython 3.11，五根 PYTHONPATH 的产品导入拓扑）
+- 下游 Actus 全量套件在"兄弟源码 / 本地 wheel / 从 PyPI 装"三种装法下各跑一次，
+  均 **1586 passed / 0 skipped / 0 failed**；细则 `Actus/CHANGELOG.md` 的 `[pypi-release-20260927]`
+
 ## [0.7.7] - 2026-09-15
 
 ### 🆕 新特性
