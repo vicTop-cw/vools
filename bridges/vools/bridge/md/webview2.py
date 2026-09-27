@@ -800,7 +800,7 @@ try:
     print("[WebView2] 窗口已关闭")
     
 except ImportError as e:
-    print(f"[WebView2] 原生 SDK 不可用: {{e}}")
+    print(f"[WebView2] 原生 SDK 不可用: {e}")
     print("[WebView2] 尝试使用 pywebview...")
     
     try:
@@ -809,11 +809,15 @@ except ImportError as e:
         webview.start()
     except ImportError:
         print("[WebView2] pywebview 也不可用")
-        sys.exit(1)
+        print("[WebView2] 回退到默认浏览器...")
+        import webbrowser
+        webbrowser.open(f"file:///{{html_path}}")
         
 except Exception as e:
-    print(f"[WebView2] 错误: {{e}}")
-    sys.exit(1)
+    print(f"[WebView2] 错误: {e}")
+    print("[WebView2] 回退到默认浏览器...")
+    import webbrowser
+    webbrowser.open(f"file:///{{html_path}}")
 '''
     
     # ═══════════════════════════════════════════════════════

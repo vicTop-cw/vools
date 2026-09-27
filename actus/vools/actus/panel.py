@@ -30,8 +30,10 @@ def _load_actions() -> list:
     """只读视图：读取索引（无索引时构建一次）。"""
     path = os.path.join(META_DIR, 'actions.index.json')
     if not os.path.exists(path):
-        import vools.actus
-        actuscore.build_index()
+        # vools.actus 没有把 indexer.build_index 转出到包命名空间（Actus 侧
+        # engine/actuscore/__init__.py 有），直接取子模块，避免 AttributeError。
+        from vools.actus.indexer import build_index
+        build_index()
     with open(path, 'r', encoding='utf-8') as f:
         idx = json.load(f)
     rows = []
@@ -167,7 +169,7 @@ class PanelApp:
     def _execute_bg(self, aid: str):
         # 薄壳原则：执行全权委托 actuscore，面板不实现任何执行语义
         def work():
-            import vools.actus
+            import vools.actus as actuscore
             r = actuscore.execute(aid, {}, confirmed=False)
             self.root.after(0, lambda: self._on_result(aid, r))
 
@@ -181,7 +183,7 @@ class PanelApp:
         status = r.get('status')
         if status == 'awaiting_confirmation':
             # 面板内确认后重跑（confirmed=True 闭环）
-            import vools.actus
+            import vools.actus as actuscore
             r2 = actuscore.execute(aid, {}, confirmed=True)
             self._on_result(aid, r2)
             return
