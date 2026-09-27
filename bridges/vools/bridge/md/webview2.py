@@ -609,7 +609,7 @@ class WebView2Manager:
             
         except ImportError as e:
             result.status = "error"
-            result.error = f"WebView2 SDK 未安装: {{e}}\n请安装: pip install pythonnet 并确保 WebView2 运行时已安装"
+            result.error = f"WebView2 SDK 未安装: {e}\n请安装: pip install pythonnet 并确保 WebView2 运行时已安装"
         except Exception as e:
             result.status = "error"
             result.error = str(e)
@@ -724,6 +724,9 @@ class WebView2Manager:
     
     def _create_webview2_runner_script(self, html_path: str, config: WebView2Config, block_id: str) -> str:
         """创建 WebView2 运行脚本"""
+        # 下面这段是 f-string 模板：{{x}} 是刻意双写，渲染成 {x} 交给生成的脚本自己
+        # 插值（生成的脚本里就有 html_path / e 这些名字）。改成单花括号＝让宿主求值，
+        # 本函数一调用就 NameError。
         return f'''
 import sys
 import os
@@ -800,7 +803,7 @@ try:
     print("[WebView2] 窗口已关闭")
     
 except ImportError as e:
-    print(f"[WebView2] 原生 SDK 不可用: {e}")
+    print(f"[WebView2] 原生 SDK 不可用: {{e}}")
     print("[WebView2] 尝试使用 pywebview...")
     
     try:
@@ -814,7 +817,7 @@ except ImportError as e:
         webbrowser.open(f"file:///{{html_path}}")
         
 except Exception as e:
-    print(f"[WebView2] 错误: {e}")
+    print(f"[WebView2] 错误: {{e}}")
     print("[WebView2] 回退到默认浏览器...")
     import webbrowser
     webbrowser.open(f"file:///{{html_path}}")
