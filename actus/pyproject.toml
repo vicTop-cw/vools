@@ -4,7 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vools-actus"
-version = "0.7.0"
+# 单一真源：静态版本。此前这里写死 0.7.0，同时又在 [tool.setuptools.dynamic]
+# 里声明 version = {attr = "vools.actus.__version__"}，而 [project] 没有
+# dynamic = ["version"]、包里也没有 __version__ —— setuptools 直接忽略 dynamic 段，
+# 打出来的 wheel 永远停在 0.7.0。对齐主包 vools 0.7.7 提到 0.7.8。
+version = "0.7.8"
 authors = [
     { name = "Victor", email = "victortop921129@gmail.com" },
 ]
@@ -31,6 +35,11 @@ classifiers = [
 requires-python = ">=3.6"
 dependencies = [
     "vools>=0.7.0",
+    # 引擎不止 mdtest 需要 vools.bridge：model.parse_cfg()（加载任何一条动作都要走）
+    # 与 executor 的逐块执行都 import vools.bridge.md.*。这些符号来自已发布的
+    # vools-bridges（主包 vools 只把它放在 [bridges] extras 里，装了 vools 也没有），
+    # 所以必须是硬依赖。
+    "vools-bridges>=0.7.6",
 ]
 
 [project.optional-dependencies]
@@ -69,9 +78,6 @@ actus = "vools.actus.cli:main"
 # ============ setuptools: 自动发现所有包 ============
 [tool.setuptools.packages.find]
 include = ["vools*"]
-
-[tool.setuptools.dynamic]
-version = { attr = "vools.actus.__version__" }
 
 [tool.setuptools.package-data]
 "vools.actus" = [

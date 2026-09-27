@@ -122,13 +122,33 @@ class TestWorkflowExecutor:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_resolve_params_reference(self):
+        # 测试目的：跨节点引用 $<真实节点 id>.<字段> 被解析成上游节点的真实输出值（不是原样透传）
+        # 新契约（workflow.py `_is_known_ref`）：引用根必须是绑定工作流里的真实节点，
+        # 所以这里用夹具声明过的 step1，而不是随手编一个 prev。
         wf = _make_workflow()
         tmpdir = tempfile.mkdtemp()
         try:
             executor = WorkflowExecutor(wf, meta_dir=tmpdir)
-            executor._node_outputs['prev'] = {'result': 'hello', 'count': 5}
-            resolved = executor._resolve_params({'$prev.result': '$prev.result'})
-            assert resolved['$prev.result'] == 'hello'
+            executor._node_outputs['step1'] = {'result': 'hello', 'count': 5}
+            resolved = executor._resolve_params(
+                {'$step1.result': '$step1.result', 'nested': {'k': '$step1.count'}})
+            assert resolved['$step1.result'] == 'hello'
+            assert resolved['nested']['k'] == 5
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_resolve_params_reference_rejects_non_node_root(self):
+        # 测试目的：引用根不是本工作流的节点时原样保留，并落进 unparsable 审计（不静默丢值）
+        wf = _make_workflow()
+        tmpdir = tempfile.mkdtemp()
+        try:
+            executor = WorkflowExecutor(wf, meta_dir=tmpdir)
+            executor._node_outputs['prev'] = {'result': 'hello'}
+            unparsable: list = []
+            resolved = executor._resolve_params(
+                {'$prev.result': '$prev.result'}, unparsable)
+            assert resolved['$prev.result'] == '$prev.result'
+            assert [e['ref'] for e in unparsable] == ['$prev.result']
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 

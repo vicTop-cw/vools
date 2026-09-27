@@ -3,11 +3,21 @@
 提供推/拉/同步的纯 Python 实现，供 .actus.md 动作和测试共用。
 """
 
+import fnmatch
 import os
+import posixpath
 import subprocess
 import time
-import fnmatch
 from typing import Dict, List, Optional, Tuple
+
+
+def remote_join(base: str, relpath: str) -> str:
+    """拼远程路径 —— 远端永远是 POSIX 分隔符，与跑在哪一侧无关。
+
+    在 Windows 上用 `os.path.join` 会塞进反斜杠（`/tmp/dir\\a.txt`），scp 把整串当
+    文件名去远端找 ⇒ 必然找不到；`sync` 的下载半边因此静默返回 0。
+    """
+    return posixpath.join(base, relpath.replace("\\", "/"))
 
 
 # ── 排除规则 ──
@@ -65,7 +75,7 @@ def scan_local_files(local_path: str, exclude: List[str] = None) -> Dict[str, di
             if should_exclude(fname, exclude):
                 continue
             fpath = os.path.join(root, fname)
-            relpath = os.path.relpath(fpath, local_path)
+            relpath = os.path.relpath(fpath, local_path).replace("\\", "/")
             try:
                 stat = os.stat(fpath)
                 files[relpath] = {"size": stat.st_size, "mtime": stat.st_mtime}
@@ -83,7 +93,7 @@ def build_ssh_opts(key_path: str = None, port: int = 22,
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
         "-o", f"ConnectTimeout={min(timeout, 30)}",
-        "-p", str(port),
+        "-o", f"Port={port}",
     ]
     if key_path and os.path.isfile(key_path):
         opts.extend(["-i", key_path])
@@ -120,7 +130,7 @@ def scan_remote_files(remote_path: str, remote_host: str, remote_user: str,
                 mtime = float(parts[0])
                 size = int(parts[1])
                 fpath = parts[2]
-                relpath = os.path.relpath(fpath, remote_path)
+                relpath = posixpath.relpath(fpath, remote_path)
                 if not should_exclude(os.path.basename(relpath), exclude):
                     files[relpath] = {"size": size, "mtime": mtime}
             except (ValueError, OSError):
@@ -237,7 +247,7 @@ def batch_upload(files: List[str], local_path: str, remote_path: str,
     errors = []
     for relpath in files:
         local_file = os.path.join(local_path, relpath)
-        remote_file = os.path.join(remote_path, relpath)
+        remote_file = remote_join(remote_path, relpath)
         if upload_single(local_file, remote_file, remote_host, remote_user,
                          port, key_path, password, timeout):
             count += 1
@@ -255,7 +265,7 @@ def batch_download(files: List[str], local_path: str, remote_path: str,
     errors = []
     for relpath in files:
         local_file = os.path.join(local_path, relpath)
-        remote_file = os.path.join(remote_path, relpath)
+        remote_file = remote_join(remote_path, relpath)
         if download_single(remote_file, local_file, remote_host, remote_user,
                            port, key_path, password, timeout):
             count += 1
@@ -280,24 +290,24 @@ def resolve_conflict(conflict: dict, local_path: str, remote_path: str,
         if local["mtime"] > remote["mtime"]:
             return upload_single(
                 os.path.join(local_path, relpath),
-                os.path.join(remote_path, relpath),
+                remote_join(remote_path, relpath),
                 remote_host, remote_user, port, key_path, password, timeout
             )
         else:
             return download_single(
-                os.path.join(remote_path, relpath),
+                remote_join(remote_path, relpath),
                 os.path.join(local_path, relpath),
                 remote_host, remote_user, port, key_path, password, timeout
             )
     elif strategy == "local":
         return upload_single(
             os.path.join(local_path, relpath),
-            os.path.join(remote_path, relpath),
+            remote_join(remote_path, relpath),
             remote_host, remote_user, port, key_path, password, timeout
         )
     elif strategy == "remote":
         return download_single(
-            os.path.join(remote_path, relpath),
+            remote_join(remote_path, relpath),
             os.path.join(local_path, relpath),
             remote_host, remote_user, port, key_path, password, timeout
         )
@@ -408,13 +418,12 @@ def _push_scp(local_path, remote_path, remote_host, remote_user,
     remote_target = f"{remote_user}@{remote_host}:{remote_path}"
     scp_cmd = ["scp", "-r"] + build_ssh_opts(key_path, port, timeout)
 
-    if os.path.isfile(local_path):
-        scp_cmd.extend([local_path, remote_target])
-    else:
-        ssh_cmd = ["ssh"] + build_ssh_opts(key_path, port, timeout)
-        ssh_cmd.extend([f"{remote_user}@{remote_host}", f"mkdir -p {remote_path}"])
-        subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
-        scp_cmd.extend([local_path, remote_target])
+    # 两种入参形状都要先把远端目录建出来 —— scp 不会自己建，单文件分支以前跳过
+    # 这一步：`scp: dest open "/tmp/…/push_1": No such file or directory`。
+    ssh_cmd = ["ssh"] + build_ssh_opts(key_path, port, timeout)
+    ssh_cmd.extend([f"{remote_user}@{remote_host}", f"mkdir -p {remote_path}"])
+    subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
+    scp_cmd.extend([local_path, remote_target])
 
     try:
         result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=timeout)
@@ -516,8 +525,6 @@ def _pull_tar_ssh(remote_path, local_path, remote_host, remote_user,
         return {"status": "error", "message": f"传输超时（{timeout}秒）"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-
 __all__ = [
     'batch_download',
     'batch_upload',
@@ -527,6 +534,8 @@ __all__ = [
     'download_single',
     'pull',
     'push',
+    'remote_join',
+    'remote_join',
     'resolve_conflict',
     'scan_local_files',
     'scan_remote_files',

@@ -240,7 +240,7 @@ def diff_markdown(md_old: str, md_new: str) -> DiffResult:
         elif isinstance(node, Divider):
             return 'divider'
         else:
-            return f'{type(node).__name__}:{getattr(node, 'text', '')}'
+            return f"{type(node).__name__}:{getattr(node, 'text', '')}"
 
     sigs_old = [_node_signature(c) for c in doc_old.children]
     sigs_new = [_node_signature(c) for c in doc_new.children]
@@ -346,7 +346,8 @@ def math_to_html(latex: str, display: bool = False) -> str:
         HTML 字符串（MathJax 兼容）
     """
     tag = 'block' if display else 'inline'
-    return f'<math{(" type=\"" + tag + "\"") if display else ""}>{latex}</math>'
+    attrs = f' type="{tag}"' if display else ''
+    return f'<math{attrs}>{latex}</math>'
 
 
 def math_to_markdown(latex: str, display: bool = False) -> str:
