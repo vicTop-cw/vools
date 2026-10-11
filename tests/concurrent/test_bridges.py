@@ -1,5 +1,6 @@
 """tests/concurrent/test_bridges.py — 桥接工具测试"""
 import pytest
+import queue
 import sys
 import os
 
@@ -42,9 +43,20 @@ class TestThreadProcessBridge:
         assert b is not None
 
     def test_send_recv_thread_side(self):
+        # 线程侧发 → 进程侧收（ThreadProcessBridge 的文档语义就是跨侧通信：
+        # 线程侧用管道 a 端、进程侧用 b 端）。这里过去写成「线程侧发、线程侧收」——
+        # 同一个 a 端自发自收，duplex Pipe 上 a.send 的数据只会出现在 b 端，
+        # a.recv() 因此**永久阻塞**（不是失败而是挂死，整条 pytest 会话被拖住）。
+        # 传 timeout 让任何回归变成「快速失败」而不是「无限等待」。
         b = ThreadProcessBridge()
         b.send_thread_side('hello')
-        assert b.recv_thread_side() == 'hello'
+        assert b.recv_process_side(timeout=2.0) == 'hello'
+
+    def test_send_recv_process_side(self):
+        # 进程侧发 → 线程侧收（反向跨侧，与上一条成对覆盖两个方向）
+        b = ThreadProcessBridge()
+        b.send_process_side('world')
+        assert b.recv_thread_side(timeout=2.0) == 'world'
 
     def test_close(self):
         b = ThreadProcessBridge()
@@ -64,18 +76,35 @@ class TestChannelBridge:
         assert b.connection is not None
 
     def test_send_recv(self):
+        # ChannelBridge 是**跨进程**通道：本端 send 的消息由 peer_connection（对端）收到。
+        # 过去写成「同一实例 send 后立刻 recv」——本端 a 端发、a 端收，duplex Pipe 上
+        # 消息只出现在对端，本端 recv() 因此永久阻塞（挂死而非失败）。
         b = ChannelBridge()
         b.send('test')
-        assert b.recv() == 'test'
+        assert b.peer_connection.recv() == 'test'
+
+    def test_recv_from_peer(self):
+        # 反向：对端 send → 本端 recv
+        b = ChannelBridge()
+        b.peer_connection.send('from_peer')
+        assert b.recv(timeout=2.0) == 'from_peer'
 
     def test_send_json_recv_json(self):
         b = ChannelBridge()
         b.send_json({'key': 'value'})
-        assert b.recv_json() == {'key': 'value'}
+        assert b.peer_connection.recv() == ('__json__', '{"key": "value"}')
+
+    def test_recv_json_from_peer(self):
+        b = ChannelBridge()
+        b.peer_connection.send(('__json__', '{"key": "value"}'))
+        assert b.recv_json(timeout=2.0) == {'key': 'value'}
 
     def test_poll(self):
         b = ChannelBridge()
         assert b.poll(0.1) is False
+        # 对端发来数据后，本端 poll 应转为 True
+        b.peer_connection.send('ping')
+        assert b.poll(2.0) is True
 
     def test_closed(self):
         b = ChannelBridge()
@@ -88,49 +117,95 @@ class TestQueueBridge:
     """QueueBridge 队列桥接测试"""
 
     def test_creation(self):
-        b = QueueBridge()
+        # QueueBridge 需要 source/destination 两个队列（见类 docstring 的示例：
+        # QueueBridge(src, dst, filter_fn=..., transform_fn=...)）。过去写成无参
+        # QueueBridge()，必然 TypeError。
+        src, dst = queue.Queue(), queue.Queue()
+        b = QueueBridge(src, dst)
         assert b is not None
 
     def test_start_stop(self):
-        b = QueueBridge()
+        src, dst = queue.Queue(), queue.Queue()
+        b = QueueBridge(src, dst)
         b.start()
-        assert b.is_running() is True
+        assert b.is_running is True
         b.stop()
-        assert b.is_running() is False
+        assert b.is_running is False
+
+    def test_forwards_messages(self):
+        # 端到端：源队列的消息应被转发到目标队列（带 filter/transform）
+        src, dst = queue.Queue(), queue.Queue()
+        b = QueueBridge(src, dst, filter_fn=lambda x: x > 0, transform_fn=lambda x: x * 2)
+        b.start()
+        try:
+            src.put(5)
+            assert dst.get(timeout=2.0) == 10
+        finally:
+            b.stop(timeout=2.0)
 
 
 class TestSharedBridge:
-    """SharedBridge 共享内存桥接测试"""
+    """SharedBridge 共享内存桥接测试
+
+    注意：SharedBridge 的签名是 ``SharedBridge(size=..., name=...)``——第一个位置
+    参数是 **size** 而不是 name。过去写成 ``SharedBridge('test', size=1024)``，
+    等于给 size 传了两次（位置 'test' + 关键字 1024），必然 TypeError。这里统一
+    改成关键字调用。
+    """
 
     def test_creation(self):
-        b = SharedBridge('test_bridge', size=1024)
-        assert b is not None
+        b = SharedBridge(size=1024)
+        try:
+            assert b is not None
+        finally:
+            b.close()
+            b.unlink()
 
     def test_name(self):
-        b = SharedBridge('my_bridge', size=1024)
-        assert b.name == 'my_bridge'
+        b = SharedBridge(size=1024)
+        try:
+            assert b.name is not None
+        finally:
+            b.close()
+            b.unlink()
 
     def test_size(self):
-        b = SharedBridge('test', size=2048)
-        assert b.size == 2048
+        b = SharedBridge(size=2048)
+        try:
+            assert b.size == 2048
+        finally:
+            b.close()
+            b.unlink()
 
     def test_write_read(self):
-        b = SharedBridge('test', size=1024)
-        b.write(b'hello')
-        assert b.read(5) == b'hello'
+        b = SharedBridge(size=1024)
+        try:
+            b.write(b'hello')
+            assert b.read(5) == b'hello'
+        finally:
+            b.close()
+            b.unlink()
 
     def test_write_object_read_object(self):
-        b = SharedBridge('test', size=4096)
-        b.write_object({'key': 'value'})
-        assert b.read_object() == {'key': 'value'}
+        b = SharedBridge(size=4096)
+        try:
+            # write_object 返回实际写入字节数；read_object(n) 需要知道读多少字节
+            # （共享内存是一段裸 buffer，没有长度前缀，无法自行推断边界）。
+            n = b.write_object({'key': 'value'})
+            assert b.read_object(n) == {'key': 'value'}
+        finally:
+            b.close()
+            b.unlink()
 
     def test_close(self):
-        b = SharedBridge('test', size=1024)
+        b = SharedBridge(size=1024)
         b.close()
+        b.unlink()
         assert True  # 无异常即通过
 
     def test_unlink(self):
-        b = SharedBridge('test', size=1024)
+        b = SharedBridge(size=1024)
+        b.close()
         b.unlink()
         assert True  # 无异常即通过
 
@@ -176,8 +251,12 @@ class TestStreamBridge:
         assert b.recv() == 'data'
 
     def test_qsize(self):
+        # StreamBridge 的 qsize 是 **property**（与同类里的 buffer_size 一致），
+        # 过去写成 b.qsize() 会 TypeError: 'int' object is not callable。
         b = StreamBridge()
-        assert b.qsize() == 0
+        assert b.qsize == 0
+        b.send('x')
+        assert b.qsize == 1
 
     def test_close(self):
         b = StreamBridge()

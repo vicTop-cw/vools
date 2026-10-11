@@ -69,6 +69,13 @@ cli = [
     "typing-extensions>=4.0.0",
     "fire>=0.5.0",
 ]
+# pyk 子包（pyspark 相关 API）：已并入 vools 主包（vools/pyk/），不再依赖独立 vools-pyk。
+# 安装方式：pip install 'vools[spark]'  即可获得 pyspark 运行时 + pyk 全套 API。
+spark = [
+    "pyspark>=2.4.3",
+    "pandas>=0.24",
+    "numpy>=1.16",
+]
 docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.0",
@@ -95,6 +102,7 @@ exclude = [
     "vools.bridge*",
     "vools.actus*",
     "vools.reactive*",
+    "vools.pyk*",
 ]
 
 [tool.setuptools.dynamic]
@@ -119,12 +127,18 @@ testpaths = ["tests"]
 # 默认不运行（需要外部资源/平台特定）：dll32, xl, monitoring, benchmarks, archive, other
 # 如需运行全部测试，使用: pytest --override-ini="addopts=--tb=short -q"
 # 如需运行特定子项目测试，使用: pytest bridges/tests/ 或 pytest rx/tests/
-addopts = "--tb=short -q --ignore=tests/monitoring --ignore=tests/benchmarks --ignore=tests/archive --ignore=tests/other --ignore=tests/__rust__ --ignore=tests/__persist__ --ignore=tests/__pycache__"
+# 让未注册标记直接失败，杜绝"标记名写对但无人实现"的静默空守卫
+addopts = "--tb=short -q --strict-markers --ignore=tests/monitoring --ignore=tests/benchmarks --ignore=tests/archive --ignore=tests/other --ignore=tests/__rust__ --ignore=tests/__persist__ --ignore=tests/__pycache__"
 markers = [
     "integration: 标记集成测试（依赖外部资源，如剪贴板、文件系统、键鼠）",
     "windows_only: 仅在 Windows 上可运行的测试",
     "slow: 运行较慢的测试",
     "asyncio: 标记异步测试",
+    # BUG-4：本仓曾用 @pytest.mark.flaky(reruns=N) 兜底计时抖动，但既没注册这个标记、
+    # 也没声明 pytest-rerunfailures —— 标记被 pytest 当未知标记静默忽略，reruns 从未
+    # 生效（套件随机红绿）。注册后：装了 pytest-rerunfailures 就真重试；没装则
+    # --strict-markers 下会明确报错，而不是继续"看起来有守卫"。
+    "flaky: 允许重试的不稳定用例（需 pytest-rerunfailures 才真正生效）",
 ]
 asyncio_mode = "auto"
 

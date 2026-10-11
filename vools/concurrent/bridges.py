@@ -256,11 +256,23 @@ class ChannelBridge:
 
     带超时和关闭语义，支持上下文管理器。
 
+    语义（跨进程通道）：``connection`` 是**本端**、``peer_connection`` 是**对端**。
+    ``send``/``recv`` 都在本端上工作——本端 send 的消息由**对端** recv 收到，
+    反之亦然。同一个实例上 ``send`` 后紧接着 ``recv`` **收不到自己发的消息**
+    （duplex Pipe 的两端各自独立），不传 timeout 时会永久阻塞。
+
     示例::
 
         ch = ChannelBridge()
+
+        # 本端发送，对端（另一个进程）接收
         ch.send_json({"key": "value"})
-        data = ch.recv_json()
+
+        # 对端进程里：
+        #   peer = ch.peer_connection
+        #   peer.send(("__json__", '{"ok": true}'))
+        # 本端接收对端发来的消息
+        #   data = ch.recv_json()
         ch.close()
     """
 
