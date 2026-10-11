@@ -5,9 +5,30 @@ vools - Python 函数式编程工具集
 """
 
 import pkgutil
+import os
+import sys
+import types
 
 # 允许 vools-rx / vools-bridges 等子包作为同一 vools 命名空间下的独立分发包被合并
 __path__ = pkgutil.extend_path(__path__, __name__)
+
+# ============================================================================
+# vools.concurrent 兼容别名（防 shadow 标准库 concurrent）
+# ============================================================================
+# 物理目录 `vools/concurrent` 已改名 `vools/vconcurrent`：因为只要 vools 根出现在
+# sys.path 的前面，`import concurrent.futures` 就会命中 vools/concurrent/futures.py
+# 而不是标准库，导致 `from concurrent.futures import ThreadPoolExecutor` 直接崩
+# （vools/decorators/trd.py 首当其冲）。
+# 这里在 sys.modules 注册一个代理模块，其 __path__ 指向 vconcurrent 目录：
+#   - `from vools.concurrent.futures import VThreadPoolExecutor`（旧用法）继续可用
+#   - `import vools.concurrent.futures`（旧用法）继续可用
+#   - 顶层 `import concurrent.futures` 不再被 shadow（标准库正常）
+_vools_pkg_dir = os.path.dirname(os.path.abspath(__file__))
+_vconcurrent_dir = os.path.join(_vools_pkg_dir, "vconcurrent")
+if not sys.modules.get("vools.concurrent") and os.path.isdir(_vconcurrent_dir):
+    _conc_proxy = types.ModuleType("vools.concurrent")
+    _conc_proxy.__path__ = [_vconcurrent_dir]
+    sys.modules["vools.concurrent"] = _conc_proxy
 
 import subprocess
 

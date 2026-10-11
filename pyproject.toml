@@ -30,6 +30,9 @@ classifiers = [
 ]
 requires-python = ">=3.6"
 dependencies = [
+    # py3.6 没有标准库 dataclasses，vools/core/dataclass_compat.py 回退到 attrs 包。
+    # py3.7+ 用标准库 dataclasses，无需额外依赖（vools 主体保持零强制依赖）。
+    "attrs>=20.3,<23; python_version < '3.7'",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +49,9 @@ serialize = [
     "msgpack>=1.0",
     "orjson>=3.9",
 ]
+# vools.data.vtext 的 fernet/aes 加密依赖 cryptography。
+# 生产用 pyk/configs.encrypt_secret(way="fernet") 加密 PG 等密文时必须装这个 extra。
+security = ["cryptography>=41.0"]
 rx = ["vools-rx==0.7.6"]
 # vools.bridge.md 实际由 vools-bridges 分发：`vools-bridge-md`(0.5.0) 从未发布到 PyPI
 # （实测 pypi.org/pypi/vools-bridge-md/json → 404），照原名 pin 会让 vools[bridge-md]
