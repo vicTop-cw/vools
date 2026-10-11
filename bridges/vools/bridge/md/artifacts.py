@@ -1,31 +1,35 @@
 """
 vools.bridge.md artifacts — 产物目录/hash/增量/清理
 """
-import os, hashlib, shutil
-from typing import Dict, List, Optional
 
+import hashlib
+import os
+import shutil
+from typing import Dict, List, Optional
 
 # ═══════════════════════════════════════════════════════
 # 目录管理
 # ═══════════════════════════════════════════════════════
 
+
 def ensure_build_dir(build_dir: str) -> None:
     """创建 .mdbuild/ 及子目录。"""
     os.makedirs(build_dir, exist_ok=True)
-    os.makedirs(os.path.join(build_dir, 'artifacts'), exist_ok=True)
-    os.makedirs(os.path.join(build_dir, 'sources'), exist_ok=True)
-    os.makedirs(os.path.join(build_dir, 'tmp'), exist_ok=True)
+    os.makedirs(os.path.join(build_dir, "artifacts"), exist_ok=True)
+    os.makedirs(os.path.join(build_dir, "sources"), exist_ok=True)
+    os.makedirs(os.path.join(build_dir, "tmp"), exist_ok=True)
 
 
 # ═══════════════════════════════════════════════════════
 # 哈希计算
 # ═══════════════════════════════════════════════════════
 
+
 def compute_artifact_hash(path: str) -> str:
     """计算产物文件 MD5。"""
     h = hashlib.md5()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(8192), b''):
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
 
@@ -33,6 +37,7 @@ def compute_artifact_hash(path: str) -> str:
 # ═══════════════════════════════════════════════════════
 # 增量判断
 # ═══════════════════════════════════════════════════════
+
 
 def is_artifact_stale(
     build_dir: str,
@@ -54,21 +59,22 @@ def is_artifact_stale(
     """
     if manifest is None:
         from .manifest import read_manifest
+
         manifest = read_manifest(build_dir)
 
     if not manifest:
         return True
 
-    blocks = manifest.get('blocks', [])
+    blocks = manifest.get("blocks", [])
     if block_idx >= len(blocks):
         return True
 
     cached = blocks[block_idx]
-    if cached.get('source_hash') != block_hash:
+    if cached.get("source_hash") != block_hash:
         return True
 
     # 检查产物文件是否存在
-    artifact_path = cached.get('artifact')
+    artifact_path = cached.get("artifact")
     if artifact_path and os.path.exists(artifact_path):
         return False
 
@@ -78,6 +84,7 @@ def is_artifact_stale(
 # ═══════════════════════════════════════════════════════
 # 产物注册
 # ═══════════════════════════════════════════════════════
+
 
 def register_artifact(
     table: Dict,
@@ -100,17 +107,18 @@ def register_artifact(
         return
 
     table[name] = {
-        'name': name,
-        'path': path,
-        'hash': compute_artifact_hash(path),
-        'source_block': block_idx,
-        'source_tag': tag,
+        "name": name,
+        "path": path,
+        "hash": compute_artifact_hash(path),
+        "source_block": block_idx,
+        "source_tag": tag,
     }
 
 
 # ═══════════════════════════════════════════════════════
 # 清理
 # ═══════════════════════════════════════════════════════
+
 
 def clean_build(
     build_dir: str,
@@ -135,17 +143,18 @@ def clean_build(
 
     # 只清 stale
     from .manifest import read_manifest
+
     manifest = read_manifest(build_dir)
 
     if manifest:
         # 从 manifest 中获取有效产物路径
         valid_paths = set()
-        for block in manifest.get('blocks', []):
-            if block.get('artifact') and os.path.exists(block['artifact']):
-                valid_paths.add(block['artifact'])
+        for block in manifest.get("blocks", []):
+            if block.get("artifact") and os.path.exists(block["artifact"]):
+                valid_paths.add(block["artifact"])
 
         # 清理 artifacts/ 下的孤儿文件
-        artifacts_dir = os.path.join(build_dir, 'artifacts')
+        artifacts_dir = os.path.join(build_dir, "artifacts")
         if os.path.exists(artifacts_dir):
             for fname in os.listdir(artifacts_dir):
                 fpath = os.path.join(artifacts_dir, fname)
@@ -153,7 +162,7 @@ def clean_build(
                     os.unlink(fpath)
 
     # 清理 tmp/
-    tmp_dir = os.path.join(build_dir, 'tmp')
+    tmp_dir = os.path.join(build_dir, "tmp")
     if os.path.exists(tmp_dir):
         for fname in os.listdir(tmp_dir):
             os.unlink(os.path.join(tmp_dir, fname))

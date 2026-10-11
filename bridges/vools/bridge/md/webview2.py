@@ -29,7 +29,7 @@ vools.bridge.md webview2 — WebView2 (Chromium) 渲染引擎 v2.0
   <script>
     // 发送消息到 Python
     sendToPython('event', { foo: 'bar' });
-    
+
     // 接收来自 Python 的消息
     window.onPythonMessage = function(data) {
         console.log('收到 Python 消息:', data);
@@ -52,34 +52,36 @@ import subprocess
 import html
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable, Union
-from pathlib import Path
 from enum import Enum
-
 
 # ═══════════════════════════════════════════════════════
 # 枚举和常量
 # ═══════════════════════════════════════════════════════
 
+
 class WebView2Mode(Enum):
     """WebView2 运行模式"""
-    NATIVE = "native"      # 原生 SDK (pythonnet + Microsoft.Web.WebView2)
+
+    NATIVE = "native"  # 原生 SDK (pythonnet + Microsoft.Web.WebView2)
     PYWEBVIEW = "pywebview"  # pywebview 库
     FALLBACK = "fallback"  # 子进程模式
 
 
 class WebView2EventType(Enum):
     """事件类型"""
-    READY = "ready"                # 页面加载完成
-    MESSAGE = "message"            # 自定义消息
-    EVENT = "event"                # 用户事件
-    ERROR = "error"                # JS 错误
+
+    READY = "ready"  # 页面加载完成
+    MESSAGE = "message"  # 自定义消息
+    EVENT = "event"  # 用户事件
+    ERROR = "error"  # JS 错误
     WINDOW_CLOSE = "window_close"  # 窗口关闭
     WINDOW_RESIZE = "window_resize"  # 窗口大小变化
-    CUSTOM = "custom"              # 自定义事件
+    CUSTOM = "custom"  # 自定义事件
 
 
 class WebView2Theme(Enum):
     """内置主题"""
+
     LIGHT = "light"
     DARK = "dark"
     BLUE = "blue"
@@ -90,9 +92,11 @@ class WebView2Theme(Enum):
 # 数据类
 # ═══════════════════════════════════════════════════════
 
+
 @dataclass
 class WebView2Config:
     """WebView2 配置"""
+
     title: str = "WebView2 Window"
     width: int = 800
     height: int = 600
@@ -115,6 +119,7 @@ class WebView2Config:
 @dataclass
 class WebView2Event:
     """WebView2 事件"""
+
     type: str
     name: str
     data: Any
@@ -126,6 +131,7 @@ class WebView2Event:
 @dataclass
 class WebView2Result:
     """执行结果"""
+
     status: str = "ok"
     events: List[Dict] = field(default_factory=list)
     messages: List[Dict] = field(default_factory=list)
@@ -138,6 +144,7 @@ class WebView2Result:
 @dataclass
 class WebView2Message:
     """消息对象"""
+
     type: str
     data: Any
     target: str = "all"  # all, js, python
@@ -148,23 +155,24 @@ class WebView2Message:
 # WebView2 管理器 - 真正的 Chromium 内核
 # ═══════════════════════════════════════════════════════
 
+
 class WebView2Manager:
     """
     WebView2 管理器 (Chromium 内核)
-    
+
     支持模式：
     1. native - 原生 WebView2 (pythonnet + Microsoft.Web.WebView2) - 首选
     2. pywebview - 轻量级回退方案
     3. fallback - 子进程模式
-    
+
     关键区别：
     - System.Windows.Forms.WebBrowser = IE 内核（旧的，不要用）
     - Microsoft.Web.WebView2 = Edge Chromium 内核（新的，用户想要的）
     """
-    
+
     _instance = None
     _lock = threading.Lock()
-    
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
@@ -172,7 +180,7 @@ class WebView2Manager:
                     cls._instance = super().__new__(cls)
                     cls._instance._initialized = False
         return cls._instance
-    
+
     def __init__(self):
         if self._initialized:
             return
@@ -182,83 +190,76 @@ class WebView2Manager:
         self._message_queue = queue.Queue()
         self._message_id_counter = 0
         self._callbacks: Dict[str, Callable] = {}
-        
+
         # 检测可用的 WebView2 实现
         self._mode = self._detect_mode()
-    
+
     def _detect_mode(self) -> WebView2Mode:
         """检测可用的 WebView2 实现"""
         # 1. 尝试原生 WebView2
         try:
             import clr
-            clr.AddReference('Microsoft.Web.WebView2')
-            from Microsoft.Web.WebView2 import WebView2
+
+            clr.AddReference("Microsoft.Web.WebView2")
+            from Microsoft.Web.WebView2 import WebView2  # noqa: F401
+
             return WebView2Mode.NATIVE
-        except:
+        except Exception:
             pass
-        
+
         # 2. 尝试 pywebview
         try:
-            import webview
+            import webview  # noqa: F401
+
             return WebView2Mode.PYWEBVIEW
         except ImportError:
             pass
-        
+
         # 3. 回退模式
         return WebView2Mode.FALLBACK
-    
+
     # ═══════════════════════════════════════════════════════
     # HTML 生成
     # ═══════════════════════════════════════════════════════
-    
-    def generate_html(
-        self,
-        html_content: str,
-        config: WebView2Config,
-        block_id: str = ""
-    ) -> str:
+
+    def generate_html(self, html_content: str, config: WebView2Config, block_id: str = "") -> str:
         """生成完整的 HTML 文件"""
         if config.html_file and os.path.exists(config.html_file):
             return config.html_file
-        
+
         full_html = self._build_html_document(html_content, config, block_id)
-        
+
         temp_dir = os.path.join(tempfile.gettempdir(), "vools_md_webview2")
         os.makedirs(temp_dir, exist_ok=True)
-        
+
         html_filename = f"webview2_{block_id or uuid.uuid4().hex[:8]}.html"
         html_path = os.path.join(temp_dir, html_filename)
-        
-        with open(html_path, 'w', encoding='utf-8') as f:
+
+        with open(html_path, "w", encoding="utf-8") as f:
             f.write(full_html)
-        
+
         return html_path
-    
-    def _build_html_document(
-        self,
-        html_content: str,
-        config: WebView2Config,
-        block_id: str
-    ) -> str:
+
+    def _build_html_document(self, html_content: str, config: WebView2Config, block_id: str) -> str:
         """构建完整的 HTML 文档"""
         comm_script = self._get_communication_script(block_id, config)
         inject_js = config.inject_js or ""
         theme_styles = self._get_theme_styles(config.theme)
-        
-        if '<html' in html_content.lower():
-            if '</body>' in html_content.lower():
+
+        if "<html" in html_content.lower():
+            if "</body>" in html_content.lower():
                 html_content = html_content.replace(
-                    '</body>',
-                    f'<style>{theme_styles}</style>\n<script>{comm_script}</script>\n<script>{inject_js}</script>\n</body>'
+                    "</body>",
+                    f"<style>{theme_styles}</style>\n<script>{comm_script}</script>\n<script>{inject_js}</script>\n</body>",
                 )
             else:
-                html_content = f'<body>{html_content}</body>\n<style>{theme_styles}</style>\n<script>{comm_script}</script>\n<script>{inject_js}</script>'
-            
-            if '<head>' not in html_content.lower() and '<html' in html_content.lower():
-                html_content = html_content.replace('<html>', '<html>\n<head>')
-                html_content = html_content.replace('</html>', '</head>\n</html>')
+                html_content = f"<body>{html_content}</body>\n<style>{theme_styles}</style>\n<script>{comm_script}</script>\n<script>{inject_js}</script>"
+
+            if "<head>" not in html_content.lower() and "<html" in html_content.lower():
+                html_content = html_content.replace("<html>", "<html>\n<head>")
+                html_content = html_content.replace("</html>", "</head>\n</html>")
         else:
-            full_html = f'''<!DOCTYPE html>
+            full_html = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -271,44 +272,44 @@ class WebView2Manager:
     <script>{comm_script}</script>
     <script>{inject_js}</script>
 </body>
-</html>'''
+</html>"""
             html_content = full_html
-        
+
         return html_content
-    
+
     def _get_theme_styles(self, theme: Union[str, WebView2Theme]) -> str:
         """获取主题样式"""
         if isinstance(theme, str):
             theme = WebView2Theme(theme.lower())
-        
+
         themes = {
-            WebView2Theme.LIGHT: '''
+            WebView2Theme.LIGHT: """
                 body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #fff; color: #333; }
                 button { padding: 8px 16px; background: #0078d4; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
                 button:hover { background: #106ebe; }
-            ''',
-            WebView2Theme.DARK: '''
+            """,
+            WebView2Theme.DARK: """
                 body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1e1e1e; color: #d4d4d4; }
                 button { padding: 8px 16px; background: #0078d4; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
                 button:hover { background: #106ebe; }
-            ''',
-            WebView2Theme.BLUE: '''
+            """,
+            WebView2Theme.BLUE: """
                 body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; min-height: 100vh; }
                 button { padding: 10px 20px; background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; cursor: pointer; backdrop-filter: blur(10px); }
                 button:hover { background: rgba(255,255,255,0.3); }
-            ''',
-            WebView2Theme.MINIMAL: '''
+            """,
+            WebView2Theme.MINIMAL: """
                 body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
                 * { box-sizing: border-box; }
-            ''',
+            """,
         }
-        
+
         return themes.get(theme, themes[WebView2Theme.LIGHT])
-    
+
     def _get_communication_script(self, block_id: str, config: WebView2Config) -> str:
         """
         获取 WebView2 通信脚本（支持双向通信）
-        
+
         关键功能：
         1. JS → Python: window.chrome.webview.postMessage
         2. Python → JS: window.receiveFromPython (回调函数)
@@ -318,8 +319,8 @@ class WebView2Manager:
         devtools_init = ""
         if config.devtools:
             devtools_init = "window.chrome.webview.openDevTools();"
-        
-        return f'''
+
+        return f"""
 // WebView2 (Chromium) 通信脚本 v2.0
 // 支持完整的双向通信
 (function() {{
@@ -477,79 +478,74 @@ class WebView2Manager:
     
     console.log('[WebView2 Chromium] 通信已初始化', blockId);
 }})();
-'''
-    
+"""
+
     # ═══════════════════════════════════════════════════════
     # 运行 WebView2
     # ═══════════════════════════════════════════════════════
-    
+
     def run_webview2(
         self,
         html_content: str,
         config: WebView2Config,
         block_id: str = "",
         timeout: int = 0,
-        context: Optional[Dict] = None
+        context: Optional[Dict] = None,
     ) -> WebView2Result:
         """运行 WebView2 (Chromium)"""
         start_time = time.perf_counter()
         result = WebView2Result()
-        
+
         try:
             html_path = self.generate_html(html_content, config, block_id)
             result.html_path = html_path
-            
+
             if self._mode == WebView2Mode.NATIVE:
                 return self._run_native_webview2(html_path, config, block_id, timeout, context)
             elif self._mode == WebView2Mode.PYWEBVIEW:
                 return self._run_pywebview(html_path, config, block_id, timeout)
             else:
                 return self._run_subprocess(html_path, config, block_id, timeout)
-                
+
         except Exception as e:
             result.status = "error"
             result.error = str(e)
-        
+
         result.duration_ms = (time.perf_counter() - start_time) * 1000
         return result
-    
+
     def _run_native_webview2(
-        self,
-        html_path: str,
-        config: WebView2Config,
-        block_id: str,
-        timeout: int,
-        context: Optional[Dict]
+        self, html_path: str, config: WebView2Config, block_id: str, timeout: int, context: Optional[Dict]
     ) -> WebView2Result:
         """使用原生 WebView2 SDK (pythonnet + Microsoft.Web.WebView2)"""
         result = WebView2Result()
         result.html_path = html_path
         result.mode = WebView2Mode.NATIVE.value
-        
+
         try:
             import clr
             from System import EventHandler, Uri
             from System.Windows.Forms import Form, Application, FormBorderStyle
-            
-            clr.AddReference('Microsoft.Web.WebView2.WinForms')
+
+            clr.AddReference("Microsoft.Web.WebView2.WinForms")
             from Microsoft.Web.WebView2.WinForms import WebView2 as WinFormsWebView2
-            
+
             # 创建窗体
             form = Form()
             form.Text = config.title
             form.Width = config.width
             form.Height = config.height
             form.FormBorderStyle = FormBorderStyle.Sizable if config.resizable else FormBorderStyle.FixedSingle
-            
+
             # 创建 WebView2 控件
             webview = WinFormsWebView2()
             webview.Dock = 5  # Fill
             webview.Source = Uri(f"file:///{html_path.replace(os.sep, '/')}")
-            
+
             # 消息存储
             events = []
             messages = []
-            
+
             # 消息处理
             def on_web_message_received(sender, args):
                 try:
@@ -557,44 +553,40 @@ class WebView2Manager:
                     if msg_json:
                         data = json.loads(msg_json)
                         messages.append(data)
-                        
+
                         # 处理事件
-                        if data.get('type') == 'event':
+                        if data.get("type") == "event":
                             events.append(data)
                             if config.on_event:
                                 config.on_event(data)
-                        elif data.get('type') == 'ready':
+                        elif data.get("type") == "ready":
                             if config.on_ready:
                                 config.on_ready(data)
-                        elif data.get('type') == 'window_close':
+                        elif data.get("type") == "window_close":
                             if config.on_close:
                                 config.on_close(data)
-                        elif data.get('type') == 'error':
+                        elif data.get("type") == "error":
                             if config.on_error:
                                 config.on_error(data)
-                        
+
                         # 调用通用回调
                         if config.on_message:
                             config.on_message(data)
                 except Exception as e:
                     if config.on_error:
-                        config.on_error({'error': str(e)})
-            
+                        config.on_error({"error": str(e)})
+
             webview.WebMessageReceived += EventHandler[object](on_web_message_received)
-            
+
             form.Controls.Add(webview)
-            
+
             # 保存窗口引用（用于发送消息）
-            self._active_windows[block_id] = {{
-                'form': form,
-                'webview': webview,
-                'config': config
-            }}
-            
+            self._active_windows[block_id] = {{"form": form, "webview": webview, "config": config}}
+
             # 显示窗口
             if config.blocking:
                 Application.Run(form)
-                
+
                 # 窗口关闭后清理
                 if block_id in self._active_windows:
                     del self._active_windows[block_id]
@@ -602,38 +594,32 @@ class WebView2Manager:
                 form.Show()
                 result.status = "ok"
                 return result
-            
+
             result.status = "ok"
             result.events = events
             result.messages = messages
-            
+
         except ImportError as e:
             result.status = "error"
             result.error = f"WebView2 SDK 未安装: {e}\n请安装: pip install pythonnet 并确保 WebView2 运行时已安装"
         except Exception as e:
             result.status = "error"
             result.error = str(e)
-        
+
         return result
-    
-    def _run_pywebview(
-        self,
-        html_path: str,
-        config: WebView2Config,
-        block_id: str,
-        timeout: int
-    ) -> WebView2Result:
+
+    def _run_pywebview(self, html_path: str, config: WebView2Config, block_id: str, timeout: int) -> WebView2Result:
         """使用 pywebview 库"""
         result = WebView2Result()
         result.html_path = html_path
         result.mode = WebView2Mode.PYWEBVIEW.value
-        
+
         try:
             import webview
-            
+
             events = []
             messages = []
-            
+
             # pywebview 的消息处理有限制
             if config.blocking:
                 window = webview.create_window(
@@ -644,11 +630,11 @@ class WebView2Manager:
                     resizable=config.resizable,
                     fullscreen=config.fullscreen,
                 )
-                
+
                 if config.devtools:
                     # pywebview 没有内置 devtools，但可以尝试
                     pass
-                
+
                 webview.start()
                 result.status = "ok"
             else:
@@ -659,51 +645,40 @@ class WebView2Manager:
                     height=config.height,
                     resizable=config.resizable,
                 )
-                self._active_windows[block_id] = {'window': window, 'config': config}
+                self._active_windows[block_id] = {"window": window, "config": config}
                 result.status = "ok"
-            
+
             result.events = events
             result.messages = messages
-            
+
         except ImportError:
             result.status = "error"
             result.error = "pywebview 未安装，请运行: pip install pywebview"
         except Exception as e:
             result.status = "error"
             result.error = str(e)
-        
+
         return result
-    
-    def _run_subprocess(
-        self,
-        html_path: str,
-        config: WebView2Config,
-        block_id: str,
-        timeout: int
-    ) -> WebView2Result:
+
+    def _run_subprocess(self, html_path: str, config: WebView2Config, block_id: str, timeout: int) -> WebView2Result:
         """使用子进程启动独立的 WebView2 进程"""
         result = WebView2Result()
         result.html_path = html_path
-        
+
         runner_script = self._create_webview2_runner_script(html_path, config, block_id)
-        
+
         temp_dir = os.path.join(tempfile.gettempdir(), "vools_md_webview2")
-        script_path = os.path.join(temp_dir, f"runner_{{block_id}}.py")
-        
-        with open(script_path, 'w', encoding='utf-8') as f:
+        script_path = os.path.join(temp_dir, "runner_{block_id}.py")
+
+        with open(script_path, "w", encoding="utf-8") as f:
             f.write(runner_script)
-        
+
         try:
             cmd = [sys.executable, script_path]
-            
+
             if config.blocking:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout if timeout > 0 else None
-                )
-                
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout if timeout > 0 else None)
+
                 if proc.returncode == 0:
                     result.status = "ok"
                 else:
@@ -711,23 +686,23 @@ class WebView2Manager:
                     result.error = proc.stderr
             else:
                 proc = subprocess.Popen(cmd)
-                self._active_windows[block_id] = {'proc': proc, 'config': config}
+                self._active_windows[block_id] = {"proc": proc, "config": config}
                 result.status = "ok"
-                
+
         except subprocess.TimeoutExpired:
             result.status = "timeout"
         except Exception as e:
             result.status = "error"
             result.error = str(e)
-        
+
         return result
-    
+
     def _create_webview2_runner_script(self, html_path: str, config: WebView2Config, block_id: str) -> str:
         """创建 WebView2 运行脚本"""
         # 下面这段是 f-string 模板：{{x}} 是刻意双写，渲染成 {x} 交给生成的脚本自己
         # 插值（生成的脚本里就有 html_path / e 这些名字）。改成单花括号＝让宿主求值，
         # 本函数一调用就 NameError。
-        return f'''
+        return f"""
 import sys
 import os
 import json
@@ -821,90 +796,86 @@ except Exception as e:
     print("[WebView2] 回退到默认浏览器...")
     import webbrowser
     webbrowser.open(f"file:///{{html_path}}")
-'''
-    
+"""
+
     # ═══════════════════════════════════════════════════════
     # 双向通信：Python → JS
     # ═══════════════════════════════════════════════════════
-    
+
     def send_message(self, block_id: str, data: Any, callback: Optional[Callable] = None) -> bool:
         """
         向 WebView2 发送消息 (Python → JS)
-        
+
         Args:
             block_id: 块标识符
             data: 要发送的数据
             callback: 可选的回调函数（当 JS 回复时调用）
-        
+
         Returns:
             是否发送成功
         """
         if block_id not in self._active_windows:
             return False
-        
+
         window_info = self._active_windows[block_id]
-        
+
         if self._mode == WebView2Mode.NATIVE:
             try:
-                webview = window_info.get('webview')
-                if webview and hasattr(webview, 'CoreWebView2'):
+                webview = window_info.get("webview")
+                if webview and hasattr(webview, "CoreWebView2"):
                     core = webview.CoreWebView2
                     if core:
-                        msg = {{
-                            'type': 'python_message',
-                            'data': data,
-                            'timestamp': time.time()
-                        }}
+                        msg = {{"type": "python_message", "data": data, "timestamp": time.time()}}
                         core.PostWebMessageAsJson(json.dumps(msg, ensure_ascii=False))
-                        
+
                         # 注册回调
                         if callback:
                             callback_id = f"cb_{int(time.time() * 1000)}"
                             self._callbacks[callback_id] = callback
-                        
+
                         return True
-            except Exception as e:
+            except Exception:
                 return False
-        
+
         return False
-    
+
     def execute_script(self, block_id: str, script: str) -> bool:
         """
         在 WebView2 中执行 JavaScript
-        
+
         Args:
             block_id: 块标识符
             script: 要执行的 JS 代码
-        
+
         Returns:
             是否执行成功
         """
         if block_id not in self._active_windows:
             return False
-        
+
         window_info = self._active_windows[block_id]
-        
+
         if self._mode == WebView2Mode.NATIVE:
             try:
-                webview = window_info.get('webview')
-                if webview and hasattr(webview, 'CoreWebView2'):
+                webview = window_info.get("webview")
+                if webview and hasattr(webview, "CoreWebView2"):
                     core = webview.CoreWebView2
                     if core:
                         core.ExecuteScriptAsync(script)
                         return True
             except Exception:
                 pass
-        
+
         return False
-    
+
     def close_window(self, block_id: str) -> bool:
         """关闭指定窗口"""
         if block_id in self._active_windows:
             window_info = self._active_windows[block_id]
-            
+
             if self._mode == WebView2Mode.NATIVE:
                 try:
-                    form = window_info.get('form')
+                    form = window_info.get("form")
                     if form:
                         form.Close()
                         return True
@@ -912,32 +883,32 @@ except Exception as e:
                     pass
             elif self._mode == WebView2Mode.PYWEBVIEW:
                 try:
-                    window = window_info.get('window')
+                    window = window_info.get("window")
                     if window:
                         window.destroy()
                         return True
                 except Exception:
                     pass
             else:
-                proc = window_info.get('proc')
+                proc = window_info.get("proc")
                 if proc:
                     proc.terminate()
                     return True
-            
+
             del self._active_windows[block_id]
             return True
-        
+
         return False
-    
+
     def get_window(self, block_id: str) -> Optional[Dict]:
         """获取窗口信息"""
         return self._active_windows.get(block_id)
-    
+
     @property
     def mode(self) -> str:
         """获取当前运行模式"""
         return self._mode.value
-    
+
     @property
     def active_windows(self) -> List[str]:
         """获取所有活动窗口的 block_id"""
@@ -952,6 +923,7 @@ _manager = WebView2Manager()
 # 便捷函数
 # ═══════════════════════════════════════════════════════
 
+
 def render_webview2(
     html_content: str,
     title: str = "WebView2 Window",
@@ -962,11 +934,11 @@ def render_webview2(
     theme: Union[str, WebView2Theme] = WebView2Theme.LIGHT,
     on_message: Optional[Callable] = None,
     on_event: Optional[Callable] = None,
-    **kwargs
+    **kwargs,
 ) -> WebView2Result:
     """
     渲染 WebView2 (Chromium)
-    
+
     Args:
         html_content: HTML 内容
         title: 窗口标题
@@ -978,7 +950,7 @@ def render_webview2(
         on_message: 消息回调
         on_event: 事件回调
         **kwargs: 其他配置
-    
+
     Returns:
         WebView2Result
     """
@@ -991,17 +963,13 @@ def render_webview2(
         theme=theme,
         on_message=on_message,
         on_event=on_event,
-        **kwargs
+        **kwargs,
     )
-    
+
     return _manager.run_webview2(html_content, config)
 
 
-def generate_html_file(
-    html_content: str,
-    config: WebView2Config,
-    block_id: str = ""
-) -> str:
+def generate_html_file(html_content: str, config: WebView2Config, block_id: str = "") -> str:
     """生成 HTML 文件"""
     return _manager.generate_html(html_content, config, block_id)
 
@@ -1014,12 +982,12 @@ def get_webview2_mode() -> str:
 def send_to_webview(block_id: str, data: Any, callback: Optional[Callable] = None) -> bool:
     """
     向 WebView2 窗口发送消息 (Python → JS)
-    
+
     Args:
         block_id: 块标识符
         data: 要发送的数据
         callback: 可选的回调函数
-    
+
     Returns:
         是否发送成功
     """
@@ -1029,11 +997,11 @@ def send_to_webview(block_id: str, data: Any, callback: Optional[Callable] = Non
 def execute_script_in_webview(block_id: str, script: str) -> bool:
     """
     在 WebView2 中执行 JavaScript
-    
+
     Args:
         block_id: 块标识符
         script: JS 代码
-    
+
     Returns:
         是否执行成功
     """
@@ -1054,57 +1022,48 @@ def get_active_webview_windows() -> List[str]:
 # 与 runner.py 集成
 # ═══════════════════════════════════════════════════════
 
-def execute_webview2_block(
-    block_content: str,
-    directives: Dict,
-    context: Dict,
-    build_dir: str
-) -> tuple[str, str, int]:
+
+def execute_webview2_block(block_content: str, directives: Dict, context: Dict, build_dir: str) -> tuple[str, str, int]:
     """
     执行 webview2 代码块（供 runner.py 调用）
     """
     # 解析配置
-    theme_str = directives.get('theme', 'light')
+    theme_str = directives.get("theme", "light")
     try:
         theme = WebView2Theme(theme_str.lower())
     except ValueError:
         theme = WebView2Theme.LIGHT
-    
+
     config = WebView2Config(
-        title=directives.get('title', 'WebView2 Window'),
-        width=int(directives.get('width', 800)),
-        height=int(directives.get('height', 600)),
-        resizable=directives.get('resizable', 'true').lower() == 'true',
-        blocking=directives.get('blocking', 'true').lower() == 'true',
-        devtools=directives.get('devtools', 'false').lower() == 'true',
+        title=directives.get("title", "WebView2 Window"),
+        width=int(directives.get("width", 800)),
+        height=int(directives.get("height", 600)),
+        resizable=directives.get("resizable", "true").lower() == "true",
+        blocking=directives.get("blocking", "true").lower() == "true",
+        devtools=directives.get("devtools", "false").lower() == "true",
         theme=theme,
-        html_file=directives.get('html'),
+        html_file=directives.get("html"),
     )
-    
+
     # 生成 block_id
-    block_id = directives.get('tag', f"block_{int(time.time())}")
+    block_id = directives.get("tag", f"block_{int(time.time())}")
     if isinstance(block_id, list):
         block_id = block_id[0] if block_id else f"block_{int(time.time())}"
-    
+
     # 执行
-    result = _manager.run_webview2(
-        block_content,
-        config,
-        block_id=block_id,
-        context=context
-    )
-    
+    result = _manager.run_webview2(block_content, config, block_id=block_id, context=context)
+
     # 构建输出
     output = {
-        'status': result.status,
-        'mode': result.mode,
-        'html_path': result.html_path,
-        'events': result.events,
-        'messages': result.messages,
-        'duration_ms': result.duration_ms,
+        "status": result.status,
+        "mode": result.mode,
+        "html_path": result.html_path,
+        "events": result.events,
+        "messages": result.messages,
+        "duration_ms": result.duration_ms,
     }
-    
+
     if result.error:
-        output['error'] = result.error
-    
+        output["error"] = result.error
+
     return json.dumps(output, ensure_ascii=False, indent=2), "", 0

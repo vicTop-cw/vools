@@ -3,7 +3,9 @@ vools.bridge.md config — Lua 配置加载
 
 复用 vools.bridge.lua 桥接执行 Lua 配置代码，结果 JSON 回传。
 """
-import os, json
+
+import json
+import os
 from typing import Dict, Any, Optional
 
 
@@ -29,7 +31,7 @@ def load_config(config_path: Optional[str], md_dir: str) -> Dict[str, Any]:
     if not config_path or not os.path.exists(config_path):
         return {}
 
-    with open(config_path, 'r', encoding='utf-8') as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         lua_code = f.read()
 
     return _execute_lua_config(lua_code, config_path)
@@ -53,7 +55,7 @@ def load_config_from_block(block, helper) -> Dict[str, Any]:
         result = helper.execute_code(block.content, func_name="__md_config")
         # result 应该是 JSON 字符串或 dict
         if isinstance(result, bytes):
-            result = result.decode('utf-8')
+            result = result.decode("utf-8")
         if isinstance(result, str):
             return json.loads(result)
         return result if isinstance(result, dict) else {}
@@ -74,21 +76,22 @@ def _execute_lua_config(lua_code: str, config_path: str) -> Dict[str, Any]:
     """
     try:
         from vools.bridge import get_helper
+
         helper = get_helper("lua")
         if not helper.is_available():
             return {}
 
         # 包装成返回 JSON 的 Lua 代码
-        wrapper = f'''
+        wrapper = f"""
         local result = (function()
             {lua_code}
         end)()
         return json.encode(result or {{}})
-        '''
+        """
 
         result = helper.execute_code(wrapper, func_name="__md_config")
         if isinstance(result, bytes):
-            result = result.decode('utf-8')
+            result = result.decode("utf-8")
         if isinstance(result, str):
             return json.loads(result)
         return result if isinstance(result, dict) else {}

@@ -7,10 +7,14 @@ M5 增强：
 - 缓存优化：智能缓存策略（基于内容哈希 + TTL）
 - 并行执行：async/parallel 多块并行
 """
-import os, sys, json, time, subprocess, shutil
+
+import json
+import os
+import subprocess
+import sys
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
-from collections import defaultdict
 
 from .parser import ParsedMD, CodeBlock, parse_md
 from .directives import validate_directives
@@ -18,23 +22,25 @@ from .config import load_config
 from .deps import check_deps
 from .manifest import write_manifest, read_manifest
 from .artifacts import (
-    ensure_build_dir, compute_artifact_hash,
-    is_artifact_stale, clean_build, register_artifact,
+    ensure_build_dir,
+    compute_artifact_hash,
+    register_artifact,
 )
-
 
 # ═══════════════════════════════════════════════════════
 # 块执行结果
 # ═══════════════════════════════════════════════════════
 
+
 @dataclass
 class BlockResult:
     """单块执行结果"""
+
     index: int
     language: str
     tag: List[str]
     directives: Dict[str, str]
-    status: str = "ok"          # ok | failed | timeout | skipped | error | paused
+    status: str = "ok"  # ok | failed | timeout | skipped | error | paused
     duration_ms: float = 0
     stdout: str = ""
     stderr: str = ""
@@ -50,7 +56,7 @@ class BlockResult:
     # M5: 调试信息
     breakpoint: bool = False
     breakpoint_hit: bool = False
-    profiling: Dict[str, float] = field(default_factory=dict)
+    profiling: Dict[str, Any] = field(default_factory=dict)
     cache_hit: bool = False
     # M5: 并行执行
     parallel: bool = False
@@ -60,11 +66,12 @@ class BlockResult:
 # M3: 导入解析
 # ═══════════════════════════════════════════════════════
 
+
 def resolve_imports(
     parsed: ParsedMD,
     md_dir: str,
     build_dir: str,
-    visited: set = None,
+    visited: Optional[set] = None,
 ) -> List[CodeBlock]:
     """解析 #!import 指令，展开所有块（包括导入的）。"""
     if visited is None:
@@ -72,23 +79,25 @@ def resolve_imports(
 
     imports = []
     for block in parsed.blocks:
-        import_val = block.directives.get('import', '')
-        if import_val and import_val.endswith('.md'):
-            imports.append({
-                'target': import_val,
-                'source_block': block,
-            })
+        import_val = block.directives.get("import", "")
+        if import_val and import_val.endswith(".md"):
+            imports.append(
+                {
+                    "target": import_val,
+                    "source_block": block,
+                }
+            )
 
     local_blocks = []
     for block in parsed.blocks:
-        if 'import' in block.directives and block.directives['import'].endswith('.md'):
+        if "import" in block.directives and block.directives["import"].endswith(".md"):
             continue
         local_blocks.append(block)
 
     all_blocks: List[CodeBlock] = []
 
     for imp in imports:
-        target = imp['target']
+        target = str(imp["target"])
         target_path = os.path.join(md_dir, target)
 
         if target_path in visited:
@@ -97,9 +106,9 @@ def resolve_imports(
         if not os.path.exists(target_path):
             empty_block = CodeBlock(
                 index=len(local_blocks) + len(all_blocks),
-                language='',
-                content=f'# [import] {target} not found',
-                directives={'import': target},
+                language="",
+                content=f"# [import] {target} not found",
+                directives={"import": target},
                 tag=[],
             )
             empty_block.source_file = target_path
@@ -131,14 +140,15 @@ def resolve_imports(
 # M4: 库级支持
 # ═══════════════════════════════════════════════════════
 
+
 def scan_library(
     library_dir: str,
     recursive: bool = True,
-    extensions: List[str] = None,
+    extensions: Optional[List[str]] = None,
 ) -> List[str]:
     """扫描目录，返回所有 .md 文件列表。"""
     if extensions is None:
-        extensions = ['.md']
+        extensions = [".md"]
 
     md_files = []
 
@@ -162,34 +172,37 @@ def build_library_manifest(
 ) -> Dict[str, Any]:
     """构建库级 manifest.yaml。"""
     if output_path is None:
-        output_path = os.path.join(library_dir, 'manifest.yaml')
+        output_path = os.path.join(library_dir, "manifest.yaml")
 
     md_files = scan_library(library_dir)
 
     entries = []
     for md_path in md_files:
         parsed = parse_md(md_path)
-        entries.append({
-            'path': os.path.relpath(md_path, library_dir),
-            'hash': parsed.md_hash,
-            'entry': parsed.file_directives.entry,
-            'only': parsed.file_directives.only,
-            'config': parsed.file_directives.config,
-            'deps': parsed.file_directives.deps,
-            'build_dir': parsed.file_directives.build_dir,
-            'blocks': len(parsed.blocks),
-        })
+        entries.append(
+            {
+                "path": os.path.relpath(md_path, library_dir),
+                "hash": parsed.md_hash,
+                "entry": parsed.file_directives.entry,
+                "only": parsed.file_directives.only,
+                "config": parsed.file_directives.config,
+                "deps": parsed.file_directives.deps,
+                "build_dir": parsed.file_directives.build_dir,
+                "blocks": len(parsed.blocks),
+            }
+        )
 
     manifest = {
-        'library_dir': library_dir,
-        'md_files': entries,
-        'total': len(entries),
+        "library_dir": library_dir,
+        "md_files": entries,
+        "total": len(entries),
     }
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         try:
             from .manifest import minimal_yaml_dump
+
             f.write(minimal_yaml_dump(manifest))
         except ImportError:
             f.write(json.dumps(manifest, indent=2, ensure_ascii=False))
@@ -199,15 +212,16 @@ def build_library_manifest(
 
 def load_library_manifest(library_dir: str) -> Optional[Dict[str, Any]]:
     """加载库级 manifest.yaml。"""
-    manifest_path = os.path.join(library_dir, 'manifest.yaml')
+    manifest_path = os.path.join(library_dir, "manifest.yaml")
     if not os.path.exists(manifest_path):
         return None
 
-    with open(manifest_path, 'r', encoding='utf-8') as f:
+    with open(manifest_path, "r", encoding="utf-8") as f:
         text = f.read()
 
     try:
         from .manifest import minimal_yaml_parse
+
         return minimal_yaml_parse(text)
     except ImportError:
         return json.loads(text)
@@ -221,7 +235,7 @@ def run_library(
 ) -> Dict[str, Any]:
     """执行整个库（所有 .md 文件）。"""
     if build_dir is None:
-        build_dir = os.path.join(library_dir, '.mdbuild')
+        build_dir = os.path.join(library_dir, ".mdbuild")
 
     ensure_build_dir(build_dir)
 
@@ -233,19 +247,20 @@ def run_library(
     for md_path in md_files:
         result = run_md(md_path, only=only, force=force, build_dir=build_dir)
         results[md_path] = result
-        total_duration += result['total_duration_ms']
+        total_duration += result["total_duration_ms"]
 
     return {
-        'library_dir': library_dir,
-        'md_files': md_files,
-        'total_duration_ms': total_duration,
-        'results': results,
+        "library_dir": library_dir,
+        "md_files": md_files,
+        "total_duration_ms": total_duration,
+        "results": results,
     }
 
 
 # ═══════════════════════════════════════════════════════
 # M5: 高级调试与性能分析
 # ═══════════════════════════════════════════════════════
+
 
 def check_breakpoint(
     block: CodeBlock,
@@ -263,24 +278,24 @@ def check_breakpoint(
         断点描述（None = 无断点）
     """
     # 检查 breakpoint 或 bp 指令是否存在
-    has_bp = 'breakpoint' in block.directives or 'bp' in block.directives
+    has_bp = "breakpoint" in block.directives or "bp" in block.directives
     if not has_bp:
         return None
 
-    bp_val = block.directives.get('breakpoint', '')
+    bp_val = block.directives.get("breakpoint", "")
     if not bp_val:
-        bp_val = block.directives.get('bp', '')
+        bp_val = block.directives.get("bp", "")
 
     if debug_mode:
         return f"Breakpoint at block {block.index}"
 
-    if bp_val == 'true' or bp_val == '':
+    if bp_val == "true" or bp_val == "":
         return f"Breakpoint at block {block.index}"
 
     # 条件断点
     try:
         condition = bp_val
-        if condition.strip() == 'true':
+        if condition.strip() == "true":
             return f"Breakpoint (condition: {condition}) at block {block.index}"
         return f"Breakpoint (condition: {condition}) at block {block.index}"
     except Exception:
@@ -291,13 +306,13 @@ def profile_block(
     block: CodeBlock,
     context: Dict,
     config: Dict,
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     """
     M5: 性能分析（profiling）。
 
     返回每个操作的耗时统计。
     """
-    profiling = {}
+    profiling: Dict[str, Any] = {}
 
     # 使用 cProfile 进行性能分析
     import cProfile
@@ -314,14 +329,14 @@ def profile_block(
 
         # 收集统计
         s = io.StringIO()
-        ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+        ps = pstats.Stats(pr, stream=s).sort_stats("cumulative")
         ps.print_stats()
-        profiling['stats'] = s.getvalue()
-        profiling['total_calls'] = ps.total_calls
-        profiling['prim_calls'] = ps.prim_calls
+        profiling["stats"] = s.getvalue()
+        profiling["total_calls"] = ps.total_calls  # type: ignore[attr-defined]
+        profiling["prim_calls"] = ps.prim_calls  # type: ignore[attr-defined]
 
     except Exception as e:
-        profiling['error'] = str(e)
+        profiling["error"] = str(e)
 
     return profiling
 
@@ -330,7 +345,7 @@ def should_use_cache(
     block: CodeBlock,
     existing_manifest: Optional[Dict],
     force: bool,
-    block_hashes: List[str] = None,
+    block_hashes: Optional[List[str]] = None,
 ) -> bool:
     """
     M5: 智能缓存策略。
@@ -344,13 +359,13 @@ def should_use_cache(
         return False
 
     # 检查块索引
-    if block.index >= len(existing_manifest.get('blocks', [])):
+    if block.index >= len(existing_manifest.get("blocks", [])):
         return False
 
-    cached = existing_manifest['blocks'][block.index]
+    cached = existing_manifest["blocks"][block.index]
 
     # 检查内容哈希
-    cached_hash = cached.get('source_hash', '')
+    cached_hash = cached.get("source_hash", "")
     if block_hashes and block.index < len(block_hashes):
         current_hash = block_hashes[block.index]
     else:
@@ -361,7 +376,7 @@ def should_use_cache(
         return False
 
     # 检查状态
-    if cached.get('status') != 'ok':
+    if cached.get("status") != "ok":
         return False
 
     return True
@@ -385,7 +400,9 @@ def run_parallel(
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {}
         for idx, block in enumerate(blocks):
-            future = executor.submit(run_block, block, idx, context, artifacts_table, config)
+            future = executor.submit(
+                run_block, block, idx, context, artifacts_table, config
+            )
             futures[future] = idx
 
         for future in as_completed(futures):
@@ -401,7 +418,7 @@ def run_parallel(
                     language=blocks[idx].language,
                     tag=blocks[idx].tag,
                     directives=blocks[idx].directives,
-                    status='error',
+                    status="error",
                     stderr=str(e),
                 )
                 br.parallel = True
@@ -415,6 +432,7 @@ def run_parallel(
 # ═══════════════════════════════════════════════════════
 # 执行单个块（M5 增强版）
 # ═══════════════════════════════════════════════════════
+
 
 def run_block(
     block: CodeBlock,
@@ -451,7 +469,7 @@ def run_block(
     if bp_desc:
         result.breakpoint = True
         result.breakpoint_hit = True
-        result.status = 'paused'
+        result.status = "paused"
         result.stdout = bp_desc
         return result
 
@@ -480,45 +498,45 @@ def run_block(
         return result
 
     # 提取指令参数
-    workdir = block.directives.get('workdir')
-    args = block.directives.get('args')
-    timeout = int(block.directives.get('timeout', '60'))
+    workdir = block.directives.get("workdir")
+    args = block.directives.get("args")
+    timeout = int(block.directives.get("timeout", "60"))
     env_vars = {}
-    if 'env' in block.directives:
-        env_str = block.directives['env']
+    if "env" in block.directives:
+        env_str = block.directives["env"]
         for pair in env_str.split():
-            if '=' in pair:
-                k, v = pair.split('=', 1)
+            if "=" in pair:
+                k, v = pair.split("=", 1)
                 env_vars[k] = v
 
     # 构建执行上下文
     exec_context = dict(context)
     if workdir:
         if not os.path.isabs(workdir):
-            workdir = os.path.join(context.get('md_dir', ''), workdir)
+            workdir = os.path.join(context.get("md_dir", ""), workdir)
         result.workdir = workdir
-        exec_context['workdir'] = workdir
+        exec_context["workdir"] = workdir
 
     if env_vars:
-        env = dict(exec_context.get('env', {}))
+        env = dict(exec_context.get("env", {}))
         env.update(env_vars)
-        exec_context['env'] = env
+        exec_context["env"] = env
 
     result.args = args
     result.timeout = timeout
 
     # 处理 stdin 指令：从文件读取内容注入到执行上下文
-    stdin_val = block.directives.get('stdin')
+    stdin_val = block.directives.get("stdin")
     if stdin_val:
         stdin_path = stdin_val
         if not os.path.isabs(stdin_path):
-            stdin_path = os.path.join(context.get('md_dir', ''), stdin_path)
+            stdin_path = os.path.join(context.get("md_dir", ""), stdin_path)
         try:
-            with open(stdin_path, 'r', encoding='utf-8') as sf:
-                exec_context['stdin'] = sf.read()
+            with open(stdin_path, "r", encoding="utf-8") as sf:
+                exec_context["stdin"] = sf.read()
         except FileNotFoundError:
             # 文件不存在时，使用空 stdin，不中断执行
-            exec_context['stdin'] = ''
+            exec_context["stdin"] = ""
         except Exception as e:
             result.status = "error"
             result.stderr = f"stdin 文件读取失败: {e}"
@@ -558,35 +576,40 @@ def run_block(
     if "export" in block.directives:
         export_name = block.directives["export"]
         artifact_path = os.path.join(
-            context.get('build_dir', '.mdbuild'),
-            'tmp',
-            f'block_{index}_{export_name}.txt'
+            context.get("build_dir", ".mdbuild"),
+            "tmp",
+            f"block_{index}_{export_name}.txt",
         )
         os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
-        with open(artifact_path, 'w', encoding='utf-8') as f:
+        with open(artifact_path, "w", encoding="utf-8") as f:
             f.write(result.stdout)
 
         register_artifact(
-            artifacts_table, export_name, artifact_path,
-            index, block.tag[0] if block.tag else None,
+            artifacts_table,
+            export_name,
+            artifact_path,
+            index,
+            block.tag[0] if block.tag else None,
         )
 
-        result.artifacts.append({
-            'name': export_name,
-            'path': artifact_path,
-            'hash': compute_artifact_hash(artifact_path),
-        })
+        result.artifacts.append(
+            {
+                "name": export_name,
+                "path": artifact_path,
+                "hash": compute_artifact_hash(artifact_path),
+            }
+        )
 
     # 处理 output
     if "output" in block.directives:
         output_file = block.directives["output"]
         output_path = os.path.join(
-            context.get('build_dir', '.mdbuild'),
-            'tmp',
-            f'block_{index}_{output_file}'
+            context.get("build_dir", ".mdbuild"),
+            "tmp",
+            f"block_{index}_{output_file}",
         )
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.write(result.stdout)
         result.output_file = output_path
 
@@ -602,13 +625,13 @@ def _execute_block(
 ) -> tuple[str, str, int]:
     """执行代码块，返回 (stdout, stderr, exit_code)。"""
     lang = block.language
-    workdir = context.get('workdir', os.getcwd())
+    workdir = context.get("workdir", os.getcwd())
 
     if lang == "python":
         # 块级 prelude 指令（```python prelude=none）优先于 config（docs/33 §Phase 1）
-        block_prelude = block.directives.get('prelude')
+        block_prelude = block.directives.get("prelude")
         if block_prelude is not None:
-            config = {**config, 'prelude': block_prelude}
+            config = {**config, "prelude": block_prelude}
         return _execute_python(block.content, context, config, args)
 
     if lang in ("shell", "bash", "sh"):
@@ -624,13 +647,26 @@ def _execute_block(
 # ── prelude：md python 块自动导入（Actus docs/33 §Phase 1）──
 
 _PRELUDE_STDLIB_MODULES = (
-    'json', 'os', 're', 'sys', 'math', 'random', 'time',
-    'datetime', 'pathlib', 'shutil', 'subprocess',
-    'itertools', 'collections', 'functools',
+    "json",
+    "os",
+    "re",
+    "sys",
+    "math",
+    "random",
+    "time",
+    "datetime",
+    "pathlib",
+    "shutil",
+    "subprocess",
+    "itertools",
+    "collections",
+    "functools",
 )
 
 _PRELUDE_VOOLS_MODULES = (
-    'vools.functional', 'vools.data', 'vools.utils',
+    "vools.functional",
+    "vools.data",
+    "vools.utils",
 )
 
 
@@ -647,7 +683,7 @@ def _build_prelude_env(config: Dict) -> Dict[str, Any]:
     开关：config['prelude'] = 'none' 跳过注入（纯净环境）。
     注入名仅为默认值，块内同名赋值可遮蔽；单项导入失败静默降级，不阻断执行。
     """
-    if str(config.get('prelude', 'auto')).lower() in ('none', 'off', 'false'):
+    if str(config.get("prelude", "auto")).lower() in ("none", "off", "false"):
         return {}
 
     prelude: Dict[str, Any] = {}
@@ -660,8 +696,10 @@ def _build_prelude_env(config: Dict) -> Dict[str, Any]:
 
     try:
         import vools.actus as _actus
-        names = getattr(_actus, '__all__', None) or [
-            n for n in dir(_actus) if not n.startswith('_')]
+
+        names = getattr(_actus, "__all__", None) or [
+            n for n in dir(_actus) if not n.startswith("_")
+        ]
         for n in names:
             if hasattr(_actus, n):
                 prelude[n] = getattr(_actus, n)
@@ -670,36 +708,39 @@ def _build_prelude_env(config: Dict) -> Dict[str, Any]:
 
     for modname in _PRELUDE_VOOLS_MODULES:
         try:
-            mod = __import__(modname, fromlist=['*'])
-            prelude[modname.rsplit('.', 1)[-1]] = mod
+            mod = __import__(modname, fromlist=["*"])
+            prelude[modname.rsplit(".", 1)[-1]] = mod
         except Exception:
             pass
 
-    raw = os.environ.get('ACTUS_PARAMS')
+    raw = os.environ.get("ACTUS_PARAMS")
     params: Any = {}
     if raw:
         try:
             params = json.loads(raw)
         except Exception:
             params = raw
-    prelude['__actus_params'] = params
-    prelude['__actus_result'] = {}
+    prelude["__actus_params"] = params
+    prelude["__actus_result"] = {}
 
     return prelude
 
 
-def _execute_python(content: str, context: Dict, config: Dict, args: Optional[str]) -> tuple[str, str, int]:
+def _execute_python(
+    content: str, context: Dict, config: Dict, args: Optional[str]
+) -> tuple[str, str, int]:
     """执行 Python 代码。"""
     try:
         import io
-        exec_env = dict(context.get('env', {}))
+
+        exec_env = dict(context.get("env", {}))
         exec_env.update(_build_prelude_env(config))
-        exec_env['__md_config'] = config
-        exec_env['__name__'] = '__md_block__'
-        exec_env['__builtins__'] = __builtins__
+        exec_env["__md_config"] = config
+        exec_env["__name__"] = "__md_block__"
+        exec_env["__builtins__"] = __builtins__
 
         if args:
-            exec_env['__md_args'] = args.split()
+            exec_env["__md_args"] = args.split()
 
         old_stdout = sys.stdout
         old_stderr = sys.stderr
@@ -708,7 +749,7 @@ def _execute_python(content: str, context: Dict, config: Dict, args: Optional[st
         stderr_buf = io.StringIO()
 
         # 若上下文提供了 stdin 数据，重定向 sys.stdin
-        stdin_data = context.get('stdin')
+        stdin_data = context.get("stdin")
         stdin_buf = io.StringIO(stdin_data) if stdin_data is not None else None
 
         try:
@@ -730,7 +771,7 @@ def _execute_python(content: str, context: Dict, config: Dict, args: Optional[st
         return stdout_buf.getvalue(), stderr_buf.getvalue(), exit_code
 
     except SystemExit as e:
-        return "", str(e), e.code or 0
+        return "", str(e), e.code if isinstance(e.code, int) else 0
     except Exception as e:
         return "", str(e), 1
 
@@ -744,8 +785,8 @@ def _execute_shell(
     args: Optional[str],
 ) -> tuple[str, str, int]:
     """执行 Shell 代码。"""
-    env = dict(context.get('env', {}))
-    stdin_data = context.get('stdin')
+    env = dict(context.get("env", {}))
+    stdin_data = context.get("stdin")
 
     if args:
         full_cmd = f"{content}\n{args}"
@@ -765,19 +806,24 @@ def _execute_shell(
     return proc.stdout, proc.stderr, proc.returncode
 
 
-def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: int) -> tuple[str, str, int]:
+def _execute_via_bridge(
+    block: CodeBlock, context: Dict, config: Dict, timeout: int
+) -> tuple[str, str, int]:
     """通过 bridge helper 执行代码 - 支持所有 31 种桥接语言。"""
     try:
         from vools.bridge import get_helper
+
         helper = get_helper(block.language)
 
         if not helper.is_available():
             return "", f"{block.language} 不可用", 1
 
-        result = helper.execute_code(block.content, func_name=f"__md_block_{block.index}")
+        result = helper.execute_code(
+            block.content, func_name=f"__md_block_{block.index}"
+        )
 
         if isinstance(result, bytes):
-            result = result.decode('utf-8')
+            result = result.decode("utf-8")
 
         return str(result), "", 0
 
@@ -788,6 +834,7 @@ def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: 
 
 
 # ── webview2: WebView2 GUI 渲染 ──
+
 
 def _execute_webview2(
     block: CodeBlock,
@@ -811,11 +858,12 @@ def _execute_webview2(
     """
     try:
         from .webview2 import execute_webview2_block
+
         return execute_webview2_block(
             block.content,
             block.directives,
             context,
-            context.get('build_dir', '.mdbuild')
+            context.get("build_dir", ".mdbuild"),
         )
     except ImportError as e:
         return "", f"webview2 模块导入失败: {e}", 1
@@ -826,6 +874,7 @@ def _execute_webview2(
 # ═══════════════════════════════════════════════════════
 # 主入口（M5 增强：导入解析 + 增量构建 + 完整报告）
 # ═══════════════════════════════════════════════════════
+
 
 def run_md(
     md_path: str,
@@ -880,7 +929,7 @@ def run_md(
 
     artifacts_table: Dict[str, Any] = {}
     block_results: List[BlockResult] = []
-    total_duration = 0
+    total_duration: float = 0.0
 
     existing_manifest = None if force else read_manifest(build_dir)
 
@@ -896,15 +945,16 @@ def run_md(
             parallel_blocks.append(block)
 
         context = {
-            'env': dict(config.get('env', {})),
-            'workdir': md_dir,
-            'build_dir': build_dir,
-            'md_dir': md_dir,
+            "env": dict(config.get("env", {})),
+            "workdir": md_dir,
+            "build_dir": build_dir,
+            "md_dir": md_dir,
         }
 
         results = run_parallel(parallel_blocks, context, config, artifacts_table)
         block_results.extend(results)
-        total_duration = sum(r.duration_ms for r in results)
+        for r in results:
+            total_duration += r.duration_ms
     else:
         # 顺序执行
         for idx, block in enumerate(all_blocks):
@@ -914,9 +964,14 @@ def run_md(
                 continue
 
             # M5: 智能缓存
-            if not force and existing_manifest and idx < len(existing_manifest.get('blocks', [])):
-                if should_use_cache(block, existing_manifest, force, parsed.block_hashes):
-                    cached = existing_manifest['blocks'][idx]
+            if (
+                not force
+                and existing_manifest
+                and idx < len(existing_manifest.get("blocks", []))
+            ):
+                if should_use_cache(
+                    block, existing_manifest, force, parsed.block_hashes
+                ):
                     br = BlockResult(
                         index=idx,
                         language=block.language,
@@ -924,7 +979,11 @@ def run_md(
                         directives=block.directives,
                         status="skipped",
                         duration_ms=0,
-                        source_hash=parsed.block_hashes[idx] if idx < len(parsed.block_hashes) else block.content,
+                        source_hash=(
+                            parsed.block_hashes[idx]
+                            if idx < len(parsed.block_hashes)
+                            else block.content
+                        ),
                         cache_hit=True,
                     )
                     br.stdout = "[cached] 跳过（内容未变）"
@@ -932,84 +991,96 @@ def run_md(
                     continue
 
             context = {
-                'env': dict(config.get('env', {})),
-                'workdir': md_dir,
-                'build_dir': build_dir,
-                'md_dir': md_dir,
+                "env": dict(config.get("env", {})),
+                "workdir": md_dir,
+                "build_dir": build_dir,
+                "md_dir": md_dir,
             }
 
-            br = run_block(block, idx, context, artifacts_table, config, debug=debug, profile=profile)
-            br.source_hash = block.content if idx >= len(parsed.block_hashes) else parsed.block_hashes[idx]
+            br = run_block(
+                block,
+                idx,
+                context,
+                artifacts_table,
+                config,
+                debug=debug,
+                profile=profile,
+            )
+            br.source_hash = (
+                block.content
+                if idx >= len(parsed.block_hashes)
+                else parsed.block_hashes[idx]
+            )
             block_results.append(br)
             total_duration += br.duration_ms
 
     manifest_data = {
-        'md_path': md_path,
-        'md_hash': parsed.md_hash,
-        'build_dir': build_dir,
-        'blocks': [
+        "md_path": md_path,
+        "md_hash": parsed.md_hash,
+        "build_dir": build_dir,
+        "blocks": [
             {
-                'index': br.index,
-                'language': br.language,
-                'tag': br.tag,
-                'status': br.status,
-                'source_hash': br.source_hash,
-                'duration_ms': br.duration_ms,
-                'artifacts': br.artifacts,
-                'source_file': br.source_file,
-                'imported': br.imported,
-                'breakpoint': br.breakpoint,
-                'breakpoint_hit': br.breakpoint_hit,
-                'profiling': br.profiling,
-                'cache_hit': br.cache_hit,
-                'parallel': br.parallel,
+                "index": br.index,
+                "language": br.language,
+                "tag": br.tag,
+                "status": br.status,
+                "source_hash": br.source_hash,
+                "duration_ms": br.duration_ms,
+                "artifacts": br.artifacts,
+                "source_file": br.source_file,
+                "imported": br.imported,
+                "breakpoint": br.breakpoint,
+                "breakpoint_hit": br.breakpoint_hit,
+                "profiling": br.profiling,
+                "cache_hit": br.cache_hit,
+                "parallel": br.parallel,
             }
             for br in block_results
         ],
-        'total_duration_ms': total_duration,
+        "total_duration_ms": total_duration,
     }
 
     manifest_path = write_manifest(build_dir, manifest_data)
 
     return {
-        'md_path': md_path,
-        'md_hash': parsed.md_hash,
-        'build_dir': build_dir,
-        'config': config,
-        'deps_status': {
-            'ok': deps_report.ok,
-            'missing': deps_report.missing,
-            'warnings': deps_report.warnings,
+        "md_path": md_path,
+        "md_hash": parsed.md_hash,
+        "build_dir": build_dir,
+        "config": config,
+        "deps_status": {
+            "ok": deps_report.ok,
+            "missing": deps_report.missing,
+            "warnings": deps_report.warnings,
         },
-        'blocks': [
+        "blocks": [
             {
-                'index': br.index,
-                'language': br.language,
-                'tag': br.tag,
-                'directives': br.directives,
-                'status': br.status,
-                'duration_ms': br.duration_ms,
-                'stdout': br.stdout,
-                'stderr': br.stderr,
-                'exit_code': br.exit_code,
-                'artifacts': br.artifacts,
-                'output_file': br.output_file,
-                'workdir': br.workdir,
-                'args': br.args,
-                'timeout': br.timeout,
-                'source_file': br.source_file,
-                'imported': br.imported,
-                'breakpoint': br.breakpoint,
-                'breakpoint_hit': br.breakpoint_hit,
-                'profiling': br.profiling,
-                'cache_hit': br.cache_hit,
-                'parallel': br.parallel,
+                "index": br.index,
+                "language": br.language,
+                "tag": br.tag,
+                "directives": br.directives,
+                "status": br.status,
+                "duration_ms": br.duration_ms,
+                "stdout": br.stdout,
+                "stderr": br.stderr,
+                "exit_code": br.exit_code,
+                "artifacts": br.artifacts,
+                "output_file": br.output_file,
+                "workdir": br.workdir,
+                "args": br.args,
+                "timeout": br.timeout,
+                "source_file": br.source_file,
+                "imported": br.imported,
+                "breakpoint": br.breakpoint,
+                "breakpoint_hit": br.breakpoint_hit,
+                "profiling": br.profiling,
+                "cache_hit": br.cache_hit,
+                "parallel": br.parallel,
             }
             for br in block_results
         ],
-        'artifacts_table': artifacts_table,
-        'total_duration_ms': total_duration,
-        'manifest_path': manifest_path,
+        "artifacts_table": artifacts_table,
+        "total_duration_ms": total_duration,
+        "manifest_path": manifest_path,
     }
 
 
@@ -1021,7 +1092,7 @@ def run_multiple_md(
 ) -> Dict[str, Any]:
     """执行多个 md 文件。"""
     if build_dir is None:
-        build_dir = os.path.join(os.getcwd(), '.mdbuild')
+        build_dir = os.path.join(os.getcwd(), ".mdbuild")
 
     ensure_build_dir(build_dir)
 
@@ -1031,10 +1102,10 @@ def run_multiple_md(
     for md_path in md_paths:
         result = run_md(md_path, only=only, force=force, build_dir=build_dir)
         results[md_path] = result
-        total_duration += result['total_duration_ms']
+        total_duration += result["total_duration_ms"]
 
     return {
-        'md_paths': md_paths,
-        'total_duration_ms': total_duration,
-        'results': results,
+        "md_paths": md_paths,
+        "total_duration_ms": total_duration,
+        "results": results,
     }

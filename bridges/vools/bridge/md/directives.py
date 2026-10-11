@@ -1,6 +1,7 @@
 """
 vools.bridge.md directives — #! 指令定义/解析/校验
 """
+
 import re
 from typing import Dict, List
 
@@ -8,26 +9,45 @@ from typing import Dict, List
 # 指令常量
 # ═══════════════════════════════════════════════════════
 
-FILE_DIRECTIVE_KEYS: set[str] = {
-    "config", "deps", "build-dir", "entry", "only"
-}
+FILE_DIRECTIVE_KEYS: set[str] = {"config", "deps", "build-dir", "entry", "only"}
 
 BLOCK_DIRECTIVE_KEYS: set[str] = {
-    "run", "compile", "only-code", "skip",
-    "export", "import", "env", "workdir",
-    "args", "stdin", "timeout", "tag", "output",
-    "breakpoint", "bp", "prelude", "test", "setup", "name",
+    "run",
+    "compile",
+    "only-code",
+    "skip",
+    "export",
+    "import",
+    "env",
+    "workdir",
+    "args",
+    "stdin",
+    "timeout",
+    "tag",
+    "output",
+    "breakpoint",
+    "bp",
+    "prelude",
+    "test",
+    "setup",
+    "name",
     # webview2 指令
-    "title", "width", "height", "resizable", "fullscreen", "blocking",
-    "html", "inject",
+    "title",
+    "width",
+    "height",
+    "resizable",
+    "fullscreen",
+    "blocking",
+    "html",
+    "inject",
 }
 
 # ═══════════════════════════════════════════════════════
 # 块级指令解析
 # ═══════════════════════════════════════════════════════
 
-_DIRECTIVE_RE = re.compile(r'#!([a-zA-Z_][\w-]*)(?:=([^\s]+))?')
-_BARE_KEY_RE = re.compile(r'(?:^|\s)([a-zA-Z_][\w-]*)(?:=(\S+))?(?=\s|$)')
+_DIRECTIVE_RE = re.compile(r"#!([a-zA-Z_][\w-]*)(?:=([^\s]+))?")
+_BARE_KEY_RE = re.compile(r"(?:^|\s)([a-zA-Z_][\w-]*)(?:=(\S+))?(?=\s|$)")
 
 
 def parse_block_directives(directive_str: str) -> Dict[str, str]:
@@ -74,6 +94,7 @@ def parse_block_directives(directive_str: str) -> Dict[str, str]:
 # ═══════════════════════════════════════════════════════
 # 指令校验
 # ═══════════════════════════════════════════════════════
+
 
 def validate_directives(directives: Dict[str, str], language: str) -> List[str]:
     """

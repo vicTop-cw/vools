@@ -4,14 +4,16 @@ vools.bridge.md deps — TOML 依赖解析与检查
 内置极简 TOML 子集解析器，兼容 Python 3.6。
 优先使用 tomli (3.11+ tomllib)，降级到内置解析器。
 """
-import os, re
-from dataclasses import dataclass, field
-from typing import Dict, List, Any
 
+import os
+import re
+from dataclasses import dataclass, field
+from typing import Dict, List, Any, Optional
 
 # ═══════════════════════════════════════════════════════
 # 极简 TOML 解析器
 # ═══════════════════════════════════════════════════════
+
 
 def parse_toml(text: str) -> Dict[str, Dict[str, Any]]:
     """
@@ -32,10 +34,12 @@ def parse_toml(text: str) -> Dict[str, Dict[str, Any]]:
     # 优先用 tomli/tomllib
     try:
         import tomllib  # Python 3.11+
+
         return tomllib.loads(text)
     except ImportError:
         try:
             import tomli
+
             return tomli.loads(text)
         except ImportError:
             return _minimal_toml_parse(text)
@@ -46,13 +50,13 @@ def _minimal_toml_parse(text: str) -> Dict[str, Dict[str, Any]]:
     result: Dict[str, Dict[str, Any]] = {}
     current_section = ""
 
-    for line in text.split('\n'):
+    for line in text.split("\n"):
         line = line.strip()
-        if not line or line.startswith('#'):
+        if not line or line.startswith("#"):
             continue
 
         # 节标题
-        section_match = re.match(r'^\[([^\]]+)\]', line)
+        section_match = re.match(r"^\[([^\]]+)\]", line)
         if section_match:
             current_section = section_match.group(1)
             if current_section not in result:
@@ -60,14 +64,14 @@ def _minimal_toml_parse(text: str) -> Dict[str, Dict[str, Any]]:
             continue
 
         # 键值对
-        kv_match = re.match(r'^(\w+)\s*=\s*(.+)$', line)
+        kv_match = re.match(r"^(\w+)\s*=\s*(.+)$", line)
         if kv_match:
             key = kv_match.group(1)
             value_str = kv_match.group(2).strip()
 
             # 去除行尾注释
-            if '#' in value_str:
-                value_str = value_str[:value_str.index('#')].strip()
+            if "#" in value_str:
+                value_str = value_str[: value_str.index("#")].strip()
 
             # 解析值
             value = _parse_toml_value(value_str)
@@ -97,8 +101,8 @@ def _parse_toml_value(s: str) -> Any:
         pass
 
     # 数组
-    if s.startswith('[') and s.endswith(']'):
-        items = s[1:-1].split(',')
+    if s.startswith("[") and s.endswith("]"):
+        items = s[1:-1].split(",")
         return [_parse_toml_value(item.strip()) for item in items if item.strip()]
 
     # 裸字符串
@@ -109,15 +113,17 @@ def _parse_toml_value(s: str) -> Any:
 # 依赖检查
 # ═══════════════════════════════════════════════════════
 
+
 @dataclass
 class DepsReport:
     """依赖检查结果"""
+
     ok: List[str] = field(default_factory=list)
     missing: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
 
-def check_deps(deps_path: str, md_dir: str) -> DepsReport:
+def check_deps(deps_path: Optional[str], md_dir: str) -> DepsReport:
     """
     检查依赖。
 
@@ -133,13 +139,13 @@ def check_deps(deps_path: str, md_dir: str) -> DepsReport:
     if not deps_path or not os.path.exists(deps_path):
         return report
 
-    with open(deps_path, 'r', encoding='utf-8') as f:
+    with open(deps_path, "r", encoding="utf-8") as f:
         text = f.read()
 
     deps = parse_toml(text)
 
     # 检查 runtime 依赖
-    runtime = deps.get('runtime', {})
+    runtime = deps.get("runtime", {})
     for lang, req in runtime.items():
         if _check_language_available(lang):
             report.ok.append(f"{lang} {req}")
@@ -147,7 +153,7 @@ def check_deps(deps_path: str, md_dir: str) -> DepsReport:
             report.missing.append(f"{lang} {req}")
 
     # 检查 compiler 依赖
-    compilers = deps.get('compilers', {})
+    compilers = deps.get("compilers", {})
     for compiler, req in compilers.items():
         if req == "optional":
             if _check_compiler_available(compiler):
@@ -167,6 +173,7 @@ def _check_language_available(lang: str) -> bool:
     """检查语言解释器是否可用。"""
     try:
         from vools.bridge import get_helper
+
         helper = get_helper(lang)
         return helper.is_available()
     except Exception:
@@ -177,6 +184,7 @@ def _check_compiler_available(compiler: str) -> bool:
     """检查编译器是否可用。"""
     try:
         from vools.bridge import manager
+
         return manager.is_available(compiler)
     except Exception:
         return False

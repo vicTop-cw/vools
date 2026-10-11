@@ -16,6 +16,16 @@ dependencies = [
     "vools>=0.7.1",
 ]
 
+[tool.black]
+line-length = 88
+target-version = ["py38"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+follow_imports = "skip"
+exclude = ["webview2\\.py$"]
+
 [tool.setuptools.packages.find]
 include = ["vools.bridge*"]
 
