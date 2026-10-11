@@ -229,6 +229,7 @@ class LookUpon:
                 commit: bool = False) -> List[Any]:
         """安全执行SQL语句并返回结果"""
         conn = None
+        stmt = None
         try:
             conn = self._get_connection()
             conn.setAutoCommit(False)
@@ -286,7 +287,11 @@ class LookUpon:
         finally:
             # 注意：不要关闭连接，保持连接用于后续操作
             # 连接在close()方法中统一关闭
-            pass
+            if stmt is not None:
+                try:
+                    stmt.close()
+                except Exception:
+                    pass
 
     
     def _init_table(self):

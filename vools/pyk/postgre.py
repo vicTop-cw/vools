@@ -447,7 +447,8 @@ def execute_sql_in_postgre(sql, conn=None, fetch=True):
         import psycopg2
     except ImportError as e:
         raise ImportError("执行 PostgreSQL SQL 需要 psycopg2: {}".format(e))
-    if conn is None:
+    _local_conn = conn is None
+    if _local_conn:
         conn = psycopg2.connect(
             host=os.environ.get("PG_HOST", "localhost"),
             port=os.environ.get("PG_PORT", "5432"),
@@ -455,12 +456,21 @@ def execute_sql_in_postgre(sql, conn=None, fetch=True):
             user=os.environ.get("PG_USER", ""),
             password=os.environ.get("PG_PASSWORD", ""),
         )
-    cur = conn.cursor()
-    cur.execute(sql)
-    result = cur.fetchall() if fetch else None
-    conn.commit()
-    cur.close()
-    return result
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        result = cur.fetchall() if fetch else None
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        if cur is not None:
+            cur.close()
+        if _local_conn:
+            conn.close()
 
 
 # ============================================================
