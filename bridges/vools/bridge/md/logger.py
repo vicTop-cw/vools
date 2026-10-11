@@ -13,9 +13,7 @@ _handlers: Dict[str, logging.Handler] = {}
 _FMT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 
-def get_logger(
-    name: str = "vools.bridge.md", level: int = logging.INFO
-) -> logging.Logger:
+def get_logger(name: str = "vools.bridge.md", level: int = logging.INFO) -> logging.Logger:
     """
     获取或创建日志器。
 

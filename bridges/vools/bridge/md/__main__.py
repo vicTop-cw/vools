@@ -115,7 +115,7 @@ def _cmd_info(args):
 
     print(f"Blocks ({len(parsed.blocks)}):")
     for block in parsed.blocks:
-        print(f"  [{block.index}] {block.language} " f"directives={block.directives} " f"tag={block.tag}")
+        print(f"  [{block.index}] {block.language} " f"directives={block.directives} tag={block.tag}")
 
 
 def _cmd_code(args):

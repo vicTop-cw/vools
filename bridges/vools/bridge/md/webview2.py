@@ -40,6 +40,8 @@ vools.bridge.md webview2 — WebView2 (Chromium) 渲染引擎 v2.0
 ```
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import json

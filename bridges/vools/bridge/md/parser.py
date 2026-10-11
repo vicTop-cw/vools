@@ -9,6 +9,8 @@ vools.bridge.md parser — Markdown 即代码解析器
 复用 vools.md 的解析器提取代码块，再叠加 #! 指令解析。
 """
 
+from __future__ import annotations
+
 import hashlib
 import re
 from dataclasses import dataclass, field
@@ -215,9 +217,7 @@ def _extract_blocks_vools_md(text: str) -> List[tuple]:
                     directive_parts.append(stripped)
                 elif stripped.startswith("# tag:") or stripped.startswith("#tag:"):
                     # 新格式 .actus.schema.md: # tag: main → tag=main 指令
-                    tag_value = (
-                        stripped.split(":", 1)[1].strip() if ":" in stripped else ""
-                    )
+                    tag_value = stripped.split(":", 1)[1].strip() if ":" in stripped else ""
                     if tag_value:
                         directive_parts.append(f"tag={tag_value}")
                     content_lines.append(line)
