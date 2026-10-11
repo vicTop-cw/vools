@@ -961,9 +961,11 @@ def _df_stack(df, stack_cols_name="node,v", ix=None, reserve_cols=None) -> 'Stac
             return self
 
         def _option1(self, node_and_v):
-            assert isinstance(node_and_v, str) and "," in node_and_v
+            if not (isinstance(node_and_v, str) and "," in node_and_v):
+                raise ValueError(f"invalid node_and_v: {node_and_v}")
             nodes = node_and_v.split(",")
-            assert len(nodes) in (2, 3)
+            if len(nodes) not in (2, 3):
+                raise ValueError(f"expected 2 or 3 nodes, got {len(nodes)}: {node_and_v}")
             return self._option2(nodes[0], nodes[1]) if len(nodes) == 2 else self._option3(nodes[0], nodes[1], nodes[2])
 
         def option(self, *node_and_v, node=None, v=None, ix=None):
@@ -1019,7 +1021,8 @@ def _df_stack(df, stack_cols_name="node,v", ix=None, reserve_cols=None) -> 'Stac
                 if l == 2:
                     return self._option3(node_and_v[0], node_and_v[1], ix)
                 node_and_v = node_and_v[0]
-                assert isinstance(node_and_v, str) and "," in node_and_v
+                if not (isinstance(node_and_v, str) and "," in node_and_v):
+                    raise ValueError(f"invalid node_and_v: {node_and_v}")
                 node, v = node_and_v.rsplit(",", 1)
                 return self._option3(node, v, ix)
             raise ValueError(f"invalid node_and_v: {node_and_v}")

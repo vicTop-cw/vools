@@ -300,7 +300,8 @@ class Mixer(Mixer_):
             if callable(result_shell):
                 pass
             elif isinstance(result_shell, str):
-                result_shell = lambda x: eval(result_shell, globals(), locals())
+                # 捕获当前字符串值，避免 lambda 引用被重新赋值后的 result_shell
+                result_shell = lambda x, _expr=result_shell: eval(_expr, globals(), locals())
             else:
                 raise TypeError("result_shell must be a function !!!")
         if partial_args and not isinstance(partial_args, (list, tuple)):
