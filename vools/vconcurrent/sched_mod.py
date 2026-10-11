@@ -11,7 +11,6 @@ vools.concurrent.sched_mod - 事件调度器高级封装
 - SchedulerPool: 多调度器统一管理
 """
 
-from __future__ import annotations
 
 import sched
 import time

@@ -13,7 +13,6 @@ vools.concurrent.delegates - 委托模式实现
     thread_safe      - 装饰器，给委托/事件总线加上线程安全锁
 """
 
-from __future__ import annotations
 
 import threading
 from functools import wraps

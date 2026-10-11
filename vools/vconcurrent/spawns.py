@@ -36,7 +36,6 @@ vools.concurrent.spawns - 进程派生工具
     mgr.stop_all()
 """
 
-from __future__ import annotations
 
 import multiprocessing as _mp
 import threading

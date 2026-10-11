@@ -11,7 +11,6 @@ Windows 平台注意事项：
     3. 实际创建子进程的代码应放在 if __name__ == '__main__' 块中。
 """
 
-from __future__ import annotations
 
 import multiprocessing
 import os

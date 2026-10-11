@@ -17,7 +17,6 @@ vools.concurrent.threading_mod - threading 高级封装
     synchronized  - 类似 Java 的 synchronized，加锁执行
 """
 
-from __future__ import annotations
 
 import threading
 import weakref

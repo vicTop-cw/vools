@@ -27,12 +27,17 @@ vools.concurrent.futures - concurrent.futures 高级封装
     print(result.result())
 """
 
-from __future__ import annotations
 
 import concurrent.futures as _cf
 import threading
 import time
 from collections import deque
+
+from vools.core.futures_compat import (
+    make_thread_executor,
+    make_process_executor,
+    shutdown_executor,
+)
 from typing import (
     Any,
     Callable,
@@ -92,7 +97,7 @@ class FutureResult(Generic[T]):
     def __init__(self, future: _cf.Future) -> None:
         self._future: _cf.Future = future
         self._lock = threading.RLock()
-        self._callbacks: List[Callable[[FutureResult[T]], None]] = []
+        self._callbacks: List[Callable[["FutureResult[T]"], None]] = []
         self._done_callbacks_registered = False
 
     @property
@@ -143,8 +148,8 @@ class FutureResult(Generic[T]):
         return self._future.exception(timeout=timeout)
 
     def add_done_callback(
-        self, fn: Callable[[FutureResult[T]], None]
-    ) -> FutureResult[T]:
+        self, fn: Callable[["FutureResult[T]"], None]
+    ) -> "FutureResult[T]":
         """添加完成回调。
 
         回调接收当前 FutureResult 作为参数。
@@ -190,7 +195,7 @@ class FutureResult(Generic[T]):
 
     def then(
         self, fn: Callable[[T], R], pool: Optional[_cf.Executor] = None
-    ) -> FutureResult[R]:
+    ) -> "FutureResult[R]":
         """链式回调：成功时执行函数，返回新的 FutureResult。
 
         Args:
@@ -201,9 +206,9 @@ class FutureResult(Generic[T]):
             新的 FutureResult。
         """
         next_future: _cf.Future = _cf.Future()
-        next_result: FutureResult[R] = FutureResult(next_future)
+        next_result: "FutureResult[R]" = FutureResult(next_future)
 
-        def _callback(f: FutureResult[T]) -> None:
+        def _callback(f: "FutureResult[T]") -> None:
             def _runner() -> None:
                 try:
                     if f.cancelled():
@@ -227,7 +232,7 @@ class FutureResult(Generic[T]):
         self,
         fn: Callable[[BaseException], T],
         pool: Optional[_cf.Executor] = None,
-    ) -> FutureResult[T]:
+    ) -> "FutureResult[T]":
         """异常回调链：失败时执行函数恢复。
 
         Args:
@@ -238,9 +243,9 @@ class FutureResult(Generic[T]):
             新的 FutureResult。
         """
         next_future: _cf.Future = _cf.Future()
-        next_result: FutureResult[T] = FutureResult(next_future)
+        next_result: "FutureResult[T]" = FutureResult(next_future)
 
-        def _callback(f: FutureResult[T]) -> None:
+        def _callback(f: "FutureResult[T]") -> None:
             def _runner() -> None:
                 try:
                     if f.cancelled():
@@ -335,7 +340,7 @@ class VThreadPoolExecutor:
         initializer: Optional[Callable[..., None]] = None,
         initargs: Tuple[Any, ...] = (),
     ) -> None:
-        self._executor = _cf.ThreadPoolExecutor(
+        self._executor = make_thread_executor(
             max_workers=max_workers,
             thread_name_prefix=thread_name_prefix,
             initializer=initializer,
@@ -434,7 +439,7 @@ class VThreadPoolExecutor:
             cancel_futures: 是否取消未开始的任务。
         """
         self._shutdown = True
-        self._executor.shutdown(wait=wait, cancel_futures=cancel_futures)
+        shutdown_executor(self._executor, wait=wait, cancel_futures=cancel_futures)
 
     def shutdown_graceful(
         self, wait: bool = True, timeout: Optional[float] = None
@@ -533,7 +538,7 @@ class VProcessPoolExecutor:
         initializer: Optional[Callable[..., None]] = None,
         initargs: Tuple[Any, ...] = (),
     ) -> None:
-        self._executor = _cf.ProcessPoolExecutor(
+        self._executor = make_process_executor(
             max_workers=max_workers,
             mp_context=mp_context,
             initializer=initializer,
@@ -623,7 +628,7 @@ class VProcessPoolExecutor:
             cancel_futures: 是否取消未开始的任务。
         """
         self._shutdown = True
-        self._executor.shutdown(wait=wait, cancel_futures=cancel_futures)
+        shutdown_executor(self._executor, wait=wait, cancel_futures=cancel_futures)
 
     def shutdown_graceful(
         self, wait: bool = True, timeout: Optional[float] = None
