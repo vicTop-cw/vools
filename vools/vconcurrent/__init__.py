@@ -16,7 +16,6 @@ vools.concurrent - 并发与并行编程工具集
     bridges          - 跨模块桥接通信
     asyncio_mod      - 异步编程工具
 """
-from __future__ import annotations
 
 __version__ = "0.1.0"
 

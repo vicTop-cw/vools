@@ -13,7 +13,6 @@ vools.concurrent.queues - 队列高级封装
     queue_to_generator - 将队列转为生成器
 """
 
-from __future__ import annotations
 
 import heapq
 import queue
@@ -516,7 +515,7 @@ class VDeque:
         maxlen: Optional[int] = None,
     ) -> None:
         if iterable is not None:
-            self._deque: deque[_T] = deque(iterable, maxlen=maxlen)
+            self._deque: "deque[_T]" = deque(iterable, maxlen=maxlen)
         else:
             self._deque = deque(maxlen=maxlen)
         self._lock = threading.RLock()

@@ -12,7 +12,6 @@ vools.concurrent.contextvars_mod - 上下文变量高级封装
 兼容 Python 3.6+，3.7+ 使用标准库 contextvars，3.6 回退到 vools.core.contextvars_compat
 """
 
-from __future__ import annotations
 
 import sys
 import inspect
@@ -36,7 +35,7 @@ _MISSING: Any = object()  # sentinel: 表示"未提供默认值"
 _PY37_PLUS = sys.version_info >= (3, 7)
 
 # 全局注册表：VContextVar 名称 -> 实例
-_REGISTRY: Dict[str, VContextVar] = {}
+_REGISTRY: Dict[str, "VContextVar"] = {}
 
 
 class VContextVar(Generic[_T]):

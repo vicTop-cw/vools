@@ -17,11 +17,11 @@ vools.concurrent.bridges - 跨模块桥接通信
     bridge_queues       - 桥接两个队列
 """
 
-from __future__ import annotations
 
 import json
 import pickle
 import queue
+import sys
 import threading
 import time
 from typing import (
@@ -620,9 +620,17 @@ class SharedBridge:
         size: Optional[int] = None,
         name: Optional[str] = None,
     ) -> None:
-        from multiprocessing import shared_memory
+        try:
+            from multiprocessing import shared_memory
+        except ImportError:
+            # multiprocessing.shared_memory 是 Python 3.8+ 才有的模块；
+            # py3.6/3.7 下给出明确原因，而不是含糊的 ImportError
+            raise NotImplementedError(
+                "SharedBridge 需要 Python 3.8+（multiprocessing.shared_memory）；"
+                "当前解释器 %d.%d 不支持" % sys.version_info[:2]
+            )
 
-        self._shm: Optional[shared_memory.SharedMemory] = None
+        self._shm: "Optional[shared_memory.SharedMemory]" = None
         self._name: Optional[str] = None
         self._size = size or 0
         self._owns = name is None

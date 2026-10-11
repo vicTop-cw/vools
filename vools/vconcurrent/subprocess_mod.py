@@ -28,7 +28,6 @@ vools.concurrent.subprocess_mod - subprocess 高级封装
     proc.wait()
 """
 
-from __future__ import annotations
 
 import sys
 import shlex

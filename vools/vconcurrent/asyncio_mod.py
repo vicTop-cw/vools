@@ -24,7 +24,6 @@ vools.concurrent.asyncio_mod - asyncio 高级封装
     retry_async    - 异步重试装饰器
 """
 
-from __future__ import annotations
 
 import asyncio
 import functools
@@ -89,7 +88,7 @@ class AsyncQueue(Generic[_T]):
     """
 
     def __init__(self, maxsize: int = 0) -> None:
-        self._queue: asyncio.Queue[_T] = asyncio.Queue(maxsize=maxsize)
+        self._queue: "asyncio.Queue[_T]" = asyncio.Queue(maxsize=maxsize)
 
     async def put(self, item: _T, timeout: Optional[float] = None) -> None:
         """将元素放入队列。
@@ -628,7 +627,7 @@ async def gather(
 async def wait_any(
     *aws: Union[Awaitable[_T], Coroutine[Any, Any, _T]],
     timeout: Optional[float] = None,
-) -> Tuple[Set[asyncio.Task[_T]], Set[asyncio.Task[_T]]]:
+) -> "Tuple[Set[asyncio.Task[_T]], Set[asyncio.Task[_T]]]":
     """等待任意一个任务完成。
 
     Args:
@@ -653,7 +652,7 @@ async def wait_any(
 async def wait_all(
     *aws: Union[Awaitable[_T], Coroutine[Any, Any, _T]],
     timeout: Optional[float] = None,
-) -> Tuple[Set[asyncio.Task[_T]], Set[asyncio.Task[_T]]]:
+) -> "Tuple[Set[asyncio.Task[_T]], Set[asyncio.Task[_T]]]":
     """等待所有任务完成。
 
     Args:
@@ -830,7 +829,7 @@ class AsyncPool:
         self._max_workers: int = max_workers
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(max_workers)
         self._return_exceptions: bool = return_exceptions
-        self._tasks: List[asyncio.Task[Any]] = []
+        self._tasks: "List[asyncio.Task[Any]]" = []
         self._closed: bool = False
 
     async def _run_with_semaphore(self, coro: Coroutine[Any, Any, _T]) -> _T:
@@ -840,7 +839,7 @@ class AsyncPool:
     async def submit(
         self,
         coro: Coroutine[Any, Any, _T],
-    ) -> asyncio.Task[_T]:
+    ) -> "asyncio.Task[_T]":
         """提交一个协程到池中执行。
 
         Args:
