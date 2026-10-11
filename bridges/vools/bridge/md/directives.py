@@ -2,6 +2,8 @@
 vools.bridge.md directives — #! 指令定义/解析/校验
 """
 
+from __future__ import annotations
+
 import re
 from typing import Dict, List
 

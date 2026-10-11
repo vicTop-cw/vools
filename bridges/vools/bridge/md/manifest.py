@@ -5,6 +5,8 @@ vools.bridge.md manifest — YAML 清单读写
 支持原子写入（临时文件 + rename）。
 """
 
+from __future__ import annotations
+
 import os
 import tempfile
 from typing import Dict, Any, Optional

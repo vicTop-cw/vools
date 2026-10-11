@@ -8,6 +8,8 @@ M5 增强：
 - 并行执行：async/parallel 多块并行
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess
@@ -400,9 +402,7 @@ def run_parallel(
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {}
         for idx, block in enumerate(blocks):
-            future = executor.submit(
-                run_block, block, idx, context, artifacts_table, config
-            )
+            future = executor.submit(run_block, block, idx, context, artifacts_table, config)
             futures[future] = idx
 
         for future in as_completed(futures):
@@ -551,9 +551,7 @@ def run_block(
     start = time.perf_counter()
 
     try:
-        stdout, stderr, exit_code = _execute_block(
-            block, exec_context, config, args, timeout
-        )
+        stdout, stderr, exit_code = _execute_block(block, exec_context, config, args, timeout)
         result.stdout = stdout
         result.stderr = stderr
         result.exit_code = exit_code
@@ -697,9 +695,7 @@ def _build_prelude_env(config: Dict) -> Dict[str, Any]:
     try:
         import vools.actus as _actus
 
-        names = getattr(_actus, "__all__", None) or [
-            n for n in dir(_actus) if not n.startswith("_")
-        ]
+        names = getattr(_actus, "__all__", None) or [n for n in dir(_actus) if not n.startswith("_")]
         for n in names:
             if hasattr(_actus, n):
                 prelude[n] = getattr(_actus, n)
@@ -726,9 +722,7 @@ def _build_prelude_env(config: Dict) -> Dict[str, Any]:
     return prelude
 
 
-def _execute_python(
-    content: str, context: Dict, config: Dict, args: Optional[str]
-) -> tuple[str, str, int]:
+def _execute_python(content: str, context: Dict, config: Dict, args: Optional[str]) -> tuple[str, str, int]:
     """执行 Python 代码。"""
     try:
         import io
@@ -806,9 +800,7 @@ def _execute_shell(
     return proc.stdout, proc.stderr, proc.returncode
 
 
-def _execute_via_bridge(
-    block: CodeBlock, context: Dict, config: Dict, timeout: int
-) -> tuple[str, str, int]:
+def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: int) -> tuple[str, str, int]:
     """通过 bridge helper 执行代码 - 支持所有 31 种桥接语言。"""
     try:
         from vools.bridge import get_helper
@@ -818,9 +810,7 @@ def _execute_via_bridge(
         if not helper.is_available():
             return "", f"{block.language} 不可用", 1
 
-        result = helper.execute_code(
-            block.content, func_name=f"__md_block_{block.index}"
-        )
+        result = helper.execute_code(block.content, func_name=f"__md_block_{block.index}")
 
         if isinstance(result, bytes):
             result = result.decode("utf-8")
@@ -964,14 +954,8 @@ def run_md(
                 continue
 
             # M5: 智能缓存
-            if (
-                not force
-                and existing_manifest
-                and idx < len(existing_manifest.get("blocks", []))
-            ):
-                if should_use_cache(
-                    block, existing_manifest, force, parsed.block_hashes
-                ):
+            if not force and existing_manifest and idx < len(existing_manifest.get("blocks", [])):
+                if should_use_cache(block, existing_manifest, force, parsed.block_hashes):
                     br = BlockResult(
                         index=idx,
                         language=block.language,
@@ -979,11 +963,7 @@ def run_md(
                         directives=block.directives,
                         status="skipped",
                         duration_ms=0,
-                        source_hash=(
-                            parsed.block_hashes[idx]
-                            if idx < len(parsed.block_hashes)
-                            else block.content
-                        ),
+                        source_hash=(parsed.block_hashes[idx] if idx < len(parsed.block_hashes) else block.content),
                         cache_hit=True,
                     )
                     br.stdout = "[cached] 跳过（内容未变）"
@@ -1006,11 +986,7 @@ def run_md(
                 debug=debug,
                 profile=profile,
             )
-            br.source_hash = (
-                block.content
-                if idx >= len(parsed.block_hashes)
-                else parsed.block_hashes[idx]
-            )
+            br.source_hash = block.content if idx >= len(parsed.block_hashes) else parsed.block_hashes[idx]
             block_results.append(br)
             total_duration += br.duration_ms
 
