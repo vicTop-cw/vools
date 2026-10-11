@@ -2,11 +2,26 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-set "KOTLINC=E:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2025.2.4\plugins\Kotlin\kotlinc\bin\kotlinc-jvm.bat"
-set "JAVA=E:\Java\jdk17.0.17_10\bin\java.exe"
+rem KOTLINC 优先取环境变量 KOTLINC_BAT，否则自动探测常见 IntelliJ 安装位置，避免写死本机路径
+if defined KOTLINC_BAT (
+    set "KOTLINC=%KOTLINC_BAT%"
+) else (
+    set "KOTLINC="
+    for /d %%d in ("C:\Program Files\JetBrains\*") do (
+        if not defined KOTLINC if exist "%%d\plugins\Kotlin\kotlinc\bin\kotlinc-jvm.bat" (
+            set "KOTLINC=%%d\plugins\Kotlin\kotlinc\bin\kotlinc-jvm.bat"
+        )
+    )
+)
+rem JAVA 优先取环境变量 JAVA_EXE，否则用 PATH 上的 java
+if defined JAVA_EXE (
+    set "JAVA=%JAVA_EXE%"
+) else (
+    set "JAVA=java"
+)
 
-if not exist "%KOTLINC%" (
-    echo Error: Kotlin compiler not found at %KOTLINC%
+if not defined KOTLINC (
+    echo Error: Kotlin compiler not found. Set KOTLINC_BAT to the kotlinc-jvm.bat path.
     exit /b 1
 )
 

@@ -26,7 +26,7 @@ from vools.bridge.tnr import (
 
 pytestmark = pytest.mark.skipif(
     not tnr_compiler_available(),
-    reason='Tnr 工具链不可用（需要 E:/IDEProjects/AI/Tnr 产物或 PATH/WSL 中的 tnr）'
+    reason='Tnr 工具链不可用（需要 PATH/WSL 中的 tnr，或 vools.bridge.configs 声明的工具链位置）'
 )
 
 
