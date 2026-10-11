@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """strip_margin 方法测试"""
 
+import os
 import sys
-sys.path.insert(0, r'E:\IDEProjects\AI\vools')
+
+# 由本文件位置反推仓库根，避免硬编码绝对路径（可在别的机器/CI 直接跑）
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, _REPO_ROOT)
 
 from vools.data.vtext import VText
 

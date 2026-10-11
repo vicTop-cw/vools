@@ -24,7 +24,7 @@ from vools.bridge.lz import (
 
 pytestmark = pytest.mark.skipif(
     not lz_compiler_available(),
-    reason='lang-zone 工具链不可用（需要 E:/IDEProjects/AI/lang-zone 产物或 PATH 中的 lang-zone）'
+    reason='lang-zone 工具链不可用（需要 PATH 上的 lang-zone，或 vools.bridge.configs 声明的工具链位置）'
 )
 
 

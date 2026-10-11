@@ -1,8 +1,12 @@
 import ctypes
 import ctypes.util
+import os
 
-# Try RTLD_GLOBAL
-lib_path = '/mnt/e/IDEProjects/AI/vools/vools/lib/linux/libvools_crypto.so'
+# 由本文件位置反推仓库根，避免硬编码绝对路径；可用 VOOOLS_CRYPTO_SO 环境变量覆盖
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+lib_path = os.environ.get(
+    "VOOOLS_CRYPTO_SO"
+) or os.path.join(_REPO_ROOT, "vools", "lib", "linux", "libvools_crypto.so")
 print(f"Loading: {lib_path}")
 
 # Try with RTLD_GLOBAL
