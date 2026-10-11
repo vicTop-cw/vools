@@ -101,7 +101,7 @@ class OvercurryManager:
                     first_func = self.overloads.funcs[0]
                     try:
                         return first_func(*args, **kwargs)
-                    except:
+                    except Exception:
                         pass
             raise
     

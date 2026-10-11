@@ -623,7 +623,7 @@ class VDate(datetime):
             try:
                 other_date = datetime.strptime(other, '%Y-%m-%d').date()
                 return self.date() == other_date
-            except:
+            except Exception:
                 return False
         return False
 
@@ -644,7 +644,7 @@ class VDate(datetime):
             try:
                 other_date = datetime.strptime(other, '%Y-%m-%d').date()
                 return self.date() < other_date
-            except:
+            except Exception:
                 return False
         return False
 
@@ -719,7 +719,7 @@ class VDate(datetime):
             return self.__dict__[name]
         try:
             return getattr(super(), name)
-        except:
+        except Exception:
             return getattr(self._date_processor, name)
 
     def __dir__(self) -> List[str]:

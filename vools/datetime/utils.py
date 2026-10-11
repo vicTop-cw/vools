@@ -297,7 +297,7 @@ def get_recently_months(dt: str, num: int = 11) -> list:
     fmt = "%Y%m%d" if len(dt) == 8 else "%Y-%m-%d"
     try:
         dt_obj = datetime.strptime(dt, fmt)
-    except:
+    except Exception:
         alt_fmt = "%Y-%m-%d" if fmt == "%Y%m%d" else "%Y%m%d"
         dt_obj = datetime.strptime(dt, alt_fmt)
 
@@ -348,7 +348,7 @@ def get_recently_weeks(dt: str, num: int = 13) -> list:
     fmt = "%Y%m%d" if len(dt) == 8 else "%Y-%m-%d"
     try:
         dt_obj = datetime.strptime(dt, fmt)
-    except:
+    except Exception:
         alt_fmt = "%Y-%m-%d" if fmt == "%Y%m%d" else "%Y%m%d"
         dt_obj = datetime.strptime(dt, alt_fmt)
 
@@ -389,7 +389,7 @@ def get_recently_days(dt: str, num: int = 13) -> list:
     fmt = "%Y%m%d" if len(dt) == 8 else "%Y-%m-%d"
     try:
         dt_obj = datetime.strptime(dt, fmt)
-    except:
+    except Exception:
         alt_fmt = "%Y-%m-%d" if fmt == "%Y%m%d" else "%Y%m%d"
         dt_obj = datetime.strptime(dt, alt_fmt)
 
@@ -426,7 +426,7 @@ def get_dates(dt: str, num: int = 13, tp: str = "d") -> list:
     fmt = "%Y%m%d" if len(dt) == 8 else "%Y-%m-%d"
     try:
         dt_obj = datetime.strptime(dt, fmt)
-    except:
+    except Exception:
         alt_fmt = "%Y-%m-%d" if fmt == "%Y%m%d" else "%Y%m%d"
         dt_obj = datetime.strptime(dt, alt_fmt)
 
