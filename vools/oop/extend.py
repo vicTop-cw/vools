@@ -231,7 +231,7 @@ def _auto_convert_type(value_str: str) -> Any:
         try:
             return {_auto_convert_type(k.strip()): _auto_convert_type(v.strip()) 
                    for k, v in [item.split(':') for item in value_str[1:-1].split(',')]}
-        except:
+        except Exception:
             pass
     if value_str.startswith('(') and value_str.endswith(')'):
         values_str = value_str[1:-1].split(',')

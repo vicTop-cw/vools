@@ -47,7 +47,7 @@ def _get_cached_signature(func: Callable[..., Any]) -> Signature:
         if hasattr(func, '__text_signature__'):
             try:
                 return signature(func.__text_signature__)
-            except:
+            except Exception:
                 pass
         if hasattr(__builtins__, func.__name__ if hasattr(func, '__name__') else ''):
             builtin_arg_counts = {

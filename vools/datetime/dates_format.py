@@ -604,7 +604,7 @@ class EnhancedDateFormatter:
     def __getattr__(self,name):
         try:
             return getattr(super(),name)
-        except:
+        except Exception:
             if name =="run":
                 return lambda f=None,f_pre=None : DateProcessor.run(self,f,f_pre)
             return getattr(self.date_processor,name)
@@ -802,7 +802,7 @@ class EnhancedDateFormatter:
             # 直接使用实例的context作为命名空间
             code = compile(value_str, '<string>', 'eval')
             return eval(code, {'__builtins__': self.context})
-        except:
+        except Exception:
             pass
         
         # 默认返回字符串
