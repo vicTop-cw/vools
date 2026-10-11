@@ -8,7 +8,9 @@ vools.bridge.md parser — Markdown 即代码解析器
 
 复用 vools.md 的解析器提取代码块，再叠加 #! 指令解析。
 """
-import os, re, hashlib
+
+import hashlib
+import re
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 
@@ -16,6 +18,7 @@ from typing import List, Dict, Optional
 try:
     from vools.md.parser import parse as _md_parse
     from vools.md.parser import CodeBlock as _MdCodeBlock
+
     _HAS_VOOLS_MD = True
 except ImportError:
     _HAS_VOOLS_MD = False
@@ -25,9 +28,11 @@ except ImportError:
 # 数据类
 # ═══════════════════════════════════════════════════════
 
+
 @dataclass
 class FileDirectives:
     """文件级指令"""
+
     config: Optional[str] = None
     deps: Optional[str] = None
     build_dir: str = ".mdbuild"
@@ -38,18 +43,20 @@ class FileDirectives:
 @dataclass
 class CodeBlock:
     """代码块（含 #! 指令）"""
+
     index: int
     language: str
     directives: Dict[str, str]
     content: str
     tag: List[str] = field(default_factory=list)
     source_file: Optional[str] = None  # M3: 来源文件
-    imported: bool = False             # M3: 是否来自 import
+    imported: bool = False  # M3: 是否来自 import
 
 
 @dataclass
 class ParsedMD:
     """解析结果"""
+
     path: str
     file_directives: FileDirectives
     blocks: List[CodeBlock]
@@ -61,7 +68,7 @@ class ParsedMD:
 # 文件级指令提取
 # ═══════════════════════════════════════════════════════
 
-_FILE_DIRECTIVE_RE = re.compile(r'^#!([a-zA-Z_][\w-]*)(?:\s+(.*))?$')
+_FILE_DIRECTIVE_RE = re.compile(r"^#!([a-zA-Z_][\w-]*)(?:\s+(.*))?$")
 
 
 def _extract_file_directives(text: str) -> tuple[FileDirectives, str]:
@@ -76,7 +83,7 @@ def _extract_file_directives(text: str) -> tuple[FileDirectives, str]:
         (FileDirectives, 剩余文本)
     """
     fd = FileDirectives()
-    lines = text.split('\n')
+    lines = text.split("\n")
     consumed = 0
 
     for i, line in enumerate(lines):
@@ -92,21 +99,21 @@ def _extract_file_directives(text: str) -> tuple[FileDirectives, str]:
         key = m.group(1)
         value = m.group(2).strip() if m.group(2) else None
 
-        if key == 'config':
+        if key == "config":
             fd.config = value
-        elif key == 'deps':
+        elif key == "deps":
             fd.deps = value
-        elif key == 'build-dir':
+        elif key == "build-dir":
             fd.build_dir = value or ".mdbuild"
-        elif key == 'entry':
+        elif key == "entry":
             fd.entry = value
-        elif key == 'only':
+        elif key == "only":
             if value:
-                fd.only = [t.strip() for t in value.split(',')]
+                fd.only = [t.strip() for t in value.split(",")]
 
         consumed += 1
 
-    remaining = '\n'.join(lines[consumed:])
+    remaining = "\n".join(lines[consumed:])
     return fd, remaining
 
 
@@ -114,7 +121,7 @@ def _extract_file_directives(text: str) -> tuple[FileDirectives, str]:
 # 代码块提取（复用 vools.md 或内置）
 # ═══════════════════════════════════════════════════════
 
-_FENCE_RE = re.compile(r'^```(\w*)\s*(.*)$')
+_FENCE_RE = re.compile(r"^```(\w*)\s*(.*)$")
 
 
 def _extract_blocks_builtin(text: str) -> List[tuple]:
@@ -125,7 +132,7 @@ def _extract_blocks_builtin(text: str) -> List[tuple]:
         [(language, directive_str, content), ...]
     """
     blocks = []
-    lines = text.split('\n')
+    lines = text.split("\n")
     i = 0
 
     while i < len(lines):
@@ -134,12 +141,12 @@ def _extract_blocks_builtin(text: str) -> List[tuple]:
             i += 1
             continue
 
-        language = m.group(1) or ''
+        language = m.group(1) or ""
         directive_str = m.group(2).strip()
         i += 1
 
         content_lines = []
-        while i < len(lines) and not lines[i].strip().startswith('```'):
+        while i < len(lines) and not lines[i].strip().startswith("```"):
             content_lines.append(lines[i])
             i += 1
 
@@ -152,19 +159,19 @@ def _extract_blocks_builtin(text: str) -> List[tuple]:
         tag_directives = []
         for line in content_lines:
             stripped = line.strip()
-            if stripped.startswith('# tag:') or stripped.startswith('#tag:'):
-                tag_value = stripped.split(':', 1)[1].strip() if ':' in stripped else ''
+            if stripped.startswith("# tag:") or stripped.startswith("#tag:"):
+                tag_value = stripped.split(":", 1)[1].strip() if ":" in stripped else ""
                 if tag_value:
-                    tag_directives.append(f'tag={tag_value}')
+                    tag_directives.append(f"tag={tag_value}")
             else:
                 actual_content.append(line)
 
         # 合并 fence 指令和 tag 指令
         all_directives = directive_str
         if tag_directives:
-            all_directives = (directive_str + ' ' + ' '.join(tag_directives)).strip()
+            all_directives = (directive_str + " " + " ".join(tag_directives)).strip()
 
-        content = '\n'.join(actual_content)
+        content = "\n".join(actual_content)
         blocks.append((language, all_directives, content))
 
     return blocks
@@ -185,18 +192,18 @@ def _extract_blocks_vools_md(text: str) -> List[tuple]:
             # vools.md 的 CodeBlock 有 language 和 code 属性
             # vools.md 把 ``` 后所有内容都放入 language，例如 "python #!run tag=main"
             # 需要从 language 中分离出真正的语言名和 #! 指令
-            lang_raw = (node.language or '').strip()
-            fence_directives = ''
-            if ' #!' in lang_raw:
+            lang_raw = (node.language or "").strip()
+            fence_directives = ""
+            if " #!" in lang_raw:
                 # 形如 "python #!run tag=main"
-                idx = lang_raw.index(' #!')
+                idx = lang_raw.index(" #!")
                 language = lang_raw[:idx].strip()
-                fence_directives = lang_raw[idx + 1:].strip()  # 去掉前导空格
+                fence_directives = lang_raw[idx + 1 :].strip()  # 去掉前导空格
             else:
                 language = lang_raw
 
             # 从 code 中分离指令行（块内 #! 指令 或 # tag: xxx 标签）
-            lines = node.code.split('\n')
+            lines = node.code.split("\n")
             directive_parts = []
             if fence_directives:
                 directive_parts.append(fence_directives)
@@ -204,19 +211,21 @@ def _extract_blocks_vools_md(text: str) -> List[tuple]:
 
             for line in lines:
                 stripped = line.strip()
-                if stripped.startswith('#!'):
+                if stripped.startswith("#!"):
                     directive_parts.append(stripped)
-                elif stripped.startswith('# tag:') or stripped.startswith('#tag:'):
+                elif stripped.startswith("# tag:") or stripped.startswith("#tag:"):
                     # 新格式 .actus.schema.md: # tag: main → tag=main 指令
-                    tag_value = stripped.split(':', 1)[1].strip() if ':' in stripped else ''
+                    tag_value = (
+                        stripped.split(":", 1)[1].strip() if ":" in stripped else ""
+                    )
                     if tag_value:
-                        directive_parts.append(f'tag={tag_value}')
+                        directive_parts.append(f"tag={tag_value}")
                     content_lines.append(line)
                 else:
                     content_lines.append(line)
 
-            directive_str = ' '.join(directive_parts)
-            content = '\n'.join(content_lines)
+            directive_str = " ".join(directive_parts)
+            content = "\n".join(content_lines)
             blocks.append((language, directive_str, content))
 
     return blocks
@@ -226,26 +235,27 @@ def _extract_blocks_vools_md(text: str) -> List[tuple]:
 # 哈希计算
 # ═══════════════════════════════════════════════════════
 
+
 def _compute_md_hash(fd: FileDirectives, blocks: List[tuple]) -> str:
     """计算 md_hash：文件级指令 + 全部块内容。"""
     h = hashlib.md5()
-    h.update((fd.config or '').encode())
-    h.update(b'\n')
-    h.update((fd.deps or '').encode())
-    h.update(b'\n')
+    h.update((fd.config or "").encode())
+    h.update(b"\n")
+    h.update((fd.deps or "").encode())
+    h.update(b"\n")
     h.update(fd.build_dir.encode())
-    h.update(b'\n')
-    h.update((fd.entry or '').encode())
-    h.update(b'\n')
-    h.update(','.join(fd.only).encode())
+    h.update(b"\n")
+    h.update((fd.entry or "").encode())
+    h.update(b"\n")
+    h.update(",".join(fd.only).encode())
 
     for lang, directives, content in blocks:
         h.update(lang.encode())
-        h.update(b'\n')
+        h.update(b"\n")
         h.update(directives.encode())
-        h.update(b'\n')
+        h.update(b"\n")
         h.update(content.encode())
-        h.update(b'\n')
+        h.update(b"\n")
 
     return h.hexdigest()
 
@@ -254,9 +264,9 @@ def _compute_block_hash(language: str, directives: str, content: str) -> str:
     """计算单块哈希。"""
     h = hashlib.md5()
     h.update(language.encode())
-    h.update(b'\n')
+    h.update(b"\n")
     h.update(directives.encode())
-    h.update(b'\n')
+    h.update(b"\n")
     h.update(content.encode())
     return h.hexdigest()
 
@@ -264,6 +274,7 @@ def _compute_block_hash(language: str, directives: str, content: str) -> str:
 # ═══════════════════════════════════════════════════════
 # 主入口
 # ═══════════════════════════════════════════════════════
+
 
 def parse_md(md_path: str) -> ParsedMD:
     """
@@ -275,7 +286,7 @@ def parse_md(md_path: str) -> ParsedMD:
     Returns:
         ParsedMD 对象
     """
-    with open(md_path, 'r', encoding='utf-8') as f:
+    with open(md_path, "r", encoding="utf-8") as f:
         text = f.read()
 
     # 1. 提取文件级指令
@@ -295,16 +306,18 @@ def parse_md(md_path: str) -> ParsedMD:
 
     for idx, (language, directive_str, content) in enumerate(raw_blocks):
         directives = parse_block_directives(directive_str)
-        tag = directives.get('tag', '').split(',') if directives.get('tag') else []
+        tag = directives.get("tag", "").split(",") if directives.get("tag") else []
         tag = [t.strip() for t in tag if t.strip()]
 
-        blocks.append(CodeBlock(
-            index=idx,
-            language=language,
-            directives=directives,
-            content=content,
-            tag=tag,
-        ))
+        blocks.append(
+            CodeBlock(
+                index=idx,
+                language=language,
+                directives=directives,
+                content=content,
+                tag=tag,
+            )
+        )
 
         bh = _compute_block_hash(language, directive_str, content)
         block_hashes.append(bh)

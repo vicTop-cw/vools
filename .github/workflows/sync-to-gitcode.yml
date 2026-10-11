@@ -16,5 +16,5 @@ jobs:
         env:
           SSH_PRIVATE_KEY: ${{ secrets.GITCODE_SSH_PRIVATE_KEY }}
         with:
-          source-repo: "git@github.com:vicTop-cw/vools.git"
+          source-repo: "https://github.com/vicTop-cw/vools.git"
           destination-repo: "git@gitcode.com:VictorTop/vools.git"

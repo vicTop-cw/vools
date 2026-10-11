@@ -1,7 +1,7 @@
 """vools.bridge.md 测试：解析、指令、配置、依赖、清单、产物、执行"""
 import sys, os, tempfile, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-sys.path.insert(0, r'E:\IDEProjects\AI\vools\bridges')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vools.bridge.md.parser import parse_md, FileDirectives, CodeBlock, ParsedMD
 from vools.bridge.md.directives import (
@@ -440,7 +440,7 @@ def test_cli_check():
             f.write(md)
         result = subprocess.run(
             [sys.executable, '-m', 'vools.bridge.md', 'check', md_path],
-            capture_output=True, text=True, cwd=r'E:\IDEProjects\AI\vools\bridges',
+            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         )
         assert result.returncode == 0
         assert 'Dependency Check' in result.stdout
@@ -456,7 +456,7 @@ def test_cli_info():
             f.write(md)
         result = subprocess.run(
             [sys.executable, '-m', 'vools.bridge.md', 'info', md_path],
-            capture_output=True, text=True, cwd=r'E:\IDEProjects\AI\vools\bridges',
+            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         )
         assert result.returncode == 0
         assert 'File:' in result.stdout
@@ -473,7 +473,7 @@ def test_cli_clean():
             f.write(md)
         result = subprocess.run(
             [sys.executable, '-m', 'vools.bridge.md', 'clean', md_path],
-            capture_output=True, text=True, cwd=r'E:\IDEProjects\AI\vools\bridges',
+            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         )
         assert result.returncode == 0
         assert 'Cleaned' in result.stdout
