@@ -78,6 +78,9 @@ def test_from_dicts():
 
 @pytest.mark.windows_only
 def test_excel_read_write(sample_table):
+    # xl 是可选子包（vools-xl），核心安装不含它。缺席时应跳过而不是报错——
+    # 与本文件 test_pandas_conversion 用 importorskip 守卫 pandas 同一惯例。
+    pytest.importorskip('vools.xl')
     tmp = os.path.join(tempfile.gettempdir(), 'test_table.xlsx')
     try:
         sample_table.write_excel(tmp)

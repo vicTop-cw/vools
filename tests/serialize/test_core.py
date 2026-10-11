@@ -96,11 +96,12 @@ class TestMsgpackSerializer:
     """Msgpack Serializer 测试"""
 
     def test_roundtrip(self):
-        try:
-            s = Serializer(backend='msgpack')
-            obj = {'key': 'value', 'num': 42}
-            data = s.dumps(obj)
-            result = s.loads(data)
-            assert result == obj
-        except ImportError:
-            pytest.skip('msgpack not installed')
+        # 守卫必须与真源抛出的异常类型一致：msgpack 缺席时 Serializer 抛的是
+        # **ValueError**（"Backend 'msgpack' is not available..."），旧守卫只 catch
+        # ImportError ⇒ 跳过从未生效，这条用例在无 msgpack 的环境里恒失败。
+        pytest.importorskip('msgpack')
+        s = Serializer(backend='msgpack')
+        obj = {'key': 'value', 'num': 42}
+        data = s.dumps(obj)
+        result = s.loads(data)
+        assert result == obj

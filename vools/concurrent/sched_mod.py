@@ -104,7 +104,11 @@ class VScheduler:
         """
         with self._lock:
             count = 0
-            for event in list(self._scheduler.queue()):
+            # BUG-2：`sched.scheduler.queue` 是 **property**（直接返回 list），不是方法。
+            # 写成 queue() 会 TypeError: 'list' object is not callable，使本方法 100% 必崩
+            # ——它是 VScheduler 唯一的批量取消入口，SchedulerPool.cancel_all/stop_all
+            # 也依赖它。
+            for event in list(self._scheduler.queue):
                 try:
                     self._scheduler.cancel(event)
                     count += 1
@@ -135,7 +139,8 @@ class VScheduler:
     def queue(self) -> List[Any]:
         """当前待执行事件队列（副本）"""
         with self._lock:
-            return list(self._scheduler.queue())
+            # BUG-2：同 cancel_all —— `sched.scheduler.queue` 是 property，不能加 ()。
+            return list(self._scheduler.queue)
 
     def __repr__(self) -> str:
         return f'VScheduler(pending={len(self.queue)})'

@@ -49,7 +49,13 @@ class BridgeRegistry:
     def _get_loader(self, language: str):
         """获取指定语言的加载器"""
         if language not in self._loaders:
-            from ..bridge.core.loader import get_loader
+            # BUG-3：vools.bridge 是可选子包（vools-bridges）。缺席时这里的 import
+            # 会抛 ModuleNotFoundError，从 load_symbol 一路冒泡出 @bridge 的 wrapper，
+            # 使「不可用则回退纯 Python」的三条路径一条都到不了。缺席即视为不可用。
+            try:
+                from ..bridge.core.loader import get_loader
+            except ImportError:
+                return None
             self._loaders[language] = get_loader(language)
         return self._loaders[language]
     
@@ -61,9 +67,13 @@ class BridgeRegistry:
             language: 语言名称（如 "nim", "rust", "go" 等）
             
         Returns:
-            bool: 桥接库是否可用
+            bool: 桥接库是否可用（vools-bridges 未安装时为 False）
         """
-        from ..bridge.core.loader import is_available as core_is_available
+        try:
+            from ..bridge.core.loader import is_available as core_is_available
+        except ImportError:
+            # BUG-3：可选子包缺席 → 不可用，而不是抛异常
+            return False
         return core_is_available(language)
     
     def get_lib(self, language: str, lib_name: str = None):
@@ -75,9 +85,13 @@ class BridgeRegistry:
             lib_name: 库名称（可选，部分语言不需要）
             
         Returns:
-            ctypes.CDLL 或 None: 加载的共享库
+            ctypes.CDLL 或 None: 加载的共享库（vools-bridges 未安装时为 None）
         """
-        from ..bridge.core.loader import load_library
+        try:
+            from ..bridge.core.loader import load_library
+        except ImportError:
+            # BUG-3：可选子包缺席 → 无库可用
+            return None
         
         cache_key = (language, lib_name)
         

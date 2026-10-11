@@ -266,6 +266,60 @@ DLL32_AVAILABLE = False
 XL_AVAILABLE = False
 
 VIC_AVAILABLE = True
+PYK_AVAILABLE = False
+
+# ============================================================================
+# legacy 兼容层：vicspark / my_spark / get_content
+# 旧版 vools 单文件里这三个是模块级全局 API（vicspark = 全局 SparkSession）。
+# 新 vools 把 Spark 能力放在 vools.pyk / vools.sql.spark 里，此处提供等价入口，
+# 让 look_upon / p3_prod 等 legacy 调用方 `from vools import vicspark, get_content`
+# 继续可用，不需要改业务代码。
+# ============================================================================
+
+_vicspark = None  # type: Any
+
+
+def my_spark(spk: Any = None) -> Any:
+    """设置/获取全局 SparkSession（legacy vicspark 兼容）。
+
+    Args:
+        spk: 传入则把它设为全局 SparkSession；不传则返回当前全局实例。
+
+    Returns:
+        SparkSession 实例。
+
+    Notes:
+        首次调用且未显式传入时，通过 ``vools.pyk.get_spark`` 惰性创建。
+    """
+    global _vicspark
+    if spk is not None:
+        _vicspark = spk
+    elif _vicspark is None:
+        from .pyk import get_spark as _pyk_get_spark
+        _vicspark = _pyk_get_spark(app_name="vools")
+    return _vicspark
+
+
+def get_content(file_path: str, to_text: bool = True):
+    """读取文件内容（legacy ``vicText.get_content_fromfile`` 兼容）。
+
+    Args:
+        file_path: 文件路径，支持 file:// URI。
+        to_text: True 返回 VText（legacy 有 ``.text``）；False 返回行列表。
+
+    Returns:
+        VText 或行列表。
+
+    Notes:
+        legacy 里 ``get_content = vicText.get_content_fromfile``，返回值带 ``.text``；
+        新 vools 的 ``VText.get_content_fromfile`` 直接返回 str，此处补一层包装，
+        让 ``get_content(path).text`` 这类旧写法继续可用。
+    """
+    from .data.vtext import VText
+    raw = VText.get_content_fromfile(file_path=file_path, to_text=to_text)
+    if to_text and not isinstance(raw, VText):
+        return VText(raw)
+    return raw
 
 
 def __getattr__(name: str) -> Any:
@@ -320,6 +374,29 @@ def __getattr__(name: str) -> Any:
             return module
         except Exception:
             raise AttributeError("vools.xl is not installed; use pip install 'vools[xl]' or pip install vools-xl")
+
+    if name == 'pyk':
+        global PYK_AVAILABLE
+        try:
+            # pyk 已并入 vools 主包（vools/pyk/），随 vools 一起安装
+            module = importlib.import_module('vools.pyk')
+            PYK_AVAILABLE = True
+            return module
+        except Exception as _pe:
+            raise AttributeError(
+                "vools.pyk 需要 pyspark；请先 `pip install 'vools[spark]'` 或 `pip install pyspark`。"
+                f" 原始错误: {_pe}"
+            )
+
+    if name == 'vicspark':
+        # legacy 兼容：全局 SparkSession，惰性创建
+        try:
+            return my_spark()
+        except Exception as _e:
+            raise AttributeError(
+                "vools.vicspark 需要 pyspark；请先安装 pyspark 或 vools-pyk[spark]。"
+                f" 原始错误: {_e}"
+            )
 
     if name in _lazy_modules:
         module_path = _lazy_modules[name]
@@ -523,6 +600,12 @@ __all__ = [
     'VText',
     'VDate',
 ]
+
+# 注意（BUG-1）：可选子包 bridge / reactive / dll32 / xl / pyk **一律不进 __all__**。
+# `from vools import *` 会遍历 __all__ 逐名 getattr，而 __getattr__ 对未安装的可选子包
+# 按设计抛 AttributeError —— 把可选名放进 __all__ 会让「标准安装（核心不含任何子包）」
+# 下的 star import 整条崩溃。pyk 曾被加进 __all__，正是 tests/core/test_import.py 与
+# tests/core/test_utils.py 两个收集错误的真因。可选子包请用显式 `vools.pyk` 访问。
 
 # Python 3.6 兼容：模块级 __getattr__ 和 __dir__ 是 3.7+ 才有的
 # 在 3.6 中需要主动导入所有延迟加载的名称

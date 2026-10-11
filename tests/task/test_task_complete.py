@@ -33,6 +33,19 @@ def slow_function(delay=0.1):
     return "completed"
 
 
+def record_interval(start_path, end_path, delay=0.1):
+    """记录任务执行的起止时刻到两个文件（用于并行性判定）。
+
+    每个任务写**自己的**文件，避免多进程写同一文件时的交错问题。
+    """
+    with open(start_path, 'w') as f:
+        f.write(repr(time.time()))
+    time.sleep(delay)
+    with open(end_path, 'w') as f:
+        f.write(repr(time.time()))
+    return "completed"
+
+
 def failing_function(should_fail=True):
     if should_fail:
         raise ValueError("Intentional failure")
@@ -162,42 +175,77 @@ class TestTaskParallelExecution:
             except:
                 pass
 
-    @pytest.mark.flaky(reruns=2)
     def test_worker_pool_size(self):
-        """测试不同工作进程数量的性能（flaky：依赖硬件并行能力）"""
-        queue = TaskQueue(self.db_path)
+        """测试多 worker 真的并行执行（确定性判据，不依赖墙钟比值）
+
+        BUG-4：本用例原来断言「4 workers 耗时 < 1 worker 耗时 × 0.75」。这是**墙钟
+        比值**判据，在负载波动的机器上必然抖动：8 个 0.2s 任务只有 1.6s 真实工作量，
+        而 WorkerPool 的启动/轮询固定开销就有 ~0.8s，加速比只剩 1.3~1.5 倍，稍一波动
+        就跌破阈值；作者用 @pytest.mark.flaky(reruns=2) 兜底，但那个标记是**空标记**
+        （pytest-rerunfailures 未安装/未声明/未注册），于是表现为套件随机红绿。
+
+        现改为**确定性**判据：让每个任务把自己的起止时刻写到独立文件，然后直接检验
+        「同一时刻是否有多个任务在运行」。只要有任意一对任务的执行区间**重叠**，
+        就证明并行真实发生——这个判据与机器负载无关（负载只会让区间更长、更容易重叠），
+        不会因为一次调度抖动翻红。
+        """
         num_tasks = 8
-        delay_per_task = 0.2
-        
-        task_ids = []
-        for _ in range(num_tasks):
-            task_ids.append(queue.submit(slow_function, delay_per_task))
-        
-        start = time.time()
-        with WorkerPool(num_workers=1, db_path=self.db_path, poll_interval=0.01) as pool:
-            for tid in task_ids:
-                queue.get_result(tid, timeout=10)
-        time_with_1_worker = time.time() - start
-        
-        for ext in ['', '-wal', '-shm']:
+        delay = 0.4
+
+        f = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+        f.close()
+        db_path = f.name
+        workdir = tempfile.mkdtemp(prefix='vools_parallel_')
+        try:
+            q = TaskQueue(db_path)
+            tids = []
+            for i in range(num_tasks):
+                sp = os.path.join(workdir, 'start_%d' % i)
+                ep = os.path.join(workdir, 'end_%d' % i)
+                tids.append(q.submit(record_interval, sp, ep, delay))
+
+            with WorkerPool(num_workers=4, db_path=db_path, poll_interval=0.01):
+                for tid in tids:
+                    q.get_result(tid, timeout=60)
+
+            intervals = []
+            for i in range(num_tasks):
+                sp = os.path.join(workdir, 'start_%d' % i)
+                ep = os.path.join(workdir, 'end_%d' % i)
+                assert os.path.exists(sp) and os.path.exists(ep), "任务 %d 未落起止时刻" % i
+                with open(sp) as fh:
+                    s = float(fh.read())
+                with open(ep) as fh:
+                    e = float(fh.read())
+                intervals.append((s, e, i))
+
+            # 并行性判据：存在一对任务的执行区间重叠
+            intervals.sort()
+            max_end = intervals[0][1]
+            max_end_task = intervals[0][2]
+            overlap = None
+            for s, e, i in intervals[1:]:
+                if s < max_end:            # 后一个任务在前一个还没结束时就开始
+                    overlap = (max_end_task, i, max_end - s)
+                    break
+                if e > max_end:
+                    max_end, max_end_task = e, i
+
+            assert overlap is not None, (
+                "4 workers 未观测到任何并发重叠——任务被串行执行了。"
+                "各任务区间(起,止,序号)=%s" % [(round(s, 3), round(e, 3), i) for s, e, i in intervals]
+            )
+        finally:
+            for ext in ['', '-wal', '-shm']:
+                try:
+                    os.unlink(db_path + ext)
+                except Exception:
+                    pass
             try:
-                os.unlink(self.db_path + ext)
-            except:
+                import shutil
+                shutil.rmtree(workdir, ignore_errors=True)
+            except Exception:
                 pass
-        
-        queue2 = TaskQueue(self.db_path)
-        task_ids2 = []
-        for _ in range(num_tasks):
-            task_ids2.append(queue2.submit(slow_function, delay_per_task))
-        
-        start = time.time()
-        with WorkerPool(num_workers=4, db_path=self.db_path, poll_interval=0.01) as pool:
-            for tid in task_ids2:
-                queue2.get_result(tid, timeout=10)
-        time_with_4_workers = time.time() - start
-        
-        # 增加任务数量和延迟，提高并行效果；降低阈值以适应不同硬件
-        assert time_with_4_workers < time_with_1_worker * 0.75
 
 
 class TestTaskDecorators:
