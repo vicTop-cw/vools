@@ -34,10 +34,9 @@
     snap = run.run()
 """
 
-from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from . import omega as _omega

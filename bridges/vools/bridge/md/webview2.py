@@ -40,8 +40,6 @@ vools.bridge.md webview2 — WebView2 (Chromium) 渲染引擎 v2.0
 ```
 """
 
-from __future__ import annotations
-
 import os
 import sys
 import json
@@ -52,9 +50,10 @@ import tempfile
 import uuid
 import subprocess
 import html
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable, Union
+from typing import Dict, List, Optional, Any, Callable, Union, Tuple
 from enum import Enum
+
+from ..core.compat.dataclass_compat import dataclass, field
 
 # ═══════════════════════════════════════════════════════
 # 枚举和常量
@@ -1025,7 +1024,7 @@ def get_active_webview_windows() -> List[str]:
 # ═══════════════════════════════════════════════════════
 
 
-def execute_webview2_block(block_content: str, directives: Dict, context: Dict, build_dir: str) -> tuple[str, str, int]:
+def execute_webview2_block(block_content: str, directives: Dict, context: Dict, build_dir: str) -> Tuple[str, str, int]:
     """
     执行 webview2 代码块（供 runner.py 调用）
     """

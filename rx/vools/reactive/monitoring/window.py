@@ -12,8 +12,6 @@ vools/reactive/monitoring/window.py - 窗口监控模块
     from_window(...):           顶层工厂函数
     write_to_window(...):       响应式操作符
 """
-from __future__ import annotations
-
 import ctypes
 import ctypes.wintypes as wt
 import datetime

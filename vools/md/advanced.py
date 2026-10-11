@@ -11,7 +11,7 @@ vools.md 高级功能模块
 """
 import re, time, os
 from typing import List, Dict, Optional, Iterator
-from dataclasses import dataclass
+from ..core.dataclass_compat import dataclass
 
 from .parser import (
     parse, Document, Heading, Paragraph, CodeBlock, BlockQuote,

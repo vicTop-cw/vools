@@ -17,7 +17,6 @@ Actus 原先的 Omega（`omega.py`）只做**执行后**的 Ω-gate（产出对 
 语料账本落 `_meta/omega_strong/<task_id>.json`（原子写），并落 call_log（caller='omega_strong'）。
 """
 
-from __future__ import annotations
 
 import json
 import os

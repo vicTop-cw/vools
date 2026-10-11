@@ -8,15 +8,14 @@ M5 增强：
 - 并行执行：async/parallel 多块并行
 """
 
-from __future__ import annotations
-
 import json
 import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
+
+from ..core.compat.dataclass_compat import dataclass, field
 
 from .parser import ParsedMD, CodeBlock, parse_md
 from .directives import validate_directives
@@ -620,7 +619,7 @@ def _execute_block(
     config: Dict,
     args: Optional[str],
     timeout: int,
-) -> tuple[str, str, int]:
+) -> Tuple[str, str, int]:
     """执行代码块，返回 (stdout, stderr, exit_code)。"""
     lang = block.language
     workdir = context.get("workdir", os.getcwd())
@@ -722,7 +721,7 @@ def _build_prelude_env(config: Dict) -> Dict[str, Any]:
     return prelude
 
 
-def _execute_python(content: str, context: Dict, config: Dict, args: Optional[str]) -> tuple[str, str, int]:
+def _execute_python(content: str, context: Dict, config: Dict, args: Optional[str]) -> Tuple[str, str, int]:
     """执行 Python 代码。"""
     try:
         import io
@@ -777,7 +776,7 @@ def _execute_shell(
     workdir: str,
     timeout: int,
     args: Optional[str],
-) -> tuple[str, str, int]:
+) -> Tuple[str, str, int]:
     """执行 Shell 代码。"""
     env = dict(context.get("env", {}))
     stdin_data = context.get("stdin")
@@ -800,7 +799,7 @@ def _execute_shell(
     return proc.stdout, proc.stderr, proc.returncode
 
 
-def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: int) -> tuple[str, str, int]:
+def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: int) -> Tuple[str, str, int]:
     """通过 bridge helper 执行代码 - 支持所有 31 种桥接语言。"""
     try:
         from vools.bridge import get_helper
@@ -830,7 +829,7 @@ def _execute_webview2(
     block: CodeBlock,
     context: Dict,
     config: Dict,
-) -> tuple[str, str, int]:
+) -> Tuple[str, str, int]:
     """
     执行 webview2 代码块，渲染 GUI。
 

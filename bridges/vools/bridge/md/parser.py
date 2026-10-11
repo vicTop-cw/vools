@@ -9,12 +9,11 @@ vools.bridge.md parser — Markdown 即代码解析器
 复用 vools.md 的解析器提取代码块，再叠加 #! 指令解析。
 """
 
-from __future__ import annotations
-
 import hashlib
 import re
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
+
+from ..core.compat.dataclass_compat import dataclass, field
 
 # 复用 vools.md 的代码块提取
 try:
@@ -73,7 +72,7 @@ class ParsedMD:
 _FILE_DIRECTIVE_RE = re.compile(r"^#!([a-zA-Z_][\w-]*)(?:\s+(.*))?$")
 
 
-def _extract_file_directives(text: str) -> tuple[FileDirectives, str]:
+def _extract_file_directives(text: str) -> Tuple[FileDirectives, str]:
     """
     从 md 文本顶部提取文件级指令。
 

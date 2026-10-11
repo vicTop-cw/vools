@@ -9,7 +9,7 @@ import re
 import shutil
 import time
 from typing import Callable, Dict, List, Optional
-from dataclasses import dataclass, field, asdict
+from vools.core.dataclass_compat import dataclass, field, asdict
 
 
 @dataclass

@@ -10,7 +10,7 @@ import os
 import re
 import time
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, asdict
+from vools.core.dataclass_compat import dataclass, asdict
 
 
 @dataclass

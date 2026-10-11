@@ -12,7 +12,7 @@
 import json
 import os
 import time
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 
@@ -384,8 +384,9 @@ class VisibilityEngine:
             return True, ""
 
         if visibility == VISIBILITY_TEAM:
-            # 需要检查团队
-            team_name = action.get("team", "") if (action := self._find_action(action_id)) else ""
+            # 需要检查团队（不用海象运算符，保持 py3.6 兼容）
+            action = self._find_action(action_id)
+            team_name = action.get("team", "") if action else ""
             if not team_name:
                 return False, f"No team associated with action: {action_id}"
             team = self._team_manager.get_team(team_name)

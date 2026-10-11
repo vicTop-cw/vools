@@ -16,7 +16,6 @@
 3. 上限：内存缓冲 500 条；SQLite 上限由 ``max_rows`` 控制（默认 20000，超出裁剪最旧）。
 """
 
-from __future__ import annotations
 
 import json
 import os

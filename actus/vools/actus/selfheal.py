@@ -10,7 +10,7 @@ import time
 import random
 import logging
 from typing import Dict, List, Optional, Callable, Tuple
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 
 logger = logging.getLogger(__name__)
 

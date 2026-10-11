@@ -3,7 +3,7 @@
 import threading
 import time
 from typing import Dict, Optional, Tuple
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 
 
 @dataclass

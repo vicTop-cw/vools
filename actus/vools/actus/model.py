@@ -4,7 +4,7 @@ __all__ = ['Action', 'parse_cfg', 'parse_cfg_from_file', 'parse_action_from_sche
 
 import json
 import os
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 from typing import Optional, List
 
 from .errors import ActionError

@@ -2,18 +2,16 @@
 vools.bridge.md directives — #! 指令定义/解析/校验
 """
 
-from __future__ import annotations
-
 import re
-from typing import Dict, List
+from typing import Dict, List, Set
 
 # ═══════════════════════════════════════════════════════
 # 指令常量
 # ═══════════════════════════════════════════════════════
 
-FILE_DIRECTIVE_KEYS: set[str] = {"config", "deps", "build-dir", "entry", "only"}
+FILE_DIRECTIVE_KEYS: Set[str] = {"config", "deps", "build-dir", "entry", "only"}
 
-BLOCK_DIRECTIVE_KEYS: set[str] = {
+BLOCK_DIRECTIVE_KEYS: Set[str] = {
     "run",
     "compile",
     "only-code",

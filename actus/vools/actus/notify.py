@@ -19,7 +19,7 @@ import os
 import logging
 import subprocess
 from typing import Dict, List, Optional, Callable
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 from datetime import datetime
 from enum import Enum
 

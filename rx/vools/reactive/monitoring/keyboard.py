@@ -3,8 +3,6 @@ vools/reactive/monitoring/keyboard.py
 仅支持 Windows 平台。
 """
 
-from __future__ import annotations
-
 import ctypes
 import ctypes.wintypes as wt
 import datetime

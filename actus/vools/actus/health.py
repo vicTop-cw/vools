@@ -15,7 +15,7 @@ import shutil
 import logging
 from typing import Dict, List, Optional
 from pathlib import Path
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 
 logger = logging.getLogger(__name__)
 
