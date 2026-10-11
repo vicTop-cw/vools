@@ -22,7 +22,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 from enum import Enum
 
 logger = logging.getLogger(__name__)

@@ -17,7 +17,7 @@ import hashlib
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 from enum import Enum
 
 logger = logging.getLogger(__name__)

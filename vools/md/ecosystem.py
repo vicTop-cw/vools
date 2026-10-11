@@ -10,7 +10,7 @@ vools.md 阶段6：文档生态工具模块
 """
 import re, os, json, time, html, threading, http.server, socketserver, hashlib, fnmatch, urllib.parse
 from typing import List, Dict, Optional, Tuple, Iterator, Any, Union
-from dataclasses import dataclass, field
+from ..core.dataclass_compat import dataclass, field
 from pathlib import Path
 
 from .parser import parse, Document, Heading, Paragraph, CodeBlock, BlockQuote, MdList, ListItem, Divider, InlineText

@@ -14,7 +14,7 @@ AST 节点类型：
   - InlineText: 行内文本（含 bold/italic/code/link 等）
 """
 
-from dataclasses import dataclass, field
+from ..core.dataclass_compat import dataclass, field
 from typing import List, Optional, Dict, Any
 import re
 

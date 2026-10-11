@@ -26,7 +26,6 @@
 处继续递归拆解，直到全树通过或达到深度/轮次上限。
 """
 
-from __future__ import annotations
 
 import json
 import os

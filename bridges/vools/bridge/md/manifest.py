@@ -5,11 +5,9 @@ vools.bridge.md manifest — YAML 清单读写
 支持原子写入（临时文件 + rename）。
 """
 
-from __future__ import annotations
-
 import os
 import tempfile
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # ═══════════════════════════════════════════════════════
 # YAML 解析（优先 PyYAML，降级内置）
@@ -41,7 +39,7 @@ def _minimal_yaml_parse(text: str) -> Dict[str, Any]:
     """内置极简 YAML 解析器。"""
     lines = text.split("\n")
     result: Dict[str, Any] = {}
-    stack: list[tuple[int, Any]] = [(-1, result)]  # (indent, container)
+    stack: List[Tuple[int, Any]] = [(-1, result)]  # (indent, container)
 
     for line in lines:
         if not line.strip() or line.strip().startswith("#"):
@@ -77,7 +75,7 @@ def _minimal_yaml_parse(text: str) -> Dict[str, Any]:
                 if isinstance(parent, dict):
                     for k in parent:
                         if parent[k] is current:
-                            lst: list[Any] = []
+                            lst: List[Any] = []
                             parent[k] = lst
                             stack[-1] = (stack[-1][0], lst)
                             target = lst

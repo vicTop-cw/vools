@@ -7,8 +7,9 @@ vools.bridge.md deps — TOML 依赖解析与检查
 
 import os
 import re
-from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional
+
+from ..core.compat.dataclass_compat import dataclass, field
 
 # ═══════════════════════════════════════════════════════
 # 极简 TOML 解析器

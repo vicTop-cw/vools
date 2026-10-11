@@ -14,7 +14,7 @@ import os
 import re
 import subprocess
 import time
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from . import records as _records

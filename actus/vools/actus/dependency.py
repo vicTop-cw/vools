@@ -16,7 +16,7 @@ import subprocess
 import sys
 import shutil
 from typing import Dict, List, Optional, Tuple, Set
-from dataclasses import dataclass, field
+from vools.core.dataclass_compat import dataclass, field
 from enum import Enum
 from collections import deque
 

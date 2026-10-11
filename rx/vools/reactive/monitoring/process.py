@@ -13,8 +13,6 @@ vools/reactive/monitoring/process.py - 进程监控模块
     write_to_process(...): 响应式操作符
 """
 
-from __future__ import annotations
-
 import ctypes
 import ctypes.wintypes as wt
 import datetime

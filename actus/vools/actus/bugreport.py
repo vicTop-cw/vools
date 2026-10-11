@@ -23,7 +23,6 @@
 3. 写出统一 LF，避免 Windows 下 CRLF 让账本在版本库里永久显示为脏。
 """
 
-from __future__ import annotations
 
 import os
 import re
