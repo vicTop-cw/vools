@@ -72,10 +72,12 @@ dmypy.json
 *.swp
 *.swo
 *~
-.run/
-.atomcode/
-.trae/
-.workbuddy/
+
+# AI 辅助工具目录已整合到根 `.AI/`（tracked，保留历史与可复用经验）：
+#   .AI/trae/ .AI/workbuddy/ .AI/atomcode/ .AI/codeartsdoer/ .AI/run/
+# 这里不再逐条 ignore 旧散落路径——它们已不存在，留着只会让「被 ignore 却仍
+# tracked」的假象继续（历史上 .trae/ 等 124 个文件就是这样被 ignore 又提交的）。
+# 若某个工具重新在根目录落点，按需在此追加。
 
 # ===== OS =====
 .DS_Store
@@ -129,7 +131,6 @@ __rust__/cache/
 **/target2/
 **/target3/
 **/target4/
-voxc/voxc-rs/target_*/
 
 # Nim build artifacts
 *.dll
