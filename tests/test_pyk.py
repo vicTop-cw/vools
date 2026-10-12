@@ -209,11 +209,22 @@ class TestLookUpon(unittest.TestCase):
     def test_all_exports(self):
         import ast
         tree = ast.parse(self._read_source())
+
+        # py3.8 起字符串字面量统一为 ast.Constant；py3.6/3.7 是 ast.Str。
+        # 只认 ast.Constant 会让本用例在 py3.6 上静默拿到空列表而假红。
+        def _str_literal_value(el):
+            if isinstance(el, ast.Constant):
+                return el.value
+            if isinstance(el, ast.Str):  # py3.6 / 3.7
+                return el.s
+            return None
+
         for node in tree.body:
             if isinstance(node, ast.Assign) and any(
                 getattr(t, "id", None) == "__all__" for t in node.targets
             ):
-                names = [el.value for el in node.value.elts if isinstance(el, ast.Constant)]
+                names = [v for v in (_str_literal_value(el) for el in node.value.elts)
+                         if v is not None]
                 self.assertEqual(names, list(_EXPECTED_EXPORTS))
                 return
         self.fail("look_upon 未定义 __all__")

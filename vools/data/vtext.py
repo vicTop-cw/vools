@@ -5,11 +5,13 @@ VText 文本类
 
 __all__ = ['VText', '_VQ_ENC_KEY_DEFAULT']
 
+import fnmatch
 import os
 import re
 import zlib
 import base64
 import hashlib
+from itertools import takewhile
 from typing import Any, Optional, Union, Tuple, Dict, List, Callable
 
 from ..decorators import rself
@@ -182,6 +184,249 @@ class VText(str):
         """
         formatter = EnhancedDateFormatter(str(self)).set(**kwargs)
         return formatter.format()
+
+    # ─── legacy vicText 通用文本能力（对齐 vools.py 大文件） ───
+
+    def trim(self, chars: Optional[str] = None, left: bool = True, right: bool = True) -> 'VText':
+        """按侧裁剪空白/指定字符（legacy ``vicText.trim``）。
+
+        Args:
+            chars: 要裁剪的字符集合；None 表示空白
+            left: 是否裁剪左侧
+            right: 是否裁剪右侧
+
+        Returns:
+            裁剪后的 VText
+        """
+        from ..utils.tools import trim as _trim
+        return self.__class__(_trim(str(self), chars, left, right))
+
+    def regexp_findall(self, pattern: str, flags: int = 0) -> List[str]:
+        """正则查找全部匹配（legacy ``vicText.regexp_findall``）。
+
+        Args:
+            pattern: 正则表达式
+            flags: 正则标志位
+
+        Returns:
+            匹配列表
+        """
+        from ..utils.tools import regexp_findall as _f
+        return _f(pattern, str(self), flags)
+
+    def regexp_replace(self, pattern: str, replacement: str, flags: int = 0, count: int = 0) -> 'VText':
+        """正则替换（legacy ``vicText.regexp_replace``）。
+
+        Args:
+            pattern: 正则表达式
+            replacement: 替换文本
+            flags: 正则标志位
+            count: 最大替换次数，0 表示全部
+
+        Returns:
+            替换后的 VText
+        """
+        from ..utils.tools import regexp_replace as _f
+        return self.__class__(_f(pattern, str(self), replacement, flags, count))
+
+    def regexp_like(self, pattern: str, flags: int = 0, complete_matching: bool = True) -> bool:
+        """正则匹配判定（legacy ``vicText.regexp_like``）。
+
+        Args:
+            pattern: 正则表达式
+            flags: 正则标志位
+            complete_matching: True 时要求整串匹配
+
+        Returns:
+            是否匹配
+        """
+        from ..utils.tools import regexp_like as _f
+        return _f(pattern, str(self), flags, complete_matching)
+
+    def regexp_substr(self, pattern: str, flags: int = 0, occurrence: int = 0) -> Optional[str]:
+        """取第 occurrence 个匹配子串（legacy ``vicText.regexp_substr``）。
+
+        Args:
+            pattern: 正则表达式
+            flags: 正则标志位
+            occurrence: 第几个匹配（0 起）
+
+        Returns:
+            匹配子串，无匹配时 None
+        """
+        from ..utils.tools import regexp_substr as _f
+        return _f(pattern, str(self), flags, occurrence)
+
+    def regexp_count(self, pattern: str, flags: int = 0) -> int:
+        """统计匹配次数（legacy ``vicText.regexp_count``）。"""
+        from ..utils.tools import regexp_count as _f
+        return _f(pattern, str(self), flags)
+
+    def regexp_instr(self, pattern: str, flags: int = 0, occurrence: int = 0) -> int:
+        """返回第 occurrence 个匹配的位置（legacy ``vicText.regexp_instr``）。"""
+        from ..utils.tools import regexp_instr as _f
+        return _f(pattern, str(self), flags, occurrence)
+
+    def splitEx(self, separator: str, rep: str = '★') -> List[str]:
+        """扩展分割：保留分隔符信息（legacy ``vicText.splitEx``）。
+
+        Args:
+            separator: 分隔符
+            rep: 分隔符占位字符
+
+        Returns:
+            分割后的列表
+        """
+        from ..utils.tools import split as _split
+        temp = _split(str(self), separator, rep)
+        return [] if temp is None else temp
+
+    def like(self, pattern: str, ignorecase: bool = True) -> bool:
+        """通配符匹配，支持 ``*`` / ``?``（legacy ``vicText.like``）。
+
+        Args:
+            pattern: 通配符模式
+            ignorecase: 是否忽略大小写
+
+        Returns:
+            是否匹配
+
+        Notes:
+            这里用 ``fnmatch.fnmatchcase`` 而非 ``fnmatch.fnmatch``：后者在
+            Windows 上会经 ``os.path.normcase`` 强制忽略大小写，导致
+            ``ignorecase=False`` 在 Windows 上形同虚设（legacy 即有此问题）。
+            统一大小写后走 fnmatchcase，使 ignorecase 在所有平台都真正生效。
+        """
+        txt = str(self)
+        if ignorecase:
+            txt, pattern = txt.lower(), pattern.lower()
+        return fnmatch.fnmatchcase(txt, pattern)
+
+    def build(self, dct: Optional[Dict[Any, Any]] = None, lst: Optional[List[Any]] = None,
+              sep: str = "\n ,", check_key: str = "item", max_iter_num: int = 999,
+              prefix: str = "", suffix: str = "") -> 'VText':
+        """把 dict/list 递归拼进模板文本（legacy ``vicText.build``）。
+
+        Args:
+            dct: 字典数据
+            lst: 列表数据
+            sep: 连接分隔符
+            check_key: 递归查找的键名
+            max_iter_num: 最大递归层数
+            prefix: 结果前缀
+            suffix: 结果后缀
+
+        Returns:
+            构建出的 VText
+        """
+        from ..utils.tools import build_text as _build_text
+        txt = prefix + _build_text(str(self), dct, lst, sep, check_key, max_iter_num) + suffix
+        return self.__class__(txt)
+
+    def discard_comments(self) -> 'VText':
+        """去掉 SQL 注释并丢弃空行（legacy ``vicText.discard_comments``）。
+
+        Returns:
+            去注释后的 VText
+        """
+        ss = re.sub(r'--.*?$|/\*.*?\*/', '', str(self), flags=re.MULTILINE | re.DOTALL)
+        result = [line for line in ss.split('\n') if line.strip()]
+        return self.__class__("\n".join(result))
+
+    def move_trailing_commas(self, discard_comment: bool = True) -> 'VText':
+        """把行尾逗号移到下一行行首（legacy ``vicText.move_trailing_commas``）。
+
+        Args:
+            discard_comment: 是否先丢弃注释
+
+        Returns:
+            处理后的 VText
+        """
+        txt = self.discard_comments() if discard_comment else self.__class__(str(self))
+        arr = str(txt).split('\n')
+        patt1 = re.compile(r',\s*\t*(--.*)?$')
+        patt3 = re.compile(r'^\s*\t*(--.*)?$')
+        patt11 = re.compile(r',\s*\t*(--.*?$|/\*.*?\*/)', re.MULTILINE | re.DOTALL)
+        patt411 = re.compile(r'(.*),(\s*\t*(--.*?$|/\*.*?\*/))', re.MULTILINE | re.DOTALL)
+        patt4 = re.compile(r'(.*),(\s*\t*(--.*)?)$')
+
+        result = []
+        p = False
+        for line in arr:
+            if patt3.search(line):
+                result.append(line)
+            else:
+                if p:
+                    s = "".join(takewhile(lambda x: x in [' ', '\t'], line)) + ","
+                    line = s + line.lstrip()
+                    p = False
+                if patt1.search(line):
+                    result.append(re.sub(patt4, r'\1\2', line))
+                    p = True
+                elif patt11.search(line):
+                    result.append(re.sub(patt411, r'\1\2', line))
+                    p = True
+                else:
+                    result.append(line)
+        else:
+            if p:
+                result.append(",")
+        return self.__class__('\n'.join(result))
+
+    # ─── legacy vicText._run / run / result ───
+
+    def _run(self, func: Any = exec) -> Any:
+        """执行文本内容（legacy ``vicText._run``）。
+
+        Args:
+            func: 可调用对象，或 "exec" / "eval" / "spark.sql" 字符串
+
+        Returns:
+            执行结果；空文本返回 None
+        """
+        text = str(self)
+        if text.strip() == "":
+            return None
+        if callable(func):
+            return func(text)
+        if isinstance(func, str):
+            lowered = func.lower()
+            if lowered == "exec":
+                return exec(text)
+            if lowered == "eval":
+                return eval(text)
+            if lowered == "spark.sql":
+                from .core import get_spark
+                return get_spark(app_name="VText").sql(text)
+            from ..utils.tools import generate_lambda as _vf
+            return _vf(func)(text)
+        return None
+
+    def run(self, func: Any = print) -> Any:
+        """执行并把结果记到 ``.result``（legacy ``vicText.run``）。
+
+        Args:
+            func: 同 :meth:`_run`
+
+        Returns:
+            结果为空时返回自身；结果为字符串时返回 VText；否则返回原结果
+        """
+        result = self._run(func)
+        self._result = result
+        if result is None:
+            return self
+        if isinstance(result, str):
+            return self.__class__(result)
+        return result
+
+    @property
+    def result(self) -> Any:
+        """最近一次 :meth:`run` 的结果（legacy ``vicText.result``）。"""
+        return getattr(self, '_result', None)
+
+    @result.setter
+    def result(self, value: Any) -> None:
+        raise ValueError("result属性只能被run函数执行设置！！！")
 
     # ─── 序列化支持 ───
 
@@ -581,3 +826,54 @@ class VText(str):
             return _offset(off, std=std)
 
         return self.__class__(pattern.sub(_repl, str(self)))
+
+    # ─── legacy vicText 运算符/迭代覆写 ───
+    # 说明：str 自带这些魔法方法但返回普通 str，而 @rself 明确不包装魔法方法，
+    # 因此不覆写就会在 `VText("a") + "b"` 这类链式用法上丢失 VText 类型。
+    # 注意：不实现 __setitem__/__delitem__ —— str 不可变，legacy 里那两处
+    # 调用 super().__setitem__ 必然抛 TypeError，属死代码。
+
+    def __add__(self, other: Any) -> 'VText':
+        """字符串拼接，返回 VText（legacy ``vicText.__add__``）。"""
+        if isinstance(other, str):
+            txt = other
+        else:
+            raise TypeError('argument `other` is invalided type ')
+        return self.__class__(str(self) + txt)
+
+    def __radd__(self, other: Any) -> 'VText':
+        """右向拼接，返回 VText（legacy ``vicText.__radd__``）。"""
+        if isinstance(other, str):
+            txt = other
+        else:
+            raise TypeError('argument `other` is invalided type ')
+        return self.__class__(txt + str(self))
+
+    def __sub__(self, other: Any) -> 'VText':
+        """删除匹配的子串（legacy ``vicText.__sub__`` 等价于正则替换为空）。"""
+        return self.__class__(self.regexp_replace(str(other), ''))
+
+    def __mul__(self, n: int) -> 'VText':
+        return self.__class__(str(self) * n)
+
+    def __rmul__(self, n: int) -> 'VText':
+        return self.__class__(n * str(self))
+
+    def __mod__(self, other: Any) -> 'VText':
+        return self.__class__(str(self) % other)
+
+    def __rmod__(self, other: Any) -> 'VText':
+        return self.__class__(other % str(self))
+
+    def __getitem__(self, key: Any) -> 'VText':
+        return self.__class__(str.__getitem__(self, key))
+
+    def __iter__(self):
+        return (self.__class__(s) for s in str.__iter__(self))
+
+    def __reversed__(self):
+        return (self.__class__(s) for s in reversed(str(self)))
+
+    def __call__(self, func: Callable[..., Any] = print, *args: Any, **kwargs: Any) -> Any:
+        """把自身当参数调用 func（legacy ``vicText.__call__``）。"""
+        return func(self, *args, **kwargs)
