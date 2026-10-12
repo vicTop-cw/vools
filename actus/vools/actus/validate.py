@@ -13,6 +13,7 @@
 
 __all__ = ['validate_action', 'validate_graph', 'check_entry_block',
            'check_args_schema', 'check_triggers', 'check_secrets',
+           'check_block_languages', 'language_notices',
            'validate_schema_md', 'check_schema_md_structure']
 
 import json
@@ -100,6 +101,9 @@ def validate_action(action: Action) -> List[str]:
     # 4) entry 指向存在的代码块
     errors.extend(check_entry_block(action))
 
+    # 4b) 代码块语言标记合法且可路由（docs/03 §6.2 后半句 + §6.5，docs/41 §A1）
+    errors.extend(check_block_languages(action))
+
     # 5) args 契约自检
     errors.extend(check_args_schema(meta))
 
@@ -136,6 +140,64 @@ def check_entry_block(action: Action) -> List[str]:
             f'semantic: 文件级 #!entry={fd_entry!r} 与 cfg.entry={entry!r} 不一致'
             '（cfg.entry 为唯一权威，docs/03 §2）')
     return errors
+
+
+def check_block_languages(action: Action) -> List[str]:
+    """代码块语言标记必须合法且已注册（docs/03 §6.5）。
+
+    判定范围只含**会被执行的块**：
+      * entry 指向的块（executor 的 `only=[action.entry]` 必然跑它）；
+      * 任何带 tag 的块（workflow 节点按 `block` 指名、`#!only` 按 tag 挑选，都可能跑）；
+      * cfg 元数据块本身按约定必须是 json（已由 model.parse_cfg 强约束），跳过。
+
+    **不带 tag 的块是文档围栏**（实测仓库内 145 个无 tag 的 bash 示例、以及 json/toml/
+    yaml/xml 说明块），执行期按 tag 过滤根本不会跑到，因此一律不判 —— 否则 110 个既有
+    动作当场全红。这条边界不是和稀泥：docs/03 §6.5 管的是"路由"，不是"文档写法"。
+
+    与 §6.2 的"语言可路由"同源：两处都走 `vools.bridge.md.runner.is_routable`
+    这一个真源，避免 runner 与 actus 各持一份语言清单而漂移。
+    """
+    errors: List[str] = []
+    try:
+        from vools.bridge.md.runner import is_routable
+    except ImportError as exc:
+        return [f'runtime: 语言路由表不可用（vools.bridge.md.runner 导入失败：{exc}）']
+
+    entry = action.meta.get('entry')
+    for b in action.blocks or []:
+        lang = (b.get('language') or '').strip().lower()
+        tags = list(b.get('tag') or [])
+        if 'cfg' in (b.get('directives') or {}):
+            continue                     # 元数据块，不是执行体
+        if not tags:
+            continue                     # 无 tag 且非 entry → 文档围栏，不参与路由判定
+        if is_routable(lang):
+            continue
+        role = 'entry' if entry in tags else f'tag={",".join(tags)}'
+        errors.append(
+            f'language: 代码块语言标记 {lang!r}（{role}）未注册，'
+            f'不可路由（docs/03 §6.5）')
+    return errors
+
+
+def language_notices(action: Action) -> List[str]:
+    """无 tag 文档围栏里不可路由的语言标记 → 只提示，不判失败。
+
+    存在意义是"别装作没看见"：这些块现在跑不到，但一旦有人给它们补上 tag 就会
+    立刻进入 §6.5 硬门。列出来供 `actus check` 展示，不作为 errors 计数。
+    """
+    notices: List[str] = []
+    try:
+        from vools.bridge.md.runner import is_routable
+    except ImportError:
+        return notices
+    for b in action.blocks or []:
+        lang = (b.get('language') or '').strip().lower()
+        if (b.get('tag') or []) or 'cfg' in (b.get('directives') or {}):
+            continue
+        if lang and not is_routable(lang):
+            notices.append(f'info: 文档围栏 {lang!r} 不可路由（无 tag，执行期不跑）')
+    return notices
 
 
 def check_args_schema(meta: dict) -> List[str]:

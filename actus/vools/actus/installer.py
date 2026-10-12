@@ -54,11 +54,84 @@ class ActionInstaller:
     def install_dir(self) -> str:
         return self._install_dir
 
+    # ── 可见性门禁 ──
+
+    def enforce_visibility_gate(self, repo_dir: str, repo_url: str = '',
+                                key: str = None, action_id: str = None) -> dict:
+        """安装前按 docs/41 §B1 判可见性：gated 需密钥、internal 一律不装。
+
+        判据真源在 `vools.actus.visibility`（GatedKeyStore 的动作级/仓级两档粒度），
+        这里只负责"把仓里每个动作的 visibility 读出来喂进去"，不另写一套规则。
+
+        `action_id` 非空时只判那一个动作（`<owner>/<name>.actus:<action_id>` 形态）。
+        返回 {'status':'ok'|'error', 'code':..., 'message':...}。
+        """
+        try:
+            from vools.actus.visibility import (AUTH_REQUIRED, GatedKeyStore,
+                                                is_internal_path)
+        except ImportError as exc:                       # noqa: BLE001
+            return {"status": "error", "code": "internal",
+                    "message": f"可见性引擎不可用：{exc}"}
+
+        repo_name = ''
+        try:
+            from vools.actus.repo import parse_ref
+            repo_name = parse_ref(repo_url).get('repo') or ''
+        except Exception:                                # noqa: BLE001
+            repo_name = (repo_url or '').rstrip('/').rsplit('/', 1)[-1].replace('.git', '')
+
+        gated_hits: list = []
+        for dirpath, dirnames, filenames in os.walk(repo_dir):
+            dirnames[:] = [d for d in dirnames if d not in ('.git', '__pycache__')]
+            for fn in sorted(filenames):
+                if not fn.endswith('.actus.md'):
+                    continue
+                full = os.path.join(dirpath, fn)
+                try:
+                    from vools.actus.model import parse_cfg_from_file
+                    action = parse_cfg_from_file(full)
+                except Exception:                        # noqa: BLE001
+                    continue                             # 解析失败留给契约校验报
+                aid = action.meta.get('id') or ''
+                if action_id and aid != action_id:
+                    continue
+                vis = (action.meta.get('visibility') or '').strip().lower()
+                if vis == 'internal':
+                    return {"status": "error", "code": "visibility_denied",
+                            "message": (f"internal 动作 {aid!r} 不经安装分发"
+                                        f"（随引擎落位 actions/system/_internal/）"),
+                            "details": {"action_id": aid, "visibility": vis}}
+                if vis == 'gated':
+                    gated_hits.append({'action_id': aid, 'path': full})
+
+        if not gated_hits:
+            return {"status": "ok", "gated": [], "repo": repo_name}
+        if not key:
+            ids = [g['action_id'] for g in gated_hits]
+            return {"status": "error", "code": AUTH_REQUIRED,
+                    "message": (f"仓 {repo_name or repo_url} 含 gated 动作 {ids}，"
+                                f"安装需带 --key <gated_key>（docs/41 §B2.3）"),
+                    "details": {"gated": ids, "repo": repo_name}}
+        try:
+            store = GatedKeyStore()
+        except RuntimeError as exc:
+            return {"status": "error", "code": AUTH_REQUIRED, "message": str(exc)}
+        denied = [g['action_id'] for g in gated_hits
+                  if not store.verify(key, action_id=g['action_id'], repo=repo_name)]
+        if denied:
+            return {"status": "error", "code": AUTH_REQUIRED,
+                    "message": (f"密钥对动作 {denied} 无效或已被轮换撤销"
+                                f"（作者轮换后需重新获取，docs/41 §B2.5）"),
+                    "details": {"denied": denied, "repo": repo_name}}
+        return {"status": "ok", "gated": [g['action_id'] for g in gated_hits],
+                "repo": repo_name}
+
     # ── 安装 ──
 
     def install(self, repo_url: str, branch: str = "main",
                 tag: str = None, commit: str = None,
-                scope: str = None) -> dict:
+                scope: str = None, key: str = None,
+                action_id: str = None) -> dict:
         """从 Git 仓库安装动作。
 
         参数:
@@ -67,6 +140,8 @@ class ActionInstaller:
             tag: 标签名（与 branch 互斥）。
             commit: commit hash（与 branch/tag 互斥）。
             scope: 权限范围（如 'sandbox', 'trusted'）。
+            key: gated 动作的授权密钥（docs/41 §B2.3）；未带或无效 ⇒ auth_required。
+            action_id: 只装这一个动作（`<owner>/<name>.actus:<action_id>` 形态）。
 
         返回:
             安装结果 {'status': 'ok', 'path': '...', 'actions': [...]}
@@ -94,6 +169,14 @@ class ActionInstaller:
 
         # 构建索引
         repo_registry_path = os.path.join(cache_path, branch)
+
+        # ── 可见性门禁（docs/41 §B1/§B2.3 / §D3）※必须在 copytree 之前 ──
+        # 装完再判等于"先落盘再拒绝"，被拒的动作已经在本地文件系统里了。
+        gate = self.enforce_visibility_gate(repo_registry_path, repo_url,
+                                            key=key, action_id=action_id)
+        if gate.get('status') != 'ok':
+            return gate
+
         reg = registry_mod.ActionRegistry(cache_dir=self._cache_dir)
         index = reg.build_from_directory(repo_registry_path)
 
@@ -633,14 +716,3 @@ def list_installed_actions() -> List[dict]:
     """便捷函数：列出已安装的仓库。"""
     installer = ActionInstaller()
     return installer.list_installed()
-
-
-__all__ = [
-    'ActionInstaller',
-    'install_actions',
-    'install_with_visibility',
-    'list_installed_actions',
-    'resolve_action_path',
-    'uninstall_actions',
-    'update_actions'
-]
