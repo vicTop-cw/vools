@@ -91,18 +91,167 @@ class vicSql(VText):
     继承核心 ``VText``（而不是裸 str），因此 toZipB64/encrypt/regexp_*/
     trim/build/replace_run_date 等文本能力全部可用，与 ``vicText`` 同源。
 
+    支持 legacy 的 run_date / repl_dict 占位符替换：
+        vicSql("select '${run_date}'", run_date="2026-10-11").sql
+        vicSql("select * from t where ds='{ds}'", repl_dict={"ds": "20261011"}).sql
+
     用法:
         vicSql("select * from db.t").toDF()
     """
 
-    def __init__(self, sql="", *a, **k):
-        super().__init__(sql)
-        self.sql = str(sql)
+    def __init__(self, raw_sql="", repl_dict=None, nonstrict=False,
+                 mr_engine=False, run_date=None):
+        super().__init__(raw_sql)
+        self._raw_sql = str(raw_sql)
+        self._repl_dict = self._to_ordered(repl_dict)
+        self.nonstrict = nonstrict
+        self.mr_engine = mr_engine
+        self._run_date = run_date
+
+    @staticmethod
+    def _to_ordered(d):
+        """把 dict 转成有序 dict（legacy 用 toOrderedDict 保证替换顺序稳定）。"""
+        if d is None:
+            return None
+        from collections import OrderedDict
+        return OrderedDict(d)
+
+    # ---- run_date ----
+
+    @property
+    def run_date(self):
+        """运行日期；未设置时依次回退到全局 run_ds、今天。
+
+        legacy 直接取全局 ``vicrun_ds``，未初始化时是 None 并会在 offset_date
+        里抛 TypeError；这里补一个「今天」兜底，让未显式设置 run_date 的
+        调用也能拿到可用日期。
+        """
+        if self._run_date is not None:
+            return self._run_date
+        from .core import get_run_ds
+        rd = get_run_ds()
+        if rd:
+            return rd
+        import datetime as _dt
+        return _dt.date.today().strftime("%Y-%m-%d")
+
+    @run_date.setter
+    def run_date(self, value):
+        self._run_date = value
+
+    # ---- repl_dict ----
+
+    @property
+    def repl_dict(self):
+        return self._repl_dict
+
+    @repl_dict.setter
+    def repl_dict(self, value):
+        self._repl_dict = self._to_ordered(value)
+
+    # ---- sql ----
+
+    @property
+    def sql(self) -> str:
+        """替换占位符后的最终 SQL。"""
+        if "{run_date" in self._raw_sql:
+            return self.get_run_date_replaced_sql()
+        if self._repl_dict:
+            return self._raw_sql.format(**self._repl_dict)
+        return self._raw_sql
+
+    @sql.setter
+    def sql(self, value):
+        self._raw_sql = str(value)
+
+    def get_run_date_replaced_sql(self) -> str:
+        """把 {run_date} / {run_date_std±N} 替换为实际日期（legacy 同名方法）。"""
+        import re as _re
+        from ..utils.tools import offset_date as _offset_date
+
+        s = self._raw_sql
+        pattern = r"\{run_date(_std)?([\+|\-][0-9]+)?\}"
+        matches = _re.findall(pattern, s)
+        replaced = [
+            _offset_date(run_date=self.run_date,
+                         offset_days=int(m[1]) if m[1] else 0,
+                         std=bool(m[0]))
+            for m in matches
+        ]
+        for m, value in zip(matches, replaced):
+            token = "{run_date" + m[0] + m[1] + "}"
+            s = s.replace(token, str(value))
+        if self._repl_dict:
+            s = s.format(**self._repl_dict)
+        return s
+
+    def __str__(self):
+        return self.sql
+
+    def run(self):
+        """执行 SQL（legacy ``vicSql.run``：按 nonstrict/mr_engine 先设会话参数）。"""
+        from .core import get_spark
+        spark = get_spark()
+        if self.mr_engine:
+            spark.sql("set hive.execution.engine=mr")
+        if self.nonstrict:
+            spark.sql("set hive.exec.dynamic.partition.mode=nonstrict")
+        return spark.sql(self.sql)
 
     def toDF(self, *a, **k):
         """把 SQL 转成 DataFrame。"""
         from .core import get_spark
-        return get_spark().sql(str(self))
+        return get_spark().sql(self.sql)
+
+    @classmethod
+    def get_unioned_sql(cls, sql_query, lst, special_val="'Total'",
+                        accord_indexes=None, print_result=False):
+        """按 lst 各列的「原值/合计值」组合生成 union all 报表 SQL。
+
+        （legacy ``vicSql.get_unioned_sql``）
+
+        Args:
+            sql_query: 原始 SQL，其中 lst 各列写成 ``<col> as <alias>``
+            lst: 参与合计的列名列表
+            special_val: 合计行使用的替换值
+            accord_indexes: 只保留这些索引位同时为 0 或同时为 1 的组合
+            print_result: 是否打印结果 SQL
+
+        Returns:
+            拼接好的 union all SQL 字符串
+        """
+        def generate_tuples(items, special, acc_idx):
+            result = []
+            n = len(items)
+            acc = list(filter(lambda x: abs(x) <= n and x != n,
+                              set(map(int, [] if acc_idx is None else list(acc_idx)))))
+            m = len(acc)
+            for i in range(2 ** n):
+                binary_str = bin(i)[2:].zfill(n)
+                elements = [items[j] if binary_str[j] == '0' else special
+                            for j in range(n)]
+                if m == 0 or all(binary_str[k] == '1' for k in acc) \
+                        or all(binary_str[k] == '0' for k in acc):
+                    result.append(tuple(elements))
+            result.append(tuple([special] * n))
+            return list(set(result))
+
+        tuples = generate_tuples(lst, special_val, accord_indexes)
+        out = []
+        for t in tuples:
+            s = sql_query
+            d = dict(zip(lst, [None] * len(lst)))
+            for i, k in enumerate(lst):
+                d[k] = t[i]
+            for k, v in d.items():
+                s = s.replace(k + ' as', str(v) + ' as')
+            out.append(s)
+        result_sql = "\n union all \n".join(out)
+        if print_result:
+            print('--copy start' + '--.--' * 30)
+            print(result_sql)
+            print('--copy end' + '--.--' * 30)
+        return result_sql
 
 
 # ============================================================

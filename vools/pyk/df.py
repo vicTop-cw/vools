@@ -186,6 +186,91 @@ class vicDataFrame(object):
         """找缺失日期。"""
         return get_missing_dates(self._df, col_name, start=start, end=end)
 
+    # ---- legacy vicDataFrame 能力对齐 ----
+    # 说明：legacy 用 camelCase（selectEx/orderCols/...），pyk 内部统一 snake_case，
+    # 故每个 camelCase 名都提供别名，两种写法都可用。
+
+    @property
+    def _jdf(self):
+        """底层 pyspark DataFrame（legacy ``vicDataFrame._jdf``）。"""
+        return self._df
+
+    def show(self, n=20, truncate=True, vertical=False):
+        """展示 DataFrame 并返回自身（legacy ``vicDataFrame.show``）。"""
+        self._df.show(n, truncate, vertical)
+        return self
+
+    def top(self, n=10):
+        """取前 n 行（legacy ``vicDataFrame.top``）。"""
+        return vicDataFrame(self._df.limit(n))
+
+    def group_by(self, *cols):
+        """分组（legacy ``vicDataFrame.group_by``）。"""
+        return self._df.groupBy(*cols)
+
+    def order_by(self, *cols, **kwargs):
+        """排序（legacy ``vicDataFrame.order_by``）。"""
+        ascending = kwargs.get("ascending", True)
+        if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
+            cols = tuple(cols[0])
+        return vicDataFrame(self._df.orderBy(*cols, ascending=ascending))
+
+    def withColumn_(self, col_name, col_expr, shell=None):
+        """增加/替换列（legacy ``vicDataFrame.withColumn_``）。"""
+        return vicDataFrame(withColumn_(self._df, col_name, col_expr, shell))
+
+    def withColumns(self, col_dict=None, **kwargs):
+        """批量增加/替换列（legacy ``vicDataFrame.withColumns``）。"""
+        return vicDataFrame(withColumns(self._df, col_dict, **kwargs))
+
+    def stack(self, cols, stack_cols2="stack_flag,stack_value", cast_type="", return_df=True):
+        """把宽表转成长表（legacy ``vicDataFrame.stack``）。"""
+        return stack(self._df, cols, stack_cols2, cast_type, return_df)
+
+    def stackEx(self, cols, stack_cols2="stack_flag,stack_value", cast_type="", return_df=True):
+        """``stack`` 的别名（legacy ``vicDataFrame.stackEx``）。"""
+        return self.stack(cols, stack_cols2, cast_type, return_df)
+
+    def pivots(self, pivot_col, value_cols, groupNames=None, newColsName=None,
+               agg_func=None, pivot_flag="pivot_flag"):
+        """多列透视（legacy ``vicDataFrame.pivots``）。"""
+        return vicDataFrame(pivots(self._df, pivot_col, value_cols, groupNames,
+                                   newColsName, agg_func, pivot_flag))
+
+    def compare(self, other, *args, **kwargs):
+        """与另一个 DataFrame 比对（legacy ``vicDataFrame.compare``）。"""
+        from .compare import vicCompare
+        return vicCompare(self._df, other.df if isinstance(other, vicDataFrame) else other,
+                          *args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        """把自身当参数调用（legacy ``vicDataFrame.__call__``）。"""
+        return self._df(*args, **kwargs)
+
+    def __radd__(self, other):
+        other_df = other.df if isinstance(other, vicDataFrame) else other
+        return vicDataFrame(other_df.unionAll(self._df))
+
+    def __rsub__(self, other):
+        other_df = other.df if isinstance(other, vicDataFrame) else other
+        return vicDataFrame(other_df.exceptAll(self._df))
+
+    def __rand__(self, other):
+        other_df = other.df if isinstance(other, vicDataFrame) else other
+        return vicDataFrame(other_df.intersect(self._df))
+
+    def __ror__(self, other):
+        other_df = other.df if isinstance(other, vicDataFrame) else other
+        return vicDataFrame(other_df.union(self._df))
+
+    # ---- camelCase 别名（legacy 写法兼容）----
+    showEx = show_ex
+    selectEx = select_ex
+    groupingSets = grouping_sets
+    orderCols = order_cols
+    toList = to_list
+    get_miss_dates = get_missing_dates
+
 
 # ============================================================
 # 工具函数
@@ -416,9 +501,120 @@ def with_flag_field(df, cols):
     return df.withColumn("row_num", F.row_number().over(w))
 
 
+def stack(df, cols, stack_cols2="stack_flag,stack_value", cast_type="", return_df=True):
+    """宽表转长表（legacy ``vicTools.stack``）。
+
+    参数:
+        df:            DataFrame
+        cols:          要 stack 的列；str 逗号分隔 / list / dict{别名: 列名}
+        stack_cols2:   输出两列名，逗号分隔或 list
+        cast_type:     非空时对每列做 cast(col as type)
+        return_df:     True 返回 DataFrame，False 返回 SQL 字符串
+    Returns:
+        DataFrame 或 SQL 字符串
+    """
+    if isinstance(cols, str):
+        cols = cols.split(",")
+    cs = list(df.columns)
+    _cast = lambda x: str(x.strip()) if not cast_type else "cast({} as {})".format(str(x.strip()), cast_type)
+
+    drop_cs = []
+    if isinstance(cols, (tuple, list)):
+        drop_cs = [str(i).strip() for i in cols if str(i).strip() in cs]
+        cols = {"'{}'".format(str(i).strip()): _cast(i) for i in cols if str(i).strip() in cs}
+    elif isinstance(cols, dict):
+        drop_cs = [str(i).strip() for i in cols.values() if str(i).strip() in cs]
+        cols = {"'{}'".format(str(k).strip()): _cast(v) for k, v in cols.items() if str(v).strip() in cs}
+
+    num = len(cols)
+    if num <= 1:
+        return df if return_df else None
+
+    if isinstance(stack_cols2, (tuple, list)):
+        stack_cols2 = ",".join(stack_cols2)
+
+    keep = [i for i in cs if i not in drop_cs]
+    combine = ""
+    for k, v in cols.items():
+        combine = "{},{},{}".format(combine, k, v)
+    sql = "select {}{} stack( {} {}) as ({}) from _pyk_stack_src".format(
+        ",".join(keep) + "," if keep else "", "", num, combine, stack_cols2)
+    df.createOrReplaceTempView("_pyk_stack_src")
+    return _get_spark().sql(sql) if return_df else sql
+
+
+def pivots(df, pivot_col, value_cols, groupNames=None, newColsName=None,
+           agg_func=None, pivot_flag="pivot_flag"):
+    """多列透视（legacy ``vicTools.pivots``）。
+
+    参数:
+        df:           DataFrame
+        pivot_col:    透视列
+        value_cols:   值列（可多列，str 逗号分隔或 list）
+        groupNames:   分组列（str 逗号分隔或 list）
+        newColsName:  透视后重命名
+        agg_func:     聚合函数，默认 F.first
+        pivot_flag:   标记列名，记录该行来自哪个 value_col
+    Returns:
+        DataFrame
+    """
+    from pyspark.sql import functions as F
+
+    if agg_func is None:
+        agg_func = F.first
+
+    def _lmd(x):
+        return x if str(x) in df.columns else F.expr(x)
+
+    if not groupNames:
+        gp = [F.lit(None)]
+    else:
+        gp = groupNames.split(",") if isinstance(groupNames, str) else list(groupNames)
+        gp = [_lmd(i) for i in gp]
+
+    p_col = _lmd(pivot_col)
+    if isinstance(value_cols, str):
+        value_cols = value_cols.split(",")
+    v_cols = [_lmd(i) for i in value_cols]
+
+    gf = df.groupBy(*gp).pivot(p_col)
+    result = None
+    for v_col in v_cols:
+        tf = gf.agg(agg_func(v_col)).withColumn(pivot_flag, F.lit(v_col))
+        result = result.unionByName(tf) if result is not None else tf
+    if result is not None:
+        if newColsName is None:
+            return result
+        from .postgre import re_names
+        return re_names(result, newColsName)
+    return None
+
+
+def pivot(df, pivot_col, value_col, groupNames=None, newColsName=None, agg_func=None):
+    """单列透视（legacy ``vicTools.pivot``）。"""
+    from pyspark.sql import functions as F
+
+    if agg_func is None:
+        agg_func = F.first
+
+    def _lmd(x):
+        return x if str(x) in df.columns else F.expr(x)
+
+    if not groupNames:
+        gp = [F.lit(None)]
+    else:
+        gp = groupNames.split(",") if isinstance(groupNames, str) else list(groupNames)
+        gp = [_lmd(i) for i in gp]
+
+    out = df.groupBy(*gp).pivot(_lmd(pivot_col)).agg(agg_func(_lmd(value_col)))
+    if newColsName is None:
+        return out
+    from .postgre import re_names
+    return re_names(out, newColsName)
+
+
 def get_missing_dates(df, col_name, start=None, end=None):
     """找 DataFrame 某列缺失日期。
-
     参数:
         df:         DataFrame
         col_name:   日期列

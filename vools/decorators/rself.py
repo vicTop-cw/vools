@@ -72,18 +72,24 @@ def rself(cls: Type) -> Type:
     # 保存原有的 __getattr__（如果有）
     original_getattr = cls.__dict__.get('__getattr__', None)
 
-    def _wrap_return_value(self, value: Any):
+    def _wrap_return_value(self, value: Any, wrap_none: bool = True):
         """
         应用返回值转换规则：
-        - None → 返回 self
+        - None → 返回 self（仅当 wrap_none=True；property 读取不适用）
         - 已经是当前类或其子类的实例 → 直接返回原值（可选复制属性）
         - 父类实例 → 使用 __from_parent__ 或 cls(value) 转换
 
         支持自定义初始化，通过 __from_parent__ 方法或实例属性传递参数
         支持属性复制：如果类定义了 _rself_copy_attrs，则将这些属性从 self 复制到返回值
+
+        Args:
+            value: 原始返回值
+            wrap_none: None 是否转换为 self。方法调用需要（链式调用兜底），
+                property 读取不需要——否则「合法返回 None 的属性」会静默
+                变成实例自身（如 VText.result 未 run 时返回整个字符串）。
         """
         if value is None:
-            return self
+            return self if wrap_none else None
 
         if isinstance(value, cls):
             # 如果返回值已经是当前类的实例，检查是否需要复制属性
@@ -173,9 +179,14 @@ def rself(cls: Type) -> Type:
                 attr_def = base.__dict__[name]
                 break
 
-        # 如果是 property，已经通过 getter 获得值，直接处理返回值
+        # 如果是 property，已经通过 getter 获得值。
+        #
+        # 注意：property 的值不走「None → self」那条规则。后者是给**方法**做链式
+        # 调用兜底用的；套到 property 上会让任何「合法返回 None」的属性静默变成
+        # 实例自身（例如 VText.result 未 run 时本该是 None，却返回了整个字符串）。
+        # 类型包装仍然保留，只是 None 原样返回。
         if isinstance(attr_def, property):
-            return _wrap_return_value(self, attr)
+            return _wrap_return_value(self, attr, wrap_none=False)
 
         # 如果是可调用对象（方法、类方法、静态方法、动态生成的函数）
         if callable(attr) and not isinstance(attr_def, property):
