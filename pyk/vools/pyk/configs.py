@@ -46,6 +46,8 @@ __all__ = [
     "default_db",
     "UPON_SQL_FILE",
     "upon_sql_file",
+    "PG_JAR",
+    "pg_jar",
     "encrypt_secret",
     "decrypt_secret",
 ]
@@ -98,6 +100,10 @@ _DEFAULT_DB: str = "default"
 # look_upon 默认 SQL 文件路径（get_replaced_sql / run_doneEx 用）；
 # 生产填 env PYK_UPON_SQL_FILE 或显式覆写，公开库留空（未配置时 look_upon 会明确报错）
 UPON_SQL_FILE: str = ""
+
+# PostgreSQL JDBC 驱动 jar 路径（look_upon query / spark 侧 JDBC 读 PG 用）；
+# 生产填 env PYK_PG_JAR 或显式覆写，公开库留空（未配置时 look_upon 会明确报错）
+PG_JAR: str = ""
 
 
 # ============================================================================
@@ -199,6 +205,17 @@ def upon_sql_file() -> str:
     未配置时返回空串——调用方应明确报错，而不是静默去读一个不存在/未知的路径。
     """
     return os.environ.get("PYK_UPON_SQL_FILE", UPON_SQL_FILE)
+
+
+def pg_jar() -> str:
+    """取 PostgreSQL JDBC 驱动 jar 路径。
+
+    优先级：env PYK_PG_JAR > 本文件 PG_JAR。
+
+    Returns:
+        驱动 jar 完整路径；未配置返回 PG_JAR 默认。
+    """
+    return os.environ.get("PYK_PG_JAR", PG_JAR)
 
 
 # ============================================================================

@@ -827,6 +827,135 @@ class VText(str):
 
         return self.__class__(pattern.sub(_repl, str(self)))
 
+    # ─── legacy vicText 字符串方法对齐 ───
+    # 说明：str 已有同名方法但返回普通 str，这里显式包装回 VText 以便链式调用；
+    # 与 legacy ``return vicText(super().xxx())`` 语义保持一致。
+
+    def __repr__(self) -> str:
+        """legacy ``vicText.__repr__`` → ``VText(...)``。"""
+        return "VText({})".format(str(self))
+
+    def __str__(self) -> str:
+        """返回纯 str 内容（legacy ``vicText.__str__``）。"""
+        return str.__str__(self)
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        """legacy ``vicText.__setitem__``：str 不可变，与 legacy 一样抛 TypeError。"""
+        return super().__setitem__(key, value)
+
+    def __delitem__(self, key: Any) -> None:
+        """legacy ``vicText.__delitem__``：str 不可变，与 legacy 一样抛 TypeError。"""
+        return super().__delitem__(key)
+
+    def upper(self) -> 'VText':
+        """转大写（legacy ``vicText.upper``）。"""
+        return self.__class__(str(self).upper())
+
+    def lower(self) -> 'VText':
+        """转小写（legacy ``vicText.lower``）。"""
+        return self.__class__(str(self).lower())
+
+    def title(self) -> 'VText':
+        """标题化（legacy ``vicText.title``）。"""
+        return self.__class__(str(self).title())
+
+    def capitalize(self) -> 'VText':
+        """首字母大写（legacy ``vicText.capitalize``）。"""
+        return self.__class__(str(self).capitalize())
+
+    def swapcase(self) -> 'VText':
+        """大小写互换（legacy ``vicText.swapcase``）。"""
+        return self.__class__(str(self).swapcase())
+
+    def replace(self, old: str, new: str, count: Optional[int] = None) -> 'VText':
+        """替换子串（legacy ``vicText.replace``）。"""
+        if count is None:
+            return self.__class__(str(self).replace(old, new))
+        return self.__class__(str(self).replace(old, new, count))
+
+    def split(self, sep: Optional[str] = None, maxsplit: int = -1) -> List[str]:
+        """按分隔符分割（legacy ``vicText.split``）。"""
+        if sep is None:
+            return str(self).split()
+        return str(self).split(sep, maxsplit)
+
+    def rsplit(self, sep: Optional[str] = None, maxsplit: int = -1) -> List[str]:
+        """从右分割（legacy ``vicText.rsplit``）。"""
+        if sep is None:
+            return str(self).rsplit()
+        return str(self).rsplit(sep, maxsplit)
+
+    def splitlines(self, keepends: bool = False) -> 'VList':
+        """按行分割（legacy ``vicText.splitlines`` → vicList）。"""
+        from ..data.vlist import VList
+        return VList(str(self).splitlines(keepends))
+
+    def partition(self, sep: str) -> 'VList':
+        """三分割（legacy ``vicText.partition`` → vicList）。"""
+        from ..data.vlist import VList
+        return VList([self.__class__(s) for s in str(self).partition(sep)])
+
+    def rpartition(self, sep: str) -> 'VList':
+        """三分割从右（legacy ``vicText.rpartition`` → vicList）。"""
+        from ..data.vlist import VList
+        return VList([self.__class__(s) for s in str(self).rpartition(sep)])
+
+    def strip(self, chars: Optional[str] = None) -> 'VText':
+        """去首尾空白/字符（legacy ``vicText.strip``）。"""
+        if chars is None:
+            return self.__class__(str(self).strip())
+        return self.__class__(str(self).strip(chars))
+
+    def lstrip(self, chars: Optional[str] = None) -> 'VText':
+        """去左侧空白/字符（legacy ``vicText.lstrip``）。"""
+        if chars is None:
+            return self.__class__(str(self).lstrip())
+        return self.__class__(str(self).lstrip(chars))
+
+    def rstrip(self, chars: Optional[str] = None) -> 'VText':
+        """去右侧空白/字符（legacy ``vicText.rstrip``）。"""
+        if chars is None:
+            return self.__class__(str(self).rstrip())
+        return self.__class__(str(self).rstrip(chars))
+
+    def zfill(self, width: int) -> 'VText':
+        """左补零到指定宽度（legacy ``vicText.zfill``）。"""
+        return self.__class__(str(self).zfill(width))
+
+    def center(self, width: int, fillchar: Optional[str] = None) -> 'VText':
+        """居中（legacy ``vicText.center``）。"""
+        if fillchar is None:
+            return self.__class__(str(self).center(width))
+        return self.__class__(str(self).center(width, fillchar))
+
+    def ljust(self, width: int, fillchar: Optional[str] = None) -> 'VText':
+        """左对齐（legacy ``vicText.ljust``）。"""
+        if fillchar is None:
+            return self.__class__(str(self).ljust(width))
+        return self.__class__(str(self).ljust(width, fillchar))
+
+    def rjust(self, width: int, fillchar: Optional[str] = None) -> 'VText':
+        """右对齐（legacy ``vicText.rjust``）。"""
+        if fillchar is None:
+            return self.__class__(str(self).rjust(width))
+        return self.__class__(str(self).rjust(width, fillchar))
+
+    def expandtabs(self, tabsize: int = 8) -> 'VText':
+        """扩展 Tab（legacy ``vicText.expandtabs``）。"""
+        return self.__class__(str(self).expandtabs(tabsize))
+
+    def translate(self, table: Any) -> 'VText':
+        """翻译字符（legacy ``vicText.translate``）。"""
+        return self.__class__(str(self).translate(table))
+
+    def join(self, iterable: Any) -> 'VText':
+        """以自身为分隔符连接序列（legacy ``vicText.join``）。"""
+        return self.__class__(str(self).join(iterable))
+
+    def format(self, *args: Any, **kwargs: Any) -> 'VText':
+        """字符串格式化（legacy ``vicText.format``）。"""
+        return self.__class__(str(self).format(*args, **kwargs))
+
     # ─── legacy vicText 运算符/迭代覆写 ───
     # 说明：str 自带这些魔法方法但返回普通 str，而 @rself 明确不包装魔法方法，
     # 因此不覆写就会在 `VText("a") + "b"` 这类链式用法上丢失 VText 类型。

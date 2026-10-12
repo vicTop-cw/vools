@@ -4,6 +4,73 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### ✨ 新增
+
+- **`bridges/vools/bridge/configs.py` 成为编译器位置的单一真源** — 新增
+  `ToolchainSpec` + `DEFAULT_SPECS`，用「环境变量名 + 相对工程根的 glob 模板」声明每种语言
+  在哪找工具链，模块内不再包含任何用户机器绝对路径。新增运行时层
+  `overrides / project_roots / discovered` 与用户 JSON（默认 `~/.vools/bridge_config.json`，
+  可用 `VOOLS_BRIDGE_CONFIG` 覆盖），只在本机生成、**不进仓库、不发布**。
+  探针发现后把结果回写该 JSON（`probe.save_probe_result`），跨进程可复现。
+- **新增 Pentad 桥接** `bridges/vools/bridge/pentad/` — `PentadBridge` / `@pentad` /
+  `compile_and_run`，经 `p5c run -q` 解释执行；参数以 `let argN = <literal>` 绑定注入。
+- **`bridge/manager.py` 注册 tnr / lz / zi / pentad** — `compiler_paths` 注册时由
+  `configs.resolve_compiler()` 解析；`_check_status` 未命中时回退 configs，运行期可变。
+
+### 🐛 修复
+
+- **Tnr 中文乱码** — `text=True` 让 `subprocess` 用系统 locale（Windows 为 GBK）解码
+  Tnr/Pentad 的 UTF-8 stdout，中文变成 `浣犲ソ`。改为去掉 `text`，stdout/stderr 显式
+  `.decode('utf-8', errors='replace')`。
+- **LZ rustc E0432** — 转译后编译缺 `--extern lz_builtins`；命中
+  `configs.resolve_aux('lz','lz_builtins_rlib')` 时追加 `--extern` 与 `-L dependency=<deps>`。
+- **`configs.clear_runtime()` 未复位惰性加载标志** — 之前只清三个运行时字典，
+  `_USER_CONFIG_LOADED` / `_AUTO_DISCOVERED` 仍为 True，清完状态后下一次
+  `resolve_compiler` 不会重新加载用户 JSON / 重新扫描工程根，导致依赖工具链解析的桥接
+  在共享进程里失效。现一并复位。
+- **桥接模块独立调用时工具链不可见** — `resolve_compiler` / `resolve_aux` 开头
+  `_ensure_user_state()` 懒加载用户 JSON 并按需 `discover_project_roots()`。
+
+### 📦 位置不再硬编码
+
+- 删除 `tnr/compiler.py` 的 `_TNR_PROJECT_CANDIDATES`、`lz/compiler.py` 的
+  `_LZ_PROJECT_CANDIDATES`、`zi/compiler.py` 的 `_ZHI_SRC` 常量，全部改走 configs。
+- `grep -R IDEProjects bridges/vools/bridge --include=*.py` 现返回空；README/docstring
+  里的历史示例说明一并改写。
+
+### ✅ 验证
+
+- 新增 `tests/test_configs.py`（单一真源 / 不硬编码 / 用户 JSON 往返 /
+  override / project_root / discovered / register_spec）与
+  `tests/test_pentad_bridge.py`（工具链探测 / 执行 / 参数注入 / 装饰器）。
+- 相关套件 `test_configs + test_pentad_bridge + test_tnr_bridge + test_lz_bridge +
+  test_zi_bridge + test_probe_manager` = **61 passed / 0 failed**。
+
+### 📦 vools-pyk 拆包（pyk 独立分发）
+
+- **`vools/pyk/` 整目录从核心库迁出**，成为独立分发包 **`vools-pyk`**（仓库子目录 `pyk/`，
+  命名空间包 `vools/pyk/`，安装后并入 `vools` 命名空间）。核心库 `vools` 不再携带
+  pyspark / PostgreSQL 重依赖，安装体积与导入纯度都下降。
+- **安装入口改写**：`pip install "vools[pyk]"`（自动拉 `vools-pyk` + `pyspark` +
+  `pandas` + `numpy`）或 `pip install vools-pyk`；旧的 `vools[spark]` 仍保留为「只拿
+  pyspark 运行时」的兼容指令。
+- **`vools.__init__` 的惰性导入提示改写**：`vools.pyk` / `vools.vicspark` 缺失时，报错
+  信息从「请装 `vools[spark]` / pyspark」改为「请装 `vools[pyk]` / `vools-pyk`」。
+- **删除核心库测试**：`tests/test_pyk.py` 与 `tests/data/test_pyk_heavy_align.py`
+  随包迁出（对应用例移到 `pyk/tests/`）；`tests/decorators/__persist__/*.json` 因
+  cache 签名变化刷新。
+- **pyproject extras 对齐**：新增 `pyk = ["vools-pyk==0.1.1"]`，并加入 `[all]`；
+  `[all]` 内的 `vools-pyk==0.1.1` 一并补齐。
+- `pyk/` 子包自带 `pyproject.toml`（`vools-pyk 0.1.1`）、`README.md`、`docs/`
+  （`CHANGELOG` / `LOOKUPON` / `MODULES`），与核心库解耦，可独立发布与回归。
+
+### ✅ 验证
+
+- `vools` 核心库 `vools.pyk` 在**未装 `vools-pyk`** 时正确抛 `AttributeError`；
+  装回 `vools-pyk` 后 `import vools.pyk` 正常解析（命名空间合并无冲突）。
+- 核心库测试拓扑在移除 `tests/test_pyk*` 后全绿（见 `docs/appendix/benchmark.md`
+  与 `tests/` 运行记录）；`pyk/tests/test_pyk.py` 在 `vools-pyk` 包内独立运行。
+
 ## [0.7.8] - 2026-09-27
 
 发出去的三个包：`vools 0.7.8`、`vools-bridges 0.7.7`、`vools-actus 0.7.8`

@@ -36,6 +36,18 @@ cd vools
 pip install .
 ```
 
+### PySpark / PostgreSQL 集成（vools-pyk）
+
+需要 Spark / Hive / PostgreSQL 相关能力时，安装 **vools-pyk**（独立分发包，
+以 `vools.pyk` 命名空间合并）：
+
+```bash
+pip install "vools[pyk]"     # 推荐
+# 等价：pip install vools-pyk
+```
+
+文档见 [pyk/README.md](pyk/README.md) 与 [pyk/docs/](pyk/docs/)。
+
 ### 环境要求
 
 - Python 3.6+

@@ -21,7 +21,8 @@ Tnr 是面向 AI 的张量数学语言（公式即代码，Rust 实现）。
         print(add(3, 5))   # -> 8
 
 前置条件：
-- Tnr 工具链可用（本机 E:\\IDEProjects\\AI\\Tnr\\target\\release\\tnr.exe 或 PATH/WSL 中的 tnr）
+- Tnr 工具链可用（位置由 vools.bridge.configs 统一解析：用户 JSON /
+  VOOLS_TNR_ROOT / VOOLS_PROJECTS_ROOT / PATH/WSL 中的 tnr，不硬编码用户机器路径）
 """
 
 from .compiler import (

@@ -407,13 +407,13 @@ def __getattr__(name: str) -> Any:
     if name == 'pyk':
         global PYK_AVAILABLE
         try:
-            # pyk 已并入 vools 主包（vools/pyk/），随 vools 一起安装
+            # pyk 由独立分发包 vools-pyk 提供（namespace 包 vools/pyk/），不随 vools 核心分发
             module = importlib.import_module('vools.pyk')
             PYK_AVAILABLE = True
             return module
         except Exception as _pe:
             raise AttributeError(
-                "vools.pyk 需要 pyspark；请先 `pip install 'vools[spark]'` 或 `pip install pyspark`。"
+                "vools.pyk 需要 vools-pyk；请先 `pip install 'vools[pyk]'` 或 `pip install vools-pyk`。"
                 f" 原始错误: {_pe}"
             )
 
@@ -423,7 +423,7 @@ def __getattr__(name: str) -> Any:
             return my_spark()
         except Exception as _e:
             raise AttributeError(
-                "vools.vicspark 需要 pyspark；请先安装 pyspark 或 vools-pyk[spark]。"
+                "vools.vicspark 需要 pyspark；请先 `pip install 'vools[pyk]'` 或 `pip install vools-pyk`。"
                 f" 原始错误: {_e}"
             )
 

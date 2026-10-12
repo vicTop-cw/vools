@@ -385,6 +385,52 @@ LANGUAGE_PROBES: Dict[str, Dict[str, Any]] = {
             'Darwin': '系统自带',
         },
     },
+
+    # ---------- 自定义工具链（路径由 vools.bridge.configs 统一解析） ----------
+    'tnr': {
+        'commands': ['tnr'],
+        'version_args': ['version'],
+        'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
+        'category': '张量语言',
+        'install_hint': {
+            'Windows': '设置 VOOLS_TNR_ROOT 指向 Tnr 工程根',
+            'Linux': '把 tnr 加入 PATH',
+            'Darwin': '把 tnr 加入 PATH',
+        },
+    },
+    'lz': {
+        'commands': ['lang-zone', 'lz', 'lzc'],
+        'version_args': ['--version'],
+        'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
+        'category': '转译语言',
+        'install_hint': {
+            'Windows': '设置 VOOLS_LZ_ROOT 指向 lang-zone 工程根',
+            'Linux': '把 lang-zone 加入 PATH',
+            'Darwin': '把 lang-zone 加入 PATH',
+        },
+    },
+    'zi': {
+        'commands': ['zhi', 'elixir'],
+        'version_args': ['--version'],
+        'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
+        'category': '中文编程语言',
+        'install_hint': {
+            'Windows': '设置 VOOLS_ZI_ROOT 指向兹工程根（含 zhi/src）',
+            'Linux': '设置 VOOLS_ZI_ROOT 指向兹工程根',
+            'Darwin': '设置 VOOLS_ZI_ROOT 指向兹工程根',
+        },
+    },
+    'pentad': {
+        'commands': ['p5c'],
+        'version_args': ['--version'],
+        'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
+        'category': '多范式语言',
+        'install_hint': {
+            'Windows': '设置 VOOLS_PENTAD_ROOT 指向 Pentad 工程根',
+            'Linux': '设置 VOOLS_PENTAD_ROOT 指向 Pentad 工程根',
+            'Darwin': '设置 VOOLS_PENTAD_ROOT 指向 Pentad 工程根',
+        },
+    },
 }
 
 # 已被 vools.bridge 子包实现覆盖的语言
@@ -393,6 +439,7 @@ BRIDGE_SUPPORTED = {
     'java', 'scala', 'ruby', 'julia', 'r', 'freebasic', 'mojo',
     'typescript', 'kotlin', 'zig', 'lua', 'dart', 'swift', 'php',
     'moonbit', 'perl', 'vbnet', 'vbscript', 'powershell', 'shell',
+    'tnr', 'lz', 'zi', 'pentad',
 }
 
 
@@ -450,6 +497,59 @@ class ProbeReport:
 # 核心探测函数
 # ============================================================================
 
+def _fill_version(status: 'LanguageStatus', lang: str, path: str,
+                  config: Dict[str, Any],
+                  env: Optional[Dict[str, str]] = None) -> None:
+    """为已解析的工具链路径填充版本号（目录型工具链尽力而为）。"""
+    # 目录/包形态：不执行，尝试读 __version__ 或标记文件
+    if os.path.isdir(path):
+        try:
+            sys_path_backup = list(sys.path)
+            sys.path.insert(0, path)
+            try:
+                pkg_name = os.path.basename(os.path.dirname(path)) or lang
+                mod = __import__(pkg_name)
+                ver = getattr(mod, '__version__', None)
+                if ver:
+                    status.version = str(ver)
+                    return
+            finally:
+                sys.path = sys_path_backup
+        except Exception:
+            pass
+        status.version = '<dir>'
+        return
+
+    try:
+        version_args = config.get('version_args', ['--version'])
+        result = subprocess.run(
+            [path] + version_args,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=5, env=env,
+        )
+        raw_output = (result.stdout or b'') + (result.stderr or b'')
+        output = ''
+        for enc in ('utf-8', 'gbk', 'cp936', 'latin-1'):
+            try:
+                output = raw_output.decode(enc)
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+        if not output:
+            output = raw_output.decode('utf-8', errors='ignore')
+        if output:
+            import re
+            pat = config.get('version_pattern', r'(\d+\.\d+(?:\.\d+)?)')
+            m = re.search(pat, output)
+            if m:
+                status.version = m.group(1)
+            else:
+                first_line = output.strip().split('\n')[0]
+                status.version = first_line[:80]
+    except Exception:
+        status.version = 'unknown'
+
+
 def _probe_one(lang: str, config: Dict[str, Any], env: Optional[Dict[str, str]] = None) -> LanguageStatus:
     """
     探测单个语言
@@ -463,6 +563,24 @@ def _probe_one(lang: str, config: Dict[str, Any], env: Optional[Dict[str, str]] 
         name=lang,
         category=config.get('category', ''),
     )
+
+    # 优先使用 vools.bridge.configs 解析（覆盖 PATH 之外的项目根/用户 JSON/覆盖项）
+    try:
+        from . import configs as _configs
+        resolved = _configs.resolve_compiler(lang)
+    except Exception:
+        resolved = None
+    if resolved and os.path.exists(resolved):
+        status.path = resolved
+        status.command = os.path.basename(resolved) if not os.path.isdir(resolved) \
+            else resolved
+        _fill_version(status, lang, resolved, config, env)
+        status.available = True
+        try:
+            _configs.set_discovered(lang, resolved, status.version or '')
+        except Exception:
+            pass
+        return status
 
     for cmd in config['commands']:
         # 优先使用 which 查找路径
@@ -558,6 +676,17 @@ def probe_environment(
     env = os.environ.copy()
     if extra_env:
         env.update(extra_env)
+
+    # 若用户设置了 VOOLS_PROJECTS_ROOT，先自动发现各工程根（不硬编码路径）
+    try:
+        from . import configs as _configs
+        if os.environ.get('VOOLS_PROJECTS_ROOT'):
+            _configs.discover_project_roots()
+        if not _configs.all_project_roots() and not _configs.all_overrides():
+            # 未加载用户 JSON 时先加载一次（幂等）
+            _configs.load_user_config()
+    except Exception:
+        pass
 
     # 准备探测目标
     if languages is None:
@@ -1351,6 +1480,79 @@ def probe_with_extra_paths(
 # 模块导出
 # ============================================================================
 
+def get_probe_result_path() -> str:
+    """探针结果 JSON 路径（默认用户侧 ~/.vools/bridge_config.json）。"""
+    try:
+        from . import configs as _configs
+        return _configs.get_user_config_path()
+    except Exception:
+        return os.path.join(os.path.expanduser('~'), '.vools', 'bridge_config.json')
+
+
+def save_probe_result(report: 'ProbeReport', path: Optional[str] = None) -> str:
+    """
+    把探测报告写入用户侧 JSON（不进仓库、不发布）。
+
+    除写入完整报告外，还会把各语言的 discovered 路径同步进
+    vools.bridge.configs，使后续 bridge 编译直接使用发现结果。
+
+    Args:
+        report: ProbeReport。
+        path: 目标 JSON 路径；默认 ~/.vools/bridge_config.json。
+
+    Returns:
+        写入的文件路径。
+    """
+    if path is None:
+        path = get_probe_result_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    try:
+        from . import configs as _configs
+    except Exception:
+        _configs = None
+
+    data = {
+        '_comment': 'vools 探针探测结果（本机生成，请勿提交/发布）。',
+        'platform': report.platform,
+        'arch': report.arch,
+        'python_version': report.python_version,
+        'host': report.host,
+        'languages': {k: v.to_dict() for k, v in report.languages.items()},
+    }
+
+    if _configs is not None:
+        for lang, st in report.languages.items():
+            if st.available and st.path:
+                _configs.set_discovered(lang, st.path, st.version or '')
+        # 合并 configs 运行时状态，避免覆盖 overrides / project_roots / discovered
+        data['overrides'] = _configs.all_overrides()
+        data['project_roots'] = _configs.all_project_roots()
+        data['discovered'] = _configs.all_discovered()
+        _configs.save_user_config(path)
+
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return path
+
+
+def load_probe_result(path: Optional[str] = None) -> int:
+    """
+    从用户侧 JSON 回读探针结果到 configs 运行时。
+
+    Args:
+        path: 目标 JSON 路径；默认 ~/.vools/bridge_config.json。
+
+    Returns:
+        加载的键数量。
+    """
+    try:
+        from . import configs as _configs
+    except Exception:
+        return 0
+    return _configs.load_user_config(path)
+
+
 __all__ = [
     'LANGUAGE_PROBES',
     'BRIDGE_SUPPORTED',
@@ -1368,4 +1570,7 @@ __all__ = [
     'list_wsl_distributions',
     'probe_all_wsl',
     'probe_with_extra_paths',
+    'save_probe_result',
+    'load_probe_result',
+    'get_probe_result_path',
 ]

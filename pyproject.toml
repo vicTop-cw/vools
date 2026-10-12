@@ -69,14 +69,20 @@ all = [
     "vools-actus==0.7.8",
     "vools-dll32==0.7.6",
     "vools-xl==0.7.6",
+    "vools-pyk==0.1.1",
 ]
 cli = [
     "typer>=0.12.0",
     "typing-extensions>=4.0.0",
     "fire>=0.5.0",
 ]
-# pyk 子包（pyspark 相关 API）：已并入 vools 主包（vools/pyk/），不再依赖独立 vools-pyk。
-# 安装方式：pip install 'vools[spark]'  即可获得 pyspark 运行时 + pyk 全套 API。
+# pyk 子包（pyspark / PostgreSQL 集成）作为独立分发包 vools-pyk 分发：
+#   仓库子目录 pyk/，namespace 包 vools/pyk/（安装后并入 vools 命名空间）。
+# 安装方式：pip install 'vools[pyk]'（自动拉 vools-pyk + pyspark + pandas + numpy）
+# 或直接 pip install vools-pyk。
+# 核心库 vools 不再携带 vools/pyk/ 目录，保持轻量。
+pyk = ["vools-pyk==0.1.1"]
+# 兼容旧指令：只想拿 pyspark 运行时（不一定装 vools-pyk 全套 API）用这个。
 spark = [
     "pyspark>=2.4.3",
     "pandas>=0.24",

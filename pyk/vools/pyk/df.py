@@ -158,6 +158,36 @@ class vicDataFrame(object):
         """按列名/列序号排序。"""
         return vicDataFrame(order_cols(self._df, key=key, reverse=reverse))
 
+    # ---- legacy camelCase 别名 ----
+    def toList(self):
+        """legacy 别名 toList -> to_list。"""
+        return self.to_list()
+
+    def showEx(self, n=100):
+        """legacy 别名 showEx -> show_ex。"""
+        return self.show_ex(n=n)
+
+    def selectEx(self, *cols, **kcols):
+        """legacy 别名 selectEx -> select_ex。"""
+        return self.select_ex(*cols, **kcols)
+
+    def groupingSets(self, group_cols, sets_expr, *agg_expr, **kwargs):
+        """legacy 别名 groupingSets -> grouping_sets。"""
+        return self.grouping_sets(group_cols, sets_expr, *agg_expr, **kwargs)
+
+    def orderCols(self, key=None, reverse=False):
+        """legacy 别名 orderCols -> order_cols。"""
+        return self.order_cols(key=key, reverse=reverse)
+
+    def get_miss_dates(self, date_col='ds', start_ds=None, end_ds=None):
+        """取缺失分区日期（legacy `get_miss_dates` 语义）。
+
+        返回 dict：{'min_ds','max_ds','miss_dss','should_dss_cnt','miss_dss_cnt'}
+        """
+        from .tb import get_miss_dss
+        tb_name = getattr(self, '_tb_name', None) or getattr(self, 'tableName', None)
+        return get_miss_dss(tb_name, start_ds=start_ds, end_ds=end_ds, date_col=date_col)
+
     def chunk_df(self, *args, **kwargs):
         """把 DataFrame 切分成多个 chunk (按行数)。"""
         return chunk_df(self._df, *args, **kwargs)
@@ -314,6 +344,7 @@ def vDF(source, cols=None, pos_name=None, source_type="hive", view_name="", cach
     if cols:
         missing = [c for c in cols if c not in df.columns]
         if missing:
+            from pyspark.sql import functions as F
             df = df.withColumn(missing[0], F.lit(None))
             return vDF(df, cols, pos_name, source_type, view_name, cache)
         df = df.select(*cols)

@@ -1,0 +1,22 @@
+- [x] `vools/reactive` 内部不再引用 `vools.decorators`、`vools.functional`、`vools.data`、`vools.oop`、`vools.task`、`vools.utils` 等功能模块
+- [x] `vools/bridge` 内部仅引用 `vools.core.*` 兼容层，不引用其他功能模块
+- [x] `bridges/vools/bridge/` 目录完整迁移原 `vools/bridge/*` 内容
+- [x] `rx/vools/reactive/` 目录完整迁移原 `vools/reactive/*` 内容
+- [x] 根目录 `vools/bridge/` 已删除
+- [x] 根目录 `vools/reactive/` 已删除
+- [x] `bridges/pyproject.toml` 配置正确，可独立构建 `vools-bridges`
+- [x] `rx/pyproject.toml` 配置正确，可独立构建 `vools-rx`
+- [x] 根目录 `pyproject.toml` 的 `[project.optional-dependencies]` 包含 `rx`、`bridges`、`all`
+- [x] 根目录 `pyproject.toml` 的 `tool.setuptools.packages.find` 排除 `vools.bridge*` 和 `vools.reactive*`
+- [x] `vools/__init__.py` 不再顶层硬导入 `vools.bridge`
+- [x] `vools/__init__.py` 通过 `__getattr__` 优雅处理 `bridge` / `reactive` 的延迟导入
+- [x] `pip install vools` 后 `import vools.bridge` 失败
+- [x] `pip install vools` 后 `import vools.reactive` 失败
+- [x] `pip install "vools[rx]"` 后 `import vools.reactive` 成功
+- [x] `pip install "vools[bridges]"` 后 `import vools.bridge` 成功
+- [x] `pip install "vools[all]"` 后 `import vools.bridge` 和 `import vools.reactive` 均成功
+- [x] `import vools` 后核心 API（`Seq`、`curry`、`memorize` 等）仍可访问
+- [x] `tests/data/test_itor.py` 全部通过
+- [x] 核心测试套件（core/data/functional/oop/reactive/serialize/task）无回归
+- [x] bridge 测试套件在 `bridges/` 子项目中可运行并通过
+- [x] reactive 测试套件在 `rx/` 子项目中可运行并通过

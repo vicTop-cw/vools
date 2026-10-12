@@ -1,8 +1,13 @@
 """
-pyk - vools 的 PySpark 集成子包（原 vx 合并于此）
+pyk - vools 的 PySpark / PostgreSQL 集成子包（**独立分发包**）
+
+安装：``pip install 'vools[pyk]'`` 或 ``pip install vools-pyk``。
 
 设计目标：
-- pyk 是 vools 里所有 pyspark 相关 API 的**统一入口**。
+- pyk 是 vools 里所有 pyspark / PostgreSQL 相关 API 的**统一入口**。
+- **独立分发**：pyk 不随 vools 核心库打包。核心库保持零 pyspark 依赖、轻量。
+  通过 PyPI 独立包 ``vools-pyk`` 分发，namespace 包路径为 ``vools/pyk/``
+  （配合 vools 的 ``pkgutil.extend_path`` 合并）。
 - 纯 Python 部分 (vools.core / vools.data / ...) 不依赖 pyspark；
   只有 pyk 及其子模块才会 import pyspark，保证 vools 核心可以独立安装/运行。
 - 用法：``from vools import pyk`` 或 ``import vools.pyk as pyk``。
@@ -15,7 +20,8 @@ pyk - vools 的 PySpark 集成子包（原 vx 合并于此）
     vools.pyk.tb         - Hive 表元数据 (vicTableInfo, getCols, get_partitions...)
     vools.pyk.compare    - DataFrame 比对 (vicCompare)
     vools.pyk.postgre    - PostgreSQL 辅助 (vicPostgreSupport)
-    vools.pyk.dialect    - SQL 方言/桥接 (兼容 vools.sql.spark)
+    vools.pyk.look_upon  - LookUpon 任务调度（PostgreSQL 队列，DAG / 跨表依赖 / 重试）
+    vools.pyk.tools      - vicTools 聚合类
 
 延迟加载说明：
 - 为避免 ``import vools`` 时强制拉起 pyspark（生产环境可能未装/很慢），
@@ -39,20 +45,21 @@ __all__ = [
     "tb",
     "compare",
     "postgre",
+    "cond",
     "patch",
     "configs",
     "look_upon",
     "tools",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 import os
 import sys
 import importlib
 
 _SUBMODULES = (
-    "core", "df", "text", "tb", "compare", "postgre", "patch",
+    "core", "df", "text", "tb", "compare", "postgre", "cond", "patch",
     "configs", "look_upon", "tools",
 )
 

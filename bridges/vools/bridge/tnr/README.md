@@ -37,8 +37,9 @@ result = compile_and_run("print(1 + 2);")   # -> 3
   （int/float/str/bool/list；张量用 `[[1,2],[3,4]]` 嵌套列表语法）
 - **输出解析**：`tnr run` 逐行打印，`Tensor<int64, []>(3)` 自动解析回 Python 值；
   非 Tensor 行原样返回字符串
-- **工具链探测**：本机 `E:\IDEProjects\AI\Tnr\target\{release,debug}\tnr.exe`
-  → PATH → WSL，探测失败时 `compiler_available()` 返回 False（配合 fallback 回退）
+- **工具链探测**：位置统一由 `vools.bridge.configs` 解析（用户 JSON / `VOOLS_TNR_ROOT` /
+  `VOOLS_TNR_PATH` / `VOOLS_PROJECTS_ROOT` 扫描）→ PATH → WSL，探测失败时
+  `compiler_available()` 返回 False（配合 fallback 回退）；不硬编码用户机器绝对路径
 - **缓存**：源文件按 `func_name + md5(code)` 落 `%TEMP%/vools_tnr_cache/`
 
 ## 高级用法

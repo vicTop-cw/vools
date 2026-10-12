@@ -3,7 +3,7 @@ Tests for ``vools.decorators.flex_pos``.
 
 Run with::
 
-    cd e:\\IDEProjects\\AI\\vools
+    cd <repo_root>   # 仓库根目录
     python tests/decorators/test_flex_pos.py -v
 """
 

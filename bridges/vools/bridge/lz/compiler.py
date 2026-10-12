@@ -49,19 +49,45 @@ from ..core.types import LangType
 # ----------------------------------------------------------------------------
 _IS_WINDOWS = platform.system() == 'Windows'
 
-# lang-zone 已知产物候选
-_LZ_PROJECT_CANDIDATES = (
-    r'E:\IDEProjects\AI\lang-zone\target\debug\lang-zone.exe',
-    r'E:\IDEProjects\AI\lang-zone\target\release\lang-zone.exe',
-)
-
 
 def _find_lz_exe() -> Optional[str]:
-    """在已知路径与 PATH 中查找 lang-zone 可执行文件。"""
-    for cand in _LZ_PROJECT_CANDIDATES:
-        if os.path.isfile(cand):
-            return cand
+    """在 configs 声明位置与 PATH 中查找 lang-zone 可执行文件。
+
+    位置统一由 vools.bridge.configs 解析（用户 JSON / VOOLS_PROJECTS_ROOT /
+    环境变量可覆盖），不再硬编码用户机器绝对路径。
+    """
+    try:
+        from ..configs import resolve_compiler
+        resolved = resolve_compiler('lz')
+        if resolved and os.path.exists(resolved):
+            return resolved
+    except Exception:
+        pass
     return shutil.which('lang-zone') or shutil.which('lz') or shutil.which('lzc')
+
+
+def _find_lz_builtins_rlib() -> Optional[str]:
+    """定位 lz_builtins 的 .rlib（rustc 编译生成 .rs 时需要的 crate）。"""
+    try:
+        from ..configs import resolve_aux
+        resolved = resolve_aux('lz', 'lz_builtins_rlib')
+        if resolved and os.path.exists(resolved):
+            return resolved
+    except Exception:
+        pass
+    return None
+
+
+def _find_lz_builtins_deps() -> Optional[str]:
+    """定位 lz_builtins 的传递依赖目录（rustc -L dependency 用）。"""
+    try:
+        from ..configs import resolve_aux
+        resolved = resolve_aux('lz', 'lz_builtins_deps')
+        if resolved and os.path.isdir(resolved):
+            return resolved
+    except Exception:
+        pass
+    return None
 
 
 def _rustc_available() -> bool:
@@ -266,8 +292,16 @@ def _compile_rs_to_exe(rs_path: str, timeout: int = 120) -> str:
                            '手动 rustc 编译（需 lz_builtins crate）'.format(rs_path))
     exe_path = os.path.splitext(rs_path)[0] + '.exe' if os.name == 'nt' else \
         os.path.splitext(rs_path)[0]
+    cmd = ['rustc', rs_path, '-o', exe_path, '--edition', '2021']
+    # 生成的 .rs 使用 `use lz_builtins::*;`，必须提供该 crate，否则 E0432
+    rlib = _find_lz_builtins_rlib()
+    if rlib:
+        cmd += ['--extern', 'lz_builtins={}'.format(rlib)]
+        deps_dir = _find_lz_builtins_deps()
+        if deps_dir:
+            cmd += ['-L', 'dependency={}'.format(deps_dir)]
     result = subprocess.run(
-        ['rustc', rs_path, '-o', exe_path, '--edition', '2021'],
+        cmd,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding='utf-8', errors='replace', timeout=timeout,
     )

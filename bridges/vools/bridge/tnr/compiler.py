@@ -49,18 +49,19 @@ _IS_WINDOWS = platform.system() == 'Windows'
 # Tnr 工具链探测
 # ----------------------------------------------------------------------------
 
-# 本机已知的 tnr 可执行文件候选（Tnr 项目常用产物路径）
-_TNR_PROJECT_CANDIDATES = (
-    r'E:\IDEProjects\AI\Tnr\target\release\tnr.exe',
-    r'E:\IDEProjects\AI\Tnr\target\debug\tnr.exe',
-)
-
-
 def _find_local_tnr() -> Optional[str]:
-    """在本机已知路径与 PATH 中查找 tnr 可执行文件。"""
-    for cand in _TNR_PROJECT_CANDIDATES:
-        if os.path.isfile(cand):
-            return cand
+    """在 configs 声明位置、本机已知路径与 PATH 中查找 tnr 可执行文件。
+
+    位置统一由 vools.bridge.configs 解析（用户 JSON / VOOLS_PROJECTS_ROOT /
+    环境变量可覆盖），不再硬编码用户机器绝对路径。
+    """
+    try:
+        from ..configs import resolve_compiler, set_project_root
+        resolved = resolve_compiler('tnr')
+        if resolved and os.path.exists(resolved):
+            return resolved
+    except Exception:
+        pass
     import shutil
     found = shutil.which('tnr')
     return found
@@ -69,7 +70,7 @@ def _find_local_tnr() -> Optional[str]:
 def _resolve_tnr_command() -> tuple:
     """解析可用的 Tnr 命令，返回 (cmd_prefix, path_converter, use_wsl)。
 
-    探测顺序：本机已知产物 → PATH → WSL 中的 tnr。
+    探测顺序：configs 解析结果 → PATH → WSL 中的 tnr。
     """
     local = _find_local_tnr()
     if local:
@@ -379,17 +380,21 @@ def _execute_tnr_code(code: str, func_name: str, cache_dir: Optional[str] = None
         result = subprocess.run(
             _TNR_CMD + ['run', _PATH_CONVERTER(src_path)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors='replace', timeout=timeout,
+            # Tnr 输出为 UTF-8；用 text=True 会按系统本地编码（如 GBK）解码导致乱码
+            timeout=timeout,
         )
+
+    stdout_text = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
+    stderr_text = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
 
     if result.returncode != 0:
         raise RuntimeError(
             'Tnr 执行失败 (exit {}):\n'
             'stderr:\n{}\nstdout:\n{}\n代码:\n{}'.format(
-                result.returncode, result.stderr, result.stdout, code
+                result.returncode, stderr_text, stdout_text, code
             )
         )
-    return result.stdout.strip()
+    return stdout_text.strip()
 
 
 # ----------------------------------------------------------------------------
@@ -652,9 +657,11 @@ class TnrBridge(LangBridge):
             result = subprocess.run(
                 _TNR_CMD + ['run', _PATH_CONVERTER(main_tnr)] + list(args),
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, errors='replace', timeout=60,
+                timeout=60,
             )
-            return (result.returncode, result.stdout, result.stderr)
+            out = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
+            err = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
+            return (result.returncode, out, err)
         artifact_path = self.compile_project(project_dir, entry, cache_dir)
         return self.call_func(artifact_path, entry, args)
 
@@ -723,9 +730,11 @@ def run_tnr_file(tnr_file: str, args: tuple = ()) -> tuple:
     result = subprocess.run(
         _TNR_CMD + ['run', _PATH_CONVERTER(tnr_file)] + list(args),
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, errors='replace', timeout=60,
+        timeout=60,
     )
-    return (result.returncode, result.stdout, result.stderr)
+    out = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
+    err = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
+    return (result.returncode, out, err)
 
 
 __all__ = [
