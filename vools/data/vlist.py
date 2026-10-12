@@ -6,7 +6,8 @@ VList 列表类
 __all__ = ['ListLikeMeta', 'VList']
 
 import itertools
-from collections import OrderedDict
+import operator
+from collections import OrderedDict, deque
 from collections.abc import Iterable
 from typing import TypeVar, Generic, Callable, List, Optional, Any, Union, Iterable as IterType, Iterator, Dict, Tuple, Type
 
@@ -28,7 +29,13 @@ class ListLikeMeta(type):
     这允许 VList 的方法直接工作在普通列表上。
     """
     def __instancecheck__(cls, instance):
-        return isinstance(instance, (list, cls))
+        # 注意：这里不能写 isinstance(instance, (list, cls)) —— 元组里含 cls 会
+        # 再次触发本方法，构成无限递归（VList.size() 这类返回非 list 的方法经
+        # @rself 包装后一律 RecursionError）。先做无递归的内建 list 检查，
+        # 再退回 type 的默认 MRO 检查。
+        if isinstance(instance, list):
+            return True
+        return type.__instancecheck__(cls, instance)
     
     def do(self: type, f: Callable[..., Any] = print, pre_f: Optional[Callable[[Any], Any]] = None, sub_f: Optional[Callable[[Any], None]] = None) -> type:
         """Apply a function for side effects, return self for chaining.
@@ -938,6 +945,383 @@ class VList(Seq, metaclass=ListLikeMeta):
             列表类型
         """
         return List[item]
+
+    # ─── legacy vicList 通用序列能力（对齐 vools.py 大文件） ───
+    # 说明：legacy 里这些方法靠 @vicTools.transfer 自动把返回值包装成 vicList。
+    # 核心库的 @rself 只包装「返回自身类/父类」的情形，对 chain/zip/生成器等
+    # 迭代器返回值不做包装，所以这里显式构造 VList。
+
+    def padnone(self):
+        """返回元素后无限补 None（legacy ``vicList.padnone``）。
+
+        与 legacy 一致：返回**惰性**迭代器而非 VList —— 序列无限，
+        物化成 VList 会立刻挂死。用法：``itertools.islice(vl.padnone(), n)``。
+
+        Returns:
+            itertools.chain，元素之后跟无限 None
+        """
+        return itertools.chain(self.collect(), itertools.repeat(None))
+
+    def rotate(self, n: int = 1) -> 'VList':
+        """循环右移 n 位（legacy ``vicList.rotate``）。
+
+        Args:
+            n: 位移量，负数向左
+
+        Returns:
+            位移后的 VList
+        """
+        q = deque(self.collect())
+        q.rotate(n)
+        return VList(q)
+
+    def ncycles(self, n: int) -> 'VList':
+        """把序列重复 n 次（legacy ``vicList.ncycles``）。
+
+        Args:
+            n: 重复次数
+
+        Returns:
+            重复后的 VList
+        """
+        return VList(itertools.chain.from_iterable(itertools.repeat(tuple(self.collect()), n)))
+
+    @staticmethod
+    def dotproduct(vec1, vec2, sum=sum, map=None, mul=None):
+        """两向量点积（legacy ``vicList.dotproduct``）。
+
+        注意：默认参数不能写成 ``map=map``/``mul=operator.mul`` 的裸 map ——
+        类体内 ``map`` 会被同名方法 VList.map 遮蔽，取到的是函数对象而非内建 map。
+        因此这里用 None 哨兵，在函数体内解析真正的内建。
+        """
+        import builtins
+        if map is None:
+            map = builtins.map
+        if mul is None:
+            mul = operator.mul
+        return sum(map(mul, vec1, vec2))
+
+    def flatten(self) -> 'VList':
+        """展平一层嵌套（legacy ``vicList.flatten``）。"""
+        return VList(itertools.chain.from_iterable(self.collect()))
+
+    @staticmethod
+    def repeatfunc(func, times=None, *args) -> 'VList':
+        """重复调用 func（legacy ``vicList.repeatfunc``）。
+
+        Args:
+            func: 被调用的函数
+            times: 次数；None 表示无限
+            *args: 传给 func 的参数
+
+        Returns:
+            VList 结果
+        """
+        if times is None:
+            return VList(itertools.starmap(func, itertools.repeat(args)))
+        return VList(itertools.starmap(func, itertools.repeat(args, times)))
+
+    def tee(self, fill_value=None) -> 'VList':
+        """相邻元素对 ``(s0,s1), (s1,s2), ...``（legacy ``vicList.tee``）。
+
+        Args:
+            fill_value: 第二个迭代器的起始填充值
+
+        Returns:
+            VList of tuples
+        """
+        a, b = itertools.tee(self.collect())
+        next(b, fill_value)
+        return VList(zip(a, b))
+
+    def grouper(self, n: int, fillvalue=None) -> 'VList':
+        """把序列切成定长块（legacy ``vicList.grouper``）。
+
+        Args:
+            n: 块大小
+            fillvalue: 末块不足时的填充值
+
+        Returns:
+            VList of tuples
+        """
+        args = [iter(self.collect())] * n
+        return VList(itertools.zip_longest(*args, fillvalue=fillvalue))
+
+    @staticmethod
+    def roundrobin(*iterables) -> 'VList':
+        """轮流取各可迭代对象的元素（legacy ``vicList.roundrobin``）。
+
+        Returns:
+            VList 结果
+        """
+        num_active = len(iterables)
+        nexts = itertools.cycle(iter(it).__next__ for it in iterables)
+        out = []
+        while num_active:
+            try:
+                for nxt in nexts:
+                    out.append(nxt())
+            except StopIteration:
+                num_active -= 1
+                nexts = itertools.cycle(itertools.islice(nexts, num_active))
+        return VList(out)
+
+    def partition(self, pred=bool) -> 'VList':
+        """按谓词分成 (不满足, 满足) 两组（legacy ``vicList.partition``）。
+
+        Args:
+            pred: 谓词函数或表达式字符串
+
+        Returns:
+            含两个 VList 的 VList
+        """
+        if isinstance(pred, str):
+            pred = create_filter_func(pred)
+        t1, t2 = itertools.tee(self.collect())
+        return VList([VList(itertools.filterfalse(pred, t1)), VList(filter(pred, t2))])
+
+    def powerset(self) -> 'VList':
+        """幂集（legacy ``vicList.powerset``）。"""
+        data = self.collect()
+        return VList(itertools.chain.from_iterable(
+            itertools.combinations(data, r) for r in range(len(data) + 1)))
+
+    def unique_everseen(self, key=None) -> 'VList':
+        """按出现顺序去重，记住所有见过的元素（legacy ``vicList.unique_everseen``）。
+
+        Args:
+            key: 可选的键函数
+
+        Returns:
+            去重后的 VList
+        """
+        seen = set()
+        seen_add = seen.add
+        if key is None:
+            return VList(x for x in self.collect() if not (x in seen or seen_add(x)))
+        out = []
+        for element in self.collect():
+            k = key(element)
+            if k not in seen:
+                seen_add(k)
+                out.append(element)
+        return VList(out)
+
+    def unique_justseen(self, key=None) -> 'VList':
+        """按出现顺序去重，只记住刚见过的元素（legacy ``vicList.unique_justseen``）。
+
+        Args:
+            key: 可选的键函数
+
+        Returns:
+            去重后的 VList
+        """
+        return VList(next(g) for _, g in itertools.groupby(self.collect(), key))
+
+    def first_true(self, default=False, pred=None) -> Any:
+        """返回第一个为真的元素（legacy ``vicList.first_true``）。
+
+        Args:
+            default: 无匹配时的返回值
+            pred: 可选谓词
+
+        Returns:
+            第一个为真的元素或 default
+        """
+        return next(filter(pred, self.collect()), default)
+
+    def dropwhile(self, func) -> 'VList':
+        """丢弃开头满足条件的元素（legacy ``vicList.dropwhile``）。"""
+        return VList(itertools.dropwhile(func, self.collect()))
+
+    def takewhile(self, func) -> 'VList':
+        """取开头满足条件的元素（legacy ``vicList.takewhile``）。"""
+        return VList(itertools.takewhile(func, self.collect()))
+
+    def foldLeft(self, initilalValue: Any, mutable: bool = False):
+        """左折叠，返回接受折叠函数的 callable（legacy ``vicList.foldLeft``）。
+
+        Args:
+            initilalValue: 初始累加值
+            mutable: True 时用返回值更新累加值
+
+        Returns:
+            接受 ``f2(acc, item)`` 的函数
+        """
+        data = self.collect()
+
+        def fold(f2):
+            acc = initilalValue
+            if mutable:
+                for item in data:
+                    acc = f2(acc, item)
+            else:
+                for item in data:
+                    f2(acc, item)
+            return acc
+        return fold
+
+    def foldRight(self, initilalValue: Any, mutable: bool = False):
+        """右折叠，返回接受折叠函数的 callable（legacy ``vicList.foldRight``）。
+
+        Args:
+            initilalValue: 初始累加值
+            mutable: True 时用返回值更新累加值
+
+        Returns:
+            接受 ``f2(acc, item)`` 的函数
+        """
+        data = self.collect()
+
+        def fold(f2):
+            acc = initilalValue
+            if mutable:
+                for item in reversed(data):
+                    acc = f2(acc, item)
+            else:
+                for item in reversed(data):
+                    f2(acc, item)
+            return acc
+        return fold
+
+    def swap(self, i: int, j: int) -> 'VList':
+        """交换两个位置的元素（legacy ``vicList.swap``）。
+
+        Args:
+            i: 第一个索引
+            j: 第二个索引
+
+        Returns:
+            自身
+        """
+        if not hasattr(self, '_data'):
+            self._data = list(self._evaluate())
+        size = len(self._data)
+        if i == j or (((i < 0 and j >= 0) or (i >= 0 and j < 0)) and (abs(i) + abs(j) == size)):
+            return self
+        self._data[i], self._data[j] = self._data[j], self._data[i]
+        return self
+
+    @staticmethod
+    def accummap_lazy(func, iters):
+        """惰性累积映射，func 收到 (索引, 已累积列表)（legacy ``vicList.accummap_lazy``）。"""
+        if isinstance(func, str):
+            func = create_map_func(func)
+        accumulated = []
+        for ix, element in enumerate(iters):
+            accumulated.append(element)
+            yield func(ix, accumulated.copy())
+
+    @staticmethod
+    def accummap_lazy_optimized(func, iters, window_selector=None, initial_value=None):
+        """带前值缓存的累积映射，func 收到 (索引, 窗口, 前次结果)。
+
+        （legacy ``vicList.accummap_lazy_optimized``）
+
+        Args:
+            func: ``func(ix, current_window, prev_result)``
+            iters: 输入序列
+            window_selector: None / int（取末尾 N 个）/ slice / callable(ix, acc)
+            initial_value: 前次结果初值
+
+        Yields:
+            每次调用的结果
+        """
+        if isinstance(func, str):
+            func = create_map_func(func)
+        accumulated = []
+        prev_result = initial_value
+        for ix, element in enumerate(iters):
+            accumulated.append(element)
+            if window_selector is None:
+                current_window = accumulated.copy()
+            elif isinstance(window_selector, int):
+                n = window_selector
+                current_window = [] if n <= 0 else accumulated[max(0, len(accumulated) - n):]
+            elif isinstance(window_selector, slice):
+                current_window = accumulated[window_selector]
+            elif callable(window_selector):
+                current_window = window_selector(ix, accumulated.copy())
+            else:
+                raise TypeError("Selector must be int or slice")
+            result = func(ix, current_window, prev_result)
+            prev_result = result
+            yield result
+
+    def accummap(self, func, window_selector=None, initial_value=None) -> 'VList':
+        """累积映射（legacy ``vicList.accummap``）。
+
+        Args:
+            func: 映射函数；无 window_selector/initial_value 时收到 (ix, 累积列表)
+            window_selector: 见 :meth:`accummap_lazy_optimized`
+            initial_value: 见 :meth:`accummap_lazy_optimized`
+
+        Returns:
+            VList 结果
+        """
+        if window_selector is None and initial_value is None:
+            return VList(self.accummap_lazy(func, self.collect()))
+        return VList(self.accummap_lazy_optimized(func, self.collect(),
+                                                  window_selector, initial_value))
+
+    def join(self, sep: str = ",", func=None, prefix: str = "", suffix: str = "") -> Any:
+        """用分隔符连接各元素（legacy ``vicList.join``，返回 VText）。
+
+        Args:
+            sep: 分隔符
+            func: 元素转换函数；None 时用 str
+            prefix: 前缀元素
+            suffix: 后缀元素
+
+        Returns:
+            连接后的 VText
+        """
+        from .vtext import VText
+        items = self.collect()
+        if func is None or func == str:
+            func = lambda x: str(x)
+        elif isinstance(func, str):
+            func = create_map_func(func)
+        if prefix:
+            items = [prefix] + items
+        if suffix:
+            items = items + [suffix]
+        return VText(sep.join(func(x) for x in items))
+
+    def build(self, text: str = "{item}", *args, **kwargs):
+        """用元素填充模板（legacy ``vicList.build``，返回 vicQuery）。
+
+        Args:
+            text: 模板字符串
+            *args, **kwargs: 透传给 vicQuery
+
+        Returns:
+            vicQuery 实例
+        """
+        from ..pyk.text import vicQuery
+        return vicQuery(text, *self.collect(), *args, **kwargs)
+
+    def sample(self, k: Optional[int] = None) -> 'VList':
+        """随机抽样（legacy ``vicList.sample``）。
+
+        Args:
+            k: 抽样数量；None 表示全部（即随机打乱）
+
+        Returns:
+            抽样结果 VList
+        """
+        import random as _random
+        data = self.collect()
+        k = len(data) if k is None else k
+        return VList(_random.sample(data, k))
+
+    def __mul__(self, other: Any) -> 'VList':
+        """重复序列（legacy ``vicList.__mul__``）。"""
+        return VList(self.collect() * other)
+
+    def __rmul__(self, other: Any) -> 'VList':
+        """右向重复序列（legacy ``vicList.__rmul__``）。"""
+        return VList(other * self.collect())
 
     # ─── 序列化支持 ───
 

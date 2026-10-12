@@ -21,28 +21,26 @@ __all__ = [
 ]
 
 import os
+from ..data.vtext import VText
 from .df import vDF
 
 
 # ============================================================
-# vicText 扩展: 在 vools.data.vtext.VText 上附加 pyspark 方法
+# vicText 扩展: 继承 vools.data.vtext.VText，附加 pyspark 方法
 # ============================================================
-class vicText(str):
-    """VText 的 pyspark 兼容别名。
+class vicText(VText):
+    """VText 的 pyspark 扩展子类。
 
-    纯 Python 环境建议直接用 vools.data.vtext.VText；
-    本类只在需要调用 DataFrame 转换等 pyspark 扩展时使用。
+    继承关系遵循 vools 的既定约定：``vicText`` 是核心 ``VText`` 的子类
+    （``vools/__init__.py`` 里 ``vicText`` 就是 ``VText`` 的别名）。
+    本类只负责**追加**依赖 pyspark 的能力（toDF 等）；
+    文本处理能力（toZipB64/unZipB64/encrypt/decrypt/regexp_*/trim/build/
+    discard_comments/... ）全部继承自 VText，不再重复实现。
 
-    注意: 继承关系与 legacy vicText 保持一致 (str 子类)。
+    纯 Python 环境建议直接用 ``vools.data.vtext.VText``；
+    需要 DataFrame 转换时用本类。
     """
 
-    def __new__(cls, text="", *args, **kwargs):
-        return super().__new__(cls, text)
-
-    def __init__(self, text="", *args, **kwargs):
-        pass
-
-    # ---- pyspark 相关 ----
     def toDF(self, *args, **kwargs):
         """把 SQL 字符串转 DataFrame。
 
@@ -52,25 +50,15 @@ class vicText(str):
         return vDF(str(self), *args, **kwargs)
 
     def run(self, func=print, *args, **kwargs):
-        """执行副作用操作。"""
-        func(str(self), *args, **kwargs)
-        return self
+        """执行副作用操作。
 
-
-# ============================================================
-
-    def formatEx(self, **kwargs):
-        """把 SQL 里的 ${run_date} / ${run_date_std±N} 等占位符替换为实际日期。
-
-        兼容 legacy vicText.formatEx：
-        ``vicText(sql).formatEx(run_date='2026-10-10')``
+        注意：这里覆写 VText.run 是为了保持 legacy vicText 的「打印/副作用」语义
+        （VText.run 是执行文本内容并记录 .result）。传字符串时仍走 VText 的执行语义。
         """
-        from ..datetime.dates_format import EnhancedDateFormatter
-        from ..data.vtext import VText
-        run_date = kwargs.pop('run_date', None)
-        txt = self.replace("${run_", "{run_")
-        vt = VText(txt)
-        return EnhancedDateFormatter(vt, run_date).set(**kwargs).format()
+        if callable(func):
+            func(str(self), *args, **kwargs)
+            return self
+        return VText.run(self, func)
 
 
 # ============================================================
@@ -84,11 +72,15 @@ class vicQuery(vicText):
     - run_date 变量替换
     """
 
-    def __new__(cls, text="", run_date=None, *args, **kwargs):
-        return super().__new__(cls, text)
-
     def __init__(self, text="", run_date=None, *args, **kwargs):
+        super().__init__(text)
         self.run_date = run_date
+
+    def formatEx(self, **kwargs):
+        """格式化并注入构造时传入的 run_date（legacy vicQuery 语义）。"""
+        if self.run_date is not None:
+            kwargs.setdefault('run_date', self.run_date)
+        return VText.formatEx(self, **kwargs)
 
     def toDF(self, *args, **kwargs):
         """执行 SQL 返回 DataFrame。"""

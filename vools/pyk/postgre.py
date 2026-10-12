@@ -50,6 +50,7 @@ def _env_pg() -> dict:
     }
 import re
 
+from ..data.vtext import VText
 from .core import get_spark
 from .df import vDF
 
@@ -84,17 +85,18 @@ def spark_type_to_postgres(spark_type):
 # ============================================================
 # vicSql (SQL 包装类, 兼容 legacy vools.py L2284)
 # ============================================================
-class vicSql(str):
+class vicSql(VText):
     """SQL 查询字符串包装类 (兼容 legacy vicSql)。
+
+    继承核心 ``VText``（而不是裸 str），因此 toZipB64/encrypt/regexp_*/
+    trim/build/replace_run_date 等文本能力全部可用，与 ``vicText`` 同源。
 
     用法:
         vicSql("select * from db.t").toDF()
     """
 
-    def __new__(cls, sql="", *a, **k):
-        return super(vicSql, cls).__new__(cls, sql)
-
     def __init__(self, sql="", *a, **k):
+        super().__init__(sql)
         self.sql = str(sql)
 
     def toDF(self, *a, **k):
