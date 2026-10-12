@@ -27,5 +27,6 @@ jobs:
         run: |
           git clone --mirror https://gitcode.com/VictorTop/vools.git /tmp/repo
           cd /tmp/repo
-          git push --all --tags "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push --all "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push --tags "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git push --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" master:main
