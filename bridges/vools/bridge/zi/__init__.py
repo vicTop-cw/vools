@@ -25,7 +25,8 @@ vools.bridge.zi - 兹（Zi）语言桥接模块
         print(hello())   # -> 你好，兹
 
 前置条件：
-- zhi 编译器（E:\\IDEProjects\\AI\\兹\\zhi\\src）可导入
+- zhi 编译器（src 目录位置由 vools.bridge.configs 统一解析：用户 JSON /
+  VOOLS_PROJECTS_ROOT / VOOLS_ZHI_SRC / VOOLS_ZI_SRC，不硬编码用户机器路径）
 - Elixir 运行时（zhi 编译到 BEAM 需要）
 """
 

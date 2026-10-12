@@ -413,6 +413,16 @@ class BridgeManager:
         # 1. 查找编译器
         compiler_path = _find_executable(config.compiler, config.compiler_paths)
         if not compiler_path:
+            # 回退：工具链位置统一由 vools.bridge.configs 解析（用户 JSON /
+            # VOOLS_PROJECTS_ROOT / 环境变量可覆盖，注册时刻可能尚未发现）
+            try:
+                from .configs import resolve_compiler
+                resolved = resolve_compiler(config.name)
+                if resolved and os.path.exists(resolved):
+                    compiler_path = resolved
+            except Exception:
+                pass
+        if not compiler_path:
             return LanguageStatus(
                 available=False,
                 error=f"Compiler '{config.compiler}' not found in paths: {config.compiler_paths}"
@@ -1208,6 +1218,50 @@ def _register_builtin_languages():
         version_pattern=r'Mojo (\d+\.\d+\.\d+)',
     ))
 
+    # 自研/实验语言：工具链位置统一由 vools.bridge.configs 解析
+    # （用户 JSON / VOOLS_PROJECTS_ROOT / 环境变量可覆盖，不硬编码用户机器路径）
+    def _bridge_toolchain_dirs(lang_name):
+        """按 configs 解析工具链所在目录，供 compiler_paths 使用。"""
+        try:
+            from .configs import resolve_compiler
+            resolved = resolve_compiler(lang_name)
+            if resolved:
+                return [os.path.dirname(resolved)]
+        except Exception:
+            pass
+        return []
+
+    # Tnr
+    manager.register(LanguageConfig(
+        name='tnr',
+        compiler='tnr.exe' if _IS_WINDOWS else 'tnr',
+        compiler_paths=_bridge_toolchain_dirs('tnr'),
+        version_pattern=r'(\d+\.\d+\.\d+)',
+    ))
+
+    # LZ
+    manager.register(LanguageConfig(
+        name='lz',
+        compiler='lang-zone' + ('.exe' if _IS_WINDOWS else ''),
+        compiler_paths=_bridge_toolchain_dirs('lz'),
+        version_pattern=r'(\d+\.\d+\.\d+)',
+    ))
+
+    # Zi（工具链是 Python 包，compiler_paths 指向 zhi/src）
+    manager.register(LanguageConfig(
+        name='zi',
+        compiler='zhi',
+        compiler_paths=_bridge_toolchain_dirs('zi'),
+    ))
+
+    # Pentad
+    manager.register(LanguageConfig(
+        name='pentad',
+        compiler='p5c' + ('.exe' if _IS_WINDOWS else ''),
+        compiler_paths=_bridge_toolchain_dirs('pentad'),
+        version_pattern=r'(\d+\.\d+\.\d+)',
+    ))
+
     # Erlang
     erlang_paths = []
     if _IS_WINDOWS:
@@ -1727,6 +1781,9 @@ def get_bridge(name: str) -> Optional[Any]:
             elif name == 'zi':
                 from .zi.compiler import _zi_bridge
                 bridge = _zi_bridge
+            elif name == 'pentad':
+                from .pentad.compiler import _pentad_bridge
+                bridge = _pentad_bridge
             elif name == 'cypy':
                 from .cypy.compiler import _cypy_bridge
                 bridge = _cypy_bridge

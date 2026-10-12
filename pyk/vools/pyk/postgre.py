@@ -341,7 +341,7 @@ def insertData(source, targetTable, cols=None, part_cols=None, mode="overwrite",
     from pyspark.sql import Row
     from .tb import vicTableInfo
     from .df import vicDataFrame
-    from .text import vicSql
+    from .postgre import vicSql
 
     if targetTable:
         if "." not in targetTable:
@@ -821,7 +821,7 @@ class vicPostgreSupport(object):
         from pyspark.sql import DataFrame
         from .tb import vicTableInfo
         from .df import vicDataFrame
-        from .text import vicSql
+        from .postgre import vicSql
 
         if not targetTable:
             targetTable = self.dbtable

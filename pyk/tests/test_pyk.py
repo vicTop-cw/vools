@@ -187,16 +187,17 @@ class TestLookUpon(unittest.TestCase):
 
     def test_has_payload_encode_decode(self):
         src = self._read_source()
-        self.assertIn("def payload_encode", src)
-        self.assertIn("def payload_decode", src)
+        # payload_encode / payload_decode 是 jsonb_encode / jsonb_decode 的别名（vools.pyk.look_upon:93-94）
+        self.assertIn("payload_encode", src)
+        self.assertIn("payload_decode", src)
         # 编解码必须走 VText.toZipB64 / unZipB64
         self.assertIn("toZipB64", src)
         self.assertIn("unZipB64", src)
 
     def test_has_payload_jsonb_column(self):
         src = self._read_source()
+        # payload 列在 _init_table 的 CREATE TABLE 内联定义（vools.pyk.look_upon:358）
         self.assertIn("payload JSONB", src)
-        self.assertIn("ADD COLUMN IF NOT EXISTS payload JSONB", src)
 
     def test_has_set_payload(self):
         self.assertIn("def set_payload", self._read_source())
@@ -231,12 +232,132 @@ class TestLookUpon(unittest.TestCase):
 
 
 # 保留 look_upon 导出符号名的静态期望
+# 与 vools/pyk/look_upon.py 顶部 `__all__` 保持一致（含 jsonb 编解码别名 + do 注册装饰器）
+# 以及 CLI 执行通道相关导出（cli_execute / LANGUAGE_DEFAULT_CMD / LANGUAGE_EXTENSIONS /
+# _detect_language / _find_executable）
 _EXPECTED_EXPORTS = [
     "TaskFunctionError", "TaskAlreadyLocked", "MaxRetriesExceeded",
     "LookUpon", "LU", "init_tasks", "add_tasks", "query_tasks",
     "run_until_done", "get_replaced_sql", "run_done", "run_doneEx",
-    "reset_tasks", "update_failed_to_pending", "payload_encode", "payload_decode",
+    "reset_tasks", "update_failed_to_pending",
+    "jsonb_encode", "jsonb_decode", "payload_encode", "payload_decode",
+    "DagValidationError", "register_do", "builtin_do",
+    "cli_execute", "LANGUAGE_DEFAULT_CMD", "LANGUAGE_EXTENSIONS",
+    "_detect_language", "_find_executable",
 ]
+
+
+class TestCliExecute(unittest.TestCase):
+    """CLI 执行通道测试（无语言枚举限制，支持 Python/Scala/Java/Shell/...）。"""
+
+    def test_python_cmd(self):
+        """显式 cmd + args 调用 python。"""
+        from vools.pyk.look_upon import cli_execute
+        result = cli_execute({
+            "cli": {
+                "cmd": "python",
+                "args": ["-c", "print('hello from cli')"],
+                "capture": True,
+            }
+        })
+        self.assertTrue(result["ok"], f"应成功: {result}")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("hello from cli", result["stdout"])
+
+    def test_python_lang_infer(self):
+        """只给 lang=python + script 内联脚本。"""
+        from vools.pyk.look_upon import cli_execute
+        result = cli_execute({
+            "task_type": "PY",
+            "cli": {
+                "lang": "python",
+                "script": "import sys; sys.stdout.write('inline-ok')",
+                "capture": True,
+            }
+        })
+        self.assertTrue(result["ok"], f"应成功: {result}")
+        self.assertIn("inline-ok", result["stdout"])
+        self.assertEqual(result["task_type"], "python")
+
+    def test_task_type_infer(self):
+        """只给 task_type=scala 推断命令（找不到解释器时应明确报错，不静默）。"""
+        from vools.pyk.look_upon import cli_execute, _detect_language
+        lang = _detect_language("SCALA")
+        self.assertEqual(lang, "scala")
+        lang = _detect_language("SQL")
+        self.assertEqual(lang, "sql")
+        lang = _detect_language("java")
+        self.assertEqual(lang, "java")
+        lang = _detect_language("SHELL")
+        self.assertEqual(lang, "shell")
+
+    def test_unknown_language_error(self):
+        """未知语言应返回明确错误，不静默成功。"""
+        from vools.pyk.look_upon import cli_execute
+        result = cli_execute({"task_type": "COBOL", "cli": {"lang": "cobol"}})
+        self.assertFalse(result["ok"])
+        self.assertIn("未知语言", result["error"])
+
+    def test_missing_exe_error(self):
+        """找不到解释器应返回明确错误。"""
+        from vools.pyk.look_upon import cli_execute
+        result = cli_execute({"cli": {"lang": "scala", "capture": True}})
+        # scala 可能装在 PATH，或未装；两种都应返回 ok=False（找不到 exe）
+        # 若恰好装了 scala，则可能返回 exit_code != 0（无脚本参数）
+        if result.get("error") and "找不到解释器" in result["error"]:
+            self.assertFalse(result["ok"])
+        else:
+            # scala 在 PATH 上：无参数运行 scala 通常退出码非 0
+            self.assertIn("exit_code", result)
+
+    def test_workdir_and_env(self):
+        """workdir + env 生效。"""
+        import tempfile, os
+        from vools.pyk.look_upon import cli_execute
+        with tempfile.TemporaryDirectory() as tmp:
+            # 写个脚本读取环境变量
+            script = os.path.join(tmp, "show_env.py")
+            with open(script, "w", encoding="utf-8") as f:
+                f.write("import os; print(os.environ.get('LOOKUPON_TEST_ENV'))")
+            result = cli_execute({
+                "cli": {
+                    "cmd": "python",
+                    "args": [script],
+                    "workdir": tmp,
+                    "env": {"LOOKUPON_TEST_ENV": "hello-env"},
+                    "capture": True,
+                }
+            })
+            self.assertTrue(result["ok"], f"应成功: {result}")
+            self.assertIn("hello-env", result["stdout"])
+
+    def test_stdin_from_value(self):
+        """顶层 value 作为 stdin 传入。"""
+        from vools.pyk.look_upon import cli_execute
+        result = cli_execute({
+            "value": "data-from-value",
+            "cli": {
+                "cmd": "python",
+                "args": ["-c", "import sys; print(sys.stdin.read().strip())"],
+                "capture": True,
+            }
+        })
+        self.assertTrue(result["ok"], f"应成功: {result}")
+        self.assertIn("data-from-value", result["stdout"])
+
+    def test_timeout(self):
+        """超时触发返回错误。"""
+        from vools.pyk.look_upon import cli_execute
+        result = cli_execute({
+            "cli": {
+                "cmd": "python",
+                "args": ["-c", "import time; time.sleep(10)"],
+                "timeout_sec": 1,
+                "capture": True,
+            }
+        })
+        self.assertFalse(result["ok"])
+        self.assertIn("超时", result["error"])
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ vools.bridge.zi.compiler - 兹（Zi）语言桥接实现（单文件）
       （即时编译到内存并运行 `策 主`，复用 OTP 并发/容错）
     - 参数传递：Python 参数以文本替换方式注入（arg0/arg1 -> 字面量），
       避免 zhi 顶层赋作用域限制
-    - 工具链：zhi Python 包（E:\\IDEProjects\\AI\\兹\\zhi\\src）+ Elixir 可执行
+    - 工具链：zhi Python 包（src 布局，位置由 vools.bridge.configs 统一解析）+ Elixir 可执行
     - 编码：.玆 文件 UTF-8 无 BOM 写入
 
 典型用法::
@@ -53,15 +53,30 @@ from ..core.types import LangType
 _IS_WINDOWS = platform.system() == 'Windows'
 
 # zhi Python 包源码目录（非标准安装，src 布局）
-_ZHI_SRC = r'E:\IDEProjects\AI\兹\zhi\src'
+# 位置统一由 vools.bridge.configs 解析（用户 JSON / VOOLS_PROJECTS_ROOT /
+# 环境变量可覆盖），不再硬编码用户机器绝对路径。
+
+def _resolve_zhi_src() -> Optional[str]:
+    """按 configs 解析 zhi 的 src 目录。"""
+    try:
+        from ..configs import resolve_compiler
+        resolved = resolve_compiler('zi')
+        if resolved and os.path.isdir(resolved):
+            return resolved
+    except Exception:
+        pass
+    return None
 
 
 def _zhi_available() -> bool:
     """探测 zhi 编译器是否可导入。"""
-    if not os.path.isdir(os.path.join(_ZHI_SRC, 'zhi')):
+    src = _resolve_zhi_src()
+    if not src:
+        return False
+    if not os.path.isdir(os.path.join(src, 'zhi')):
         return False
     try:
-        sys.path.insert(0, _ZHI_SRC)
+        sys.path.insert(0, src)
         import zhi  # noqa: F401
         return True
     except Exception:
@@ -92,7 +107,9 @@ def get_zi_version() -> str:
     if not _ZHI_OK:
         return ''
     try:
-        sys.path.insert(0, _ZHI_SRC)
+        src = _resolve_zhi_src() or ''
+        if src:
+            sys.path.insert(0, src)
         import zhi
         return getattr(zhi, '__version__', '') or 'zhi@src'
     except Exception:
@@ -199,7 +216,9 @@ def _execute_zi_code(code: str, func_name: str,
             f.write(code)
 
         env = dict(os.environ)
-        env['PYTHONPATH'] = _ZHI_SRC + os.pathsep + env.get('PYTHONPATH', '')
+        zhi_src = _resolve_zhi_src()
+        if zhi_src:
+            env['PYTHONPATH'] = zhi_src + os.pathsep + env.get('PYTHONPATH', '')
 
         result = subprocess.run(
             [sys.executable, '-m', 'zhi.cli', 'compile', src_path, '--run'],
@@ -384,7 +403,9 @@ class ZiBridge(LangBridge):
         """运行兹项目：找到入口 .玆 并执行，返回 (returncode, stdout, stderr)。"""
         entry_file = self.compile_project(project_dir, entry, cache_dir)
         env = dict(os.environ)
-        env['PYTHONPATH'] = _ZHI_SRC + os.pathsep + env.get('PYTHONPATH', '')
+        zhi_src = _resolve_zhi_src()
+        if zhi_src:
+            env['PYTHONPATH'] = zhi_src + os.pathsep + env.get('PYTHONPATH', '')
         result = subprocess.run(
             [sys.executable, '-m', 'zhi.cli', 'compile', entry_file, '--run'],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,

@@ -14,7 +14,7 @@ from typing import TypeVar, Generic, Callable, List, Optional, Any, Union, Itera
 from .seq import Seq
 from ..decorators import rself
 from ..functional.pipe_ops import P
-from ..security import create_filter_func, create_map_func, ExpressionSecurityError
+from ..security import create_filter_func, create_map_func, safe_compile_expression, ExpressionSecurityError
 from ..serialize.context import get_protocol
 
 T = TypeVar('T')
@@ -1322,6 +1322,97 @@ class VList(Seq, metaclass=ListLikeMeta):
     def __rmul__(self, other: Any) -> 'VList':
         """右向重复序列（legacy ``vicList.__rmul__``）。"""
         return VList(other * self.collect())
+
+    # ─── legacy 兼容方法 ───
+
+    def accum(self, func: Union[Callable[[T, T], T], str] = operator.add):
+        """累积计算（legacy ``vicList.accum``）。
+
+        Args:
+            func: 累积函数或表达式字符串，默认加法。
+
+        Returns:
+            itertools.accumulate 迭代器
+        """
+        if isinstance(func, str):
+            func = safe_compile_expression(func, ('x', 'y'))
+        return itertools.accumulate(self, func=func)
+
+    def mapmap(self, inner_func, outer_func=None, outer_func_first=False) -> 'VList':
+        """双重 map（legacy ``vicList.mapmap``）。
+
+        Args:
+            inner_func: 内层函数或表达式字符串
+            outer_func: 外层函数或表达式字符串，None 时只做内层
+            outer_func_first: True 时先应用 outer_func 再应用 inner_func
+
+        Returns:
+            VList
+        """
+        if self.size == 0:
+            return VList([])
+        temp = self
+        if outer_func is not None and outer_func_first:
+            temp = temp.map(outer_func)
+        if temp.any_equal(lambda x: not isinstance(x, Iterable)):
+            raise TypeError("All items of self must be a Iterable item, check it !!!")
+        inner_func = inner_func if callable(inner_func) else (
+            create_map_func(inner_func) if isinstance(inner_func, str) else None
+        )
+        temp = temp.map(lambda it: VList(it).map(inner_func))
+        return temp if outer_func is None or outer_func_first else temp.map(outer_func)
+
+    def reduce(self, func: Union[Callable[[T, T], T], str] = operator.add, init=None):
+        """聚合操作（legacy ``vicList.reduce``）。
+
+        Args:
+            func: 聚合函数或表达式字符串，默认加法
+            init: 初始值
+
+        Returns:
+            聚合结果
+        """
+        if isinstance(func, str):
+            func = safe_compile_expression(func, ('x', 'y'))
+        from functools import reduce as _reduce
+        return _reduce(func, self) if init is None else _reduce(func, self, init)
+
+    def zip(self, *iterables) -> 'VList':
+        """与另一可迭代对象配对（legacy ``vicList.zip``）。
+
+        Returns:
+            VList
+        """
+        import builtins
+        return VList(list(builtins.zip(self, *iterables)))
+
+    def zip_longest(self, *iterables, fillvalue=None) -> 'VList':
+        """配对并填充缺失值（legacy ``vicList.zip_longest``）。
+
+        Returns:
+            VList
+        """
+        return VList(list(itertools.zip_longest(self, *iterables, fillvalue=fillvalue)))
+
+    def toDF(self, cols=None, pos_name=None, source_type: str = "hive"):
+        """转成 pyspark DataFrame（legacy ``vicList.toDF``）。
+
+        Args:
+            cols: 列名
+            pos_name: 位置列名
+            source_type: 源类型，默认 "hive"
+
+        Returns:
+            pyspark.sql.DataFrame；空列表返回 None
+        """
+        if self.size == 0:
+            return None
+        temp = self[0]
+        lst = self
+        if isinstance(temp, str) or not isinstance(temp, Iterable):
+            lst = [(i,) for i in lst]
+        from ..pyk.df import vDF
+        return vDF(list(lst), cols=cols, pos_name=pos_name, source_type=source_type)
 
     # ─── 序列化支持 ───
 

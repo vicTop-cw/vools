@@ -247,6 +247,11 @@ git pull --rebase
 
 避免基于过期版本做修改导致合并冲突。
 
+## 8·一、仓库同步（只需同步 GitCode）
+
+- **同步/发布只需推 GitCode 即可**：https://gitcode.com/VictorTop/vools —— GitHub 镜像（https://github.com/vicTop-cw/vools）由 CI 自动同步（GitCode 根目录 `.sync-to-github` 开关控制，只增不删，以 GitCode 为源覆盖同名分支），**无需手动推送 GitHub，也不要直接改动 GitHub 镜像**。
+- 本机 `git remote` 以 GitCode 为权威源；推送后 GitHub 侧由 workflow 自动跟进，勿重复双推。
+
 ---
 
 ## 9. 快速验证

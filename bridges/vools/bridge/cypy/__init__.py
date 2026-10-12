@@ -21,7 +21,7 @@ Cypy 是一门 Python-like 语言，编译器 cypyc 将其转译为 Cython（.py
         print(hello())
 
 前置条件：
-- cypyc 工具链（pip install cypyc 后可用，或 E:\\IDEProjects\\AI\\Cypy 源码）
+- cypyc 工具链（pip install cypyc 后可用，或由 vools.bridge.configs 解析的 Cypy 源码）
 - 完整执行链路需要 Python C API 头文件（Python.h）+ C 编译器（MSVC cl / gcc）
 """
 

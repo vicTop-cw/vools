@@ -38,7 +38,7 @@ print(hello())   # -> 你好，兹
   （即时编译到内存并运行 `策 主`，复用 OTP 运行时）
 - **参数传递**：Python 参数以 arg0/arg1 占位符**文本替换**注入
   （避开 zhi 顶层 `赋` 作用域限制；body 内写 arg0/arg1 即被替换为字面量）
-- **工具链**：zhi Python 包（`E:\IDEProjects\AI\兹\zhi\src`，src 布局）+ Elixir 可执行
+- **工具链**：zhi Python 包（src 布局，位置由 vools.bridge.configs 统一解析，不硬编码用户机器路径）+ Elixir 可执行
 - **编码**：.玆 文件 UTF-8 写入；Elixir 编译警告走 stderr 不影响 stdout 结果
 - **缓存**：按 `func_name + md5(code)` 落 `%TEMP%/vools_zi_cache/`
 

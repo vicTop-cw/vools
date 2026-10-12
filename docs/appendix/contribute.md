@@ -168,6 +168,70 @@ python -m pytest tests/functional/test_pipe_ops.py::test_basic_pipe -v
 python -m pytest tests/ --cov=vools --cov-report=html
 ```
 
+## 分支合并策略（Trunk-Based，以本地仓库为主）
+
+> **以本地仓库为唯一真源**：`main` 是长期开发主线（trunk）。本地 `main` 的
+> 历史与状态以工作区为准，不做远程强制推送。
+
+### 分支角色
+
+| 分支 | 用途 | 生命周期 |
+|---|---|---|
+| `main` | **唯一 trunk**，长期开发主线，所有合流终点 | 永久 |
+| `feat/<name>` | 新功能分支 | 极短（≤1 天），合并后立即删除 |
+| `fix/<name>` | 缺陷修复分支 | 极短，合并后立即删除 |
+| `gh-pages` | GitHub Pages 部署分支（仅文档产物） | 保留 |
+| `master` | ~~旧默认分支~~ | **已废弃，删除** |
+
+### 分支创建与合并
+
+```bash
+# 1. 从 main 拉分支（保持最新）
+git checkout main
+git pull origin main          # 本地以 main 为准，可跳过远程
+git checkout -b feat/my-thing
+
+# 2. 开发 + 提交
+# ... 修改 ...
+git add -A
+git commit -m "feat(xxx): 简述"
+
+# 3. 合并回 main 并删除分支（合并后必须清理）
+git checkout main
+git merge feat/my-thing       # 优先 --squash 保持主线干净
+git branch -d feat/my-thing   # 已合并，删除
+```
+
+### 硬性规则
+
+1. **`main` 是唯一主线**，不在 main 上做长尾实验。
+2. **分支合并后立即删除**：`git log main..<branch>` 为空即代表已完全合并，
+   可以 `git branch -d <branch>` 清理。
+3. **短生命周期**：分支存在时间不超过 1 天；超过请先合并回 main 再开新分支。
+4. **远程只作镜像**：以本地仓库为主，远程（`origin` / `github` / `gitcode`）
+   只用于同步，不作真源。
+5. **保留 `gh-pages`**：这是 MkDocs 部署产物，不属于代码分支，不要动它。
+6. **`master` / 任何旧主线分支**：一旦被 `main` 完全包含（`git log main..master`
+   为空），直接 `git branch -d` 删除。
+7. **提交信息规范**：`feat(xxx): ...` / `fix(xxx): ...` / `compat(xxx): ...` /
+   `docs(xxx): ...` / `chore(xxx): ...`，见 CHANGELOG 前缀约定。
+
+### 本地维护命令
+
+```bash
+# 查看哪些分支已完全合并（可以安全删除）
+git log main..<branch> --oneline   # 输出为空 = 已合并
+
+# 一键清理已合并分支
+git branch -d fix/actus-schema-path
+git branch -d master
+
+# 查看主线未推送提交（本地为主，不强制推远程）
+git log origin/main..main --oneline
+```
+
+---
+
 ## 项目结构
 
 ```

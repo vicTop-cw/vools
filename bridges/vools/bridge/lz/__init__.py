@@ -25,8 +25,9 @@ LZ 是面向系统编程的静态类型语言（LZ → Rust，IR 中间表示路
         print(hello(1))
 
 前置条件：
-- lang-zone 工具链（E:\\IDEProjects\\AI\\lang-zone\\target\\debug\\lang-zone.exe 或 PATH）
-- rustc + lz_builtins crate（可选，用于转译后编译执行）
+- lang-zone 工具链（位置由 vools.bridge.configs 统一解析：用户 JSON /
+  VOOLS_PROJECTS_ROOT / VOOLS_LZ_ROOT / PATH，不硬编码用户机器路径）
+- rustc + lz_builtins crate（可选，用于转译后编译执行；crate 路径同样由 configs 解析）
 """
 
 from .compiler import (

@@ -232,6 +232,8 @@ __all__ = [
     'lz',
     # zi 桥接
     'zi',
+    # pentad 桥接
+    'pentad',
     # cypy 桥接
     'cypy',
 ]
@@ -269,6 +271,7 @@ _shell_loaded = False
 _tnr_loaded = False
 _lz_loaded = False
 _zi_loaded = False
+_pentad_loaded = False
 _cypy_loaded = False
 
 
@@ -775,6 +778,24 @@ def _load_zi():
     return _zi_loaded
 
 
+def _load_pentad():
+    """延迟加载 Pentad 模块（importlib 方式，规避 __getattr__ 递归）"""
+    global _pentad_loaded
+    if not _pentad_loaded:
+        try:
+            import importlib
+            pentad = importlib.import_module('.pentad', __package__)
+            globals()['pentad'] = pentad.pentad
+            globals()['pentad_bridge'] = pentad.pentad_bridge
+            globals()['PentadBridge'] = pentad.PentadBridge
+            globals()['pentad_compiler_available'] = pentad.pentad_compiler_available
+            globals()['compile_and_run'] = pentad.compile_and_run
+            _pentad_loaded = True
+        except Exception:
+            _pentad_loaded = False
+    return _pentad_loaded
+
+
 def _load_cypy():
     """延迟加载 Cypy 模块（importlib 方式，规避 __getattr__ 递归）"""
     global _cypy_loaded
@@ -975,6 +996,11 @@ def __getattr__(name):
 
     if name in ('zi', 'zi_bridge', 'ZiBridge', 'zi_compiler_available'):
         if _load_zi():
+            return globals().get(name)
+        raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
+
+    if name in ('pentad', 'pentad_bridge', 'PentadBridge', 'pentad_compiler_available'):
+        if _load_pentad():
             return globals().get(name)
         raise AttributeError("module 'vools.bridge' has no attribute '%s'" % name)
 
