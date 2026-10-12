@@ -142,12 +142,20 @@ def _load_vic():
     """延迟加载 vic 类"""
     global _vic_loaded, _vic_classes
     if not _vic_loaded:
-        from .utils import tools as _tools_module
         from .data.vtext import VText
         from .data.vlist import VList
         from .datetime.vdate_class import VDate
+
+        # vicTools 优先用 pyk.tools.vicTools（legacy vicTools 的聚合类，含
+        # pyspark 方法）；pyk 缺席（未装 pyspark/pandas）时回退到纯 Python 的
+        # vools.utils.tools 模块，保证核心库不依赖 pyspark。
+        try:
+            from .pyk.tools import vicTools as _vic_tools
+        except Exception:
+            from .utils import tools as _vic_tools
+
         _vic_classes = {
-            'vicTools': _tools_module,
+            'vicTools': _vic_tools,
             'vicDate': VDate,
             'vicText': VText,
             'vicList': VList,

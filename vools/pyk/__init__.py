@@ -42,6 +42,7 @@ __all__ = [
     "patch",
     "configs",
     "look_upon",
+    "tools",
 ]
 
 __version__ = "0.1.0"
@@ -52,7 +53,7 @@ import importlib
 
 _SUBMODULES = (
     "core", "df", "text", "tb", "compare", "postgre", "patch",
-    "configs", "look_upon",
+    "configs", "look_upon", "tools",
 )
 
 
