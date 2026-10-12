@@ -1,0 +1,31 @@
+name: Sync from GitCode
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check sync flag on GitCode
+        id: flag
+        run: |
+          git clone --depth 1 --branch master https://gitcode.com/VictorTop/vools.git /tmp/check
+          if [ -f /tmp/check/.sync-to-github ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync GitCode to GitHub (add-only)
+        if: steps.flag.outputs.enabled == 'true'
+        run: |
+          git clone --mirror https://gitcode.com/VictorTop/vools.git /tmp/repo
+          cd /tmp/repo
+          git push --all --tags "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" master:main
