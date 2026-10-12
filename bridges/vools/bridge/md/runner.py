@@ -638,7 +638,110 @@ def _execute_block(
     if lang in ("webview2", "webview", "htmlview"):
         return _execute_webview2(block, context, config)
 
+    # sigma / sigma-spec / sigma-md: ΣLang 规约块（docs/41 主题 A · A1 语言路由）
+    # 真源在 vools.actus.sigma；此处只做路由，不复制任何规约语义。
+    if lang.lower() in SIGMA_LANGUAGE_TAGS:
+        return _execute_sigma(block)
+
     return _execute_via_bridge(block, context, config, timeout)
+
+
+#: docs/41 §A1：sigma 语言标记集（与 vools.actus.sigma.SIGMA_LANGUAGE_TAGS 同集合）
+SIGMA_LANGUAGE_TAGS = ("sigma", "sigma-spec", "sigma-md")
+
+#: `_execute_block` 里直接处理、不走 bridge 的语言标记。
+BUILTIN_BLOCK_LANGUAGES: Tuple[str, ...] = (
+    "python", "shell", "bash", "sh", "webview2", "webview", "htmlview",
+) + SIGMA_LANGUAGE_TAGS
+
+
+_KNOWN_LANGUAGES_CACHE: Optional[Tuple[str, ...]] = None
+
+
+def known_languages(refresh: bool = False) -> Tuple[str, ...]:
+    """当前**可路由**的语言标记全集（单一真源，供 actus 侧 §6.5 校验使用）。
+
+    取并集而非查询运行态，是为了让这个集合**与本机装了什么编译器无关**：
+      1. 本 runner 直接处理的标记（BUILTIN_BLOCK_LANGUAGES，含 sigma 族）；
+      2. `vools/bridge/` 下有 compiler.py 的桥接子包（typescript/zig/perl…）；
+      3. vools 侧运行时注册表的别名（node/js/javascript、rs、golang…）；
+      4. 已注册进 BridgeManager 的语言（若已发现）。
+
+    「已注册但编译器未安装」不在此列 —— docs/03 §6.5 判的是「标记合法且已注册」，
+    可用性由执行期 `is_available()` 显式报不可用（_execute_via_bridge 已有该分支）。
+
+    **结果按进程缓存**：这个集合在进程生命周期内是静态的，而 `is_routable()` 会被
+    `validate_action` 对每个动作的每个块各调一次（实测 106 个动作）。不缓存时首次
+    调用的编译器探测（含 `rustc --version` 子进程）会在同一次 scan 里重复付账，
+    把本就吃紧的路径推过 30 秒测试预算。需要重新探测时传 `refresh=True`。
+    """
+    global _KNOWN_LANGUAGES_CACHE
+    if _KNOWN_LANGUAGES_CACHE is not None and not refresh:
+        return _KNOWN_LANGUAGES_CACHE
+
+    names = set(BUILTIN_BLOCK_LANGUAGES)
+
+    pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # .../vools/bridge
+    try:
+        for entry in os.listdir(pkg_dir):
+            if entry.startswith(('_', '.')) or '.' in entry:
+                continue
+            sub = os.path.join(pkg_dir, entry)
+            # 语言桥接包的判据：目录下有 compiler.py（core/、md/、auto_discovery/
+            # 这些基础设施包没有，不能当语言混进来）
+            if os.path.isdir(sub) and os.path.isfile(os.path.join(sub, 'compiler.py')):
+                names.add(entry.lower())
+    except OSError:
+        pass
+
+    try:
+        from vools.actus.runtimes import _get_registry
+        names.update(str(k).lower() for k in _get_registry()._runtimes)
+    except Exception:  # noqa: BLE001 —— actus 引擎不在路径上时（bridge 单独使用）跳过
+        pass
+
+    try:
+        from ..manager import list_languages as _list_languages
+        names.update(str(x).lower() for x in _list_languages())
+    except Exception:  # noqa: BLE001 —— 桥接层不可用时回退到已得集合
+        pass
+
+    _KNOWN_LANGUAGES_CACHE = tuple(sorted(names))
+    return _KNOWN_LANGUAGES_CACHE
+
+
+def reset_known_languages() -> None:
+    """清掉语言全集缓存（供测试与"运行时装了新桥接"的场景显式调用）。"""
+    global _KNOWN_LANGUAGES_CACHE
+    _KNOWN_LANGUAGES_CACHE = None
+
+
+def is_routable(language: str) -> bool:
+    """语言标记是否已注册（不含「注册了但编译器缺失」这层运行时判定）。"""
+    lang = (language or "").strip().lower()
+    if not lang:
+        return False
+    return lang in known_languages()
+
+
+def _execute_sigma(block: CodeBlock) -> Tuple[str, str, int]:
+    """执行 Sigma 规约块：跑 vools.actus.sigma 的 Iron Laws 门禁。
+
+    引擎缺失/导入失败一律显式报错并返回非 0（docs/03 §6.5「未注册语言须显式报
+    不可用」、docs/41 §A1「失败即返回 action_invalid，不静默降级」）——
+    绝不因为「拿不到验证器」就当规约通过。
+    """
+    try:
+        from vools.actus.sigma import run_sigma_block
+    except ImportError as exc:
+        return "", (
+            "sigma 不可用：vools.actus.sigma 未安装或导入失败 "
+            f"（{exc}）。请安装 vools-actus，或 pip install sigma-lang 兜底。"
+        ), 1
+    try:
+        return run_sigma_block(block.content)
+    except Exception as exc:  # noqa: BLE001 —— 收敛为块失败，但把异常原样报出
+        return "", f"sigma 执行异常：{type(exc).__name__}: {exc}", 1
 
 
 # ── prelude：md python 块自动导入（Actus docs/33 §Phase 1）──

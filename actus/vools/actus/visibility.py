@@ -1,17 +1,21 @@
-"""visibility.py —— 私有动作与可见性控制引擎（docs/24 §F0-1）。
+"""visibility.py —— 私有动作与可见性控制引擎（docs/24 §F0-1，docs/41 §B 扩展）。
 
 支持：
-- 四级可见性：public / unlisted / private / team
+- 六级可见性：public / unlisted / private / team / gated（新增）/ internal（新增）
 - 多注册表管理（公共/团队/个人/自定义）
 - 团队成员管理
 - 安装时的可见性检查
 - 私有动作执行隔离
+- gated 授权式公开：仓级/动作级密钥，只存摘要、可轮换可撤销（GatedKeyStore）
 - 密钥使用审计
 """
 
 import json
 import os
 import time
+import hmac
+import secrets
+import hashlib
 from vools.core.dataclass_compat import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -23,7 +27,185 @@ VISIBILITY_UNLISTED = "unlisted"
 VISIBILITY_PRIVATE = "private"
 VISIBILITY_TEAM = "team"
 
-ALL_VISIBILITIES = [VISIBILITY_PUBLIC, VISIBILITY_UNLISTED, VISIBILITY_PRIVATE, VISIBILITY_TEAM]
+#: docs/41 §B1 新增两级。
+#:   gated    授权式公开：不进公开搜索结果，持 `gated_key` 即可安装并执行（给密钥即用）。
+#:            签名与 trust 校验照旧执行 —— 授权 ≠ 免审（docs/41:94）。
+#:   internal 仅引擎/授权流程可见可执行；不走市场/索引/签名链路，
+#:            默认 `trust=trusted`，物理落位 `actions/system/_internal/`（docs/41:90-93）。
+VISIBILITY_GATED = "gated"
+VISIBILITY_INTERNAL = "internal"
+
+ALL_VISIBILITIES = [
+    VISIBILITY_PUBLIC, VISIBILITY_UNLISTED, VISIBILITY_PRIVATE, VISIBILITY_TEAM,
+    VISIBILITY_GATED, VISIBILITY_INTERNAL,
+]
+
+#: 允许出现在公开搜索结果里的级别（docs/41 §B2.6：gated 不进公开结果）。
+PUBLISHABLE_VISIBILITIES = [
+    VISIBILITY_PUBLIC, VISIBILITY_UNLISTED, VISIBILITY_PRIVATE, VISIBILITY_TEAM,
+]
+
+#: internal 动作的物理落位标记（docs/41 §B1）。
+INTERNAL_DIR_MARKER = "_internal"
+
+#: 错误语义串（供上层映射到 actus 错误码 auth_required / action_invalid）。
+AUTH_REQUIRED = "auth_required"
+
+
+def is_internal_path(path: str) -> bool:
+    """路径是否落在 internal 目录（`.../system/_internal/...`）。"""
+    if not path:
+        return False
+    norm = os.path.abspath(path).replace("\\", "/")
+    return f"/{INTERNAL_DIR_MARKER}/" in norm
+
+
+# ── gated 密钥仓储（存摘要，不存明文） ──────────────────────────────────
+
+class GatedKeyStore:
+    """`gated_key` 的授权仓储（docs/41 §B2.2 / §B2.5）。
+
+    设计要点：
+      * **只落摘要**（sha256 hex），明文密钥仅在 grant 成功那一次返回给调用方；
+        因此本文件即使外泄也交不出可用密钥（docs/41 §9「密钥入 vault、禁止落日志」）。
+      * 支持**动作级**与**仓级**两档粒度：仓级密钥对该仓全部 gated 动作共用，
+        对同仓的 public/unlisted 动作无任何影响。
+      * **轮换即撤销**：同一作用域再次 grant 会整体替换旧摘要集合，旧密钥当场失效，
+        已安装方必须重新 `actus install --key`/`actus update` 拿新钥续期。
+      * 比对用 `hmac.compare_digest`（定长摘要，避免按位早退的时间侧信道）。
+      * 授权记录（谁在何时的哪个作用域上通过）另记审计行，**不含密钥值**。
+    """
+
+    CURRENT = "current"
+
+    def __init__(self, config_dir: str = None):
+        base = config_dir or os.path.join(os.path.expanduser("~"), ".actus")
+        self.path = os.path.join(base, "gated_keys.json")
+        self.audit_path = os.path.join(base, "gated_audit.jsonl")
+        self._data: Dict[str, dict] = {}
+        self._load()
+
+    # 内部
+
+    def _load(self) -> None:
+        if os.path.isfile(self.path):
+            try:
+                with open(self.path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                self._data = loaded if isinstance(loaded, dict) else {}
+            except (OSError, ValueError):
+                # 仓储不可读时**不得**当成「没有任何授权」之外的状态：显式抛出，
+                # 让调用方拒绝放行，而不是静默降级成 fail-open。
+                raise RuntimeError(
+                    f"gated 密钥仓储损坏或不可读：{self.path}（拒绝放行，不静默降级）")
+        else:
+            self._data = {}
+
+    def _save(self) -> None:
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self._data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, self.path)
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass                      # Windows 上 chmod 语义有限，摘要文件本身不含明文
+
+    @staticmethod
+    def digest_of(key: str) -> str:
+        return hashlib.sha256((key or "").encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def generate() -> str:
+        """生成一把新授权密钥（只在返回时是明文，此后只存摘要）。"""
+        return "actus-gk-" + secrets.token_urlsafe(32)
+
+    def scope_id(self, action_id: str = "", repo: str = "") -> str:
+        if action_id:
+            return f"action:{action_id}"
+        if repo:
+            return f"repo:{repo}"
+        raise ValueError("gated 密钥需要 action_id 或 repo 之一")
+
+    # 对外
+
+    def grant(self, action_id: str = "", repo: str = "",
+              key: str = "") -> dict:
+        """生成/设定（并轮换）某作用域的 gated 密钥。返回明文一次。"""
+        sid = self.scope_id(action_id, repo)
+        new_key = key or self.generate()
+        if not new_key:
+            raise ValueError("key 不能为空")
+        digest = self.digest_of(new_key)
+        previous = list((self._data.get(sid) or {}).get(self.CURRENT, []))
+        self._data[sid] = {
+            self.CURRENT: [digest],          # 整体替换 → 旧密钥立即失效（§B2.5）
+            "rotated_at": time.time(),
+            "rotations": int((self._data.get(sid) or {}).get("rotations", 0)) + 1,
+            "superseded": previous + list((self._data.get(sid) or {}).get("superseded", [])),
+        }
+        self._save()
+        self._audit("grant", sid, bool(previous))
+        return {"scope": sid, "key": new_key, "digest": digest,
+                "rotated": bool(previous),
+                "warning": "密钥仅此一次明文返回，之后只存 sha256 摘要"}
+
+    def verify(self, key: str, action_id: str = "", repo: str = "") -> bool:
+        """校验密钥是否被该作用域授权（动作级优先，其次仓级共用）。"""
+        if not key:
+            return False
+        digest = self.digest_of(key)
+        candidates = [f"action:{action_id}"] if action_id else []
+        if repo:
+            candidates.append(f"repo:{repo}")
+        for sid in candidates:
+            entry = self._data.get(sid)
+            if not entry:
+                continue
+            for stored in entry.get(self.CURRENT, []):
+                if hmac.compare_digest(stored, digest):
+                    self._audit("verify-ok", sid, False)
+                    return True
+        self._audit("verify-deny", ", ".join(candidates) or "-", False)
+        return False
+
+    def has_gate(self, action_id: str = "", repo: str = "") -> bool:
+        """该作用域是否已设定过密钥（未设定 = 没有任何人能装）。"""
+        return bool(self._data.get(self.scope_id(action_id, repo), {})
+                    .get(self.CURRENT))
+
+    def revoke(self, action_id: str = "", repo: str = "") -> bool:
+        """撤销该作用域的全部授权。"""
+        sid = self.scope_id(action_id, repo)
+        if sid in self._data:
+            del self._data[sid]
+            self._save()
+            self._audit("revoke", sid, False)
+            return True
+        return False
+
+    def list_scopes(self) -> List[dict]:
+        out = []
+        for sid, entry in self._data.items():
+            out.append({"scope": sid,
+                        "configured": bool(entry.get(self.CURRENT)),
+                        "key_count": len(entry.get(self.CURRENT, [])),
+                        "rotations": entry.get("rotations", 0),
+                        "rotated_at": entry.get("rotated_at")})
+        return out
+
+    def _audit(self, event: str, scope: str, rotated: bool) -> None:
+        """审计行：只记事件/作用域/时间，绝记密钥值。"""
+        try:
+            os.makedirs(os.path.dirname(self.audit_path), exist_ok=True)
+            with open(self.audit_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"ts": time.time(), "event": event,
+                                    "scope": scope, "rotated": rotated},
+                                   ensure_ascii=False) + "\n")
+        except OSError:
+            pass                      # 审计落盘失败不改变授权判定结果（判定已在上面完成）
+
 
 
 # ── 数据结构 ──
@@ -294,18 +476,27 @@ class VisibilityEngine:
     - 管理私有动作列表
     """
 
-    def __init__(self, config_dir: str = None, current_user: str = ""):
+    def __init__(self, config_dir: str = None, current_user: str = "",
+                 gated_store: "GatedKeyStore" = None):
         self._config_dir = config_dir or os.path.join(os.path.expanduser("~"), ".actus")
         self._current_user = current_user or os.environ.get("ACTUS_USER", os.getlogin() if hasattr(os, "getlogin") else "default")
         self._registry_manager = RegistryManager(config_dir)
         self._team_manager = TeamManager(config_dir)
         self._private_index_file = os.path.join(self._config_dir, "private", "index.json")
         self._private_actions: Dict[str, dict] = {}
+        self._gated_store = gated_store
         self._load_private_index()
 
     @property
     def current_user(self) -> str:
         return self._current_user
+
+    @property
+    def gated_keys(self) -> "GatedKeyStore":
+        """gated 密钥仓储（惰性建：非 gated 路径不受其损坏影响）。"""
+        if self._gated_store is None:
+            self._gated_store = GatedKeyStore(self._config_dir)
+        return self._gated_store
 
     # ── 私有动作索引 ──
 
@@ -353,16 +544,23 @@ class VisibilityEngine:
     # ── 可见性检查 ──
 
     def check_visibility(self, action_id: str, visibility: str,
-                         expected_user: str = None) -> Tuple[bool, str]:
+                         expected_user: str = None, key: str = "",
+                         repo: str = "", internal_caller: bool = False
+                         ) -> Tuple[bool, str]:
         """检查用户是否有权限访问该可见性级别的动作。
 
         参数:
             action_id: 动作 id。
             visibility: 可见性级别。
             expected_user: 期望的用户（默认当前用户）。
+            key: gated 授权密钥明文（仅 `visibility == "gated"` 用；docs/41 §B2）。
+            repo: 仓名（gated 的**仓级**密钥粒度，docs/41 §B2.2）。
+            internal_caller: 调用方是否为引擎内部路由（`visibility == "internal"`
+                的唯一放行通道，docs/41 §B1「仅引擎/授权流程」）。
 
         返回:
-            (是否允许, 拒绝原因)
+            (是否允许, 拒绝原因)。拒绝原因里 gated 未授权固定以 `auth_required:`
+            开头，供上层直接映射成错误码；其余级别沿用既有文案。
         """
         user = expected_user or self._current_user
 
@@ -396,6 +594,28 @@ class VisibilityEngine:
                 return False, f"User '{user}' is not a member of team '{team_name}'"
             return True, ""
 
+        if visibility == VISIBILITY_GATED:
+            # 授权式公开：持有效密钥即可，与身份无关（docs/41 §B2.1）。
+            if not key:
+                return False, (f"{AUTH_REQUIRED}: 动作 '{action_id}' 为 gated，"
+                               f"安装/执行需带 --key <gated_key>")
+            try:
+                store = self.gated_keys
+            except RuntimeError as exc:
+                # 仓储损坏 → 拒绝放行（fail-closed），绝不静默当无门禁
+                return False, f"{AUTH_REQUIRED}: {exc}"
+            if store.verify(key, action_id=action_id, repo=repo):
+                return True, ""
+            return False, (f"{AUTH_REQUIRED}: 密钥对动作 '{action_id}' 无效或已被"
+                           f"轮换撤销（作者轮换后需重新获取）")
+
+        if visibility == VISIBILITY_INTERNAL:
+            # 仅引擎/授权流程；普通用户路径一律拒，即使本人是作者（docs/41 §B1）。
+            if internal_caller:
+                return True, ""
+            return False, (f"internal 动作 '{action_id}' 仅限引擎内部路由执行，"
+                           f"不经市场/索引/搜索分发")
+
         return False, f"Unknown visibility level: {visibility}"
 
     def _find_action(self, action_id: str) -> Optional[dict]:
@@ -406,15 +626,36 @@ class VisibilityEngine:
         return None
 
     def can_install(self, action_id: str, visibility: str,
-                    registry_name: str = "public") -> Tuple[bool, str]:
-        """检查是否允许安装动作。"""
+                    registry_name: str = "public", key: str = "",
+                    repo: str = "") -> Tuple[bool, str]:
+        """检查是否允许安装动作。
+
+        docs/41 的收紧点：`internal` 永不可安装（只随引擎走），`gated` 必须带有效
+        密钥。其余既有级别行为不变（public/unlisted/team 仍放行，private 走作者校验）。
+        """
+        if visibility == VISIBILITY_INTERNAL:
+            return False, (f"internal 动作 '{action_id}' 不经安装分发"
+                           f"（随仓库落位 actions/system/_internal/）")
+        if visibility == VISIBILITY_GATED:
+            return self.check_visibility(action_id, visibility, key=key, repo=repo)
         if visibility == VISIBILITY_PRIVATE:
             return self.check_visibility(action_id, visibility)
         return True, ""
 
-    def can_execute(self, action_id: str, visibility: str) -> Tuple[bool, str]:
+    def can_execute(self, action_id: str, visibility: str, key: str = "",
+                    repo: str = "", internal_caller: bool = False) -> Tuple[bool, str]:
         """检查是否允许执行动作。"""
-        return self.check_visibility(action_id, visibility)
+        return self.check_visibility(action_id, visibility, key=key, repo=repo,
+                                     internal_caller=internal_caller)
+
+    def is_searchable(self, visibility: str) -> bool:
+        """该级别是否出现在公开搜索结果里（docs/41 §B1 / §B2.6）。
+
+        gated / internal 均不进公开结果；安装 gated 动作需显式给出完整 id + 密钥，
+        这与 unlisted 的「知道 ID 即可」不同 —— gated 是「知道 ID 还不够」。
+        """
+        return visibility in (VISIBILITY_PUBLIC, VISIBILITY_UNLISTED,
+                              VISIBILITY_PRIVATE, VISIBILITY_TEAM)
 
     # ── 注册表代理 ──
 
@@ -428,32 +669,59 @@ class VisibilityEngine:
 
     # ── 综合权限查询 ──
 
-    def get_action_permissions(self, action_id: str,
-                               visibility: str) -> dict:
-        """获取动作的综合权限信息。"""
+    def get_action_permissions(self, action_id: str, visibility: str,
+                               key: str = "", repo: str = "",
+                               internal_caller: bool = False) -> dict:
+        """获取动作的综合权限信息。
+
+        未知级别显式落到 else 分支并带上 `unknown_visibility=True`：原先没有 else，
+        未知值与「有级别但被拒」在返回值上不可区分，调用方没法分辨是配置写错还是
+        确实没权限。
+        """
         can_view = False
         can_install = False
         can_execute = False
+        reason = ""
+        unknown = visibility not in ALL_VISIBILITIES
 
         if visibility == VISIBILITY_PUBLIC:
             can_view = can_install = can_execute = True
         elif visibility == VISIBILITY_UNLISTED:
             can_view = can_install = can_execute = True
         elif visibility == VISIBILITY_PRIVATE:
-            ok, _ = self.check_visibility(action_id, visibility)
+            ok, reason = self.check_visibility(action_id, visibility)
             can_view = can_install = can_execute = ok
         elif visibility == VISIBILITY_TEAM:
-            ok, _ = self.check_visibility(action_id, visibility)
+            ok, reason = self.check_visibility(action_id, visibility)
             can_view = can_install = can_execute = ok
+        elif visibility == VISIBILITY_GATED:
+            # 不可搜索；持密钥才可安装/执行（docs/41 §B1 表）
+            can_view = False
+            ok, reason = self.check_visibility(action_id, visibility,
+                                               key=key, repo=repo)
+            can_install = can_execute = ok
+        elif visibility == VISIBILITY_INTERNAL:
+            # 不可搜索、不可安装、仅内部路由可执行
+            can_view = False
+            can_install = False
+            can_execute, reason = self.check_visibility(
+                action_id, visibility, internal_caller=internal_caller)
 
-        return {
+        result = {
             "action_id": action_id,
             "visibility": visibility,
             "current_user": self._current_user,
             "can_view": can_view,
             "can_install": can_install,
             "can_execute": can_execute,
+            "searchable": self.is_searchable(visibility),
         }
+        if reason:
+            result["reason"] = reason
+        if unknown:
+            result["unknown_visibility"] = True
+            result["allowed_values"] = list(ALL_VISIBILITIES)
+        return result
 
 
 # ── 密钥审计 ──
@@ -508,6 +776,26 @@ class SecretAuditor:
                     continue
         return entries[-limit:]
 
+    def record_visibility(self, action_id: str, visibility: str,
+                          exec_id: str = "", granted: bool = True) -> None:
+        """记录一次可见性判定（docs/41 §B2.4：授权过程要留痕，但**不留密钥值**）。
+
+        与 record_usage 同文件同形状，多带 visibility/exec_id/granted 三列，
+        这样 `internal` 内部路由与 `gated` 密钥放行都能事后追溯是哪一个 exec、
+        判定结果如何 —— 而行里绝不出现密钥（审计外泄不等于授权泄漏）。
+        """
+        os.makedirs(os.path.dirname(self._audit_file), exist_ok=True)
+        entry = {
+            "timestamp": time.time(),
+            "event": "visibility",
+            "action_id": action_id,
+            "visibility": visibility,
+            "exec_id": exec_id,
+            "granted": bool(granted),
+        }
+        with open(self._audit_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
 
 # ── 便捷函数 ──
 
@@ -516,6 +804,18 @@ def check_visibility(action_id: str, visibility: str,
     """便捷函数：检查可见性。"""
     engine = VisibilityEngine(current_user=current_user)
     return engine.check_visibility(action_id, visibility)
+
+
+def grant_gated_key(action_id: str = "", repo: str = "", key: str = "",
+                    config_dir: str = None) -> dict:
+    """便捷函数：生成/轮换 gated 授权密钥（明文只在此返回一次）。"""
+    return GatedKeyStore(config_dir).grant(action_id=action_id, repo=repo, key=key)
+
+
+def revoke_gated_key(action_id: str = "", repo: str = "",
+                     config_dir: str = None) -> bool:
+    """便捷函数：撤销 gated 授权。"""
+    return GatedKeyStore(config_dir).revoke(action_id=action_id, repo=repo)
 
 
 def add_private_action(action_id: str, metadata: dict,
@@ -549,12 +849,18 @@ def get_visibility_engine(config_dir: str = None,
 
 __all__ = [
     'ALL_VISIBILITIES',
+    'AUTH_REQUIRED',
+    'GatedKeyStore',
+    'INTERNAL_DIR_MARKER',
+    'PUBLISHABLE_VISIBILITIES',
     'RegistryConfig',
     'RegistryManager',
     'SecretAuditor',
     'TeamConfig',
     'TeamManager',
     'TeamMember',
+    'VISIBILITY_GATED',
+    'VISIBILITY_INTERNAL',
     'VISIBILITY_PRIVATE',
     'VISIBILITY_PUBLIC',
     'VISIBILITY_TEAM',
@@ -564,5 +870,8 @@ __all__ = [
     'check_visibility',
     'create_team',
     'get_visibility_engine',
-    'list_private_actions'
+    'grant_gated_key',
+    'is_internal_path',
+    'list_private_actions',
+    'revoke_gated_key',
 ]

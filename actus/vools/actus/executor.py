@@ -133,11 +133,18 @@ def _payload_depth(obj) -> int:
 def execute(action_id: str, params: dict = None,
             confirmed: bool = False, meta_dir: str = None,
             actions_dir: str = None, force: bool = False,
-            artifacts_dir: str = None) -> dict:
+            artifacts_dir: str = None, preparsed_action: 'Action' = None) -> dict:
     """执行一个动作，返回 docs/03 §7.2 结构化出参。
 
     confirmed=True 表示人类已通过确认通道放行（audit 级需要）。
     meta_dir/artifacts_dir 可覆盖留痕与产物落点（临时仓库隔离）。
+    preparsed_action：已解析好的 Action（零散动作专用，docs/41 §5 主题 C）。
+      零散动作在**任意路径**，且缺省字段（trust=audit / visibility=private，
+      docs/41 §C1）是在解析后补上的；execute 若再从磁盘 re-parse，补上的缺省值
+      当场丢失 → 校验报 trust 缺失。传进来即用同一份对象，缺省值不再被抹掉。
+      仍然走完整的 validating/trust/sandbox/Ω 门禁 —— 只是"对象从哪来"变了。
+      **名字不能叫 action_obj**：下面依赖预检那段有同名本地变量 `action_obj = None`，
+      参数会被当场覆盖（实测踩到过）。
     全程留痕：_meta/runs/<exec_id>.json + status.json + 追加式日志。
     """
     params = params if params is not None else {}
@@ -341,10 +348,13 @@ def execute(action_id: str, params: dict = None,
 
         # ── validating ──
         transit('validating')
-        action = load_and_validate(
-            _resolve_path(action_id, actions_dir)) if actions_dir else None
-        if action is None:
-            action = _get_validated(action_id)
+        if preparsed_action is not None:
+            action = preparsed_action
+        else:
+            action = load_and_validate(
+                _resolve_path(action_id, actions_dir)) if actions_dir else None
+            if action is None:
+                action = _get_validated(action_id)
 
         _validate_params(action, params)
 
@@ -353,6 +363,9 @@ def execute(action_id: str, params: dict = None,
         sub = {aid: a for aid, a in all_actions.items()
                if aid == action_id or aid in (action.meta.get('deps') or [])}
         validate_graph(sub)
+
+        # ── 可见性门禁（docs/41 §B1）：只判新增的 internal / gated 两级 ──
+        _visibility_gate(action, action_id, exec_id)
 
         # ── trust 判定 ──
         strategy = decide(action.trust, confirmed=confirmed)
@@ -521,6 +534,90 @@ def _get_validated(action_id: str) -> Action:
     return load_and_validate(get_action(action_id).path)
 
 
+def _visibility_gate(action: Action, action_id: str, exec_id: str,
+                     gated_key: str = None, gated_store=None) -> None:
+    """执行前的可见性门禁（docs/41 §B1）。
+
+    **只判新增的 internal / gated 两级，既有四级（public/unlisted/private/team）
+    一律原样放行。** 这不是偷懒，是兼容性判据：实测这四级在现行执行链上从来没有
+    被门禁过（executor 早前根本不 import visibility），若在这里给它们补上判据，
+    `visibility: private` 的既有动机会当场开始报 `Private action not found`
+    （私有索引里根本没有它们的记录），属于凭空造回归。新级别的收紧与旧级别的行为
+    不变是两件事，分开做才看得见。
+
+    internal 的放行判据是**物理落位**（`actions/system/_internal/`，docs/41 §B1）：
+    落在该目录下才算引擎内部路由；把任意动作标成 `visibility: internal` 想借此
+    绕过市场/签名链路的，这里当场拒掉 —— 落位是权威，声明只是意图。
+
+    gated 的放行判据是密钥：显式参数 → `ACTUS_GATED_KEY` 环境变量 → vault，
+    三者都取不到或校验不过 → `auth_required`（docs/41 §B2.3）。密钥明文只在这里
+    过一遍，不进 record、不进日志。
+    """
+    visibility = (action.meta.get('visibility') or '').strip().lower()
+
+    if visibility == 'internal':
+        from .visibility import is_internal_path
+        if not is_internal_path(action.path):
+            record_gate(action_id, visibility, exec_id, granted=False)
+            raise ActionError(
+                'visibility_denied',
+                f"internal 动作 '{action_id}' 未落在 _internal/ 目录，"
+                f"拒绝按内部路由执行（当前路径：{action.path}）",
+                {'visibility': visibility, 'path': action.path})
+        record_gate(action_id, visibility, exec_id, granted=True)
+        return
+
+    if visibility == 'gated':
+        from .visibility import AUTH_REQUIRED, GatedKeyStore
+        key = gated_key or os.environ.get('ACTUS_GATED_KEY', '')
+        if not key:
+            try:
+                from .vault import get_key
+                key = get_key('gated_key',
+                              meta_dir=os.environ.get('ACTUS_META_DIR', '')) or ''
+            except Exception:       # noqa: BLE001 —— vault 不可用等同"没有密钥"
+                key = ''
+        if not key:
+            record_gate(action_id, visibility, exec_id, granted=False)
+            raise ActionError(
+                'auth_required',
+                f"动作 '{action_id}' 为 gated 可见性，执行需授权密钥"
+                f"（--key / ACTUS_GATED_KEY / vault gated_key 三者之一）",
+                {'visibility': visibility})
+        repo = action.meta.get('repo') or ''
+        # 仓储可注入：默认落 ~/.actus/gated_keys.json（与 VisibilityEngine 同根）。
+        # 取不到仓储（文件损坏等）一律按"未授权"拒 —— fail-closed，不静默放行。
+        try:
+            store = gated_store if gated_store is not None else GatedKeyStore()
+        except RuntimeError as exc:
+            record_gate(action_id, visibility, exec_id, granted=False)
+            raise ActionError('auth_required', str(exc), {'visibility': visibility})
+        if not store.verify(key, action_id=action_id, repo=repo):
+            record_gate(action_id, visibility, exec_id, granted=False)
+            raise ActionError(
+                'auth_required',
+                f"动作 '{action_id}' 的授权密钥无效或已被轮换撤销",
+                {'visibility': visibility, 'reason': AUTH_REQUIRED})
+        record_gate(action_id, visibility, exec_id, granted=True)
+        return
+
+    # 既有四级（public/unlisted/private/team）在现行执行链上没有任何门禁，这里也
+    # **不做判定也不写审计** —— 若在此写一条 granted=True，审计记录会谎称"做过
+    # 可见性校验并通过"，而事实是一个字节都没查。只记录真实发生的判定。
+
+
+def record_gate(action_id: str, visibility: str, exec_id: str,
+                granted: bool) -> None:
+    """可见性判定留痕（不含任何密钥值）。写失败不影响判定结果。"""
+    try:
+        from .visibility import SecretAuditor
+        SecretAuditor().record_visibility(
+            action_id=action_id, visibility=visibility,
+            exec_id=exec_id, granted=granted)
+    except Exception:               # noqa: BLE001 —— 审计是旁路，不反向决定授权
+        pass
+
+
 def _pending_ops(action: Action, params: dict) -> list:
     """从动作声明推断待执行操作明细（docs/07 §2 确认通道展示用）。"""
     ops = []
@@ -606,6 +703,10 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
         # 参数注入：写入临时环境文件，vools config env 携带 ACTUS_PARAMS
         os.environ['ACTUS_PARAMS'] = json.dumps(params, ensure_ascii=False)
         os.environ['ACTUS_EXEC_ID'] = exec_id
+        # 动作自身路径：docs/41 §A1 的内嵌 Sigma 规约块要读回**同一份文件**才能复跑
+        # 规约门禁。没有它，动作只能把规约正文再抄一份进 python 块，抄的那份与
+        # ```sigma 块会各自漂移，"校验过规约"就变成了"校验过副本"。
+        os.environ['ACTUS_ACTION_PATH'] = action.path
         # 引擎定位环境：动作代码（如 loop_prompt 的会话留痕）经此解析引擎状态目录，
         # 测试经 meta_dir 覆盖即可整体隔离，不污染真实仓库。
         os.environ['ACTUS_REPO_ROOT'] = _repo_root()

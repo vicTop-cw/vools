@@ -7,7 +7,8 @@ ERROR_CODES = [
     'action_not_found', 'action_invalid', 'param_invalid',
     'dependency_missing', 'dependency_cycle', 'trust_rejected',
     'permission_denied', 'confirmation_timeout', 'timeout',
-    'language_unavailable', 'internal',
+    'language_unavailable', 'visibility_denied', 'auth_required',
+    'internal',
 ]
 
 class ActionError(Exception):

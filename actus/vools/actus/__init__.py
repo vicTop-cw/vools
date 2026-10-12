@@ -51,6 +51,7 @@ from .triggers import TriggerEngine, CronScheduler, FileWatcher, parse_triggers,
 from .intent import IntentRouter
 from .author import author_action, publish_action, Pipeline, run_pipeline
 from .loophelpers import fingerprint, clipboard_write, clipboard_clear, focus_window, run_playback
+from . import sigma
 
 # 分组导出（便于维护，__all__ 在下方聚合）
 _base = [
@@ -127,10 +128,15 @@ _webhook = [
 _intent = [
     'IntentRouter',
 ]
+# docs/41 主题 A：sigma-Law 规范引擎以子包形式导出（vools.actus.sigma）。
+# 只挂名字、不批量 re-export 其符号，避免 `sigma` 这类通用名污染 vools.actus 命名空间。
+_sigma = [
+    'sigma',
+]
 
 __all__ = (
     _base + _model + _exec + _workflow + _registry + _records
     + _concurrency + _sandbox + _trust + _security + _adapter
     + _install + _selfheal + _project + _notify + _health
-    + _jump + _webhook + _intent
+    + _jump + _webhook + _intent + _sigma
 )
