@@ -8,6 +8,7 @@ import subprocess
 import json
 import time
 import tempfile
+import secrets
 
 # 获取 python32 路径
 _PYTHON32_DIR = os.path.join(os.path.dirname(__file__), '..', '_python32')
@@ -26,7 +27,11 @@ class Python32Process:
 
     def call(self, method, params=None, timeout=30):
         """调用 32 位 Python 执行"""
-        req_id = str(int(time.time() * 1000000))
+        # req_id 必须不可预测且抗并发：旧实现仅用 time.time()*1e6，同一微秒内
+        # 两个调用会生成相同 id，请求/响应/脚本临时文件互相覆盖（结果串号）。
+        # 拼上 8 字节密码学随机后缀，既消除碰撞也让 %TEMP% 文件名不可被同机
+        # 其它进程预先猜到（缓解临时文件符号链接/抢占劫持）。
+        req_id = '%d_%s' % (int(time.time() * 1000000), secrets.token_hex(4))
         req_file = os.path.join(tempfile.gettempdir(), 'dll32_req_' + req_id + '.json')
         resp_file = os.path.join(tempfile.gettempdir(), 'dll32_resp_' + req_id + '.json')
 
@@ -36,7 +41,6 @@ class Python32Process:
                 json.dump(request, f)
 
             dll_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), '_dlls')
-            dll_dir = dll_dir.replace('\\', '\\\\')
 
             py_code = self._build_py_code(dll_dir, req_file, resp_file)
 
@@ -74,14 +78,23 @@ class Python32Process:
                         pass
 
     def _build_py_code(self, dll_dir, req_file, resp_file):
-        """构建 32 位 Python 执行代码"""
+        """构建 32 位 Python 执行代码。
+
+        dll_dir/req_file/resp_file 是真实文件系统路径，会被内插进生成的
+        Python 源码。历史上用裸字符串拼接（+ r"... "），路径里只要含一个
+        双引号或换行会直接破坏生成脚本语法、甚至注入任意代码。这里统一用
+        repr() 生成【带引号、完整转义】的 Python 字符串字面量，杜绝注入。
+        """
+        dll_dir_lit = repr(os.path.abspath(dll_dir))
+        req_lit = repr(os.path.abspath(req_file))
+        resp_lit = repr(os.path.abspath(resp_file))
         return '''
 import sys
 import os
 import json
 import ctypes
 
-_dll_dir = r"''' + dll_dir + '''"
+_dll_dir = ''' + dll_dir_lit + '''
 os.environ['PATH'] = _dll_dir + os.pathsep + os.environ.get('PATH', '')
 
 # 函数签名注册表
@@ -257,7 +270,7 @@ def _convert_result(ret, restype):
     else:
         return ret
 
-with open(r"''' + req_file + '''", 'r', encoding='utf-8') as f:
+with open(''' + req_lit + ''', 'r', encoding='utf-8') as f:
     req = json.load(f)
 
 method = req['method']
@@ -321,7 +334,7 @@ try:
 except Exception as e:
     result['error'] = str(e)
 
-with open(r"''' + resp_file + '''", 'w', encoding='utf-8') as f:
+with open(''' + resp_lit + ''', 'w', encoding='utf-8') as f:
     json.dump(result, f)
 '''
 
