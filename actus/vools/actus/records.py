@@ -108,10 +108,18 @@ def list_run_records(meta_dir: str = None, action_id: str = None,
     if not os.path.isdir(runs_dir):
         return []
 
+    # 提前截断：无 action_id 过滤时，倒序前 offset+limit 条即为最终结果，
+    # 读到就停 —— runs/ 积累到 7653 条后全量读一遍在 Windows 上要 ~120s
+    # （2026-10-07 实测：`omega learn --limit 5` real 120s / user 0.015s，
+    # 纯逐文件 I/O 阻塞，把全量测试拖死在 test_omega_cli）。有过滤时不知道
+    # 后面还有多少命中，保持全量扫描。
+    budget = None if limit is None else offset + limit
     records = []
     for fname in sorted(os.listdir(runs_dir), reverse=True):
         if not fname.endswith('.json'):
             continue
+        if budget is not None and not action_id and len(records) >= budget:
+            break
         path = os.path.join(runs_dir, fname)
         try:
             with open(path, 'r', encoding='utf-8') as f:
