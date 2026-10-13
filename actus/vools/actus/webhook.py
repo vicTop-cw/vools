@@ -426,10 +426,20 @@ class WebhookReceiver:
         return hmac.compare_digest(expected, sig_hex)
 
     def _dispatch_action(self, action_id: str, event_type: str, payload: dict):
-        """分发触发动作执行（异步）。"""
+        """分发触发动作执行（异步）。
+
+        2026-10-13 修复：这里原先写的是 `from .executor import execute_action` ——
+        **executor 里从来没有这个函数**（只有 `execute` / `preview` / `new_exec_id`）。
+        因为整段包在 `except Exception` 里，ImportError 被吞成一句 print，
+        于是 **webhook 从来没有真正触发过任何动作**，且不报错。
+
+        改成真实入口 `execute`。**不传 `confirmed=True`**：webhook 是自动触发，
+        按信任模型，`trust=audit` 的动作应当落到 `awaiting_confirmation`
+        等人工放行 —— 自动放行等于绕过审计门。
+        """
         try:
-            from .executor import execute_action
-            execute_action(action_id, params={
+            from .executor import execute
+            return execute(action_id, params={
                 "event_type": event_type,
                 "payload": payload,
                 "triggered_by": "webhook"
@@ -437,6 +447,7 @@ class WebhookReceiver:
         except Exception as e:
             # 记录但不抛出（异步上下文）
             print(f"⚠️  Webhook 触发动作失败 [{action_id}]: {e}")
+            return None
 
     def _log_request(self, client_ip: str, event_type: str,
                      action_id: str, payload: dict):

@@ -194,14 +194,27 @@ class EvolutionEngine:
             return None, aid
 
     def _phase_validate(self, action_path: str) -> dict:
-        """Validate 阶段：Schema 校验。"""
+        """Validate 阶段：Schema 校验。
+
+        2026-10-13 修复：这里原先 `from .validate import validate_action_file` ——
+        **validate 里从来没有这个函数**（等价入口是 `load_and_validate(path)`）。
+        因为整段包在 `except Exception` 里，ImportError 被当成校验失败返回，
+        于是自进化的 Validate 阶段**对任何动作都报 "Schema invalid"**，
+        错误信息还是 `cannot import name 'validate_action_file'` ——
+        一个恒假断言，且看不出是坏在调用面而不是动作本身。
+
+        改用真实入口：`parse_cfg_from_file` + `validate_action`。
+        **不用 `load_and_validate`** —— 它在有错时 `raise`，
+        而本函数的契约是"返回 {valid, errors} 而不是抛"。
+        """
         try:
-            from .validate import validate_action_file
-            vr = validate_action_file(action_path)
-            if vr.get('valid'):
+            from .model import parse_cfg_from_file
+            from .validate import validate_action
+            action = parse_cfg_from_file(action_path)
+            errs = validate_action(action)
+            if not errs:
                 return {"valid": True, "message": "Schema valid", "errors": []}
-            return {"valid": False, "message": "Schema invalid",
-                    "errors": vr.get("errors", [])}
+            return {"valid": False, "message": "Schema invalid", "errors": list(errs)}
         except Exception as e:
             return {"valid": False, "message": str(e), "errors": [str(e)]}
 
