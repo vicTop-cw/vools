@@ -51,29 +51,42 @@ def test_specs_use_env_var_not_absolute_path():
 # 2. 编译器解析（需本机工具链存在，否则跳过）
 # ---------------------------------------------------------------------------
 
-_HAVE_TOOLS = all(
-    os.path.exists(C.resolve_compiler(lang))
-    for lang in ('tnr', 'lz', 'pentad')
-) or os.environ.get('VOOLS_PROJECTS_ROOT')
+def _have(lang):
+    """resolve_compiler 找不到时合法返回 None；exists(None) 会 TypeError，
+    必须先判空。"""
+    p = C.resolve_compiler(lang)
+    return bool(p) and os.path.exists(p)
 
-pytestmark = pytest.mark.skipif(
+
+_HAVE_TOOLS = (
+    all(_have(lang) for lang in ('tnr', 'lz', 'pentad'))
+    or bool(os.environ.get('VOOLS_PROJECTS_ROOT'))
+)
+
+# 只给【需要真实工具链】的 3 个用例打 skip；结构/JSON 往返等纯逻辑用例
+# 不依赖任何编译器，必须在任何机器上都运行（旧版模块级 pytestmark 会把它们
+# 一起误 skip，且 None 未守卫直接在收集期 TypeError 中断整文件）。
+_requires_tools = pytest.mark.skipif(
     not _HAVE_TOOLS,
     reason='本机未探测到 tnr/lz/pentad 工具链（设置 VOOLS_PROJECTS_ROOT 后再跑）'
 )
 
 
+@_requires_tools
 def test_resolve_tnr():
     """tnr 应解析到真实可执行文件。"""
     p = C.resolve_compiler('tnr')
     assert p and os.path.exists(p)
 
 
+@_requires_tools
 def test_resolve_lz():
     """lz 应解析到真实可执行文件。"""
     p = C.resolve_compiler('lz')
     assert p and os.path.exists(p)
 
 
+@_requires_tools
 def test_resolve_pentad():
     """pentad 应解析到真实可执行文件。"""
     p = C.resolve_compiler('pentad')

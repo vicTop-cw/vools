@@ -49,7 +49,7 @@ _IS_WINDOWS = platform.system() == 'Windows'
 # ----------------------------------------------------------------------------
 
 def _find_p5c() -> Optional[str]:
-    """按 configs 声明位置与 PATH 查找 p5c 可执行文件。"""
+    """按 configs 声明位置与 PATH 查找【确实存在】的 p5c 可执行文件。"""
     try:
         from ..configs import resolve_compiler
         resolved = resolve_compiler('pentad')
@@ -64,13 +64,18 @@ def _find_p5c() -> Optional[str]:
 def _resolve_pentad_command() -> tuple:
     """解析可用的 p5c 命令，返回 (cmd_prefix, path_converter, use_wsl)。
 
-    探测顺序：configs 解析结果 → PATH → WSL 中的 p5c。
+    探测顺序：configs 解析结果 → PATH → WSL 中的 p5c。三处都【确实】
+    定位不到时返回 ([], id, False)（空前缀），由 _P5C_OK=False 表达
+    「不可用」——绝不能把未经验证的裸命令名 'p5c' 当成存在，否则
+    available() 谎报 True、真正执行时才 FileNotFoundError。
     """
     local = _find_p5c()
     if local:
         return ([local], lambda p: p, False)
-    from ..core.wsl import resolve_command
-    return resolve_command('p5c')
+    from ..core.wsl import command_resolves, resolve_command
+    if command_resolves('p5c'):
+        return resolve_command('p5c')
+    return ([], lambda p: p, False)
 
 
 _P5C_CMD, _PATH_CONVERTER, _USE_WSL = _resolve_pentad_command()
