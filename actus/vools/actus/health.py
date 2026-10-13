@@ -159,13 +159,28 @@ def check_meta_directory(repo_root: str = ".") -> HealthCheckResult:
 
 
 def check_vault(repo_root: str = ".") -> HealthCheckResult:
-    """检查 Vault 配置。"""
+    """检查 Vault 配置。
+
+    先试 `actuscore.vault`（从 Actus 仓调用时 CLI/MCP 跑的那一份），
+    再退回本包的 `vools.actus.vault` —— 后者才是 vools 独立安装时唯一存在的那份。
+
+    只查 actuscore 的旧写法会让**纯 vools 环境永远报 warn**（实测：
+    干净环境 `check_vault()` -> "Vault 模块导入失败: No module named 'actuscore'"），
+    把"健康检查"变成了一句永远为假的断言。
+    """
     start = time.time()
-    try:
-        from actuscore.vault import Vault
-        return HealthCheckResult("vault", "ok", "Vault 模块可用", time.time() - start)
-    except ImportError as e:
-        return HealthCheckResult("vault", "warn", f"Vault 模块导入失败: {e}", time.time() - start)
+    for modname in ('actuscore.vault', 'vools.actus.vault'):
+        try:
+            __import__(modname, fromlist=['Vault'])
+            return HealthCheckResult("vault", "ok", "Vault 模块可用", time.time() - start)
+        except ImportError:
+            continue
+        except Exception as e:              # noqa: BLE001
+            return HealthCheckResult("vault", "warn",
+                                     f"Vault 模块导入失败: {e}", time.time() - start)
+    return HealthCheckResult("vault", "warn",
+                             "Vault 模块不可用（actuscore.vault 与 vools.actus.vault 均导入失败）",
+                             time.time() - start)
 
 
 # ── 健康检查运行器 ────────────────────────────────────────────────────────

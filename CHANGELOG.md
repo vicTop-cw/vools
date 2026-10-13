@@ -2,9 +2,63 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.7.9] - 2026-10-13
 
-### ✨ 新增
+发出去的三个包：`vools 0.7.9`、`vools-bridges 0.7.9`、`vools-actus 0.7.9`。
+
+**这一版的主题是"把 09-27 之后写的东西真正发出去"。** 0.7.8 发布于 09-27，
+而 Actus 侧 docs/41（内置化 / 零散化 / 分发）与 `vools.security.otp` 是
+10-11 / 10-12 才写的 —— 它们**从未进过任何已发布的 wheel**。本地源码与 PyPI 上的
+0.7.8 内容并不相同，所以必须靠版本号区分，而不是覆盖 0.7.8。
+
+### ✨ 新增（Actus 引擎侧 / docs/41）
+
+- **`vools.actus.sigma`** — sigma-Law 规约引擎（17 条 Iron Laws / verify /
+  spec JSON / spec2judge / bootstrap）。仅标准库，与上游三端验证器的 Python 端对齐。
+- **`vools.actus.scattered`** — 零散动作：任意路径 `.actus.md` / `.actus/` 即插即用。
+  默认 private + audit；路径逃逸 / 成环 / 缺入口结构化报错；核心依赖注入白名单 +
+  `project.actus.toml` 显式声明。TOML 解析为三级兜底
+  （`tomllib` → `tomli` → 内置最小子集），三级各自实测可用。
+- **`vools.actus.repo` / `vools.actus.publisher`** — `.actus` 开发仓检索 / 安装 / 更新，
+  以及发布三途径 + 三重门（sigma / Omega 语料 / actus 契约）。
+- **`vools.bridge.md.runner` 新增 `known_languages()` / `is_routable()` /
+  `reset_known_languages()`** —— 语言可路由性的**单一真源**，供 actus 侧
+  `validate.check_block_languages()`（docs/03 §6.5）复用，避免两处各持一份语言清单。
+  `known_languages()` 按进程缓存：不缓存时其首次构造要付编译器探测
+  （含 `rustc --version` 子进程）的账，会让 `build_index` 从 6.9s 涨到 19.8s。
+- **`vools.actus.cost.alert_budget_if_over()`** — 预算告警最小版（docs/31 阶段 4），
+  超支经 notify 模块告警；告警通道失败不影响预算判定。
+- **`vools.actus.scaffold.ENTRY_DRIVER` + `_with_entry_driver()`** — 骨架生成时把
+  模块级入口驱动插进最后一个 python 块的闭栏**之前**（docs/38 §1）。
+- **`vools.security.otp`** 随本版首次进入 `vools` 主包。
+
+### 🐛 修复（Actus 引擎侧 / docs/41）
+
+- **`scaffold` 生成的骨架不是合法动作** —— `_INLINE_PYTHON_TEMPLATE` 还是
+  `.format()` 时代的写法（JSON 里全写 `{{ }}`），但渲染走 `.replace()`，
+  于是 `{{` 原样留在产物里：cfg 块不是合法 JSON；python 块
+  `{{"status": "ok"}}` 是"含 dict 的 set"，执行期 `TypeError: unhashable type`。
+  同时把入口驱动补上（原先只有 `if __name__ == "__main__":`，而 md 引擎以
+  `__name__='__md_block__'` 执行块 ⇒ 动作"每次都成功但 data 恒为 null"）。
+  新增 `tests/actus/test_scaffold.py` 5 条回归（反证：改回双括号会有 2 条转红）。
+- **`health.check_vault()` 在纯 vools 安装下永远误报** —— 它只写
+  `from actuscore.vault import Vault`，而 `actuscore` 是 **Actus 仓的顶层包名**，
+  vools 独立安装时不存在，于是这条健康检查恒返回 warn。改为先试
+  `actuscore.vault`（从 Actus 仓调用时那才是 CLI/MCP 跑的那份），
+  再退回 `vools.actus.vault`。新增 `tests/actus/test_health_fallback.py` 2 条。
+- **`vools.actus.cost` 缺 `alert_budget_if_over`** —— Actus 侧 `test_cost.py`
+  有 4 条断言它，vools 侧却没有这个函数（P1 回灌遗漏）。
+
+### 📌 依赖下限（本次必须同批发布）
+
+- `vools-actus 0.7.9` 的 `dependencies` 把 `vools-bridges` 下限从 `>=0.7.7`
+  抬到 **`>=0.7.9`**：`validate` 走 `is_routable`，而实测**已发布的 0.7.8 wheel 里
+  没有这个符号**（装 0.7.8 后 `from vools.bridge.md.runner import is_routable`
+  直接 ImportError）。钉 0.7.7 / 0.7.8 会解析出"装得上但校验一跑就炸"的组合。
+- 根 `pyproject.toml` 的 extras 是**精确 pin**，`bridges` / `bridge-md` / `actus` /
+  `all` 四处从 `==0.7.7` / `==0.7.8` 一并抬到 `==0.7.9`。
+
+### ✨ 新增（桥接层：编译器位置单一真源 + Pentad）
 
 - **`bridges/vools/bridge/configs.py` 成为编译器位置的单一真源** — 新增
   `ToolchainSpec` + `DEFAULT_SPECS`，用「环境变量名 + 相对工程根的 glob 模板」声明每种语言

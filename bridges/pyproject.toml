@@ -4,7 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vools-bridges"
-version = "0.7.8"
+# 0.7.9：runner 新增 is_routable / known_languages / reset_known_languages 与
+# sigma 族语言标记（docs/41 §A1）。vools-actus 0.7.9 的 validate 依赖 is_routable，
+# 所以这一版必须与它同批发布。
+version = "0.7.9"
 authors = [
     { name = "Victor", email = "victortop921129@gmail.com" },
 ]
