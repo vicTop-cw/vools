@@ -1,6 +1,8 @@
 """cost.py — 成本账本（阶段 4）。
 
 追踪每次云端 API 调用的成本，支持预算告警。
+预算告警复用 notify 模块（docs/31 阶段 4：成本账本落 _meta/costs/，
+复用 notify 模块做预算告警，先做最小版）。
 """
 
 import json
@@ -11,8 +13,18 @@ from typing import Dict, List, Optional
 __all__ = ['record_cost', 'get_cost_summary', 'check_budget',
            'alert_budget_if_over', 'COSTS_DIR']
 
-COSTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)))), '_meta', 'costs')
+# 成本账本目录。优先走 ACTUS_REPO_ROOT 环境变量（Actus 仓库根，run_tests.ps1 与
+# 主程序都设它）；回退到相对本文件推导 —— 那个回退分支只在**vools 独立用**、
+# 没有 Actus 主仓时兜底。
+# 2026-10-13（docs/45 S2 shim 化）：本模块实现落在 vools，但 _meta/costs/ 是
+# **宿主仓库**的运行时数据，不能跟着实现文件走。若靠 __file__ 推导，shim 后
+# 会写成 `vools/.../_meta/costs/`，账本记到仓库外去了。
+_ACTUS_ROOT = os.environ.get('ACTUS_REPO_ROOT')
+if _ACTUS_ROOT:
+    COSTS_DIR = os.path.join(_ACTUS_ROOT, '_meta', 'costs')
+else:
+    COSTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), '_meta', 'costs')
 
 
 def _ensure_dir():

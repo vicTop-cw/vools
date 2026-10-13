@@ -16,9 +16,13 @@ import os
 import re
 from typing import Dict, List, Optional
 
-# 模板目录 = 本文件上三级目录 / actions/templates
+# 模板目录。本模块已迁入 vools.actus，而 `actions/templates/` 仍随宿主仓库走
+# （docs/32 迁移约定：仓库只留 .md/.json）。alias 后被 Actus 进程加载时，若仍按
+# `__file__` 推导会指向 vools 安装树 —— 那里没有动作模板。故优先读
+# `ACTUS_REPO_ROOT`（run_tests.ps1 / CLI 均会设），退回本文件上三级目录。
 _TEMPLATES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    os.environ.get('ACTUS_REPO_ROOT')
+    or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     'actions', 'templates')
 
 
@@ -234,6 +238,8 @@ def scaffold_action(
         lambda m: f'{m.group(1)}"{author}"',
         rendered,
     )
+    # 替换内联模板注释中的 {name}（BUG-0032）
+    rendered = rendered.replace('# {name}', f'# {name}')
     # 更新 ai.generated
     rendered = re.sub(
         r'("generated":\s*)(true|false)',
