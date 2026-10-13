@@ -6,11 +6,20 @@
 
 - ✅ **多进程支持**：基于 `multiprocessing.Process` 的进程级并发
 - ✅ **多线程支持**：基于 `threading.Thread` 的线程级并发
-- ✅ **任务状态管理**：支持 PENDING, RUNNING, RETRYING, FAILED, SUCCESS, CANCEL
-- ✅ **任务重试机制**：自动重试失败任务
+- ✅ **任务状态管理**：支持 PENDING, READY, LOCKED, RUNNING, RETRYING, RETRY_PENDING, FAILED, SUCCESS, COMPLETED, SKIPPED, CANCEL
+- ✅ **任务重试机制**：自动重试失败任务（RETRY_PENDING 状态，对齐 look_upon）
 - ✅ **SQLite持久化**：任务数据持久存储
 - ✅ **并发安全**：原子任务领取、租约机制
 - ✅ **@task装饰器**：方便地将函数转换为任务
+
+### 补齐（对齐 look_upon 能力面）
+
+- ✅ **多后端**：`create_backend("pg" / "sqlite" / "memory")` — PG / SQLite / 内存队列统一接口
+- ✅ **PG 队列**：`PgTaskBackend` — 对标 look_upon，多 Worker 竞争（`FOR UPDATE SKIP LOCKED`）
+- ✅ **CLI 执行通道**：`cli_execute(payload)` — 无语言枚举限制，Python subprocess 调外部 CLI
+- ✅ **Worker 引擎**：`WorkerEngine` — 对标 look_upon.run_until_done 常驻循环 + 心跳续期
+- ✅ **结构化 payload**：`payload` JSON 支持 `{"cli": {...}}` / 函数任务双通道
+- ✅ **心跳 / 租约续期**：`clean_stale_locks` 回收过期锁
 
 ## 安装
 
