@@ -8,7 +8,10 @@ name = "vools-actus"
 # 里声明 version = {attr = "vools.actus.__version__"}，而 [project] 没有
 # dynamic = ["version"]、包里也没有 __version__ —— setuptools 直接忽略 dynamic 段，
 # 打出来的 wheel 永远停在 0.7.0。对齐主包 vools 0.7.7 提到 0.7.8。
-version = "0.7.8"
+# 0.7.9：docs/41 的 sigma / scattered / repo / publisher 四个模块此前**从未进过
+# 任何已发布的 wheel**（0.7.8 发布于 09-27，那四个模块是 10-12 才写的），
+# 所以本地源码与 PyPI 上的 0.7.8 内容并不相同 —— 必须靠版本号区分。
+version = "0.7.9"
 authors = [
     { name = "Victor", email = "victortop921129@gmail.com" },
 ]
@@ -42,7 +45,11 @@ dependencies = [
     # 下限 0.7.7：mdtest.py 直取 `_build_prelude_env`，实测已发布的 0.7.6 wheel 里
     # 没有这个符号（解包 grep vools/bridge/md/runner.py = 0），装 0.7.6 会让
     # `import vools.actus.mdtest` 直接 ImportError。
-    "vools-bridges>=0.7.7",
+    # 下限抬到 0.7.9：`validate.check_block_languages()` 走
+    # `vools.bridge.md.runner.is_routable`，而实测已发布的 **0.7.8 wheel 里没有这个符号**
+    # （装 0.7.8 后 `from vools.bridge.md.runner import is_routable` 直接 ImportError）。
+    # 钉 0.7.7/0.7.8 都会让"装得上但校验一跑就炸"的组合被解析出来。
+    "vools-bridges>=0.7.9",
 ]
 
 [project.optional-dependencies]

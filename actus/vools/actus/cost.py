@@ -8,7 +8,8 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional
 
-__all__ = ['record_cost', 'get_cost_summary', 'check_budget', 'COSTS_DIR']
+__all__ = ['record_cost', 'get_cost_summary', 'check_budget',
+           'alert_budget_if_over', 'COSTS_DIR']
 
 COSTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), '_meta', 'costs')
@@ -81,3 +82,28 @@ def check_budget(month_limit_usd: float = 10.0) -> dict:
         'over_budget': over,
         'usage_pct': round(total / month_limit_usd * 100, 2) if month_limit_usd > 0 else 0,
     }
+
+
+def alert_budget_if_over(month_limit_usd: float = 10.0, notify: bool = True) -> dict:
+    """预算告警最小版（docs/31 阶段 4）：超支时经 notify 模块发告警。
+
+    返回 check_budget 的状态 + alerted 标志；告警失败不影响判定结果。
+    """
+    status = check_budget(month_limit_usd)
+    status['alerted'] = False
+    if not status['over_budget'] or not notify:
+        return status
+    try:
+        from .notify import NotifyLevel, get_notification_manager
+        mgr = get_notification_manager()
+        mgr.notify(
+            title='Actus 预算告警',
+            body=(f"本月云端成本 ${status['spent_usd']} 已超预算 "
+                  f"${status['budget_usd']}（{status['usage_pct']}%）"),
+            level=NotifyLevel.WARNING,
+            metadata={'kind': 'budget', **status},
+        )
+        status['alerted'] = True
+    except Exception:
+        pass  # 告警通道失败不影响预算判定本身
+    return status

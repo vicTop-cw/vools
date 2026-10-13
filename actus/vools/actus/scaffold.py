@@ -173,7 +173,7 @@ def scaffold_action(
     if not os.path.isfile(template_path):
         # 模板缺失 —— 回退到内联最小模板
         template_name = '__inline__'
-        template_body = _INLINE_PYTHON_TEMPLATE
+        template_body = _with_entry_driver(_INLINE_PYTHON_TEMPLATE)
     else:
         with open(template_path, 'r', encoding='utf-8') as f:
             template_body = f.read()
@@ -288,6 +288,27 @@ def scaffold_action(
 
 # ── 内联最小模板（模板目录缺失时回退） ──
 
+# 引擎契约（docs/38 §1）：md 引擎以 __name__='__md_block__' 执行块
+# （vools/bridge/md/runner.py:698），而 executor 只用入口块的 stdout 造 data。
+# 所以调用必须写在模块级 —— 写在 `if __name__ == "__main__":` 里的动作
+# 每次执行都"成功"且 data 恒为 null。新增动作只能从这份常量长出去。
+ENTRY_DRIVER = '''
+
+# 引擎契约：调用必须在模块级，见 docs/38 §1
+import inspect as _zinspect, json as _zjson, os as _zos
+_zparams = _zjson.loads(_zos.environ.get('ACTUS_PARAMS') or '{}')
+if __name__ != "__main__" or _zparams:
+    _zsig = _zinspect.signature(main).parameters
+    if not any(p.kind is _zinspect.Parameter.VAR_KEYWORD for p in _zsig.values()):
+        _zparams = {k: v for k, v in _zparams.items() if k in _zsig}
+    print(_zjson.dumps(main(**_zparams), ensure_ascii=False))
+
+if __name__ == "__main__":
+    import json, sys
+    params = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
+    print(json.dumps(main(**params), ensure_ascii=False, indent=2))
+'''
+
 _INLINE_PYTHON_TEMPLATE = '''---
 AIGC:
     Label: "1"
@@ -302,7 +323,7 @@ AIGC:
 # {name}
 
 ```json #!cfg
-{{
+{
   "id": "actus.<namespace>.<name>",
   "name": "my-action",
   "version": "1.0.0",
@@ -310,18 +331,18 @@ AIGC:
   "deps": [],
   "entry": "main",
   "description": "TODO: 动作描述",
-  "usage": "调用示例: actus_<namespace>_<name>({{\\"param\\": \\"value\\"}});\\n返回: {{\\"status\\": \\"ok\\"}}",
+  "usage": "调用示例: actus_<namespace>_<name>({\\"param\\": \\"value\\"});\\n返回: {\\"status\\": \\"ok\\"}",
   "author": "ai-scaffold",
   "permissions": ["files:read"],
-  "args": {{
+  "args": {
     "type": "object",
-    "properties": {{
-      "param": {{ "type": "string", "description": "参数说明" }}
-    }},
+    "properties": {
+      "param": { "type": "string", "description": "参数说明" }
+    },
     "required": ["param"]
-  }},
-  "ai": {{ "generated": true, "author": "ai-scaffold", "evolve_policy": "confirm" }}
-}}
+  },
+  "ai": { "generated": true, "author": "ai-scaffold", "evolve_policy": "confirm" }
+}
 ```
 
 ```python #!run tag=main
@@ -336,12 +357,20 @@ AIGC:
 
 def main(param: str) -> dict:
     # TODO: 实现动作逻辑
-    return {{"status": "ok", "result": param}}
-
-
-if __name__ == "__main__":
-    import json, sys
-    params = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {{}}
-    print(json.dumps(main(**params), ensure_ascii=False, indent=2))
+    return {"status": "ok", "result": param}
 ```
 '''
+
+
+# 闭栏前的驱动注入点：模板正文自带闭栏，所以驱动拼在最后一个块里而不是尾部。
+def _with_entry_driver(text):
+    """把 ENTRY_DRIVER 插进最后一个 python 块的闭栏**之前**。
+
+    插在闭栏之外就落进了 markdown，动作照旧静默空转且没人报错 ——
+    这条上一轮踩过（插错位置得到的假绿被当成"补了驱动还是 ok"）。
+    """
+    close = text.rfind('```')
+    opener = text.rfind('```python', 0, close)
+    if close < 0 or opener < 0:
+        return text + ENTRY_DRIVER + '\n'
+    return text[:close] + ENTRY_DRIVER + text[close:]
