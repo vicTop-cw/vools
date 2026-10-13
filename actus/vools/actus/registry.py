@@ -590,8 +590,13 @@ class ActionRegistry:
         计算文件校验和，推断分类和作者。
         """
         try:
-            with open(fpath, "r", encoding="utf-8") as f:
-                content = f.read()
+            try:
+                from vools.encoding import read_text as _fc_read_text
+                content = _fc_read_text(fpath)
+            except Exception:
+                # vools.encoding 不可用时退化为 utf-8（动作文件约定 utf-8）
+                with open(fpath, "r", encoding="utf-8") as f:
+                    content = f.read()
         except (OSError, UnicodeDecodeError):
             return None
 
