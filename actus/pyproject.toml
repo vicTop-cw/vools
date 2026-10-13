@@ -100,6 +100,10 @@ include = ["vools*"]
 # ============ pytest ============
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# manual_gui/ 是需要真实桌面（WebView2/CEF/pywebview）+ 人工观察的手动脚本，
+# 用 spec_from_file_location 顶层加载、headless 环境必然收集失败，不进自动套件；
+# 需要时在本机直接 `python tests/manual_gui/xxx.py` 运行。
+norecursedirs = [".*", "manual_gui"]
 addopts = "--tb=short -q"
 markers = [
     "integration: 标记集成测试（依赖外部资源，如剪贴板、文件系统、键鼠）",
