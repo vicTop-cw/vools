@@ -41,6 +41,12 @@ from .core.queue import TaskQueue
 from .core.worker import WorkerPool, ThreadPool
 from .decorators.task_decorator import task, batch_execute
 from .core.models import TaskStatus, Task, DagValidationError
+from .core.cli_exec import cli_execute, LANGUAGE_DEFAULT_CMD, LANGUAGE_EXTENSIONS
+from .core.worker_engine import WorkerEngine, TaskFunctionError
+from .backends import create_backend, BackendBase
+from .backends.pg import PgTaskBackend
+from .backends.memory_backend import MemoryTaskBackend
+from .backends.sqlite_backend import SqliteTaskBackend
 
 # 延迟导入 rules 子包
 from .rules import Rule, RuleSet, RuleEngine, rule, RuleStatus, DagScheduler
@@ -51,4 +57,9 @@ __all__ = [
     'TaskStatus', 'Task', 'DagValidationError',
     'Rule', 'RuleSet', 'RuleEngine', 'rule', 'RuleStatus',
     'DagScheduler',
+    # 补齐（look_upon 能力面对齐）
+    'cli_execute', 'LANGUAGE_DEFAULT_CMD', 'LANGUAGE_EXTENSIONS',
+    'WorkerEngine', 'TaskFunctionError',
+    'create_backend', 'BackendBase',
+    'PgTaskBackend', 'MemoryTaskBackend', 'SqliteTaskBackend',
 ]
