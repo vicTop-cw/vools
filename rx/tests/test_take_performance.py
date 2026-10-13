@@ -1,4 +1,12 @@
-"""take 操作符性能基准测试 - 验证优化效果"""
+"""take 操作符性能基准测试 - 验证优化效果
+
+reactivex(RxPY) 是【可选】的第三方对比基准，不属于 vools-rx 的必需依赖；
+未安装时整个模块 skip，而不是在收集期 ImportError 拖垮 rx 套件。
+"""
+import pytest
+
+pytest.importorskip("reactivex")
+
 import timeit
 import gc
 import vools.reactive as rx

@@ -2,9 +2,19 @@
 # -*- coding: utf-8 -*-
 
 """Tests for vools.reactive.clipboard (Windows only / integration)."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pytest
 
-pytestmark = [pytest.mark.integration, pytest.mark.windows_only]
+from _env_guard import clipboard_usable, CLIPBOARD_SKIP_REASON
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.windows_only,
+    pytest.mark.skipif(not clipboard_usable(), reason=CLIPBOARD_SKIP_REASON),
+]
 
 """
 ClipChangeType 枚举
