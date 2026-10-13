@@ -18,6 +18,9 @@ from typing import Dict, List, Optional, Any, Tuple
 from ..core.compat.dataclass_compat import dataclass, field
 
 from .parser import ParsedMD, CodeBlock, parse_md
+
+# 字符编码：读取/写入统一走 filecodec（自动探测 GBK/UTF-8/BOM，不再硬编码 utf-8）
+from ...encoding import read_text, write_text, detect, strip_bom
 from .directives import validate_directives
 from .config import load_config
 from .deps import check_deps
@@ -200,13 +203,12 @@ def build_library_manifest(
     }
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        try:
-            from .manifest import minimal_yaml_dump
-
-            f.write(minimal_yaml_dump(manifest))
-        except ImportError:
-            f.write(json.dumps(manifest, indent=2, ensure_ascii=False))
+    try:
+        from .manifest import minimal_yaml_dump
+        text = minimal_yaml_dump(manifest)
+    except ImportError:
+        text = json.dumps(manifest, indent=2, ensure_ascii=False)
+    write_text(output_path, text)
 
     return manifest
 
@@ -217,8 +219,7 @@ def load_library_manifest(library_dir: str) -> Optional[Dict[str, Any]]:
     if not os.path.exists(manifest_path):
         return None
 
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        text = f.read()
+    text = read_text(manifest_path)
 
     try:
         from .manifest import minimal_yaml_parse
@@ -531,8 +532,7 @@ def run_block(
         if not os.path.isabs(stdin_path):
             stdin_path = os.path.join(context.get("md_dir", ""), stdin_path)
         try:
-            with open(stdin_path, "r", encoding="utf-8") as sf:
-                exec_context["stdin"] = sf.read()
+            exec_context["stdin"] = read_text(stdin_path)
         except FileNotFoundError:
             # 文件不存在时，使用空 stdin，不中断执行
             exec_context["stdin"] = ""
@@ -578,8 +578,7 @@ def run_block(
             f"block_{index}_{export_name}.txt",
         )
         os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
-        with open(artifact_path, "w", encoding="utf-8") as f:
-            f.write(result.stdout)
+        write_text(artifact_path, result.stdout)
 
         register_artifact(
             artifacts_table,
@@ -606,8 +605,7 @@ def run_block(
             f"block_{index}_{output_file}",
         )
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(result.stdout)
+        write_text(output_path, result.stdout)
         result.output_file = output_path
 
     return result
@@ -915,7 +913,10 @@ def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: 
         result = helper.execute_code(block.content, func_name=f"__md_block_{block.index}")
 
         if isinstance(result, bytes):
-            result = result.decode("utf-8")
+            # 子进程输出可能为 GBK（Windows PowerShell 5.1）/UTF-16，先探测再解码
+            info = detect(result)
+            body, _bom = strip_bom(result)
+            result = body.decode(info["encoding"], errors="replace")
 
         return str(result), "", 0
 

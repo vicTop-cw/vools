@@ -6,46 +6,45 @@ vools.md CLI 命令行工具
     python -m vools.md.cli md2json input.md -o output.json
     python -m vools.md.cli md2org input.md -o output.org
     python -m vools.md.cli md2text input.md -o output.txt
+
+编码：读入统一走 ``vools.encoding.filecodec.read_text``（自动探测 GBK/UTF-8/BOM，
+不再因源文件带 BOM 或为 GBK 而崩）；写出统一走 ``write_text``（默认 UTF-8 无 BOM，
+跨平台最安全）。
 """
 import sys
 import argparse
 
+from ..encoding import read_text, write_text
+
 
 def cmd_md2html(args):
     from .html import to_html_file
-    with open(args.input, 'r', encoding='utf-8') as f:
-        md = f.read()
+    md = read_text(args.input)
     to_html_file(md, args.output)
     print(f'HTML written to {args.output}')
 
 
 def cmd_md2json(args):
     from .utils import to_json
-    with open(args.input, 'r', encoding='utf-8') as f:
-        md = f.read()
+    md = read_text(args.input)
     json_str = to_json(md, indent=args.indent)
-    with open(args.output, 'w', encoding='utf-8') as f:
-        f.write(json_str)
+    write_text(args.output, json_str)
     print(f'JSON written to {args.output}')
 
 
 def cmd_md2org(args):
     from .utils import to_org_mode
-    with open(args.input, 'r', encoding='utf-8') as f:
-        md = f.read()
+    md = read_text(args.input)
     org = to_org_mode(md)
-    with open(args.output, 'w', encoding='utf-8') as f:
-        f.write(org)
+    write_text(args.output, org)
     print(f'Org-mode written to {args.output}')
 
 
 def cmd_md2text(args):
     from .utils import to_plain_text
-    with open(args.input, 'r', encoding='utf-8') as f:
-        md = f.read()
+    md = read_text(args.input)
     text = to_plain_text(md)
-    with open(args.output, 'w', encoding='utf-8') as f:
-        f.write(text)
+    write_text(args.output, text)
     print(f'Text written to {args.output}')
 
 

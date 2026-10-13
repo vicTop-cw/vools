@@ -337,3 +337,22 @@ def to_str(data, encoding='utf-8'):
     if isinstance(data, bytes):
         return data.decode(encoding)
     return data
+
+
+# ─── 字符编码文件编解码（GBK/UTF-8/UTF-16/BOM，跨平台统一解决）─────────────────
+# `filecodec` 与上面的数据编码（base64/压缩/序列化）互补：这里面向**文件**的字符
+# 编码探测、读写、转换，纯标准库、绝不抛解码异常。
+# 延迟导入，避免顶层导入过重。
+from . import filecodec  # noqa: E402
+from .filecodec import (  # noqa: E402
+    BOM_SIGNATURES,
+    ENCODING_ALIASES,
+    SUPPORTED,
+    convert,
+    detect,
+    read_bytes,
+    read_text,
+    sniff_stdio,
+    strip_bom,
+    write_text,
+)

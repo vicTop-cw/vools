@@ -8,6 +8,7 @@ from .parser import (
     Document, Heading, Paragraph, CodeBlock, BlockQuote,
     MdList, ListItem, Divider, InlineText
 )
+from ..encoding import write_text
 
 
 def _inline_to_text(node: InlineText) -> str:
@@ -106,8 +107,7 @@ def generate_to_file(ast, filepath: str) -> str:
         写入的文件路径
     """
     md_text = generate(ast)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(md_text)
+    write_text(filepath, md_text)
     return filepath
 
 

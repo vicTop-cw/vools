@@ -12,6 +12,7 @@ vools.md 高级功能模块
 import re, time, os
 from typing import List, Dict, Optional, Iterator
 from ..core.dataclass_compat import dataclass
+from ..encoding import write_text, read_bytes, detect
 
 from .parser import (
     parse, Document, Heading, Paragraph, CodeBlock, BlockQuote,
@@ -163,8 +164,7 @@ def export_html_theme(markdown_text: str, theme: str, filepath: str) -> str:
         写入的文件路径
     """
     html = render_html_with_theme(markdown_text, theme)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(html)
+    write_text(filepath, html)
     return filepath
 
 
@@ -461,7 +461,11 @@ def stream_parse(
     chunk_idx = 0
     buffer = ''
 
-    with open(file_path, 'r', encoding='utf-8') as f:
+    # 先探测源文件编码（GBK/UTF-8/BOM），再按该编码流式读，避免遇非 UTF-8 文件崩
+    info = detect(read_bytes(file_path))
+    enc = str(info.get('encoding') or 'utf-8')
+
+    with open(file_path, 'r', encoding=enc, errors='replace') as f:
         while True:
             chunk = f.read(chunk_size)
             if not chunk:
