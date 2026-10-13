@@ -9,7 +9,7 @@ from typing import Dict
 
 from .errors import ActionError
 from .model import parse_cfg_from_file, Action
-from .validate import validate_action, validate_graph
+from .validate import validate_action, validate_graph, analyze_graph
 
 _TZ = timezone(timedelta(hours=8))
 ACTION_SUFFIX = '.actus.md'
@@ -130,18 +130,20 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
     meta = meta_dir or os.path.join(_repo_root(), '_meta')
     actions = scan_actions(root, validate=False)
 
-    graph_error = None
-    try:
-        valid_actions = {aid: a for aid, a in actions.items()
-                         if not validate_action(a)}
-        validate_graph(valid_actions)
-    except ActionError as e:
-        graph_error = e.to_payload()
+    # 依赖图按节点分析：只标记真正受坏边/环影响的动作（属主 + 其下游锥），
+    # 不再「一条坏依赖连坐整个动作市场」（历史上 validate_graph 首错即抛后
+    # 把全部 entries 标 invalid，导致上百个无关动作从 MCP / LLM 目录下架）。
+    valid_actions = {aid: a for aid, a in actions.items()
+                     if not validate_action(a)}
+    graph_issues = analyze_graph(valid_actions)
 
     entries = {}
     problems = dict(getattr(scan_actions, 'problems', {}))
     for aid, action in actions.items():
-        errs = action.meta.get('_validation_errors') or []
+        errs = list(action.meta.get('_validation_errors') or [])
+        issue = graph_issues.get(aid)
+        if issue is not None:
+            errs.append(f"dependency graph: {issue['message']}")
         brief = action.brief()
         brief['status'] = 'invalid' if errs else 'valid'
         if errs:
@@ -151,19 +153,20 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
     for rel, why in problems.items():
         entries[f'_invalid:{rel}'] = {'path': rel, 'status': 'invalid', 'errors': [why]}
 
-    if graph_error:
-        for e in entries.values():
-            e['status'] = 'invalid'
-            e.setdefault('errors', []).append(
-                f"dependency graph: {graph_error['message']}")
-
     index = {
         'schema_version': '1.0.0',
         'generated_at': datetime.now(_TZ).isoformat(timespec='seconds'),
         'actions': entries,
     }
-    if graph_error:
-        index['dependency_graph'] = graph_error
+    if graph_issues:
+        # 摘要保留，便于体检/排障；逐节点详情已在各 action.errors 里
+        codes = sorted({v['code'] for v in graph_issues.values()})
+        index['dependency_graph'] = {
+            'code': 'dependency_issues',
+            'codes': codes,
+            'affected': sorted(graph_issues),
+            'count': len(graph_issues),
+        }
 
     os.makedirs(meta, exist_ok=True)
     with open(os.path.join(meta, 'actions.index.json'), 'w', encoding='utf-8') as f:

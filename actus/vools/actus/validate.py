@@ -11,7 +11,7 @@
 - 形式 B（新）：.actus.schema.md YAML front-matter → 内置规则校验
 """
 
-__all__ = ['validate_action', 'validate_graph', 'check_entry_block',
+__all__ = ['validate_action', 'validate_graph', 'analyze_graph', 'check_entry_block',
            'check_args_schema', 'check_triggers', 'check_secrets',
            'check_block_languages', 'language_notices',
            'validate_schema_md', 'check_schema_md_structure']
@@ -404,6 +404,109 @@ def validate_graph(actions: Dict[str, Action]) -> None:
     for aid in actions:
         if color[aid] == WHITE:
             dfs(aid)
+
+
+def analyze_graph(actions: Dict[str, Action]) -> Dict[str, dict]:
+    """非抛出版依赖图分析：按节点给出错误，不「一条坏边连坐整个市场」。
+
+    旧行为（build_index 历史上）是：validate_graph 抛出第一个错误后，把
+    **所有**动作一律标 invalid。结果一条 ``A 依赖 B 不存在`` 会让上百个
+    与该依赖毫无关系的动作（vault.*/textstats/…）全部从 MCP / LLM 目录
+    下架 —— 爆炸半径是整个动作市场。
+
+    本函数只把**真正受影响**的动作判为图错误：
+      - 缺失依赖：声明该坏 deps 的动作本身；
+      - 循环依赖：环上的每个成员；
+      - 以及（可选，默认包含）沿依赖边正向传播到的下游：一个动作依赖了
+        不可用的东西，它本身也无法可靠执行，其下游同理。这条锥用
+        ``propagate`` 控制，需要「仅标记直接坏点」时可关。
+
+    Args:
+        actions: aid -> Action（通常是已通过单动作契约校验的子集）。
+
+    Returns:
+        Dict[str, dict]：仅含有图问题的节点，键为 action_id，值为
+        ``{'code': 'dependency_missing'|'dependency_cycle', 'message': str}``。
+        图干净时返回空 dict。
+
+    Note:
+        运行时依赖（system:/lang:/mcp:/...）与构建依赖（cs_*/build:）
+        不在动作图中，跳过存在性校验，口径与 validate_graph 一致。
+    """
+    _KNOWN_BUILD_PREFIXES = ("cs_", "build:")
+    _KNOWN_RUNTIME_PREFIXES = ("system:", "lang:", "mcp:", "action:", "pip:", "npm:")
+
+    def _is_build_dep(dep: str) -> bool:
+        return any(dep.startswith(p) or dep == p.rstrip(":") for p in _KNOWN_BUILD_PREFIXES)
+
+    def _is_runtime_dep(dep: str) -> bool:
+        return any(dep.startswith(p) for p in _KNOWN_RUNTIME_PREFIXES)
+
+    issues: Dict[str, dict] = {}
+
+    def mark(aid: str, code: str, message: str) -> None:
+        # 同一节点保留最严重/最早的一条，避免信息淹没
+        issues.setdefault(aid, {'code': code, 'message': message})
+
+    # 正向边：aid -> 它依赖的动作（仅图内动作）
+    edges: Dict[str, List[str]] = {}
+    for aid, a in actions.items():
+        edges[aid] = [d for d in (a.meta.get('deps', []) or [])
+                      if not _is_build_dep(d) and not _is_runtime_dep(d)]
+
+    # 1) 缺失依赖：只标记声明它的动作
+    missing_owners: List[str] = []
+    for aid, deps in edges.items():
+        for dep in deps:
+            if dep not in actions:
+                mark(aid, 'dependency_missing', f'动作 {aid} 依赖 {dep} 不存在')
+                missing_owners.append(aid)
+
+    # 2) 循环检测：标记环上的每个成员（DFS 三色，收集所有环，不首遇即停）
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {aid: WHITE for aid in actions}
+
+    def dfs_cycle(node: str, stack: List[str]) -> None:
+        color[node] = GRAY
+        stack.append(node)
+        for dep in edges.get(node, []):
+            if dep not in actions:
+                continue  # 缺失已在上面处理
+            if color.get(dep, BLACK) == GRAY:
+                idx = stack.index(dep)
+                cyc = stack[idx:] + [dep]
+                msg = '检测到循环依赖: ' + ' → '.join(cyc)
+                for member in cyc[:-1]:
+                    mark(member, 'dependency_cycle', msg)
+            elif color.get(dep, BLACK) == WHITE:
+                dfs_cycle(dep, stack)
+        stack.pop()
+        color[node] = BLACK
+
+    for aid in actions:
+        if color[aid] == WHITE:
+            dfs_cycle(aid, [])
+
+    # 3) 正向传播：依赖了坏节点的下游锥同样不可用（BFS）
+    reverse: Dict[str, List[str]] = {}
+    for aid, deps in edges.items():
+        for d in deps:
+            reverse.setdefault(d, []).append(aid)
+
+    seeds = list(issues.keys())
+    seen = set(seeds)
+    stack = list(seeds)
+    while stack:
+        cur = stack.pop()
+        for child in reverse.get(cur, []):
+            if child not in seen:
+                seen.add(child)
+                stack.append(child)
+                if child not in issues:
+                    mark(child, 'dependency_unavailable',
+                         f'动作 {child} 的（传递）依赖 {cur} 不可用')
+
+    return issues
 
 
 def load_and_validate(path: str) -> Action:
