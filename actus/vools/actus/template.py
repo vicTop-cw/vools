@@ -24,7 +24,7 @@ BUILTIN_TEMPLATES: Dict[str, dict] = {
         "body": '''"""${action_name} — ${description}"""
 
 import json
-import sys
+import os
 
 
 def main(params: dict) -> dict:
@@ -48,15 +48,11 @@ def main(params: dict) -> dict:
         return {"status": "failed", "error": str(e)}
 
 
-if __name__ == "__main__":
-    # 从环境变量读取参数
-    params = json.loads(os.environ.get("ACTUS_PARAMS", "{}")) if "ACTUS_PARAMS" in os.environ else {}
-    if len(sys.argv) > 1:
-        try:
-            params = json.loads(sys.argv[1])
-        except json.JSONDecodeError:
-            pass
-    print(json.dumps(main(params), ensure_ascii=False))
+# 入口自调用协议：读 ACTUS_PARAMS → 调 main(params) → 打印。
+# 引擎 exec 时 __name__ != '__main__'，所以不能关在 if __name__ 守卫里，否则必然
+# entry_no_output（docs/38 §1）。这也是复合动作规范化的约定。
+params = json.loads(os.environ.get("ACTUS_PARAMS", "{}") or "{}")
+print(json.dumps(main(params), ensure_ascii=False))
 ''',
     },
 
@@ -107,9 +103,10 @@ def main(params: dict) -> dict:
         return {"status": "failed", "error": str(e)}
 
 
-if __name__ == "__main__":
-    params = json.loads(os.environ.get("ACTUS_PARAMS", "{}")) if "ACTUS_PARAMS" in os.environ else {}
-    print(json.dumps(main(params), ensure_ascii=False))
+# 入口自调用协议：读 ACTUS_PARAMS → 调 main(params) → 打印
+# （引擎 exec 时 __name__ != '__main__'，关在 if __name__ 守卫里必然 entry_no_output）
+params = json.loads(os.environ.get("ACTUS_PARAMS", "{}") or "{}")
+print(json.dumps(main(params), ensure_ascii=False))
 ''',
     },
 
@@ -198,7 +195,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
             if sig != expected:
                 self.send_response(401)
                 self.end_headers()
-                self.wfile.write(b'{"error":"签名无效"}')
+                self.wfile.write('{"error":"签名无效"}'.encode('utf-8'))
                 return
         
         try:
@@ -224,9 +221,9 @@ def main(params: dict) -> dict:
     server.serve_forever()
 
 
-if __name__ == "__main__":
-    params = json.loads(os.environ.get("ACTUS_PARAMS", "{}")) if "ACTUS_PARAMS" in os.environ else {}
-    print(json.dumps(main(params), ensure_ascii=False))
+# 入口自调用协议：读 ACTUS_PARAMS → 调 main(params) → 打印
+params = json.loads(os.environ.get("ACTUS_PARAMS", "{}") or "{}")
+print(json.dumps(main(params), ensure_ascii=False))
 ''',
     },
 
@@ -259,7 +256,7 @@ def main(params: dict) -> dict:
     interval = params.get("interval", 5)
     
     if not os.path.exists(path):
-        return {"status": "failed", "error": f"路径不存在: {path"}
+        return {"status": "failed", "error": f"路径不存在: {path}"}
     
     p = Path(path)
     if p.is_file():
@@ -282,9 +279,9 @@ def main(params: dict) -> dict:
     }
 
 
-if __name__ == "__main__":
-    params = json.loads(os.environ.get("ACTUS_PARAMS", "{}")) if "ACTUS_PARAMS" in os.environ else {}
-    print(json.dumps(main(params), ensure_ascii=False))
+# 入口自调用协议：读 ACTUS_PARAMS → 调 main(params) → 打印
+params = json.loads(os.environ.get("ACTUS_PARAMS", "{}") or "{}")
+print(json.dumps(main(params), ensure_ascii=False))
 ''',
     },
 }
