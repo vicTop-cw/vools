@@ -1,3 +1,5 @@
+from __future__ import absolute_import
+
 import contextlib
 import time
 import re
@@ -7,7 +9,15 @@ import subprocess
 import shutil
 import tempfile
 import platform
-from pyspark.sql import SparkSession,DataFrame
+# pyspark 是【可选】重依赖：本模块的 CLI 执行通道（cli_execute / 语言映射 /
+# 任务调度 SQL 拼装）并不需要 Spark，顶层硬导入会让「没装 pyspark 的环境」
+# 连这些纯 Python 能力都用不了（实测 8 个 TestCliExecute 用例因此整批失败）。
+# 故顶层改为可选导入：真正起 Spark 的方法在函数内再惰性导入。
+try:
+    from pyspark.sql import SparkSession, DataFrame
+except ImportError:  # pragma: no cover - 无 pyspark 环境的正常路径
+    SparkSession = None
+    DataFrame = None
 import copy
 from typing import List, Any, Optional, Callable, Dict, Tuple
 from functools import partial,wraps
@@ -490,7 +500,7 @@ class LookUpon:
                  init: bool = False, tasks: Optional[List[str]] = None,
                  url: Optional[str] = None, user: Optional[str] = None, 
                  password: Optional[str] = None, driver: Optional[str] = None, 
-                 spark: Optional[SparkSession] = None, dbName: str = "public",
+                 spark: Optional['SparkSession'] = None, dbName: str = "public",
                  max_retries: int = 3, retry_delay_min: int = 5, drop_if_exists: bool = False):
         """
         spark: SparkSession 实例
@@ -1530,8 +1540,9 @@ class LookUpon:
             logger.info("数据库连接已关闭")
 
     @classmethod
-    def _get_spark_session(cls) -> SparkSession:
+    def _get_spark_session(cls) -> 'SparkSession':
         """获取SparkSession"""
+        from pyspark.sql import SparkSession  # 惰性：仅真正起 Spark 时才需要
         from .configs import pg_jar
         jar = pg_jar()
         builder = SparkSession.builder \
@@ -1604,7 +1615,7 @@ def add_tasks(dbtable:str,tasks:List[Any],deps:Optional[Dict[str, List[int]]] = 
         logger.error(f"添加任务失败: {str(e)}")
         return False
 
-def query_tasks(dbtable:str,where_cond:str = "") -> Optional[DataFrame]:
+def query_tasks(dbtable:str,where_cond:str = "") -> Optional['DataFrame']:
     """查询任务"""
     try:
         lu = LookUpon(
@@ -1725,7 +1736,9 @@ def run_doneEx(dbtable = None,**kwargs):
     #     txt = f.read()
     txt = _get_content(path).text
     factory = kwargs.pop('factory', get_spark())
-    factory = factory.sql if isinstance(factory,SparkSession) else factory
+    # SparkSession 在未装 pyspark 时是 None 哨兵，不能直接 isinstance(arg, None)
+    factory = factory.sql if (SparkSession is not None
+                              and isinstance(factory, SparkSession)) else factory
     def do(run_date):
         sql = _vicText(txt)
         if "{run_date" in txt:
