@@ -821,6 +821,23 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
             failed['stdout_truncated'] = True
         return failed
 
+    # entry_no_output 契约（docs/38 §1）：入口块没抛异常、也没打印 ⇒ 不能记 ok。
+    # 否则"调用被关在 `if __name__ == \"__main__\":` 里"这族动作每次执行都报成功、
+    # 不留痕迹 —— 引擎 exec 时 __name__='__md_block__'，守卫内的调用永不执行。
+    # 判据认"空 stdout"，不认 data 为 null（main 合法返回 None 时 data=None 但 stdout 非空）。
+    if not entry_stdout_raw.strip():
+        return {'status': 'failed', 'data': None, 'error': {
+            'code': 'entry_no_output',
+            'message': (f"入口块 {action.entry} 无 stdout：{action.id} 的调用被关在守卫里，"
+                        f"或 main() 未打印。引擎 exec 时 __name__ != '__main__'，"
+                        f"`if __name__ == \"__main__\":` 内的调用永不执行。"),
+            'details': {
+                'entry_block': action.entry,
+                'hint': ('ENTRY_DRIVER：把调用从守卫移到模块级 —— '
+                         '读 ACTUS_PARAMS → main(params) → print(json.dumps(...))'),
+            },
+        }}
+
     # 产物收集：vools 报告中的 export 产物 + 块级 output 文件（docs/04 §3）
     arts = []
     for b in report.get('blocks', []):
