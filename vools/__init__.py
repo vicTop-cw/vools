@@ -265,6 +265,13 @@ _lazy_modules = {
     'pickle_loads': '.encoding',
     'serialize': '.encoding',
     'deserialize': '.encoding',
+    # 字符编码文件编解码（GBK/UTF-8/UTF-16/BOM）
+    'filecodec': '.encoding.filecodec',
+    'detect': '.encoding.filecodec',
+    'read_text': '.encoding.filecodec',
+    'write_text': '.encoding.filecodec',
+    'convert': '.encoding.filecodec',
+    'sniff_stdio': '.encoding.filecodec',
 
     # 加密模块
     'crypto': '.crypto',

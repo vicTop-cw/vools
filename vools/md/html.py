@@ -8,6 +8,7 @@ from .parser import (
     Document, Heading, Paragraph, CodeBlock, BlockQuote,
     MdList, ListItem, Divider, InlineText, parse
 )
+from ..encoding import write_text
 
 
 def _inline_to_html(node: InlineText) -> str:
@@ -147,8 +148,7 @@ def to_html_file(source, filepath: str) -> str:
 {html}
 </body>
 </html>'''
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(full_html)
+    write_text(filepath, full_html)
     return filepath
 
 

@@ -11,6 +11,7 @@ vools.md 阶段6：文档生态工具模块
 import re, os, json, time, html, threading, http.server, socketserver, hashlib, fnmatch, urllib.parse
 from typing import List, Dict, Optional, Tuple, Iterator, Any, Union
 from ..core.dataclass_compat import dataclass, field
+from ..encoding import read_text, write_text
 from pathlib import Path
 
 from .parser import parse, Document, Heading, Paragraph, CodeBlock, BlockQuote, MdList, ListItem, Divider, InlineText
@@ -91,9 +92,7 @@ def markdown_to_docx(markdown_text: str, filepath: str, title: Optional[str] = N
 
     except ImportError:
         # 降级：纯文本写入
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(f'# {title or "Document"}\n\n')
-            f.write(markdown_text)
+        write_text(filepath, f'# {title or "Document"}\n\n' + markdown_text)
 
     return filepath
 
@@ -146,8 +145,7 @@ def markdown_to_pdf(markdown_text: str, filepath: str, theme: str = 'github',
     except Exception:
         # 降级：Playwright 不可用或浏览器未安装时，保存为 HTML
         html_path = filepath.rsplit('.', 1)[0] + '.html'
-        with open(html_path, 'w', encoding='utf-8') as f:
-            f.write(full_html)
+        write_text(html_path, full_html)
         return html_path
 
     return filepath
@@ -164,8 +162,7 @@ def markdown_to_pdf_via_cli(markdown_text: str, filepath: str, theme: str = 'git
 
     # 保存临时 HTML
     tmp_html = filepath.rsplit('.', 1)[0] + '_tmp.html'
-    with open(tmp_html, 'w', encoding='utf-8') as f:
-        f.write(full_html)
+    write_text(tmp_html, full_html)
 
     try:
         # 尝试通过 playwright CLI 生成 PDF
@@ -182,8 +179,7 @@ def markdown_to_pdf_via_cli(markdown_text: str, filepath: str, theme: str = 'git
     # 降级：保留 HTML
     os.unlink(tmp_html)
     html_path = filepath.rsplit('.', 1)[0] + '.html'
-    with open(html_path, 'w', encoding='utf-8') as f:
-        f.write(full_html)
+    write_text(html_path, full_html)
     return html_path
 
 
@@ -307,13 +303,11 @@ def render_template_file(template_path: str, context: Optional[Dict[str, Any]] =
     Returns:
         输出文件路径
     """
-    with open(template_path, 'r', encoding='utf-8') as f:
-        template = f.read()
+    template = read_text(template_path)
     result = render_template(template, context)
 
     if output_path:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(result)
+        write_text(output_path, result)
         return output_path
     return result
 
@@ -438,8 +432,7 @@ class PreviewServer:
                 if fname.endswith('.md'):
                     fpath = os.path.join(root, fname)
                     try:
-                        with open(fpath, 'r', encoding='utf-8') as f:
-                            return f.read()
+                        return read_text(fpath)
                     except Exception:
                         pass
         return None
