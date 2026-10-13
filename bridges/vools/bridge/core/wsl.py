@@ -94,5 +94,29 @@ def resolve_command(local_name: str) -> tuple:
     if _IS_WINDOWS and check_wsl_command(local_name):
         return (['wsl', local_name], windows_to_wsl_path, True)
 
-    # 3. 回退
+    # 3. 回退：【未经验证】地给出裸命令名。这是为了兼容执行期「让 OS 报错」
+    #    的旧行为，但它【不代表命令存在】——调用方不得据此判定 available()。
+    #    是否真的可用请用 command_resolves() 判断。
     return ([local_name], lambda p: p, False)
+
+
+def command_resolves(local_name: str) -> bool:
+    """命令是否在【本地 PATH】或【WSL】中确实可解析。
+
+    与 resolve_command 的区别：resolve_command 第 3 分支在两处都找不到时
+    仍回退裸命令名（供执行期把错误交给 OS），那个返回值不能用来回答
+    「工具链可用吗」。本谓词只在 shutil.which 命中或 WSL 里 which 命中时
+    返回 True，是 *_available() 的正确依据，避免「探测说有、一跑就
+    FileNotFoundError」的假可用（pentad p5c 实测即此问题）。
+
+    Args:
+        local_name: 可执行文件名，如 'p5c' / 'ruby'。
+
+    Returns:
+        bool: 本地或 WSL 中能定位到该命令才 True。
+    """
+    if shutil.which(local_name):
+        return True
+    if _IS_WINDOWS and check_wsl_command(local_name):
+        return True
+    return False
