@@ -239,6 +239,40 @@ def test_anthropic_body_shape():
     assert 'max_tokens' in body
 
 
+def test_anthropic_multiple_tool_results_share_one_user_turn():
+    """一次 assistant 多个 tool_use 的回传必须合并到同一个 user 回合。
+
+    否则出现连续两条 role=user 消息，Anthropic Messages API 返回
+    400 roles must alternate。
+    """
+    from vools.actus.ai.base import Message
+    msgs = [
+        Message(role='user', content='do two things'),
+        Message(role='assistant', content='', tool_calls=(
+            ToolCall(id='c1', name='a', arguments={}),
+            ToolCall(id='c2', name='b', arguments={}),
+        )),
+        Message(role='tool', content='r1', tool_call_id='c1', name='a'),
+        Message(role='tool', content='r2', tool_call_id='c2', name='b'),
+    ]
+    body = AnthropicClient()._build_body(msgs, None, 0.0, None)
+    roles = [m['role'] for m in body['messages']]
+    assert roles == ['user', 'assistant', 'user']       # 不是 user,assistant,user,user
+    last = body['messages'][-1]
+    assert isinstance(last['content'], list)
+    blocks = [b for b in last['content'] if b['type'] == 'tool_result']
+    assert [b['tool_use_id'] for b in blocks] == ['c1', 'c2']
+    assert [b['content'] for b in blocks] == ['r1', 'r2']
+
+
+def test_anthropic_zero_temperature_is_preserved():
+    """temperature=0.0 是合法的确定性取值，不得因真值判断被丢弃（否则退回默认 1.0）。"""
+    from vools.actus.ai.base import Message
+    body = AnthropicClient()._build_body([Message(role='user', content='hi')],
+                                         None, 0.0, None)
+    assert body['temperature'] == 0.0
+
+
 def test_anthropic_parse_content_blocks():
     """Anthropic 响应是 content 块数组，要抽出 text 与 tool_use。"""
     payload = {'model': 'claude-x', 'content': [
