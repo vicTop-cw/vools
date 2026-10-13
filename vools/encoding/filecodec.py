@@ -21,8 +21,10 @@
 - :func:`sniff_stdio`     跨平台标准流编码探测
 """
 
-from __future__ import annotations
-
+# 刻意不使用延迟注解的 __future__ 开关（annotations）：核心 vools 支持
+# Python 3.6，而该 future 语句是 3.7 才引入的（曾因这里误用导致包在 3.6
+# import 即 SyntaxError）。本模块注解全部用 typing.Dict/List/Optional/Tuple，
+# 3.6 原生即可求值，无需延迟注解。
 import codecs
 import os
 import sys
