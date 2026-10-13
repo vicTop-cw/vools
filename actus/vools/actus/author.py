@@ -186,11 +186,18 @@ def run_pipeline(action_path: str, repo_root: Optional[str] = None,
 
 
 def author_action(action_id: str, instruction: str,
-                  repo_root: Optional[str] = None) -> dict:
+                  repo_root: Optional[str] = None,
+                  ai_edit: Optional[Callable[[str, str, str], str]] = None) -> dict:
     """根据自然语言指令修改已有动作。
 
     当前实现：将 instruction 写入动作文件的 TODO 注释区，
               调用 AI 回调（由上层注入，或默认只记录指令）。
+
+    ``ai_edit`` 是上层注入的编辑回调（docs/10 §D.2 的注入点，此前文档宣称
+    可注入但签名上从未存在）：
+    ``ai_edit(original_text, instruction, file_path) -> str``
+    返回编辑后的完整文件文本。回调抛出的异常不吞 —— 原样上抛，
+    让调用方决定重试或放弃；文件在此前已写入指令记录，失败留痕。
 
     完整实现（docs/10 §D.2）：
         AI 客户端读取动作文件 → 理解 instruction → 调用文件系统编辑动作
@@ -203,6 +210,7 @@ def author_action(action_id: str, instruction: str,
         action_id: 要修改的动作 id。
         instruction: 自然语言修改指令。
         repo_root: 仓库根目录。
+        ai_edit: 可选编辑回调，签名 (original_text, instruction, file_path) -> str。
 
     返回:
         dict: {
@@ -210,6 +218,7 @@ def author_action(action_id: str, instruction: str,
             'instruction': 指令,
             'file_path': 动作文件路径,
             'pipeline': 7 步流水线结果,
+            'ai_applied': 是否应用了 ai_edit 编辑,
             'status': 'modified' | 'failed',
             'message': 说明,
         }
@@ -249,6 +258,21 @@ def author_action(action_id: str, instruction: str,
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(modified)
 
+    # AI 编辑回调（docs/10 §D.2 注入点）：拿到的是含指令记录后的文本。
+    # 异常不吞 —— 原样上抛让调用方决定重试/放弃；此时文件已带指令记录，失败留痕。
+    ai_applied = False
+    if ai_edit is not None:
+        edited = ai_edit(modified, instruction, file_path)
+        if not isinstance(edited, str):
+            raise ActionError(
+                'invalid_ai_edit_result',
+                f'ai_edit 回调必须返回 str，得到 {type(edited).__name__}',
+                {'action_id': action_id})
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(edited)
+        modified = edited
+        ai_applied = True
+
     # 重新解析并运行流水线
     new_action = parse_cfg_from_file(file_path)
     pipeline = Pipeline(new_action, repo_root=repo_root)
@@ -259,6 +283,7 @@ def author_action(action_id: str, instruction: str,
         'instruction': instruction,
         'file_path': os.path.abspath(file_path),
         'pipeline': result,
+        'ai_applied': ai_applied,
         'status': 'modified' if result['valid'] else 'needs_fix',
         'message': '修改已记录，校验通过' if result['valid'] else f'校验需修复: {[s for s in result["steps"] if not s["ok"]]}',
     }

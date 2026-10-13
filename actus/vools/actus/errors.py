@@ -9,6 +9,10 @@ ERROR_CODES = [
     'permission_denied', 'confirmation_timeout', 'timeout',
     'language_unavailable', 'visibility_denied', 'auth_required',
     'internal',
+    # 09-28 给 executor 补的"入口块一个字节都没打 ⇒ 不许记 ok"这条行为发的是
+    # entry_no_output，名单当时没同步 ⇒ 按这份名单分派的调用方会漏掉它。
+    # （docs/38 §1；executor.py 属禁改区，这里只补登记，不动行为。）
+    'entry_no_output',
 ]
 
 class ActionError(Exception):

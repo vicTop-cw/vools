@@ -569,13 +569,16 @@ class DependencyResolver:
 
         children = []
         for dep in deps:
-            if dep.type == "action":
+            # DepType 是普通 Enum，`dep.type == "action"` 恒 False ⇒ 动作级依赖
+            # 从来不递归（整棵树只有单层）；同处的 `"type": dep.type` 又把枚举
+            # 直接交给 json.dumps ⇒ `dep-tree` 子命令必然崩在 internal。
+            if dep.type == DepType.ACTION:
                 children.append(self.get_dep_tree(dep.name, depth + 1, visited.copy()))
             else:
                 result = self.check_dep(dep)
                 children.append({
                     "id": dep.name,
-                    "type": dep.type,
+                    "type": dep.type.value,
                     "satisfied": result.satisfied,
                     "message": result.message
                 })

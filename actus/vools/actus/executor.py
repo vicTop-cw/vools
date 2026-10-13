@@ -724,6 +724,32 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
                 # secrets 注入失败不阻断执行，动作代码自行处理缺失密钥
                 pass
 
+        # Phase 4：vault:// 前缀自动解析（docs/10 §D3）。密钥值形如
+        # `vault://<key>` 时，经 vault2 认证后用 resolve_vault_refs 换回明文。
+        # 与 secrets 注入同源：失败不阻断执行，动作代码自行处理缺失密钥。
+        try:
+            vault_refs = [
+                s for s in secrets_config
+                if str(s.get('key', s.get('env', ''))).startswith('vault://')
+            ]
+            if vault_refs:
+                from . import vault2 as vault2_mod
+                identity_id = os.environ.get('VAULT_IDENTITY_ID')
+                machine_id = os.environ.get('VAULT_MACHINE_ID')
+                pin = os.environ.get('VAULT_PIN')
+                if identity_id and machine_id and pin:
+                    auth_result = vault2_mod.auth(identity_id, machine_id, pin)
+                    if auth_result.get('status') == 'ok':
+                        token = auth_result['session_token']
+                        resolve_result = vault2_mod.resolve_vault_refs(token, vault_refs)
+                        if resolve_result.get('status') == 'ok':
+                            for env_name, env_value in resolve_result.get('resolved', {}).items():
+                                if env_value:
+                                    os.environ[env_name] = env_value
+        except Exception:
+            # vault:// 解析失败不阻断执行
+            pass
+
         if sandboxed:
             # docs/07 §5：沙箱动作强制落入 jail 根，环境变量指示边界
             build_dir = sbx.prepare(artifacts_dir, exec_id)
