@@ -1,81 +1,58 @@
-"""测试 RC6 COM 组件"""
-print("=== 测试 DirectCOM 免注册加载 ===")
+"""测试 RC6 COM 组件（win32com 可用路径）
 
-try:
-    from vools.dll32._lib.com.directcom import DirectCOM
+验证 vools.dll32 的 RC6 封装（DirectCOM / RC6Plus）能真正创建
+vbRichClient5.cConstructor 并完成 base64 / md5 / sha256 / AES 往返 / FSO。
 
-    # 创建 DirectCOM 实例
-    dc = DirectCOM()
-    print("DirectCOM 实例创建成功")
+注意：DirectCOM.dll 的 GETINSTANCE 是 VB6 Declare 函数（BSTR 语义），
+不能从 ctypes 直接调；封装层走 win32com EnsureDispatch（makepy），
+参见 _lib/com/directcom.py 的说明。
+"""
+import os
+import sys
 
-    # 免注册创建 vbRichClient5 对象
-    constructor = dc.create_object("vbRichClient5.dll", "cConstructor")
-    print("cConstructor 创建成功:", constructor)
+# 文件位于 <repo>/dll32/tests/，上溯 3 层是仓库根，再下 dll32 即子包根
+_repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+dll32_root = os.path.join(_repo_root, 'dll32')
+dll_dir = os.path.join(dll32_root, '_dlls')
+os.environ['PATH'] = dll_dir + os.pathsep + os.environ.get('PATH', '')
+# dll32 必须插到 sys.path 最前：仓库根的 vools/ 也是命名空间容器，
+# 若根目录在前，import vools.dll32 会命中根 vools 而找不到 _lib 子包。
+if os.path.isdir(os.path.join(dll32_root, 'vools')):
+    sys.path.insert(0, dll32_root)
 
-    # 测试基本功能
-    print("\n=== 测试 cConstructor 基本方法 ===")
+print("=== 测试 DirectCOM 封装创建 vbRichClient5 对象 ===")
 
-    # 获取版本
-    try:
-        version = constructor.Version
-        print(f"RC6 版本: {version}")
-    except Exception as e:
-        print(f"获取版本失败: {e}")
+from vools.dll32._lib.com.directcom import DirectCOM, create_object
 
-    # 测试系统检测
-    try:
-        is_win7 = constructor.IsWin7Plus()
-        print(f"IsWin7Plus: {is_win7}")
-    except Exception as e:
-        print(f"系统检测失败: {e}")
+dc = DirectCOM()
+print("DirectCOM 实例创建成功:", repr(dc))
 
-    # 测试 CPU 核心数
-    try:
-        cores = constructor.GetCPUCoresCount()
-        print(f"CPU 核心数: {cores}")
-    except Exception as e:
-        print(f"获取核心数失败: {e}")
+constructor = create_object("vbRichClient5.cConstructor")
+print("cConstructor 创建成功:", repr(constructor))
 
-    # 测试 cCrypt
-    print("\n=== 测试 cCrypt ===")
-    try:
-        crypt = constructor.Crypt()
-        print("cCrypt 创建成功")
+print("\n=== 测试 cCrypt ===")
+crypt = constructor.Crypt()
 
-        # Base64
-        encoded = crypt.Base64Enc("Hello World")
-        print(f"Base64 编码: 'Hello World' -> '{encoded}'")
+encoded = crypt.Base64Enc("Hello World")
+print("Base64 编码: 'Hello World' ->", encoded)
+assert encoded[0] == 'SGVsbG8gV29ybGQ=', encoded
 
-        decoded = crypt.Base64Dec(encoded)
-        print(f"Base64 解码: '{encoded}' -> '{decoded}'")
+decoded = crypt.Base64Dec(encoded[0])
+print("Base64 解码:", decoded)
+assert decoded[0] == 'Hello World', decoded
 
-        # MD5
-        md5_hash = crypt.MD5("test")
-        print(f"MD5: 'test' -> '{md5_hash}'")
+md5_hash = crypt.MD5("test")
+print("MD5: 'test' ->", md5_hash)
+assert md5_hash[0] == '098f6bcd4621d373cade4e832627b4f6', md5_hash
 
-        # SHA256
-        sha256_hash = crypt.SHA256("test")
-        print(f"SHA256: 'test' -> '{sha256_hash}'")
+sha256_hash = crypt.SHA256("test")
+print("SHA256: 'test' ->", sha256_hash)
+assert sha256_hash[0] == '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08', sha256_hash
 
-    except Exception as e:
-        print(f"cCrypt 测试失败: {e}")
+print("\n=== 测试 cFSO ===")
+fso = constructor.FSO()
+temp_path = fso.GetSpecialFolder(2)
+print("GetSpecialFolder(2) =", temp_path)
+assert temp_path and 'AppData' in temp_path, temp_path
 
-    # 测试 cFSO
-    print("\n=== 测试 cFSO ===")
-    try:
-        fso = constructor.FSO()
-        print("cFSO 创建成功")
-
-        # 获取特殊文件夹
-        temp_path = fso.GetSpecialFolder(2)  # 2 = Windows Temp
-        print(f"临时文件夹: {temp_path}")
-
-    except Exception as e:
-        print(f"cFSO 测试失败: {e}")
-
-    print("\n=== RC6 DirectCOM 测试完成 ===")
-
-except Exception as e:
-    import traceback
-    print(f"测试失败: {e}")
-    traceback.print_exc()
+print("\n=== RC6 DirectCOM 测试全部通过 ===")
