@@ -4,8 +4,19 @@ vools.serialize 单元测试
 
 import pytest
 
-# vools-rx 为可选子包：未安装时跳过 Reactive 序列化测试
+# vools-rx 为可选子包：未安装时跳过 Reactive 序列化测试。
+# 注意：vools-rx 是独立 namespace 包（rx/vools），core 目录跑测试时不在
+# sys.path 上，直接 import 会误判 rx 未安装（假 skip）。需先把 rx 包目录
+# 显式加入 sys.path，才能让 pkgutil.extend_path 合并出 vools.reactive。
 try:
+    import os
+    import sys
+    _RX_DIR = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        'rx',
+    )
+    if _RX_DIR not in sys.path:
+        sys.path.insert(0, _RX_DIR)
     import vools.reactive as _vools_rx
     _rx_available = True
 except ImportError:
