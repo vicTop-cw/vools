@@ -42,6 +42,14 @@ if not hasattr(subprocess.Popen.__init__, '_vools_patched'):
     _original_popen_init = subprocess.Popen.__init__
 
     def _popen_init(self, *args, **kwargs):
+        # Python 3.6 的 Popen 没有 text 参数（3.7+ 才加入 text 作为
+        # universal_newlines 的别名）。subprocess.run 会把 text 原样透传给
+        # Popen，导致 py3.6 下任何 subprocess.run(..., text=True) 都抛
+        # TypeError。这里统一转为 universal_newlines。
+        if sys.version_info < (3, 7) and 'text' in kwargs:
+            text_val = kwargs.pop('text')
+            if 'universal_newlines' not in kwargs:
+                kwargs['universal_newlines'] = text_val
         if kwargs.get('text') or kwargs.get('universal_newlines'):
             if 'errors' not in kwargs:
                 kwargs['errors'] = 'replace'
