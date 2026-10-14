@@ -99,7 +99,8 @@ def test_scaffolded_action_runs_under_md_block_semantics(scaffolded):
         'exec(compile(code, "<block>", "exec"), g)\n'
     )
     r = subprocess.run([sys.executable, '-c', runner],
-                       capture_output=True, text=True, env=env)
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       text=True, env=env)
     assert r.returncode == 0, f'块执行失败: {r.stderr[-400:]}'
     out = (r.stdout or '').strip()
     assert out, 'stdout 为空 —— 动作静默空转（docs/38 §1）'

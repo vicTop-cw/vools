@@ -124,10 +124,15 @@ class ActionRegistry:
             index = json.load(f)
 
         # 加载条目到内存
+        # py3.6 下 dataclass_compat 用 attrs 实现，类没有 __dataclass_fields__
+        # 属性，需回退到 __attrs_attrs__（attrs 的字段描述符）。
+        _entry_fields = getattr(RegistryEntry, '__dataclass_fields__', None)
+        if _entry_fields is None:
+            _entry_fields = {a.name: a for a in getattr(RegistryEntry, '__attrs_attrs__', ())}
         for raw in index.get("actions", []):
             entry = RegistryEntry(**{
                 k: v for k, v in raw.items()
-                if k in RegistryEntry.__dataclass_fields__
+                if k in _entry_fields
             })
             self._entries[entry.id] = entry
 
