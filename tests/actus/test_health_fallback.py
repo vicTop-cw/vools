@@ -28,7 +28,8 @@ def _run_vools_only(code):
         os.path.join(REPO, 'bridges'),
         os.path.join(REPO, 'rx'),
     ])
-    return subprocess.run([sys.executable, '-c', code], capture_output=True,
+    return subprocess.run([sys.executable, '-c', code],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           text=True, env=env, encoding='utf-8', errors='replace')
 
 
@@ -79,8 +80,9 @@ def test_check_vault_prefers_actuscore_when_present():
         os.path.join(REPO, 'actus'), REPO,
         os.path.join(REPO, 'bridges'), os.path.join(REPO, 'rx'),
     ])
-    p = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
-                       env=env, encoding='utf-8', errors='replace')
+    p = subprocess.run([sys.executable, '-c', code],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       text=True, env=env, encoding='utf-8', errors='replace')
     if p.returncode != 0:
         pytest.skip(f'Actus 引擎不可用，跳过对照格: {p.stderr[-200:]}')
     import json
