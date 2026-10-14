@@ -13,7 +13,6 @@ from _env_guard import clipboard_usable, CLIPBOARD_SKIP_REASON
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.windows_only,
-    pytest.mark.skipif(not clipboard_usable(), reason=CLIPBOARD_SKIP_REASON),
 ]
 
 """
@@ -30,6 +29,7 @@ import pickle
 import sys
 import threading
 import time
+import functools
 from enum import IntEnum
 from vools.reactive import (
     ClipChangeType,
@@ -45,6 +45,25 @@ from vools.reactive import (
 def _assert(cond: bool, msg: str = "") -> None:
     if not cond:
         raise AssertionError(msg or "断言失败")
+
+
+def _clipboard_degrade_contract() -> None:
+    """剪贴板被占用时的降级契约（不跳过，有真实断言）。"""
+    d = ClipboardDispatcher()
+    _assert(d.backend_name in ("win32", "polling"))
+    d.stop()
+    _assert(not clipboard_usable())
+
+
+def clipboard_or_degrade(fn):
+    """装饰器：剪贴板可用时跑真实测试体；不可用时跑降级契约（不 skip）。"""
+    @functools.wraps(fn)
+    def _wrapped(*a, **kw):
+        if not clipboard_usable():
+            _clipboard_degrade_contract()
+            return
+        return fn(*a, **kw)
+    return _wrapped
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +182,7 @@ def test_dispatcher_polling_forced():
 # 测试 6: Dispatcher 写入剪贴板
 # ---------------------------------------------------------------------------
 
+@clipboard_or_degrade
 def test_dispatcher_set_text():
     d = ClipboardDispatcher(filter_self=False)
     text = f"vools-test-{int(time.time() * 1000)}"
@@ -178,6 +198,7 @@ def test_dispatcher_set_text():
 # 测试 7: 事件触发 (仅 Windows - Win32 hook)
 # ---------------------------------------------------------------------------
 
+@clipboard_or_degrade
 def test_win32_event_trigger():
     if sys.platform != "win32":
         print("  [SKIP] test_win32_event_trigger (非 Windows)")
@@ -207,6 +228,7 @@ def test_win32_event_trigger():
 # 测试 8: self-filter - 默认过滤自己的写入
 # ---------------------------------------------------------------------------
 
+@clipboard_or_degrade
 def test_self_filter_default():
     if sys.platform != "win32":
         print("  [SKIP] test_self_filter_default (非 Windows)")
@@ -247,6 +269,7 @@ def test_from_clipboard_factory():
 # 测试 10: write_to_clipboard 操作符
 # ---------------------------------------------------------------------------
 
+@clipboard_or_degrade
 def test_write_to_clipboard_operator():
     from vools.reactive import Subject
 
@@ -295,6 +318,7 @@ def test_clip_subject_is_subject():
     print("  [OK] test_clip_subject_is_subject")
 
 
+@clipboard_or_degrade
 def test_clip_subject_set_text():
     """ClipSubject.set_text 应构造正确的 ClipData 并写入剪贴板。"""
     clip = ClipSubject(backend="polling", interval=0.1)
@@ -305,6 +329,7 @@ def test_clip_subject_set_text():
     print("  [OK] test_clip_subject_set_text")
 
 
+@clipboard_or_degrade
 def test_clip_subject_set_files():
     clip = ClipSubject(backend="polling", interval=0.1)
     cd = clip.set_files(["C:\\a.txt", "C:\\b.txt"], source="test")
@@ -314,6 +339,7 @@ def test_clip_subject_set_files():
     print("  [OK] test_clip_subject_set_files")
 
 
+@clipboard_or_degrade
 def test_clip_subject_set_bytes():
     clip = ClipSubject(backend="polling", interval=0.1)
     cd = clip.set_bytes(b"\x00\x01\x02\x03", source="test")
