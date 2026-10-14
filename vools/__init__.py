@@ -50,6 +50,22 @@ if not hasattr(subprocess.Popen.__init__, '_vools_patched'):
             text_val = kwargs.pop('text')
             if 'universal_newlines' not in kwargs:
                 kwargs['universal_newlines'] = text_val
+        # Python 3.6 的 subprocess.run 也没有 capture_output 参数（3.7+ 才加）。
+        # py3.6 的 run(*popenargs, input=None, timeout=None, check=False, **kwargs)
+        # 会把未知的 capture_output 直接透传给 Popen -> TypeError。
+        # 这里按 3.7+ run() 的语义还原：capture_output=True 等价于
+        # stdout=PIPE, stderr=PIPE；若调用方已显式指定 stdout/stderr 则保持
+        # 3.7+ 的行为报 ValueError。
+        if sys.version_info < (3, 7) and 'capture_output' in kwargs:
+            capture = kwargs.pop('capture_output')
+            if capture:
+                if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                    raise ValueError(
+                        'stdout and stderr arguments may not be used '
+                        'with capture_output.'
+                    )
+                kwargs['stdout'] = subprocess.PIPE
+                kwargs['stderr'] = subprocess.PIPE
         if kwargs.get('text') or kwargs.get('universal_newlines'):
             if 'errors' not in kwargs:
                 kwargs['errors'] = 'replace'
