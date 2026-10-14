@@ -51,10 +51,11 @@ class Python32Process:
             env = os.environ.copy()
             env['PYTHONPATH'] = ''
 
+            # py3.6 不支持 capture_output=（py3.7+ 才加），用显式 stdout/stderr=PIPE
             proc_result = subprocess.run(
                 [_PYTHON32_EXE, py_file],
-                capture_output=True,
-                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 env=env,
                 timeout=timeout,
             )
@@ -67,7 +68,10 @@ class Python32Process:
                     raise Exception(response['error'])
                 return response.get('result')
             else:
-                raise Exception('Response file not found. stderr: ' + proc_result.stderr)
+                _stderr = proc_result.stderr
+                if isinstance(_stderr, bytes):
+                    _stderr = _stderr.decode('utf-8', errors='replace')
+                raise Exception('Response file not found. stderr: ' + _stderr)
 
         finally:
             for f in [req_file, resp_file, py_file]:
