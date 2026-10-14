@@ -369,6 +369,13 @@ class _ClipboardReader:
     _instance_lock = threading.Lock()
     _shared: Optional["_ClipboardReader"] = None
 
+    # Win32 剪贴板是进程级单一资源：某线程 OpenClipboard 成功后即独占，
+    # 其它线程再 OpenClipboard 一律失败。polling 后端每 interval 读一次，
+    # 与主线程的 set_text 写入若不互斥会互相饿死——退避重试再多次也赶不上
+    # 0.1s 一轮的轮询抢锁。这把类级锁把「OpenClipboard -> CloseClipboard」
+    # 整段临界区串行化，读写才可能成功。
+    _clip_lock = threading.Lock()
+
     @classmethod
     def shared(cls) -> "_ClipboardReader":
         with cls._instance_lock:
@@ -399,6 +406,11 @@ class _ClipboardReader:
             return ClipChangeType.OTHER, None, [], {"error": repr(e)}
 
     def _read_win(self) -> Tuple[ClipChangeType, Optional[Union[str, bytes]], List[str], Dict[str, Any]]:
+        # 整段读操作持锁，避免与 polling 读取/主线程写入争抢剪贴板
+        with self._clip_lock:
+            return self._read_win_locked()
+
+    def _read_win_locked(self) -> Tuple[ClipChangeType, Optional[Union[str, bytes]], List[str], Dict[str, Any]]:
         for attempt in range(10):
             if not _user32.OpenClipboard(None):
                 time.sleep(0.05 * (attempt + 1))
@@ -554,6 +566,10 @@ class _ClipboardReader:
         self._clear()
 
     def _write_unicode(self, text: str) -> None:
+        with self._clip_lock:
+            self._write_unicode_locked(text)
+
+    def _write_unicode_locked(self, text: str) -> None:
         src = (text or "").encode("utf-16-le") + b"\x00\x00"
         last_err: Optional[OSError] = None
         for attempt in range(10):
@@ -584,6 +600,10 @@ class _ClipboardReader:
             raise last_err
 
     def _write_bytes(self, data: bytes, fmt: int) -> None:
+        with self._clip_lock:
+            self._write_bytes_locked(data, fmt)
+
+    def _write_bytes_locked(self, data: bytes, fmt: int) -> None:
         last_err: Optional[OSError] = None
         for attempt in range(10):
             try:
@@ -613,6 +633,10 @@ class _ClipboardReader:
             raise last_err
 
     def _write_hdrop(self, files: List[str]) -> None:
+        with self._clip_lock:
+            self._write_hdrop_locked(files)
+
+    def _write_hdrop_locked(self, files: List[str]) -> None:
         if not files:
             return
 
@@ -687,11 +711,12 @@ class _ClipboardReader:
 
     def _clear(self) -> None:
         if self._is_win:
-            if _user32.OpenClipboard(None):
-                try:
-                    _user32.EmptyClipboard()
-                finally:
-                    _user32.CloseClipboard()
+            with self._clip_lock:
+                if _user32.OpenClipboard(None):
+                    try:
+                        _user32.EmptyClipboard()
+                    finally:
+                        _user32.CloseClipboard()
         else:
             self._write_tk("")
 
