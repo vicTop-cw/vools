@@ -12,25 +12,41 @@ from typing import Optional, List
 
 _IS_WINDOWS = platform.system() == 'Windows'
 
+# 进程级缓存：WSL 可用性与「某命令是否在 WSL 中」在一次进程生命周期内不变。
+# 不加缓存时，bridges 探测路径（configs.resolve_compiler 第 7 步 / probe 的
+# 每个语言）会为每个语言各起 1 次 `wsl --version` + N 次 `wsl which`，
+# 累计几十次 wsl.exe 进程（实测 resolve_compiler 全量 17.6s、
+# 本机 probe 全量 36.8s，其中 dart 单语言 10.9s、freebasic 6.6s）。
+# 缓存后同一进程内只探测一次 WSL 可用性，命令查询按命令名缓存。
+_WSL_AVAILABLE_CACHE: Optional[bool] = None
+_WSL_COMMAND_CACHE: dict = {}
+
 
 def is_wsl_available() -> bool:
-    """检查 WSL 是否可用（仅 Windows 上）"""
+    """检查 WSL 是否可用（仅 Windows 上）。结果在进程内缓存。"""
+    global _WSL_AVAILABLE_CACHE
     if not _IS_WINDOWS:
         return False
+    if _WSL_AVAILABLE_CACHE is not None:
+        return _WSL_AVAILABLE_CACHE
     try:
         result = subprocess.run(
             ['wsl', '--version'],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             timeout=5,
         )
-        return result.returncode == 0
+        _WSL_AVAILABLE_CACHE = result.returncode == 0
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return False
+        _WSL_AVAILABLE_CACHE = False
+    return _WSL_AVAILABLE_CACHE
 
 
 def check_wsl_command(cmd: str) -> bool:
-    """检查 WSL 中是否存在指定命令"""
+    """检查 WSL 中是否存在指定命令。结果按命令名在进程内缓存。"""
+    if cmd in _WSL_COMMAND_CACHE:
+        return _WSL_COMMAND_CACHE[cmd]
     if not is_wsl_available():
+        _WSL_COMMAND_CACHE[cmd] = False
         return False
     try:
         result = subprocess.run(
@@ -38,9 +54,18 @@ def check_wsl_command(cmd: str) -> bool:
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             timeout=10,
         )
-        return result.returncode == 0 and result.stdout.strip() != b''
+        ok = result.returncode == 0 and result.stdout.strip() != b''
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return False
+        ok = False
+    _WSL_COMMAND_CACHE[cmd] = ok
+    return ok
+
+
+def reset_cache() -> None:
+    """清空 WSL 探测缓存（测试或环境变化后调用）。"""
+    global _WSL_AVAILABLE_CACHE
+    _WSL_AVAILABLE_CACHE = None
+    _WSL_COMMAND_CACHE.clear()
 
 
 def windows_to_wsl_path(windows_path: str) -> str:

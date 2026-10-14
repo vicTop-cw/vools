@@ -19,6 +19,7 @@ vools.bridge.probe - 跨语言编译环境探测工具
 
 import os
 import sys
+import time
 import platform
 import subprocess
 import shutil
@@ -29,6 +30,12 @@ from .core.compat.dataclass_compat import dataclass, field, asdict
 _IS_WINDOWS = platform.system() == 'Windows'
 _IS_LINUX = platform.system() == 'Linux'
 _IS_MACOS = platform.system() == 'Darwin'
+
+# WSL 探测总预算（秒）。WSL 探测要对每个语言 × 每个 command 各起一个
+# wsl.exe 子进程，累计上百次；某些机器上 wsl.exe 到期后不退出，会把
+# 调用方（如 bridges 全量测试）拖到分钟级甚至挂住。超预算后剩余语言
+# 标记为「未探测」并立即返回，保证调用方总能拿到结果。
+WSL_PROBE_BUDGET_SECONDS = 90
 
 # ============================================================================
 # 语言探测配置
@@ -785,6 +792,10 @@ def probe_wsl(
     if languages is None:
         languages = list(LANGUAGE_PROBES.keys())
 
+    # WSL 探测总预算：见下方循环里的说明。超时后剩余语言标记为未探测，
+    # 避免上百次 wsl 子进程把调用方拖死。
+    _wsl_budget_deadline = time.time() + WSL_PROBE_BUDGET_SECONDS
+
     # 获取 WSL 的发行版信息
     try:
         info = subprocess.run(
@@ -796,12 +807,16 @@ def probe_wsl(
     except Exception:
         os_info = 'WSL Linux'
 
-    arch_info = subprocess.run(
-        ['wsl', '-d', dist, '--', 'uname', '-m'],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        timeout=5,
-    )
-    arch = arch_info.stdout.decode('utf-8', errors='ignore').strip() or platform.machine()
+    arch = platform.machine()
+    try:
+        arch_info = subprocess.run(
+            ['wsl', '-d', dist, '--', 'uname', '-m'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=5,
+        )
+        arch = arch_info.stdout.decode('utf-8', errors='ignore').strip() or platform.machine()
+    except Exception:
+        arch = platform.machine()
 
     report = ProbeReport(
         platform=os_info,
@@ -811,6 +826,19 @@ def probe_wsl(
     )
 
     for lang in languages:
+        # WSL 探测要对「每个语言 × 每个 command」各起一次 wsl 进程，
+        # 累计可达上百次。某些机器上 wsl.exe 到期后不退出，整个探测会
+        # 拖到分钟级甚至挂住（bridges 全量跑不完即此因）。
+        # 这里加总预算：超时就把剩余语言标记为未探测，保证调用方
+        # 一定能拿到返回值而不是无限等下去。
+        if time.time() > _wsl_budget_deadline:
+            report.languages[lang] = LanguageStatus(
+                name=lang,
+                category=LANGUAGE_PROBES.get(lang, {}).get('category', ''),
+                available=False,
+                error='WSL 探测超预算（{}s 内未完成），未探测'.format(WSL_PROBE_BUDGET_SECONDS),
+            )
+            continue
         config = LANGUAGE_PROBES.get(lang)
         if not config:
             st = LanguageStatus(
@@ -1379,7 +1407,10 @@ def probe_all_wsl(languages: Optional[List[str]] = None) -> List[ProbeReport]:
     """
     reports = []
     distros = list_wsl_distributions()
+    deadline = time.time() + WSL_PROBE_BUDGET_SECONDS
     for dist in distros:
+        if time.time() > deadline:
+            break
         try:
             report = probe_wsl(dist=dist, languages=languages)
             reports.append(report)
