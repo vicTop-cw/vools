@@ -132,15 +132,27 @@ def _format_cell(value):
     return str(value)
 
 
-def _format_table(data):
-    """将二维数据格式化为类似 tabulate 的文本表格。"""
+def _format_table(data, has_header=True):
+    """将二维数据格式化为类似 tabulate 的文本表格。
+
+    Args:
+        data: 二维列表（可为参差行，短行右侧补空）。
+        has_header: 第一行是否为表头。True 时在表头下插入 ``---+---`` 分隔线；
+            False 时纯数据行，不插分隔线。
+
+    修复说明（2026-10-14）：
+    - 旧实现无论 ``has_header`` 与否【总是】插分隔线（且该参数根本没传进来），
+      导致 ``show_table(..., has_header=False)`` 输出仍是带表头分隔线的样子——
+      文档化参数完全失效。
+    - 旧实现还有一行 ``rows = [... for v in row]`` 分配出全表单元格的列表却
+      【从不使用】（O(行×列) 白分配），连同 ``num_rows`` / ``r`` 都是死代码。
+    """
     if not data:
         return ''
 
-    rows = [_format_cell(v) for row in data for v in row]
-
-    num_cols = max(len(row) for row in data) if data else 0
-    num_rows = len(data)
+    num_cols = max(len(row) for row in data)
+    if num_cols == 0:
+        return ''
 
     col_widths = [0] * num_cols
     for row in data:
@@ -150,14 +162,15 @@ def _format_table(data):
                 col_widths[i] = width
 
     lines = []
-    for r, row in enumerate(data):
+    for row in data:
         cells = []
         for c in range(num_cols):
             value = _format_cell(row[c]) if c < len(row) else ''
             cells.append(value.ljust(col_widths[c]))
         lines.append(' | '.join(cells))
 
-    if len(lines) > 1:
+    # 仅当有表头且不止表头一行时，才在表头下方加分隔线
+    if has_header and len(lines) > 1:
         sep = '-+-'.join('-' * w for w in col_widths)
         lines.insert(1, sep)
 
@@ -193,8 +206,8 @@ def show_table(data, title=None, has_header=True, modal=True, show_index=False):
     if normalized['type'] == 'book':
         for name, sheet_data in zip(normalized['names'], normalized['sheets']):
             output.append(f"\n[{name}]")
-            output.append(_format_table(sheet_data))
+            output.append(_format_table(sheet_data, has_header=has_header))
     else:
-        output.append(_format_table(normalized['data']))
+        output.append(_format_table(normalized['data'], has_header=has_header))
 
     print('\n'.join(output))
