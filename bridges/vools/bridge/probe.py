@@ -37,6 +37,17 @@ _IS_MACOS = platform.system() == 'Darwin'
 # 标记为「未探测」并立即返回，保证调用方总能拿到结果。
 WSL_PROBE_BUDGET_SECONDS = 90
 
+# 本机探测结果的进程级缓存：key=(lang, host) -> LanguageStatus。
+# 单语言探测含 PATH 查询 + 版本命令 + WSL 回退（后者最贵），同一进程内
+# 结果稳定；而 discover_all / configure_from_discovery / manager.get_status
+# 等入口会反复触发全量探测，不缓存时 bridges 集成测试累计数百秒。
+_LOCAL_PROBE_CACHE: Dict[Tuple[str, str], Any] = {}
+
+
+def reset_probe_cache() -> None:
+    """清空本机探测缓存（测试或环境变化后调用）。"""
+    _LOCAL_PROBE_CACHE.clear()
+
 # ============================================================================
 # 语言探测配置
 # ============================================================================
@@ -707,6 +718,8 @@ def probe_environment(
         host=host,
     )
 
+    # extra_env 为空时探测结果可安全缓存（等价于本机环境）
+    _cacheable = not extra_env
     for lang in languages:
         config = LANGUAGE_PROBES.get(lang)
         if not config:
@@ -718,7 +731,17 @@ def probe_environment(
                 install_hint='请在 vools.bridge.probe.LANGUAGE_PROBES 中添加该语言',
             )
         else:
-            st = _probe_one(lang, config, env=env)
+            # 进程级缓存：单次探测（尤其含 WSL 回退）成本高，同一进程内
+            # 结果稳定。discover_all/configure_from_discovery 等每调一次都会
+            # 全量重探，不加缓存时 bridges 的集成测试累计可达数百秒。
+            key = (lang, host)
+            cached = _LOCAL_PROBE_CACHE.get(key) if _cacheable else None
+            if cached is not None:
+                st = cached
+            else:
+                st = _probe_one(lang, config, env=env)
+                if _cacheable:
+                    _LOCAL_PROBE_CACHE[key] = st
         report.languages[lang] = st
 
     return report
