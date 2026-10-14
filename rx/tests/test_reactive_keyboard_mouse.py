@@ -186,7 +186,8 @@ def test_keyboard_dispatcher_context_manager():
 
 def test_keyboard_dispatcher_self_filter():
     kd = KeyboardDispatcher(backend="polling", filter_self=True)
-    kd.start()
+    # 不 start()：polling backend 会读真实键盘，全量跑时真实输入会额外触发
+    # _on_change 污染 dispatch_count。self_filter 是同步派发路径，无需 backend。
     kd._register_self_signature(KeyData.now(key_code=65, is_press=True))
     kd._dispatch_once(KeyData.now(key_code=65, is_press=True))
     assert kd.self_filtered_count == 1
@@ -226,7 +227,7 @@ def test_mouse_dispatcher_context_manager():
 
 def test_mouse_dispatcher_self_filter():
     ms = MouseDispatcher(backend="polling", filter_self=True)
-    ms.start()
+    # 不 start()：避免 polling backend 读真实鼠标输入污染 dispatch_count
     ms._register_self_signature(
         MouseData.now(x=100, y=200, event_type=MouseEventType.MOVE)
     )
