@@ -46,6 +46,22 @@ def _unwrap_result(result: Any) -> Any:
     return result
 
 
+def _to_bytes(value: Any) -> bytes:
+    """把 RC6 返回的 buffer/memory/array 转成 bytes。
+
+    RC6 的 AESEncrypt/AESDecrypt/ArcFour 等通过 SAFEARRAY(VT_UI1) 返回数据，
+    makepy 包装下是 memoryview/array；直接 bytes() 亦可。
+    """
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, (bytearray, memoryview)):
+        return bytes(value)
+    tobytes = getattr(value, 'tobytes', None)
+    if tobytes is not None:
+        return tobytes()
+    return bytes(value)
+
+
 class RC6Plus:
     """VBRichClient5 (RC6) 包装类
 
@@ -270,35 +286,48 @@ class RC6Plus:
         return _unwrap_result(result)
 
     def aes_encrypt(self, data: str, password: str = '',
-                    mode: int = 0, padding: int = 0) -> str:
+                    mode: int = 0, padding: int = 0) -> bytes:
         """AES 加密
 
         Args:
-            data: 待加密数据
+            data: 待加密数据 (str 或 bytes)
             password: 密码
             mode: 模式 (0-ECB, 1-CBC)
             padding: 填充方式
 
         Returns:
-            加密后的 Base64 字符串
+            加密后的字节串
+
+        注意:
+            RC6 cCrypt.AESEncrypt 接受 Byte Array 数据参数，
+            makepy 下需传 bytes/bytearray；返回 (True, SAFEARRAY, Password, Mode)。
         """
-        result = self.crypt.AESEncrypt(data, password, mode, padding)
+        raw = data.encode('utf-8') if isinstance(data, str) else bytes(data)
+        result = self.crypt.AESEncrypt(raw, password)
+        if isinstance(result, tuple) and len(result) >= 2:
+            return _to_bytes(result[1])
         return _unwrap_result(result)
 
-    def aes_decrypt(self, encrypted: str, password: str = '',
-                    mode: int = 0, padding: int = 0) -> str:
+    def aes_decrypt(self, encrypted, password: str = '',
+                    mode: int = 0, padding: int = 0) -> bytes:
         """AES 解密
 
         Args:
-            encrypted: 加密文本 (Base64)
+            encrypted: 加密数据 (bytes/bytearray/str)
             password: 密码
             mode: 模式 (0-ECB, 1-CBC)
             padding: 填充方式
 
         Returns:
-            解密后的原文
+            解密后的字节串
         """
-        result = self.crypt.AESDecrypt(encrypted, password, mode, padding)
+        if isinstance(encrypted, str):
+            raw = encrypted.encode('utf-8')
+        else:
+            raw = bytes(encrypted)
+        result = self.crypt.AESDecrypt(raw, password)
+        if isinstance(result, tuple) and len(result) >= 2:
+            return _to_bytes(result[1])
         return _unwrap_result(result)
 
     def read_text(self, file_path: str, encoding: str = 'utf-8') -> str:
@@ -325,7 +354,7 @@ class RC6Plus:
         self.fso.SaveTextContent(content, file_path, encoding)
 
     def __repr__(self) -> str:
-        return f"<RC6Plus>"
+        return f"<RC6Plus constructor={self._constructor!r}>"
 
 
 # 全局实例 (延迟初始化)

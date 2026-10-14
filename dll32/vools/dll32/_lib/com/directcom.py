@@ -57,9 +57,9 @@ class DirectCOM:
         if self._pythoncom is None:
             try:
                 import pythoncom
-                from win32com.client import Dispatch
+                from win32com.client.gencache import EnsureDispatch
                 self._pythoncom = pythoncom
-                self._Dispatch = Dispatch
+                self._Dispatch = EnsureDispatch
             except ImportError as e:
                 raise ImportError(
                     "pythoncom 未安装。请确保 Python 32 位环境中已安装 pywin32:\n"
@@ -75,6 +75,14 @@ class DirectCOM:
 
         Returns:
             COM 对象
+
+        注意:
+            使用 win32com 的 EnsureDispatch（makepy 生成的强类型包装）。
+            对 vbRichClient5 等带 TypeLib 的 VB6 COM 组件，makepy 是必需的：
+            - 否则 AESEncrypt/ArcFour 等接受 SAFEARRAY(VT_UI1) 的方法会因
+              win32com 无法把 bytes/array 转成 VB6 Byte Array 而报 "Type mismatch"。
+            - comtypes 对 vbRichClient5 的 TypeLib 解析失败
+              （GetRefTypeInfo failed, E:Cannot load DLL），不适用。
         """
         _, Dispatch = self._ensure_pythoncom()
 
@@ -84,7 +92,6 @@ class DirectCOM:
             return obj
         except Exception as e:
             raise RuntimeError(f"无法创建 COM 对象 {prog_id}: {e}")
-
     def create_with_pythoncom(self, prog_id: str) -> Any:
         """使用 pythoncom 创建对象 (显式方式)
 
