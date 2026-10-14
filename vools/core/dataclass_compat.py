@@ -171,6 +171,12 @@ else:
             # KeyData.key_name 恒为空串的根因）。
             if hasattr(c, '__post_init__') and not hasattr(c, '__attrs_post_init__'):
                 c.__attrs_post_init__ = c.__post_init__
+            # 类已自定义 __repr__ 时不生成 attrs 的 repr，与标准库 dataclass
+            # 行为一致（标准库 dataclass 只在未显式定义 __repr__ 时才生成）。
+            # attrs 默认 repr=True 会覆盖自定义 __repr__（如 md/parser.py 的
+            # InlineText，其 repr 输出 [B]'text' 风格的标记）。
+            if 'repr' not in _attrs_kwargs and '__repr__' in c.__dict__:
+                _attrs_kwargs['repr'] = False
             wrapped = attrs(c, **_attrs_kwargs)
             return wrapped
 

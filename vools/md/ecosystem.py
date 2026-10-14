@@ -168,7 +168,8 @@ def markdown_to_pdf_via_cli(markdown_text: str, filepath: str, theme: str = 'git
         # 尝试通过 playwright CLI 生成 PDF
         result = subprocess.run(
             ['npx', 'playwright', 'pdf', tmp_html, filepath],
-            capture_output=True, text=True, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, timeout=30,
         )
         if result.returncode == 0:
             os.unlink(tmp_html)
