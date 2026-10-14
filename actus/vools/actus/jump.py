@@ -6,9 +6,32 @@
 import fnmatch
 import os
 import posixpath
+import stat
 import subprocess
 import time
 from typing import Dict, List, Optional, Tuple
+
+
+def shquote(value) -> str:
+    """把一个值安全地引用为【单个】POSIX shell 单词。
+
+    jump 通过 ssh 在远端 shell 里执行 find/mkdir/tar，路径与 --exclude 模式
+    历史上用 f-string 裸拼：含空格的路径（文档示例 ``Victor/My Build/x.jar``）
+    会被拆成多个词导致传输失败，含 ``;`` / ``$()`` / 反引号的值更可注入任意
+    远端命令。这里统一用单引号包裹，并把值内部的单引号转成 ``'\\''``
+    （POSIX 安全引用：单引号内一切皆字面量，唯一需要处理的就是单引号本身）。
+
+    非字符串先转字符串；None 转空串。
+
+    Example:
+        >>> shquote('a b') == "'a b'"
+        True
+        >>> shquote("x'y") == "'x'\\\\''y'"
+        True
+    """
+    if value is None:
+        value = ""
+    return "'" + str(value).replace("'", "'\\''") + "'"
 
 
 def remote_join(base: str, relpath: str) -> str:
@@ -109,7 +132,8 @@ def scan_remote_files(remote_path: str, remote_host: str, remote_user: str,
     """扫描远程文件，返回 {相对路径: {size, mtime}} 字典。"""
     exclude = exclude or []
     remote_target = f"{remote_user}@{remote_host}"
-    cmd = f"find {remote_path} -type f -printf '%T@ %s %p\\n' 2>/dev/null"
+    cmd = ("find " + shquote(remote_path)
+           + " -type f -printf '%T@ %s %p\\n' 2>/dev/null")
 
     ssh_cmd = ["ssh"] + build_ssh_opts(key_path, port, timeout)
     ssh_cmd.extend([remote_target, cmd])
@@ -318,11 +342,17 @@ def resolve_conflict(conflict: dict, local_path: str, remote_path: str,
 
 def push(local_path: str, remote_path: str,
          remote_host: str, remote_user: str,
-         port: int = 22, method: str = "scp",
+         port: int = 22, method: str = "paramiko",
          exclude: List[str] = None, key_path: str = None,
          password: str = None, dry_run: bool = False,
          timeout: int = 300) -> dict:
-    """推送本地文件到远程。"""
+    """推送本地文件到远程。
+
+    method 三条路，默认 paramiko（纯 Python SFTP，见 _push_paramiko）：
+    - paramiko/sftp：纯 Python，不依赖远端有 ssh/lftp 工具，排除规则本地判定
+    - tar+ssh：走系统 ssh + tar
+    - 其它（scp 等）：走系统 scp
+    """
     files = collect_files(local_path, exclude)
     if not files:
         return {"status": "ok", "files_transferred": 0, "bytes": 0, "message": "没有需要传输的文件"}
@@ -331,7 +361,10 @@ def push(local_path: str, remote_path: str,
         return {"status": "ok", "files_transferred": 0, "dry_run": True,
                 "files": files[:50], "total_files": len(files)}
 
-    if method == "tar+ssh":
+    if method in ("paramiko", "sftp"):
+        return _push_paramiko(local_path, remote_path, remote_host, remote_user,
+                              port, key_path, password, exclude, timeout)
+    elif method == "tar+ssh":
         return _push_tar_ssh(local_path, remote_path, remote_host, remote_user,
                              port, key_path, password, exclude, timeout)
     else:
@@ -341,18 +374,23 @@ def push(local_path: str, remote_path: str,
 
 def pull(remote_path: str, local_path: str,
          remote_host: str, remote_user: str,
-         port: int = 22, method: str = "scp",
+         port: int = 22, method: str = "paramiko",
          exclude: List[str] = None, key_path: str = None,
          password: str = None, dry_run: bool = False,
          timeout: int = 300) -> dict:
-    """从远程拉取文件到本地。"""
+    """从远程拉取文件到本地（method 语义同 push，默认 paramiko）。"""
     os.makedirs(local_path, exist_ok=True)
 
     if dry_run:
-        return {"status": "ok", "files_transferred": 0, "dry_run": True,
-                "message": "预览模式"}
+        # files_transferred/bytes 显式给 0：dry_run 的出参形状必须与真跑一致，
+        # 否则调用方要按两套形状处理。
+        return {"status": "ok", "files_transferred": 0, "bytes": 0,
+                "dry_run": True, "transport": method, "message": "预览模式"}
 
-    if method == "tar+ssh":
+    if method in ("paramiko", "sftp"):
+        return _pull_paramiko(remote_path, local_path, remote_host, remote_user,
+                              port, key_path, password, exclude, timeout)
+    elif method == "tar+ssh":
         return _pull_tar_ssh(remote_path, local_path, remote_host, remote_user,
                              port, key_path, password, exclude, timeout)
     else:
@@ -366,8 +404,17 @@ def sync(local_path: str, remote_path: str,
          strategy: str = "newer", exclude: List[str] = None,
          key_path: str = None, password: str = None,
          dry_run: bool = False, timeout: int = 600,
-         delete: bool = False) -> dict:
-    """双向同步。"""
+         delete: bool = False, method: str = "paramiko") -> dict:
+    """双向同步（method 语义同 push，默认 paramiko）。
+
+    method 加在**参数表末尾**：jump_sync 动作按位置传前 13 个实参，
+    插在中间会把 direction/strategy 整列错位。
+    """
+    if method in ("paramiko", "sftp"):
+        return _sync_paramiko(local_path, remote_path, remote_host, remote_user,
+                              port, direction, strategy, exclude, key_path,
+                              password, dry_run, timeout, delete)
+
     local_files = scan_local_files(local_path, exclude)
     remote_files = scan_remote_files(remote_path, remote_host, remote_user,
                                      port, key_path, password, exclude, timeout)
@@ -421,7 +468,8 @@ def _push_scp(local_path, remote_path, remote_host, remote_user,
     # 两种入参形状都要先把远端目录建出来 —— scp 不会自己建，单文件分支以前跳过
     # 这一步：`scp: dest open "/tmp/…/push_1": No such file or directory`。
     ssh_cmd = ["ssh"] + build_ssh_opts(key_path, port, timeout)
-    ssh_cmd.extend([f"{remote_user}@{remote_host}", f"mkdir -p {remote_path}"])
+    ssh_cmd.extend([f"{remote_user}@{remote_host}",
+                    "mkdir -p " + shquote(remote_path)])
     subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
     scp_cmd.extend([local_path, remote_target])
 
@@ -441,7 +489,8 @@ def _push_tar_ssh(local_path, remote_path, remote_host, remote_user,
                   port, key_path, password, exclude, timeout):
     """tar+ssh 推送。"""
     remote_target = f"{remote_user}@{remote_host}"
-    remote_cmd = f"mkdir -p {remote_path} && tar xzf - -C {remote_path}"
+    qrp = shquote(remote_path)
+    remote_cmd = "mkdir -p " + qrp + " && tar xzf - -C " + qrp
     tar_cmd = ["tar", "czf", "-"]
     for pattern in exclude or []:
         tar_cmd.extend(["--exclude", pattern])
@@ -497,10 +546,14 @@ def _pull_tar_ssh(remote_path, local_path, remote_host, remote_user,
                   port, key_path, password, exclude, timeout):
     """tar+ssh 拉取。"""
     remote_target = f"{remote_user}@{remote_host}"
+    qrp = shquote(remote_path)
     remote_tar_cmd = "tar czf -"
     for pattern in exclude or []:
-        remote_tar_cmd += f" --exclude '{pattern}'"
-    remote_tar_cmd += f" -C {os.path.dirname(remote_path)} {os.path.basename(remote_path)}"
+        # 不能手工包单引号：pattern 内含单引号即闭合注入；统一走 shquote
+        remote_tar_cmd += " --exclude " + shquote(pattern)
+    # dirname/basename 后再引用：POSIX 远端，用 posixpath 切（remote_path 是远端路径）
+    remote_tar_cmd += (" -C " + shquote(posixpath.dirname(remote_path))
+                       + " " + shquote(posixpath.basename(remote_path)))
 
     try:
         ssh_cmd = ["ssh"] + build_ssh_opts(key_path, port, timeout) + [remote_target, remote_tar_cmd]
@@ -535,11 +588,542 @@ __all__ = [
     'pull',
     'push',
     'remote_join',
+    'scan_remote_files_paramiko',
+    '_sync_paramiko',
+    '_pull_paramiko',
+    '_push_paramiko',
+    '_sftp_makedirs',
+    '_sftp_close',
+    '_sftp_connect',
+    '_import_paramiko',
+    'PARAMIKO_HINT',
     'remote_join',
     'resolve_conflict',
     'scan_local_files',
     'scan_remote_files',
+    'shquote',
     'should_exclude',
     'sync',
     'upload_single'
 ]
+
+
+# ============================================================
+# paramiko(SFTP) 后端 —— 默认传输路径
+# ============================================================
+#
+# 为什么排在 scp/tar+ssh 前面（owner 2026-10-13 定：优先使用 paramiko）：
+#
+# 1. **纯 Python，不依赖外部工具**。scp/ssh/tar 三条老路都要本机装 OpenSSH 客户端
+#    （Windows 10 1809 以后才有 scp，还常缺 tar）；paramiko 只要能 import。
+# 2. **不依赖远端有命令**。tar+ssh 在远端跑 `tar xzf`，缺 tar 就整条失败。
+# 3. **排除规则本地判定完**，远端零命令（老路的 tar --exclude 是远端执行的）。
+# 4. **一次连接传所有文件**。老路的 batch_upload 是**每个文件起一个 scp 进程**
+#    （upload_single 里 subprocess.run），传 1000 个文件就是 1000 次 TCP+握手。
+# 5. **主机密钥策略可控**：AutoAddPolicy 等价于老路的 StrictHostKeyChecking=no，
+#    但显式写出来比藏在 ssh 命令行里好审计。
+#
+# 代价与边界：
+# - paramiko 不是 stdlib，按可选依赖惰性导入（见 _import_paramiko）；缺失时给
+#   可执行提示而不是静默回退到 scp（docs/38 §1：严禁静默降级）。
+# - 密钥认证走 paramiko 自己的 agent/look_for_keys，与 ssh 的 ~/.ssh/config
+#   （IdentityFile、ProxyJump 等）**不等价**：需要跳板链时仍走 tar+ssh 或 ssh -J。
+
+PARAMIKO_HINT = (
+    "缺少 paramiko：pip install paramiko；"
+    "或显式指定 method=tar+ssh / scp 走系统 ssh 工具"
+)
+
+
+def _import_paramiko():
+    """惰性导入 paramiko，返回 (module, None) 或 (None, 错误文案)。
+
+    为什么不放在模块顶层：paramiko 是可选依赖，顶层硬 import 会让**整个模块**
+    在没装它的机器上不可用 —— 而 scp/tar+ssh 两条路根本不需要它。
+    """
+    try:
+        import paramiko
+    except ImportError as e:
+        return None, "%s（%s）" % (PARAMIKO_HINT, e)
+    return paramiko, None
+
+
+def _patch_paramiko_filename_decoding():
+    """把 paramiko 的回包解码改成 surrogateescape，幂等；返回是否成功。
+
+    实测坑（2026-10-13 真机 47.93.7.122:10022）：远端目录里只要有一个非ASCII
+    文件名，`listdir_attr` / `listdir` 就抛
+        UnicodeDecodeError: 'utf-8' codec can't decode bytes in position 61-62
+    栈在 paramiko/message.py 的 `get_text -> util.u -> s.decode('utf-8')`。
+    根因是同一批回包里两个字段编码不同：
+      - filename：SFTP 协议规定的字节，我们自己按 utf-8 传的 ⇒ 合法；
+      - longname：服务端按**本地 locale** 生成的 `ls -l` 可读行 ⇒ 非 utf-8。
+    而 longname 的内容我们从不读（只用 filename/st_mode/st_size/st_mtime），
+    却要为它的解码失败整条传输/扫描买单。
+
+    修法：只把解码策略换成 surrogateescape —— 非法字节保留原样、可往返回服务端，
+    合法 utf-8 完全不受影响。**不改 paramiko 源码**，只在本进程内换掉
+    Message.get_text（幂等：打过一次就不再打）。
+    """
+    try:
+        from paramiko.message import Message
+    except Exception:
+        return False
+    if getattr(Message.get_text, "_actus_surrogateescape", False):
+        return True
+
+    def get_text(self):
+        raw = self.get_string()
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            # 保留原字节（surrogateescape 可往返）：发给服务端的路径因此还是对的
+            return raw.decode("utf-8", "surrogateescape")
+
+    get_text._actus_surrogateescape = True
+    Message.get_text = get_text
+    return True
+
+
+def _sftp_connect(remote_host, remote_user, port=22, key_path=None,
+                  password=None, timeout=300):
+    """建 SFTP 会话。
+
+    返回 ((client, sftp), None) 或 (None, 错误 dict)；调用方负责 close。
+    主机密钥策略用 AutoAddPolicy —— 与 build_ssh_opts 里那两条
+    StrictHostKeyChecking=no / UserKnownHostsFile=/dev/null 对齐；
+    不设的话首次连任何机器都会抛 "not found in known_hosts"。
+    """
+    _patch_paramiko_filename_decoding()
+    paramiko, err = _import_paramiko()
+    if paramiko is None:
+        return None, {"status": "error", "message": err}
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    kwargs = {
+        "hostname": remote_host,
+        "username": remote_user,
+        "port": int(port),
+        "timeout": timeout,
+        "auth_timeout": timeout,
+        "banner_timeout": timeout,
+        "allow_agent": True,
+        "look_for_keys": True,
+    }
+    if key_path and os.path.isfile(key_path):
+        kwargs["key_filename"] = key_path
+    if password:
+        kwargs["password"] = password
+
+    try:
+        client.connect(**kwargs)
+    except Exception as e:
+        try:
+            client.close()
+        except Exception:
+            pass
+        return None, {"status": "error", "message": "SSH 连接失败: %s" % e}
+
+    try:
+        sftp = client.open_sftp()
+    except Exception as e:
+        try:
+            client.close()
+        except Exception:
+            pass
+        return None, {"status": "error", "message": "打开 SFTP 通道失败: %s" % e}
+    return (client, sftp), None
+
+
+SFTP_KIND_FILE = "file"
+SFTP_KIND_DIR = "dir"
+SFTP_KIND_OTHER = "other"
+
+
+def _sftp_entry_kind(attr):
+    """判定一个 SFTP 条目是目录 / 普通文件 / 其他，并回报是否靠了兜底。
+
+    为什么不能直接信 S_ISREG/S_ISDIR —— 实测这台跳板机的 sftp-server 对**文件**
+    返回的 st_mode 只有权限位（0o666），**没有 S_IFREG 类型位**（正常 Linux 会给
+    0o100666）；目录的类型位倒是全的（0o40666）。于是 S_ISREG(0o666) -> False，
+    所有文件被静默跳过：scan 返回 {}、pull 报"成功"却传 0 个字节，全程不报错
+    （单测的 FakeSFTP 造的是标准 S_IFREG|0o644，所以这类用例全绿也抓不到）。
+
+    判定顺序（先看类型位，再兜底）：
+        S_IFDIR                -> dir
+        S_IFREG                -> file
+        类型位全 0 且权限位非 0  -> file（服务端没给类型位，兜底）
+        类型位非 0 且非 DIR/REG  -> other（符号链接/设备/fifo，不传）
+        全 0                    -> other（无从判断，不猜）
+
+    返回 (kind, inferred)：inferred=True 表示这条是靠兜底判的，调用方把它
+    如实报进出参（mode_inferred），免得"兜底"又变成一件看不见的事。
+    """
+    mode = getattr(attr, "st_mode", 0) or 0
+    if stat.S_ISDIR(mode):
+        return SFTP_KIND_DIR, False
+    if stat.S_ISREG(mode):
+        return SFTP_KIND_FILE, False
+    type_bits = mode & 0o170000
+    if type_bits == 0:
+        if mode & 0o777:
+            return SFTP_KIND_FILE, True
+        return ((SFTP_KIND_FILE, True) if getattr(attr, "st_size", 0)
+                else (SFTP_KIND_OTHER, True))
+    return SFTP_KIND_OTHER, False
+
+
+def _sftp_close(client, sftp):
+    """关会话：两个 close 都要试 —— 一处抛异常不能连带另一处漏关（漏的是连接）。"""
+    for closer in (sftp, client):
+        try:
+            closer.close()
+        except Exception:
+            pass
+
+
+def _sftp_makedirs(sftp, remote_dir):
+    """SFTP 建多级目录（paramiko 只有 mkdir，没有 mkdir -p）。
+
+    已存在就跳过；"刚被别人建好"那种竞态再 stat 一次确认，确认存在即当成功
+    —— 否则并发写同一目录时第二个写者会拿到一个假的失败。
+    """
+    if not remote_dir:
+        return
+    normalized = remote_dir.replace("\\", "/")
+    cur = "/" if normalized.startswith("/") else ""
+    for part in [p for p in normalized.split("/") if p]:
+        cur = posixpath.join(cur, part) if cur else part
+        try:
+            sftp.stat(cur)
+            continue
+        except IOError:
+            pass
+        try:
+            sftp.mkdir(cur)
+        except IOError:
+            try:
+                sftp.stat(cur)
+            except IOError:
+                raise
+
+
+def _sftp_walk_put(sftp, local_root, remote_root, exclude, counter, errors):
+    """本地目录 → 远端，逐文件 put（counter/errors 由调用方持有便于汇总）。"""
+    for name in sorted(os.listdir(local_root)):
+        lpath = os.path.join(local_root, name)
+        if os.path.isdir(lpath):
+            if should_exclude(name, exclude):
+                continue
+            rpath = posixpath.join(remote_root, name)
+            _sftp_makedirs(sftp, rpath)
+            _sftp_walk_put(sftp, lpath, rpath, exclude, counter, errors)
+        elif os.path.isfile(lpath):
+            if should_exclude(name, exclude):
+                continue
+            rpath = posixpath.join(remote_root, name)
+            try:
+                sftp.put(lpath, rpath)
+                counter["files"] += 1
+                counter["bytes"] += os.path.getsize(lpath)
+            except Exception as e:
+                errors.append("上传失败 %s: %s" % (rpath, e))
+
+
+def _sftp_walk_get(sftp, remote_root, local_root, exclude, counter, errors):
+    """远端目录 → 本地，逐文件 get。
+
+    符号链接/设备文件一类非普通文件**跳过**（SFTP 读不出目标内容），
+    计数进 counter["skipped"]，不混进 errors —— 它们不是失败，是有意不传。
+    """
+    for attr in sftp.listdir_attr(remote_root):
+        name = attr.filename
+        if should_exclude(name, exclude):
+            continue
+        rpath = posixpath.join(remote_root, name)
+        lpath = os.path.join(local_root, name)
+        kind, inferred = _sftp_entry_kind(attr)
+        if kind == SFTP_KIND_DIR:
+            os.makedirs(lpath, exist_ok=True)
+            _sftp_walk_get(sftp, rpath, lpath, exclude, counter, errors)
+        elif kind == SFTP_KIND_FILE:
+            try:
+                sftp.get(rpath, lpath)
+                counter["files"] += 1
+                counter["bytes"] += int(getattr(attr, "st_size", 0) or 0)
+                if inferred:
+                    counter["mode_inferred"] = counter.get("mode_inferred", 0) + 1
+            except Exception as e:
+                errors.append("下载失败 %s: %s" % (rpath, e))
+        else:
+            counter["skipped"] += 1
+
+
+def _paramiko_result(counter, errors, extra=None):
+    """paramiko 各路共用的出参形状：ok / partial + 计数 + transport 自报家门。"""
+    status = "ok" if not errors else "partial"
+    out = {
+        "status": status,
+        "files_transferred": counter["files"],
+        "bytes": counter["bytes"],
+        "transport": "paramiko",
+    }
+    if counter.get("skipped"):
+        out["skipped_non_regular"] = counter["skipped"]
+    if counter.get("mode_inferred"):
+        # 服务端没给 st_mode 文件类型位、靠兜底判成文件的条数。如实报出：
+        # 计数只在 counter 里、出参不露的话，"判定是兜底的"这件事就又是看不见的。
+        out["mode_inferred"] = counter["mode_inferred"]
+    if errors:
+        out["errors"] = errors[:10]
+    if extra:
+        out.update(extra)
+    return out
+
+
+def _push_paramiko(local_path, remote_path, remote_host, remote_user,
+                   port=22, key_path=None, password=None, exclude=None,
+                   timeout=300):
+    """paramiko(SFTP) 推送：目录递归建 + 逐文件 put；单文件按全路径 put。"""
+    pair, err = _sftp_connect(remote_host, remote_user, port, key_path,
+                              password, timeout)
+    if err:
+        return err
+    client, sftp = pair
+
+    counter = {"files": 0, "bytes": 0, "skipped": 0}
+    errors = []
+    try:
+        if os.path.isfile(local_path):
+            # 单文件：remote_path 就是**文件全路径**，不能再拼一层 basename
+            # （scp 老路在这里踩过 dest open .../push_1: No such file or directory）。
+            remote_dir = posixpath.dirname(remote_path.replace("\\", "/"))
+            if remote_dir:
+                _sftp_makedirs(sftp, remote_dir)
+            sftp.put(local_path, remote_path)
+            counter["files"] = 1
+            counter["bytes"] = os.path.getsize(local_path)
+        elif os.path.isdir(local_path):
+            _sftp_makedirs(sftp, remote_path)
+            _sftp_walk_put(sftp, local_path, remote_path, exclude or [],
+                           counter, errors)
+        else:
+            return {"status": "error", "message": "本地路径不存在: %s" % local_path}
+    except Exception as e:
+        return {"status": "error", "message": "SFTP 推送失败: %s" % e}
+    finally:
+        _sftp_close(client, sftp)
+    return _paramiko_result(counter, errors)
+
+
+def _pull_paramiko(remote_path, local_path, remote_host, remote_user,
+                   port=22, key_path=None, password=None, exclude=None,
+                   timeout=300):
+    """paramiko(SFTP) 拉取：远端是文件就落到 local_path，是目录就递归取。"""
+    import stat as _stat
+
+    pair, err = _sftp_connect(remote_host, remote_user, port, key_path,
+                              password, timeout)
+    if err:
+        return err
+    client, sftp = pair
+
+    counter = {"files": 0, "bytes": 0, "skipped": 0}
+    errors = []
+    try:
+        remote_path = remote_path.replace("\\", "/")
+        try:
+            attr = sftp.stat(remote_path)
+        except IOError as e:
+            return {"status": "error",
+                    "message": "远端路径不可读: %s（%s）" % (remote_path, e)}
+
+        if _stat.S_ISREG(attr.st_mode):
+            # local_path 已是目录 → 放进去（对齐 scp -r 的落位行为）
+            target = (os.path.join(local_path, posixpath.basename(remote_path))
+                      if os.path.isdir(local_path) else local_path)
+            parent = os.path.dirname(target)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            sftp.get(remote_path, target)
+            counter["files"] = 1
+            counter["bytes"] = int(getattr(attr, "st_size", 0) or 0)
+        elif _stat.S_ISDIR(attr.st_mode):
+            os.makedirs(local_path, exist_ok=True)
+            _sftp_walk_get(sftp, remote_path, local_path, exclude or [],
+                           counter, errors)
+        else:
+            return {"status": "error",
+                    "message": "远端路径既不是文件也不是目录: %s" % remote_path}
+    except Exception as e:
+        return {"status": "error", "message": "SFTP 拉取失败: %s" % e}
+    finally:
+        _sftp_close(client, sftp)
+    return _paramiko_result(counter, errors)
+
+
+def scan_remote_files_paramiko(remote_path: str, remote_host: str,
+                               remote_user: str, port: int = 22,
+                               key_path: str = None, password: str = None,
+                               exclude: List[str] = None,
+                               timeout: int = 60,
+                               inferred_counter: list = None) -> Dict[str, dict]:
+    """paramiko 版远端扫描：SFTP 递归 stat，不在远端跑任何命令。
+
+    ssh 版 scan_remote_files 依赖远端 `find <path> -type f -printf '%T@ %s %p'`：
+    minimal 容器常常没有 find，或 busybox find 不支持 -printf ⇒ 整次扫描直接失败，
+    sync 于是把"扫不出来"当成"远端没有文件"，plan 全落到 upload 侧。
+    SFTP 这条路只需要远端开 SSH 子系统。
+    """
+    exclude = exclude or []
+    pair, err = _sftp_connect(remote_host, remote_user, port, key_path,
+                              password, timeout)
+    if err:
+        return {"__error__": err["message"]}
+    client, sftp = pair
+
+    files: Dict[str, dict] = {}
+
+    inferred_count = [0]
+
+    def walk(remote_dir, rel_base):
+        try:
+            entries = sftp.listdir_attr(remote_dir)
+        except IOError as e:
+            raise RuntimeError("列目录失败 %s: %s" % (remote_dir, e))
+        for attr in entries:
+            if should_exclude(attr.filename, exclude):
+                continue
+            relpath = (posixpath.join(rel_base, attr.filename)
+                       if rel_base else attr.filename)
+            kind, inferred = _sftp_entry_kind(attr)
+            if kind == SFTP_KIND_DIR:
+                walk(posixpath.join(remote_dir, attr.filename), relpath)
+            elif kind == SFTP_KIND_FILE:
+                files[relpath] = {
+                    "size": int(getattr(attr, "st_size", 0) or 0),
+                    "mtime": float(getattr(attr, "st_mtime", 0) or 0),
+                }
+                if inferred:
+                    inferred_count[0] += 1
+
+    try:
+        walk(remote_path.replace("\\", "/"), "")
+    except Exception as e:
+        return {"__error__": str(e)}
+    finally:
+        _sftp_close(client, sftp)
+    # "有多少条是靠兜底判成文件的"（服务端没给 st_mode 类型位）通过 out 参数回传，
+    # **不塞进返回值** —— 返回值的契约是 {relpath: {size, mtime}}，多一个
+    # __mode_inferred__ 整数键会被 compute_sync_plan 当成文件去取 ["size"] 而TypeError。
+    if inferred_counter is not None:
+        inferred_counter.append(inferred_count[0])
+    return files
+
+
+def _sync_paramiko(local_path, remote_path, remote_host, remote_user,
+                   port=22, direction="both", strategy="newer", exclude=None,
+                   key_path=None, password=None, dry_run=False, timeout=600,
+                   delete=False):
+    """双向同步的 paramiko 实现：一个 SFTP 会话走完全程。
+
+    与 sync 老路同一份 plan（compute_sync_plan），差别只在传输层：
+    老路每个文件一次 scp 子进程，这里一次连接 + 复用。
+    """
+    exclude = exclude or []
+    local_files = scan_local_files(local_path, exclude)
+    inferred = []
+    remote_files = scan_remote_files_paramiko(remote_path, remote_host,
+                                              remote_user, port, key_path,
+                                              password, exclude, timeout,
+                                              inferred_counter=inferred)
+    if isinstance(remote_files, dict) and "__error__" in remote_files:
+        return {"status": "error", "message": remote_files["__error__"]}
+
+    plan = compute_sync_plan(local_files, remote_files, direction, strategy,
+                             delete)
+    if dry_run:
+        return {"status": "ok", "dry_run": True, "transport": "paramiko",
+                "upload": len(plan["upload"]), "download": len(plan["download"]),
+                "conflicts": len(plan["conflict"]), "skip": len(plan["skip"]),
+                "delete": len(plan["delete"])}
+
+    pair, err = _sftp_connect(remote_host, remote_user, port, key_path,
+                              password, timeout)
+    if err:
+        return err
+    client, sftp = pair
+
+    counter = {"files": 0, "bytes": 0, "skipped": 0}
+    errors = []
+    conflicts_resolved = 0
+    uploaded = downloaded = 0
+    try:
+        for relpath in plan["upload"]:
+            lpath = os.path.join(local_path, relpath) if relpath else local_path
+            rpath = remote_join(remote_path, relpath) if relpath else remote_path
+            try:
+                if relpath:
+                    _sftp_makedirs(sftp, posixpath.dirname(rpath))
+                sftp.put(lpath, rpath)
+                counter["files"] += 1
+                counter["bytes"] += os.path.getsize(lpath)
+                uploaded += 1
+            except Exception as e:
+                errors.append("上传失败 %s: %s" % (relpath or ".", e))
+
+        for relpath in plan["download"]:
+            rpath = remote_join(remote_path, relpath)
+            lpath = os.path.join(local_path, relpath)
+            try:
+                parent = os.path.dirname(lpath)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                sftp.get(rpath, lpath)
+                counter["files"] += 1
+                downloaded += 1
+            except Exception as e:
+                errors.append("下载失败 %s: %s" % (relpath, e))
+
+        for relpath in plan["delete"]:
+            rpath = remote_join(remote_path, relpath)
+            try:
+                sftp.remove(rpath)
+            except Exception as e:
+                errors.append("删除失败 %s: %s" % (relpath, e))
+
+        for item in plan["conflict"]:
+            relpath = item["relpath"]
+            local, remote = item["local"], item["remote"]
+            # newer：本地新就推、远端新就拉；local/remote：单边强制
+            take_local = {"newer": local["mtime"] > remote["mtime"],
+                          "local": True, "remote": False}.get(strategy, True)
+            try:
+                if take_local:
+                    lpath = os.path.join(local_path, relpath)
+                    rpath = remote_join(remote_path, relpath)
+                    _sftp_makedirs(sftp, posixpath.dirname(rpath))
+                    sftp.put(lpath, rpath)
+                else:
+                    rpath = remote_join(remote_path, relpath)
+                    lpath = os.path.join(local_path, relpath)
+                    parent = os.path.dirname(lpath)
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
+                    sftp.get(rpath, lpath)
+                conflicts_resolved += 1
+            except Exception as e:
+                errors.append("冲突解决失败 %s: %s" % (relpath, e))
+    except Exception as e:
+        return {"status": "error", "message": "SFTP 同步失败: %s" % e}
+    finally:
+        _sftp_close(client, sftp)
+
+    out = _paramiko_result(counter, errors)
+    out.update({"uploaded": uploaded, "downloaded": downloaded,
+                "conflicts": conflicts_resolved, "skipped": len(plan["skip"])})
+    if inferred and inferred[0]:
+        # 服务端没给 st_mode 类型位、靠兜底判成文件的条数（如实报出，不静默）
+        out["mode_inferred"] = inferred[0]
+    return out
