@@ -19,10 +19,10 @@ Usage:
 > 只依赖标准库，没有反向依赖 Actus，所以能安全上移。
 """
 
-from __future__ import annotations
 
 import re
-from typing import NamedTuple
+# 兼容 Python 3.6：不用 PEP 585/604 的 tuple[...] / str | None（3.9/3.10+）
+from typing import NamedTuple, Optional, Tuple
 
 _SEMVER_RE = re.compile(
     r"^(?P<major>0|[1-9]\d*)"
@@ -43,8 +43,8 @@ class SemVer(NamedTuple):
     major: int
     minor: int
     patch: int
-    pre: tuple[str, ...]
-    build: str | None
+    pre: Tuple[str, ...]
+    build: Optional[str]
 
 
 def parse(version: str) -> SemVer:

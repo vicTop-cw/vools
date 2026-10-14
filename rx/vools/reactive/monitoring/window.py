@@ -15,6 +15,7 @@ vools/reactive/monitoring/window.py - 窗口监控模块
 import ctypes
 import ctypes.wintypes as wt
 import datetime
+from vools.core.datetime_compat import datetime_fromisoformat  # py3.6 兼容（datetime.fromisoformat 是 3.7+）
 import itertools
 import json
 import logging
@@ -166,7 +167,7 @@ class WindowData:
         """从字典创建。"""
         d = dict(d)
         if isinstance(d.get("timestamp"), str):
-            d["timestamp"] = datetime.datetime.fromisoformat(d["timestamp"])
+            d["timestamp"] = datetime_fromisoformat(d["timestamp"])
         return cls(**d)
 
     def to_json(self) -> str:

@@ -22,7 +22,6 @@
 MIT §4 要求在实质部分中包含版权声明，故保留本段与 LICENSE-SIGMA 归属说明。
 """
 
-from __future__ import annotations
 
 __all__ = [
     # 常量与词表

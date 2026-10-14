@@ -8,6 +8,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from vools.serialize.type_registry import (
     register_type, get_type_handler, get_type_deserializer,
 )
+# datetime_fromisoformat 是 Python 3.7+；用 core 的兼容版保证 py3.6 也能跑
+from vools.core.datetime_compat import datetime_fromisoformat
 
 
 class TestTypeRegistry:
@@ -20,7 +22,7 @@ class TestTypeRegistry:
             return obj.isoformat()
 
         def deserialize(data):
-            return datetime.fromisoformat(data)
+            return datetime_fromisoformat(data)
 
         register_type(datetime, serialize=serialize, deserialize=deserialize)
         # get_type_handler 需要传入实例对象
@@ -43,7 +45,7 @@ class TestTypeRegistry:
             return obj.isoformat()
 
         def deserialize(data):
-            return datetime.fromisoformat(data)
+            return datetime_fromisoformat(data)
 
         register_type(datetime, serialize=serialize, deserialize=deserialize)
         # 获取名称
@@ -64,7 +66,7 @@ class TestTypeRegistry:
             return {'iso': obj.isoformat()}
 
         def deserialize(data):
-            return datetime.fromisoformat(data['iso'])
+            return datetime_fromisoformat(data['iso'])
 
         register_type(datetime, serialize=serialize, deserialize=deserialize)
         dt = datetime(2024, 1, 1, 12, 0, 0)

@@ -32,6 +32,7 @@ from collections import deque
 from ctypes import wintypes as wt
 from ...core.dataclass_compat import dataclass
 from datetime import datetime
+from vools.core.datetime_compat import datetime_fromisoformat  # py3.6 兼容（datetime.fromisoformat 是 3.7+）
 from enum import IntEnum
 from typing import (
     Any,
@@ -192,7 +193,7 @@ class FileData:
         ts = d.get("timestamp")
         if isinstance(ts, str):
             try:
-                ts = datetime.fromisoformat(ts)
+                ts = datetime_fromisoformat(ts)
             except ValueError:
                 ts = datetime.now()
         elif isinstance(ts, (int, float)):

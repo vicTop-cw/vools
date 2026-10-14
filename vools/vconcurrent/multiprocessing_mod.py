@@ -12,6 +12,7 @@ Windows 平台注意事项：
 """
 
 
+import importlib
 import multiprocessing
 import os
 import queue as _queue
@@ -713,15 +714,35 @@ def _register_decorated(func: Callable[..., Any]) -> str:
 
 
 class _RegisteredCaller:
-    """可 pickle 的调用器：通过 key 从注册表查找真实函数并调用。"""
+    """可 pickle 的调用器：通过 key 从注册表查找真实函数并调用。
+
+    修复说明（2026-10-14）：旧的实现只依赖"子进程重新导入用户模块时再次
+    执行装饰器"来填充子进程注册表——但 spawn 子进程反序列化本对象时，pickle
+    只会导入本类所在的模块（``vools.concurrent.multiprocessing_mod``），根本
+    不会导入用户模块，因此子进程注册表永远是空的，运行时必然 KeyError。
+    这里在注册表未命中时显式 ``importlib.import_module`` 用户模块，让它的顶层
+    装饰器在子进程里重新执行、重新填充注册表，从而真正兑现 Windows spawn 承诺。
+    """
 
     def __init__(self, key: str) -> None:
         self._key = key
 
+    def _resolve(self) -> Optional[Callable[..., Any]]:
+        fn = _decorated_funcs.get(self._key)
+        if fn is not None:
+            return fn
+        # 子进程注册表未命中：导入用户模块触发其顶层装饰器重新注册
+        mod_name = self._key.split(':', 1)[0]
+        if mod_name and mod_name not in ('__main__', '__mp_main__'):
+            try:
+                importlib.import_module(mod_name)
+            except Exception:
+                return None
+        return _decorated_funcs.get(self._key)
+
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        try:
-            fn = _decorated_funcs[self._key]
-        except KeyError:
+        fn = self._resolve()
+        if fn is None:
             raise RuntimeError(
                 f"已注册函数 {self._key!r} 在当前进程中未找到。"
                 "请确保定义该函数的模块在子进程中被正确导入。"

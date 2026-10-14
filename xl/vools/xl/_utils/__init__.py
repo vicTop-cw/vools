@@ -91,6 +91,27 @@ def book_to_sheets_data(book, sheet_names=None):
     return sheets_data, names
 
 
+def _cell_to_str(v):
+    """把单元格值转成字符串，空值一律输出空串。
+
+    修复说明（2026-10-14）：旧实现只把 ``None`` 转空串，而 pandas 的空值
+    （浮点 ``NaN``、``NaT``）``is not None`` 为真，``str(float('nan'))``
+    得到 ``'nan'``——写到 Excel 里会真的落一个 ``"nan"`` 字面字符串，
+    用户读回来还以为是数据。
+
+    这里用 ``v != v`` 识别 NaN（NaN 不自等，且不依赖 pandas/numpy 导入），
+    空值统一成 ``''``。
+    """
+    if v is None:
+        return ''
+    try:
+        if v != v:          # NaN / NaT：不自等
+            return ''
+    except (TypeError, ValueError):
+        pass
+    return str(v)
+
+
 def dataframe_to_2d_list(df, show_index=False):
     if show_index:
         df = df.reset_index()
@@ -99,7 +120,7 @@ def dataframe_to_2d_list(df, show_index=False):
     data = [headers]
 
     for _, row in df.iterrows():
-        data.append([str(v) if v is not None else '' for v in row.tolist()])
+        data.append([_cell_to_str(v) for v in row.tolist()])
 
     return data
 
