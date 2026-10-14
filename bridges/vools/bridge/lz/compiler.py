@@ -274,6 +274,31 @@ def _transpile_lz(src_path: str, timeout: int = 60) -> str:
     return rs_path
 
 
+def _strip_lz_builtins_import(rs_path: str) -> Optional[str]:
+    """生成去掉 `use lz_builtins::*;` 的 .rs 副本（用户环境未提供该 crate 时）。
+
+    生成的 .rs 通过 glob import 引入 lz_builtins，但实际编译常只依赖标准库。
+    找不到 lz_builtins 的 .rlib 时，去掉这一行，避免 rustc 报 E0432
+    （unresolved import `lz_builtins`）。
+
+    Returns:
+        修改后的 .rs 路径；无改动时返回原路径；失败时返回 None。
+    """
+    try:
+        with open(rs_path, 'r', encoding='utf-8', errors='replace') as f:
+            text = f.read()
+        stripped = text.replace('use lz_builtins::*;', '')
+        if stripped == text:
+            return rs_path
+        base = rs_path[:-3] if rs_path.endswith('.rs') else rs_path
+        tmp = base + '_nobuiltins.rs'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(stripped)
+        return tmp
+    except Exception:
+        return None
+
+
 def _compile_rs_to_exe(rs_path: str, timeout: int = 120) -> str:
     """用 rustc 把 .rs 编译为可执行文件（需要 lz_builtins crate 可见）。
 
@@ -292,14 +317,20 @@ def _compile_rs_to_exe(rs_path: str, timeout: int = 120) -> str:
                            '手动 rustc 编译（需 lz_builtins crate）'.format(rs_path))
     exe_path = os.path.splitext(rs_path)[0] + '.exe' if os.name == 'nt' else \
         os.path.splitext(rs_path)[0]
-    cmd = ['rustc', rs_path, '-o', exe_path, '--edition', '2021']
     # 生成的 .rs 使用 `use lz_builtins::*;`，必须提供该 crate，否则 E0432
     rlib = _find_lz_builtins_rlib()
+    compile_rs = rs_path
     if rlib:
+        cmd = ['rustc', compile_rs, '-o', exe_path, '--edition', '2021']
         cmd += ['--extern', 'lz_builtins={}'.format(rlib)]
         deps_dir = _find_lz_builtins_deps()
         if deps_dir:
             cmd += ['-L', 'dependency={}'.format(deps_dir)]
+    else:
+        # 未提供 lz_builtins crate：去掉 glob import 后再编译，
+        # 避免 rustc "unresolved import lz_builtins"（E0432）
+        compile_rs = _strip_lz_builtins_import(rs_path) or rs_path
+        cmd = ['rustc', compile_rs, '-o', exe_path, '--edition', '2021']
     result = subprocess.run(
         cmd,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
