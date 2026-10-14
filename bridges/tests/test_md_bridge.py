@@ -431,51 +431,64 @@ print(f'got: {data}')
 # CLI (M2)
 # ═══════════════════════════════════════════════════════
 
-def test_cli_check():
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_BRIDGES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _run_md_cli(args):
+    """在子进程中运行 `python -m vools.bridge.md`，返回 CompletedProcess。
+
+    cwd 用仓库根：`vools.bridge.md.cli` 会 `from vools.encoding import ...`
+    读编码辅助，而 vools.encoding 属于 core 包（仓库根的 vools/）。
+    仅把 bridges 目录放进 sys.path 时，vools 命名空间只会命中 bridges 的
+    `vools/`，子进程会报 ModuleNotFoundError: No module named 'vools.encoding'。
+    这里用仓库根作 cwd 并把仓库根显式写进 PYTHONPATH，保证 core 子包可见。
+    """
     import subprocess
+    env = os.environ.copy()
+    env['PYTHONPATH'] = _REPO_ROOT + os.pathsep + _BRIDGES_DIR + os.pathsep + env.get('PYTHONPATH', '')
+    # py3.6 不支持 capture_output=（py3.7+ 才加），显式用 stdout/stderr=PIPE
+    return subprocess.run(
+        [sys.executable, '-m', 'vools.bridge.md'] + list(args),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        universal_newlines=True,
+        cwd=_REPO_ROOT, env=env,
+    )
+
+
+def test_cli_check():
     md = "#!entry main\n\n```python #!run tag=main\nprint(1)\n```\n"
     with tempfile.TemporaryDirectory() as tmpdir:
         md_path = os.path.join(tmpdir, 'test.md')
         with open(md_path, 'w', encoding='utf-8') as f:
             f.write(md)
-        result = subprocess.run(
-            [sys.executable, '-m', 'vools.bridge.md', 'check', md_path],
-            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        )
-        assert result.returncode == 0
+        result = _run_md_cli(['check', md_path])
+        assert result.returncode == 0, result.stderr
         assert 'Dependency Check' in result.stdout
         print('OK: cli check')
 
 
 def test_cli_info():
-    import subprocess
     md = "#!entry main\n\n```python #!run tag=main\nprint(1)\n```\n"
     with tempfile.TemporaryDirectory() as tmpdir:
         md_path = os.path.join(tmpdir, 'test.md')
         with open(md_path, 'w', encoding='utf-8') as f:
             f.write(md)
-        result = subprocess.run(
-            [sys.executable, '-m', 'vools.bridge.md', 'info', md_path],
-            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        )
-        assert result.returncode == 0
+        result = _run_md_cli(['info', md_path])
+        assert result.returncode == 0, result.stderr
         assert 'File:' in result.stdout
         assert 'Blocks' in result.stdout
         print('OK: cli info')
 
 
 def test_cli_clean():
-    import subprocess
     md = "#!entry main\n\n```python #!run tag=main\nprint(1)\n```\n"
     with tempfile.TemporaryDirectory() as tmpdir:
         md_path = os.path.join(tmpdir, 'test.md')
         with open(md_path, 'w', encoding='utf-8') as f:
             f.write(md)
-        result = subprocess.run(
-            [sys.executable, '-m', 'vools.bridge.md', 'clean', md_path],
-            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        )
-        assert result.returncode == 0
+        result = _run_md_cli(['clean', md_path])
+        assert result.returncode == 0, result.stderr
         assert 'Cleaned' in result.stdout
         print('OK: cli clean')
 
