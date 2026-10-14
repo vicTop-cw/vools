@@ -418,8 +418,11 @@ class TestEdgeCases:
         
         assert len(task_ids) == 50
         
+        # 50 个任务串行等待，每个独立 timeout 窗口。WorkerPool 启动（10 线程 +
+        # SQLite 初始化）与 claim 竞争会吃掉部分窗口，5s 在慢机器上偶发不足
+        # （实测单轮 50 任务约 1.7-2.1s，但启动抖动可叠加），放宽到 20s。
         with WorkerPool(num_workers=10, db_path=self.db_path, poll_interval=0.1) as pool:
-            results = [queue.get_result(tid, timeout=5) for tid in task_ids]
+            results = [queue.get_result(tid, timeout=20) for tid in task_ids]
             assert len(results) == 50
 
 
