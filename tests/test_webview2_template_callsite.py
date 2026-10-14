@@ -38,10 +38,16 @@ def _isolated_method():
         if isinstance(node, ast.FunctionDef) and node.name == METHOD:
             first = lines[node.lineno - 1]
             assert first[:node.col_offset].strip() == "", "def 行前缀不是空白"
-            block = [first[node.col_offset:]] + lines[node.lineno:node.end_lineno]
+            # Python < 3.8 的 ast 节点没有 end_lineno：用子树最大行号估算
+            end_ln = getattr(node, "end_lineno", None)
+            if end_ln is None:
+                end_ln = max((n.lineno for n in ast.walk(node)
+                              if hasattr(n, "lineno")),
+                             default=node.lineno)
+            block = [first[node.col_offset:]] + lines[node.lineno:end_ln]
             ns = {"WebView2Config": _Cfg}
             exec(compile("\n".join(block), "<isolated webview2>", "exec"), ns)
-            return ns[METHOD], node.lineno, node.end_lineno
+            return ns[METHOD], node.lineno, end_ln
     raise AssertionError("找不到方法 %s" % METHOD)
 
 

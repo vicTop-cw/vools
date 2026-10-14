@@ -80,10 +80,11 @@ else:
             pass
         try:
             sig = inspect.signature(attrs)
-            if 'auto_attribs' not in sig.parameters:
-                caps['auto_attribs'] = False
-            if 'frozen' not in sig.parameters:
-                caps['frozen'] = False
+            # 注意：这里必须双向赋值——旧代码只在参数"缺失"时设 False，
+            # "存在"时却从不设 True（初始值都是 False），导致 attrs 明明支持
+            # auto_attribs / frozen 也被误判为不支持，py3.6 下 frozen=True 失效。
+            caps['auto_attribs'] = 'auto_attribs' in sig.parameters
+            caps['frozen'] = 'frozen' in sig.parameters
         except (ValueError, TypeError):
             pass
         return caps
@@ -163,10 +164,14 @@ else:
                         setattr(c, attr_name, attr.ib(default=val))
                     else:
                         setattr(c, attr_name, attr.ib())
+            # 必须在 attrs(c) **之前**把 __post_init__ 映射为 __attrs_post_init__：
+            # attrs 在生成 __init__ 时检查 __attrs_post_init__ 是否存在；若在
+            # attrs() 之后才赋值，生成的 __init__ 已定型、永远不会调用它，
+            # 导致 Python < 3.7 下 __post_init__ 形同虚设（这正是 py3.6 上
+            # KeyData.key_name 恒为空串的根因）。
+            if hasattr(c, '__post_init__') and not hasattr(c, '__attrs_post_init__'):
+                c.__attrs_post_init__ = c.__post_init__
             wrapped = attrs(c, **_attrs_kwargs)
-            # 兼容 __post_init__: attrs 用 __attrs_post_init__
-            if hasattr(wrapped, '__post_init__') and not hasattr(wrapped, '__attrs_post_init__'):
-                wrapped.__attrs_post_init__ = wrapped.__post_init__
             return wrapped
 
         if cls is not None:

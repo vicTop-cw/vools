@@ -16,6 +16,7 @@ vools/reactive/monitoring/process.py - 进程监控模块
 import ctypes
 import ctypes.wintypes as wt
 import datetime
+from vools.core.datetime_compat import datetime_fromisoformat  # py3.6 兼容（datetime.fromisoformat 是 3.7+）
 import itertools
 import json
 import logging
@@ -191,7 +192,7 @@ class ProcessData:
         ts = data.get("timestamp")
         if isinstance(ts, str):
             try:
-                data["timestamp"] = datetime.datetime.fromisoformat(ts)
+                data["timestamp"] = datetime_fromisoformat(ts)
             except ValueError:
                 data["timestamp"] = datetime.datetime.now(datetime.timezone.utc)
         elif not isinstance(ts, datetime.datetime):

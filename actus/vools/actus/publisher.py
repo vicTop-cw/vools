@@ -14,7 +14,6 @@
 远端操作默认 `dry_run=True`；真跑必须显式关掉 —— 发布是不可逆的对外动作。
 """
 
-from __future__ import annotations
 
 __all__ = [
     'PublishError', 'triple_gate', 'publish', 'publish_to_repo',

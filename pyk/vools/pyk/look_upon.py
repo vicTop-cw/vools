@@ -396,8 +396,11 @@ def cli_execute(payload: Dict[str, Any], timeout_sec: Optional[int] = None,
             cwd=workdir,
             env=env,
             input=stdin_data,
-            capture_output=capture,
-            text=True,
+            # capture_output / text 都是 Python 3.7+ 才有的参数，py3.6 的 subprocess.run
+            # 会 TypeError；这里改用 stdout/stderr=PIPE + encoding（3.6 起指定
+            # encoding 即进入文本模式），全版本兼容。
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.PIPE if capture else None,
             encoding="utf-8",
             errors="replace",
             timeout=timeout_sec,

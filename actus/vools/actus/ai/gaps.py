@@ -418,12 +418,17 @@ def analyze_market(catalog=None):
     dup = detect_duplicates(list(cat))
     known = set(cat.action_ids())
 
-    # 孤儿依赖：需要原始 deps，从索引再取一次（目录本身不保留 deps）
+    # 孤儿依赖：需要原始 deps，从索引再取一次（目录本身不保留 deps）。
+    # 关键：只统计【目录内工具】的 deps。若遍历整个全局索引，空目录也会
+    # 被塞进一堆外部工具的依赖，产生"伪孤儿"（测试 test_analyze_market_on_
+    # empty_catalog 要求空目录 orphan 为空）。
     referenced = set()
     try:
         from ..indexer import load_index
         index = load_index(cat.meta_dir or None)
-        for brief in (index.get('actions') or {}).values():
+        for action_id, brief in (index.get('actions') or {}).items():
+            if action_id not in known:
+                continue
             if not isinstance(brief, dict):
                 continue
             for dep in brief.get('deps') or []:

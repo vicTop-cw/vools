@@ -65,12 +65,16 @@ def test_show_table_passes_has_header(capsys):
     assert '-+-' in out
 
 
-def test_dataframe_to_2d_list_none_becomes_empty_string():
-    pd = pytest.importorskip('pandas')
-    df = pd.DataFrame({'x': [1, None], 'y': ['a', 'b']})
+def test_dataframe_to_2d_list_none_and_nan_become_empty_string():
+    # 不再 importorskip：pandas 是本套件已声明依赖，缺失应报错而不是静默跳过
+    import pandas as pd
+    # 混合 None/NaN 会让 int 列被提升为 float64，故 1 显示为 '1.0'
+    df = pd.DataFrame({'x': [1, None, float('nan')], 'y': ['a', 'b', 'c']})
     rows = dataframe_to_2d_list(df, show_index=False)
     assert rows[0] == ['x', 'y']            # 表头
+    assert rows[1][0] == '1.0'
     assert rows[2][0] == ''                  # None -> ''
+    assert rows[3][0] == ''                  # NaN -> ''（旧版误输出 'nan'）
 
 
 def test_normalize_data_rejects_unsupported_type():

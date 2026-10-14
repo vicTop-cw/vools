@@ -5,6 +5,7 @@ vools/reactive/monitoring/mouse.py
 
 import ctypes
 import datetime
+from vools.core.datetime_compat import datetime_fromisoformat  # py3.6 兼容（datetime.fromisoformat 是 3.7+）
 import itertools
 import json
 import logging
@@ -140,7 +141,7 @@ class MouseData:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "MouseData":
         if isinstance(d.get("timestamp"), str):
-            d["timestamp"] = datetime.datetime.fromisoformat(d["timestamp"])
+            d["timestamp"] = datetime_fromisoformat(d["timestamp"])
         return cls(**d)
 
     def to_json(self) -> str:

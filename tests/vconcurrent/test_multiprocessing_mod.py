@@ -17,6 +17,31 @@ def _factorial(x):
     return math.factorial(x)
 
 
+# process_pool / run_in_process 需要被 pickle 的目标函数必须位于模块顶层，
+# 不能是测试方法内的局部函数：Windows spawn 的子进程无法 import `<locals>`。
+@process_pool(processes=2)
+def _compute_pool(x):
+    return _factorial(x)
+
+
+@run_in_process()
+def _heavy_task(x):
+    return _factorial(x)
+
+
+# process_pool / run_in_process 的 target 必须是模块级（可被 import）函数：
+# 定义在测试方法内的 `<locals>` 函数在 Windows spawn 下子进程无法重新导入，
+# 这也是旧 skipif(win32) 一直在掩盖的问题。
+@process_pool(processes=2)
+def _compute_pool(x):
+    return _factorial(x)
+
+
+@run_in_process()
+def _heavy_task(x):
+    return _factorial(x)
+
+
 class TestVProcess:
     """VProcess 增强进程测试"""
 
@@ -226,31 +251,21 @@ class TestCpuCount:
 
 
 class TestProcessPoolDecorator:
-    """process_pool 装饰器测试"""
+    """process_pool 装饰器测试
 
-    @pytest.mark.skipif(
-        sys.platform == 'win32',
-        reason="spawn 模式下子进程无法导入测试模块，装饰器注册表机制失效"
-    )
+    Windows 兼容说明：vools.concurrent.multiprocessing_mod 里针对 Windows
+    spawn 模式做了专门处理（_RegisteredCaller + __mp_main__ 归一化），因此
+    本测试**可以在 win32 上跑**。旧的 ``skipif(win32)`` 是过时残留，会掩盖
+    真实回归；这里去掉 skip，让它真正验证 Windows spawn 下的注册表机制。
+    """
+
     def test_decorator(self):
-        @process_pool(processes=2)
-        def compute(x):
-            return _factorial(x)
-
-        assert compute(5) == 120
+        # target 必须是模块级函数 _compute_pool（见文件顶部注释）
+        assert _compute_pool(5) == 120
 
 
 class TestRunInProcessDecorator:
-    """run_in_process 装饰器测试"""
+    """run_in_process 装饰器测试（同上，去掉过时的 win32 skip）"""
 
-    @pytest.mark.skipif(
-        sys.platform == 'win32',
-        reason="spawn 模式下子进程无法导入测试模块，装饰器注册表机制失效"
-    )
     def test_decorator(self):
-        @run_in_process()
-        def heavy_task(x):
-            return _factorial(x)
-
-        result = heavy_task(5)
-        assert result == 120
+        assert _heavy_task(5) == 120

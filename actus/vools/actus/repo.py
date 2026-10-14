@@ -12,7 +12,6 @@
 仓结构（docs/41 §D2）：`actions/` + `actus.registry.json` + `README.md`。
 """
 
-from __future__ import annotations
 
 __all__ = [
     'RepoError', 'ActionRepo', 'REGISTRY_FILENAMES', 'REPO_SUFFIX',

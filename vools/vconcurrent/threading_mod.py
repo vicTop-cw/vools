@@ -406,8 +406,19 @@ class VSemaphore:
         return self._sem.acquire(timeout=timeout)
 
     def release(self, n: int = 1) -> None:
-        """释放信号量。"""
-        self._sem.release(n)
+        """释放信号量。
+
+        ``threading.Semaphore.release(n)`` 的 ``n`` 参数是 Python 3.9+ 才有的；
+        Python 3.6–3.8 的 release 只接受 self，这里在 TypeError 时循环降级，
+        保证跨版本语义一致（且不会把 release(n) 变成 AttributeError）。
+        """
+        if n <= 0:
+            return
+        try:
+            self._sem.release(n)
+        except TypeError:            # Python < 3.9：release() 不接受 n
+            for _ in range(n):
+                self._sem.release()
 
     def __enter__(self) -> "VSemaphore":
         self._sem.acquire()

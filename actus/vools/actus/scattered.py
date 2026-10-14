@@ -25,7 +25,6 @@ C3 核心依赖自动注入
     `engine/actuscore/scattered.py` 只做 re-export shim（与 trust_model.py 同形态）。
 """
 
-from __future__ import annotations
 
 __all__ = [
     'ScatteredError', 'ScatteredAction',

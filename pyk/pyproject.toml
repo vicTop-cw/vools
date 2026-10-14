@@ -29,16 +29,25 @@ classifiers = [
 ]
 requires-python = ">=3.6"
 # pyk 是独立分发包：安装后作为 vools 命名空间下的 vools.pyk 出现（配合 vools 的
-# pkgutil.extend_path namespace package）。核心依赖：vools + pyspark + pandas + numpy。
+# pkgutil.extend_path namespace package）。
+#
+# 硬依赖只有 vools。pyspark / pandas / numpy 移到 [spark] extra：
+# 生产（尤其 p3）用的是**系统自带**的 pyspark 2.4.3 + JDK8，不该由 pip 拉取；
+# 若把它们留成硬依赖，`pip install vools-pyk` 会强行装一份 pyspark，
+# 既拖慢安装，也可能与集群 Spark 版本冲突（Spark 2.4.3 与 Java 11 不兼容）。
 dependencies = [
     "vools>=0.7.8",
+]
+
+[project.optional-dependencies]
+# Spark 运行时：仅在"用 pip 管理 pyspark"的场景装（本地开发 / 测试集群）。
+# 生产 p3 用系统 pyspark，装的时候直接 --no-deps 跳过。
+spark = [
     "pyspark>=2.4.3",
     "pandas>=0.24",
     "numpy>=1.16",
 ]
-
-[project.optional-dependencies]
-# 若只装运行时依赖，pyspark/pandas/numpy 都已在 dependencies 里，无需 extra。
+# 若只装运行时依赖，pyspark/pandas/numpy 都已在 [spark] 里，无需 extra。
 # 这里保留 dev 用于开发测试。
 dev = [
     "pytest>=7.4",

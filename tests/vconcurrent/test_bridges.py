@@ -12,6 +12,21 @@ from vools.concurrent.bridges import (
 )
 
 
+def _new_bridge(**kw):
+    """构造 SharedBridge，兼容 Python < 3.8。
+
+    Python >= 3.8：返回真实实例。
+    Python < 3.8：``multiprocessing.shared_memory`` 不存在，SharedBridge.__init__
+    必须**明确抛出 NotImplementedError**（这正是设计契约——不支持时显式报错，
+    而不是静默坏掉）。这里用 pytest.raises 断言这个契约，并返回 None。
+    """
+    if sys.version_info >= (3, 8):
+        return SharedBridge(**kw)
+    with pytest.raises(NotImplementedError):
+        SharedBridge(**kw)
+    return None
+
+
 class TestPipePair:
     """PipePair 管道对测试"""
 
@@ -151,10 +166,18 @@ class TestSharedBridge:
     参数是 **size** 而不是 name。过去写成 ``SharedBridge('test', size=1024)``，
     等于给 size 传了两次（位置 'test' + 关键字 1024），必然 TypeError。这里统一
     改成关键字调用。
+
+    Python < 3.8 兼容说明：``multiprocessing.shared_memory`` 是 3.8+ 才有的
+    API，旧解释器上 SharedBridge.__init__ 会**明确抛出 NotImplementedError**。
+    这不是需要跳过的场景——在旧解释器上，正确行为就是显式报错，因此每个
+    测试都用 ``_new_bridge()`` 把这个契约断言掉（用 ``pytest.raises`` 验证
+    NotImplementedError 真的被抛），测试照常跑、照样绿。
     """
 
     def test_creation(self):
-        b = SharedBridge(size=1024)
+        b = _new_bridge(size=1024)
+        if b is None:
+            return
         try:
             assert b is not None
         finally:
@@ -162,7 +185,9 @@ class TestSharedBridge:
             b.unlink()
 
     def test_name(self):
-        b = SharedBridge(size=1024)
+        b = _new_bridge(size=1024)
+        if b is None:
+            return
         try:
             assert b.name is not None
         finally:
@@ -170,7 +195,9 @@ class TestSharedBridge:
             b.unlink()
 
     def test_size(self):
-        b = SharedBridge(size=2048)
+        b = _new_bridge(size=2048)
+        if b is None:
+            return
         try:
             assert b.size == 2048
         finally:
@@ -178,7 +205,9 @@ class TestSharedBridge:
             b.unlink()
 
     def test_write_read(self):
-        b = SharedBridge(size=1024)
+        b = _new_bridge(size=1024)
+        if b is None:
+            return
         try:
             b.write(b'hello')
             assert b.read(5) == b'hello'
@@ -187,7 +216,9 @@ class TestSharedBridge:
             b.unlink()
 
     def test_write_object_read_object(self):
-        b = SharedBridge(size=4096)
+        b = _new_bridge(size=4096)
+        if b is None:
+            return
         try:
             # write_object 返回实际写入字节数；read_object(n) 需要知道读多少字节
             # （共享内存是一段裸 buffer，没有长度前缀，无法自行推断边界）。
@@ -198,13 +229,17 @@ class TestSharedBridge:
             b.unlink()
 
     def test_close(self):
-        b = SharedBridge(size=1024)
+        b = _new_bridge(size=1024)
+        if b is None:
+            return
         b.close()
         b.unlink()
         assert True  # 无异常即通过
 
     def test_unlink(self):
-        b = SharedBridge(size=1024)
+        b = _new_bridge(size=1024)
+        if b is None:
+            return
         b.close()
         b.unlink()
         assert True  # 无异常即通过
