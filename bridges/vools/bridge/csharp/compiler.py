@@ -51,6 +51,27 @@ def csharp_compiler_available():
     return _csharp_helper.is_available()
 
 
+def _exe_path_for(dll_path):
+    """由 DLL 路径推导同目录、同名的可执行文件路径（_call_csharp_func 依赖它）。"""
+    base = os.path.splitext(dll_path)[0]
+    return (base + '.exe') if _IS_WINDOWS else base
+
+
+def _cache_entry_valid(cache_dir, dll_name):
+    """缓存条目是否完整可用：DLL 与其同名可执行文件都在。
+
+    _call_csharp_func 实际跑的是同目录同名的 apphost/exe，只用
+    `os.path.exists(dll_path)` 判缓存会让"有 DLL 无 exe"的半截缓存命中，
+    返回一个点不到的路径 -> 调用期 FileNotFoundError（本会话 test_csharp_bridge
+    在 py3.6 就是这样失败：dotnet publish 偶发只留 .dll 未产出/被清掉 .exe）。
+    这里要求 .dll 与 .exe 同时存在才算命中，否则视为需要重编。
+    """
+    dll_path = os.path.join(cache_dir, dll_name + '.dll')
+    if not os.path.exists(dll_path):
+        return False
+    return os.path.exists(_exe_path_for(dll_path))
+
+
 def _compile_csharp_code(cs_code, func_name, cache_dir=None):
     """
     编译 C# 代码为 DLL
@@ -85,7 +106,7 @@ def _compile_csharp_code(cs_code, func_name, cache_dir=None):
 
     # 检查缓存
     dll_path = os.path.join(cache_dir, dll_name + '.dll')
-    if os.path.exists(dll_path):
+    if _cache_entry_valid(cache_dir, dll_name):
         return dll_path
 
     # 创建项目目录
@@ -109,7 +130,7 @@ def _compile_csharp_code(cs_code, func_name, cache_dir=None):
     # 编译（使用锁防止并发编译同一项目时的文件竞争）
     with _compile_lock:
         # 双重检查：可能在等待锁期间其他线程已完成编译
-        if os.path.exists(dll_path):
+        if _cache_entry_valid(cache_dir, dll_name):
             return dll_path
 
         result = subprocess.run(
