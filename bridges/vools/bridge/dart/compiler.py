@@ -48,7 +48,15 @@ def _check_wsl_dart() -> bool:
     return _wsl.check_wsl_command('dart')
 
 
-_USE_WSL = _IS_WINDOWS and shutil.which('dart') is None and _check_wsl() and _check_wsl_dart()
+# 惰性求值闸门：若在模块导入期冻结成常量，恰逢 WSL 冷启动时 False 会被永久固化，
+# 整会话假 skip（实测 py3.11 批跑 test_dart_bridge 15 个 skip 即此）。
+def _wsl_dart_usable() -> bool:
+    return bool(shutil.which('dart') is None
+                and _check_wsl() and _check_wsl_dart())
+
+
+from ..core.wsl import WSLGate
+_USE_WSL = WSLGate(_wsl_dart_usable) if _IS_WINDOWS else False
 
 
 def _to_wsl_path(windows_path: str) -> str:
@@ -70,7 +78,7 @@ def dart_compiler_available() -> bool:
     """检查 Dart 编译器是否可用"""
     if _find_dart() is not None:
         return True
-    return _USE_WSL
+    return bool(_USE_WSL)
 
 
 def get_dart_version() -> Optional[str]:

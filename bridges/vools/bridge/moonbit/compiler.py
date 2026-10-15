@@ -53,7 +53,13 @@ def _check_wsl_moonbit() -> bool:
     return _wsl.probe_wsl_cmd(['moon', '--version'], per_try_timeout=15)
 
 
-_USE_WSL = _IS_WINDOWS and not _check_moonbit() and _check_wsl() and _check_wsl_moonbit()
+# 惰性求值闸门：导入期冻结会把 WSL 冷启动瞬间的 False 永久固化（见 core.wsl.WSLGate）。
+def _wsl_moonbit_usable() -> bool:
+    return bool(not _check_moonbit() and _check_wsl() and _check_wsl_moonbit())
+
+
+from ..core.wsl import WSLGate
+_USE_WSL = WSLGate(_wsl_moonbit_usable) if _IS_WINDOWS else False
 
 
 def _to_wsl_path(windows_path: str) -> str:
@@ -74,7 +80,7 @@ def moonbit_compiler_available() -> bool:
     """检查 MoonBit 编译器是否可用"""
     if _check_moonbit():
         return True
-    return _USE_WSL
+    return bool(_USE_WSL)
 
 
 def get_moonbit_version() -> Optional[str]:

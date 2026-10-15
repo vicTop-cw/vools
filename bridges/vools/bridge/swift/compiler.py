@@ -40,7 +40,13 @@ def _check_wsl() -> bool:
     return _wsl.is_wsl_available()
 
 
-_USE_WSL = _IS_WINDOWS and not _check_local_swift() and _check_wsl()
+# 惰性求值闸门：导入期冻结会把 WSL 冷启动瞬间的 False 永久固化（见 core.wsl.WSLGate）。
+def _wsl_swift_usable() -> bool:
+    return bool(not _check_local_swift() and _check_wsl())
+
+
+from ..core.wsl import WSLGate
+_USE_WSL = WSLGate(_wsl_swift_usable) if _IS_WINDOWS else False
 
 
 def swift_compiler_available() -> bool:
@@ -49,7 +55,7 @@ def swift_compiler_available() -> bool:
         return _check_local_swift()
     if _check_local_swift():
         return True
-    return _USE_WSL and _check_wsl_swift()
+    return bool(_USE_WSL) and _check_wsl_swift()
 
 
 def _check_wsl_swift() -> bool:

@@ -58,7 +58,14 @@ def _check_local_kotlin() -> bool:
     return shutil.which('kotlin') is not None
 
 
-_USE_WSL = _IS_WINDOWS and not _check_local_kotlinc() and _check_wsl() and _check_wsl_kotlin()
+# 惰性求值闸门：导入期冻结成常量会把 WSL 冷启动瞬间的 False 永久固化，
+# 整会话假 skip（见 core.wsl.WSLGate 说明）。
+def _wsl_kotlin_usable() -> bool:
+    return bool(not _check_local_kotlinc() and _check_wsl() and _check_wsl_kotlin())
+
+
+from ..core.wsl import WSLGate
+_USE_WSL = WSLGate(_wsl_kotlin_usable) if _IS_WINDOWS else False
 
 
 def _to_wsl_path(windows_path: str) -> str:

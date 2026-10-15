@@ -56,29 +56,62 @@ def _probe_wsl(cmd, per_try_timeout: float, attempts: int = 4, backoff: float = 
 
 
 def is_wsl_available() -> bool:
-    """检查 WSL 是否可用（仅 Windows 上）。结果在进程内缓存（瞬时超时不缓存）。"""
+    """检查 WSL 是否可用（仅 Windows 上）。
+
+    只缓存 True：WSL 冷启动/服务未就绪时的 False（超时或瞬态非零）若被缓存，
+    会在整个进程生命周期内把可用环境误判为不可用（实测把 py3.11 批跑的
+    test_dart_bridge 毒化成 15 个假 skip）。False 不缓存 = 每次重探，
+    VM 起来后自动恢复；wsl 真不存在的机器上 `wsl --version` 立即失败，开销可忽略。
+    """
     global _WSL_AVAILABLE_CACHE
     if not _IS_WINDOWS:
         return False
-    if _WSL_AVAILABLE_CACHE is not None:
-        return _WSL_AVAILABLE_CACHE
-    ok, definitive = _probe_wsl(['wsl', '--version'], per_try_timeout=5)
-    if definitive:
-        _WSL_AVAILABLE_CACHE = ok
+    if _WSL_AVAILABLE_CACHE:
+        return True
+    ok, _definitive = _probe_wsl(['wsl', '--version'], per_try_timeout=5)
+    if ok:
+        _WSL_AVAILABLE_CACHE = True
     return ok
 
 
 def check_wsl_command(cmd: str) -> bool:
-    """检查 WSL 中是否存在指定命令。结果按命令名在进程内缓存（瞬时超时不缓存）。"""
-    if cmd in _WSL_COMMAND_CACHE:
-        return _WSL_COMMAND_CACHE[cmd]
+    """检查 WSL 中是否存在指定命令（结果按命令名缓存，且只缓存 True，理由同上）。"""
+    if _WSL_COMMAND_CACHE.get(cmd):
+        return True
     if not is_wsl_available():
-        # 若可用性判定是瞬时超时（未缓存），这里不写命令缓存，避免固化冷启动误判。
         return False
-    ok, definitive = _probe_wsl(['wsl', 'which', cmd], per_try_timeout=10)
-    if definitive:
-        _WSL_COMMAND_CACHE[cmd] = ok
+    ok, _definitive = _probe_wsl(['wsl', 'which', cmd], per_try_timeout=10)
+    if ok:
+        _WSL_COMMAND_CACHE[cmd] = True
     return ok
+
+
+class WSLGate:
+    """惰性求值的 WSL 可用性闸门（True 后锁定，False 每次重算）。
+
+    各语言 compiler.py 原来在【模块导入期】算 `_USE_WSL = ... and _check_wsl() ...`
+    并冻结成模块常量；若那一刻恰逢 WSL 冷启动（VM 正在重启），False 就被永久
+    冻结、整个测试会话假 skip。改成闸门后：`if _USE_WSL:` 等既有布尔用法不变
+    （通过 __bool__ 惰性求值），而 False 不再被固化。
+    """
+
+    __slots__ = ('_compute', '_ready')
+
+    def __init__(self, compute):
+        self._compute = compute
+        self._ready = False
+
+    def __bool__(self):
+        if not self._ready:
+            try:
+                if self._compute():
+                    self._ready = True
+            except Exception:
+                return False
+        return self._ready
+
+    def __repr__(self):
+        return '<WSLGate ready=%s>' % self._ready
 
 
 def probe_wsl_cmd(args, per_try_timeout: float = 15) -> bool:
