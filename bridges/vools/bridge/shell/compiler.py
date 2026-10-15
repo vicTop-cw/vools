@@ -75,7 +75,9 @@ def _wsl_available() -> bool:
 
 
 _SHELL_PATH = _setup_shell_env()
-_WSL_AVAILABLE = _IS_WINDOWS and _wsl_available()
+# 惰性求值闸门：导入期冻结会把 WSL 冷启动瞬间的 False 永久固化（见 core.wsl.WSLGate）。
+from ..core.wsl import WSLGate
+_WSL_AVAILABLE = WSLGate(_wsl_available) if _IS_WINDOWS else False
 
 
 def shell_compiler_available() -> bool:
@@ -102,7 +104,7 @@ def shell_compiler_available() -> bool:
                 return result.returncode == 0
             except Exception:
                 pass
-        return _WSL_AVAILABLE
+        return bool(_WSL_AVAILABLE)
 
 
 def bash_compiler_available() -> bool:
