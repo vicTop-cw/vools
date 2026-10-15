@@ -264,11 +264,14 @@ def test_folder_dispatcher_win32_renamed_event():
         assert FolderChangeType.FOLDER_RENAMED in types
 
 
-@pytest.mark.skipif(
-    not sys.platform.startswith("linux"), reason="Linux/inotify only"
-)
-def test_folder_dispatcher_inotify_created_event():
-    """Linux 下 inotify 后端应捕获目录创建。"""
+def _has_wsl():
+    """检测本机是否有可用的 WSL（供 Windows 委托 inotify 测试用）。"""
+    import shutil
+    return shutil.which("wsl") is not None
+
+
+def _run_inotify_direct():
+    """本机（Linux）直接跑 inotify 后端断言。"""
     with tempfile.TemporaryDirectory() as tmpdir:
         received = []
         d = FolderDispatcher(paths=[tmpdir], backend="inotify")
@@ -286,6 +289,63 @@ def test_folder_dispatcher_inotify_created_event():
         assert len(received) >= 1
         types = {fd.change_type for fd in received}
         assert FolderChangeType.FOLDER_CREATED in types
+
+
+def _wsl_path(win_path):
+    r"""把 Windows 绝对路径转为 WSL 的 /mnt/<drive>/... 路径。"""
+    drive = win_path[0].lower()
+    return '/mnt/' + drive + win_path[2:].replace('\\', '/')
+
+
+def _run_inotify_via_wsl():
+    """Windows 上委托 WSL 跑 inotify（inotify 是 Linux 原生 API，Windows 无此内核机制）。
+
+    复用同目录下的 _inotify_probe.py（其逻辑与 _run_inotify_direct 等价）。
+    这样单次在 Windows 上运行本测试文件也能覆盖 inotify 后端，不再以
+    "Linux/inotify only" 假跳过。WSL 不可用时给出显式失败而非静默 skip。
+    """
+    import subprocess
+
+    probe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_inotify_probe.py")
+    if not os.path.exists(probe):
+        pytest.skip("inotify WSL 探针缺失: {}".format(probe))
+    # repo 根 = rx 的上一级，供 PYTHONPATH 让 vools.reactive 可 import
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    wsl_probe = _wsl_path(probe)
+    wsl_repo = _wsl_path(repo_root)
+    # 用 bash -c 避免 wsl 对含空格/引号参数的二次切分
+    inner = (
+        "cd $(dirname {}) && PYTHONPATH={} python3 _inotify_probe.py".format(
+            wsl_probe, wsl_repo
+        )
+    )
+    try:
+        r = subprocess.run(
+            ["wsl", "bash", "-lc", inner],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            universal_newlines=True, timeout=120,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as e:
+        pytest.fail("WSL 不可用，无法委托运行 inotify 测试: {}".format(e))
+    out = (r.stdout or "").strip()
+    assert r.returncode == 0 and out.endswith("PASS"), \
+        "WSL inotify 探针失败 (exit={}): {}".format(r.returncode, out[-300:])
+
+
+def test_folder_dispatcher_inotify_created_event():
+    """inotify 后端捕获目录创建。
+
+    Linux 下直接跑；Windows 下委托 WSL 跑（inotify 是 Linux 原生 API）。
+    两种平台都能真实验证 inotify 后端，不再单平台假 skip。
+    """
+    if sys.platform.startswith("linux"):
+        _run_inotify_direct()
+    elif sys.platform == "win32" and _has_wsl():
+        _run_inotify_via_wsl()
+    elif sys.platform == "win32":
+        pytest.skip("Windows 无 inotify 且本机未安装 WSL，无法验证 inotify 后端")
+    else:
+        pytest.skip("inotify 仅 Linux 原生支持，当前平台 {}".format(sys.platform))
 
 
 # ====================================================================
