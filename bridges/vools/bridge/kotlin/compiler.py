@@ -32,31 +32,18 @@ _KOTLIN_CACHE_DIR = os.path.join(tempfile.gettempdir(), 'vools_kotlin_cache')
 
 
 def _check_wsl() -> bool:
-    """检查是否可以使用 WSL"""
-    if not _IS_WINDOWS:
-        return False
-    try:
-        result = subprocess.run(
-            ['wsl', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=5
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    """检查是否可以使用 WSL（走 core.wsl 冷启动容错 + 进程级缓存）"""
+    from ..core import wsl as _wsl
+    return _wsl.is_wsl_available()
 
 
 def _check_wsl_kotlin() -> bool:
-    """检查 WSL 中是否有 kotlinc 和 kotlin"""
-    try:
-        result = subprocess.run(
-            ['wsl', 'bash', '-c', 'source ~/.sdkman/bin/sdkman-init.sh 2>/dev/null; which kotlinc && which kotlin'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=15
-        )
-        return result.returncode == 0 and result.stdout.strip() != ''
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    """检查 WSL 中是否有 kotlinc 和 kotlin（走 core.wsl，冷启动超时退避重试）"""
+    from ..core import wsl as _wsl
+    return _wsl.probe_wsl_cmd(
+        ['bash', '-c', 'source ~/.sdkman/bin/sdkman-init.sh 2>/dev/null; which kotlinc && which kotlin'],
+        per_try_timeout=15,
+    )
 
 
 def _check_local_kotlinc() -> bool:
