@@ -1058,3 +1058,18 @@ if sys.version_info < (3, 7):
         except Exception:
             pass
     del _loader
+
+    # manager_funcs 走的是 __getattr__ 的最后一个分支（不是 _load_* 懒加载），
+    # py3.6 下同样不会被 `from vools.bridge import save_config` 触发。
+    # 这里把它们提前绑定到 globals()，与 __getattr__ 内 getattr(manager, name) 等价。
+    for _mname in (
+        'set_compiler_path', 'add_compiler_path',
+        'set_runtime_path', 'add_runtime_path',
+        'get_all_paths', 'save_config', 'load_config',
+        'get_config_file_path',
+    ):
+        try:
+            globals()[_mname] = getattr(globals()['manager'], _mname)
+        except Exception:
+            pass
+    del _mname
