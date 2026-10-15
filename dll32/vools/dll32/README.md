@@ -32,7 +32,8 @@ vools/dll32/
 │   ├── RC6.dll
 │   ├── RC6Widgets.dll
 │   ├── vbRichClient5.dll
-│   ├── cairo_sqlite.dll
+│   ├── cairo_sqlite.dll      # RC6.dll 的依赖
+│   ├── vb_cairo_sqlite.dll   # vbRichClient5.dll 的依赖（与上面不是同一文件！）
 │   └── WebView2Loader.dll
 ├── _lib/                    # 高层包装库
 │   ├── com/                 # COM 组件支持
@@ -418,8 +419,32 @@ exists = dll_exists('VB6Plus.dll')
 1. **仅支持 Windows 平台**：32 位 DLL 是 Windows 特有技术
 2. **进程间通信开销**：每次调用都会启动 32 位 Python 进程，频繁调用建议批量处理
 3. **数据类型限制**：跨进程传输仅支持 JSON 可序列化类型（str、int、float、bool、list、dict、None）
-4. **COM 组件注册**：部分 COM 组件可能需要先注册才能使用
+4. **COM 组件免注册**：`DirectCOM` 会自动启用 SxS activation context，
+   从 `_dlls/` 同目录解析 COM 服务器，**不需要注册表登记**（详见下方"免注册 COM"）
 5. **线程安全**：当前实现不是线程安全的，多线程环境需自行加锁
+
+## 免注册 COM（推荐，自包含）
+
+`DirectCOM` 默认走免注册路径：在 `_dlls/` 生成 SxS manifest 并用
+`CreateActCtxW` + `ActivateActCtx` 激活，此后 `CoCreateInstance` 优先按
+manifest 声明的 `comClass` 从同目录 DLL 加载，**不依赖注册表**。
+
+```python
+from vools.dll32._lib.com.directcom import DirectCOM
+
+dc = DirectCOM()
+assert dc.enable_regfree()          # 激活免注册上下文
+obj = dc.create('vbRichClient5.cConstructor')
+print(obj.Crypt().Base64Enc('Hello World'))
+```
+
+> **关键坑**：`vbRichClient5.dll` 依赖 **`vb_cairo_sqlite.dll`**（约 2.8MB），
+> 而 `RC6.dll` 依赖 **`cairo_sqlite.dll`**（约 3.9MB）——**两者不是同一个文件**。
+> `_dlls/` 必须两份都放，否则 `vbRichClient5.dll` 会报
+> `WinError 126 找不到指定的模块`，很容易误判成"没注册 COM"。
+>
+> 若 `_dlls/` 缺 `vb_cairo_sqlite.dll`，`DirectCOM.create()` 会抛
+> `RuntimeError` 并在消息里明确指出缺失文件。
 
 ## 常见问题
 

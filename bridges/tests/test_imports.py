@@ -6,7 +6,11 @@ print()
 # 1. 导入主包
 print('1. vools 主包...')
 import vools
-from importlib.metadata import version as _pkg_version
+# importlib.metadata 是 py3.8+ 标准库；py3.6/3.7 需用反向移植包 importlib_metadata。
+try:
+    from importlib.metadata import version as _pkg_version
+except ImportError:
+    from importlib_metadata import version as _pkg_version
 print(f'   OK - vools {_pkg_version("vools")}')
 
 # 2. bridge 模块

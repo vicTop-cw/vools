@@ -49,11 +49,30 @@ def _setup_all_runtimes():
     except Exception:
         pass
 
-# 尝试初始化（可能在 manager 未加载时失败，不影响功能）
-try:
-    _setup_all_runtimes()
-except Exception:
-    pass
+
+# 惰性初始化：原实现在 import 本模块时立刻执行 _setup_all_runtimes()，
+# 而那会为全部已注册语言解析工具链路径（含 WSL 探测）。在 py3.6 上
+# 实测仅 `import vools.bridge` 就要 46-67s（首次），其中
+# vools.bridge.core.types 之前有 20.6s 间隙、各语言模块间还有 2-5s 间隙，
+# 全部来自这里的 import 期副作用。
+#
+# import 不应承担这种代价：bridge 的绝大多数入口（类型映射、装饰器、
+# 序列化）都不需要运行时环境已配置。改为首次真正需要时才初始化，
+# 并保持幂等与「失败不影响功能」的既有语义。
+_RUNTIME_SETUP_DONE = False
+_RUNTIME_SETUP_LOCK = threading.Lock()
+
+
+def ensure_runtimes_setup() -> None:
+    """幂等地初始化各语言运行时环境（首次调用时才做，避免 import 副作用）。"""
+    global _RUNTIME_SETUP_DONE
+    if _RUNTIME_SETUP_DONE:
+        return
+    with _RUNTIME_SETUP_LOCK:
+        if _RUNTIME_SETUP_DONE:
+            return
+        _setup_all_runtimes()
+        _RUNTIME_SETUP_DONE = True
 
 
 class SharedLibrary:

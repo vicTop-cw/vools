@@ -8,7 +8,7 @@ vools.md 阶段6：文档生态工具模块
 - 实时预览 HTTP 服务器（文件监听 + 热刷新）
 - CommonMark/GFM 规范合规检查器
 """
-import re, os, json, time, html, threading, http.server, socketserver, hashlib, fnmatch, urllib.parse
+import re, os, json, time, html, threading, hashlib, fnmatch, urllib.parse
 from typing import List, Dict, Optional, Tuple, Iterator, Any, Union
 from ..core.dataclass_compat import dataclass, field
 from ..encoding import read_text, write_text
@@ -368,6 +368,15 @@ class PreviewServer:
         Returns:
             服务器地址 URL
         """
+        # http.server / socketserver 延迟到此函数内 import：
+        # 它们只在启动预览服务器时才需要，但 http.server 模块在 import 期
+        # 会执行 mimetypes.init() → read_windows_registry()，扫描 HKCR 下
+        # 全部 MIME 注册表项（py3.6 无缓存，实测 1 万次 winreg.OpenKey、
+        # 额外 40s 全局导入锁等待）。顶层 import 会让任何 import vools.md
+        # （乃至 vools.bridge → vools.bridge.md）都付出这份代价。
+        import http.server
+        import socketserver
+
         url = f'http://localhost:{self.port}'
 
         class Handler(http.server.BaseHTTPRequestHandler):
