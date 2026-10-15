@@ -22,6 +22,7 @@ import logging
 import weakref
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Optional, List
+from vools.core.ast_compat import is_literal, literal_value
 
 log = logging.getLogger("vools.bridge.sigcache")
 
@@ -569,13 +570,13 @@ def _extract_body(func: Callable[..., Any], args: tuple, kwargs: Dict[str, Any])
         if func_def:
             for node in ast.walk(func_def):
                 if isinstance(node, ast.Return):
-                    if isinstance(node.value, ast.Constant):
-                        return str(node.value.value)
+                    if is_literal(node.value):
+                        return str(literal_value(node.value))
                     elif isinstance(node.value, ast.JoinedStr):
                         parts = []
                         for v in node.value.values:
-                            if isinstance(v, ast.Constant):
-                                parts.append(str(v.value))
+                            if is_literal(v):
+                                parts.append(str(literal_value(v)))
                         return ''.join(parts)
     except Exception:
         pass

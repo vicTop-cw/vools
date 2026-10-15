@@ -35,6 +35,7 @@ LangBridge 统一接口：
 # 预加载 asyncio：Loomy python-runtime 3.13 下，asyncio 首次导入在
 # 延迟加载子模块（__getattr__ -> from . import xxx）路径中可能部分初始化，
 # 导致 _base.py 的 import asyncio 报 base_events 未定义。提前完整加载以规避。
+import sys
 import asyncio  # noqa: F401
 import importlib
 
@@ -1030,3 +1031,30 @@ def __getattr__(name):
 def __dir__():
     """返回所有可用的导出名称"""
     return sorted(set(globals().keys()) | set(__all__))
+
+
+# ============================================================================
+# Python 3.6 兼容：预加载懒加载模块
+# ============================================================================
+# 本模块用 PEP 562 的 module-level ``__getattr__`` 实现按需加载（各语言的
+# 桥接模块只在首次访问时才 import）。但 **PEP 562 是 Python 3.7+ 特性**：
+# py3.6 下 ``from vools.bridge import lua_compiler_available`` 不会触发
+# ``__getattr__``，直接抛 ImportError（实测 py3.6 下 bridges 的 28 个
+# 语言测试文件因 `cannot import name 'xxx_compiler_available'` 失败）。
+#
+# 这里在 py3.6 上主动预加载所有懒加载模块，让名字提前进入 globals()，
+# 这样 ``from vools.bridge import ...`` 在两种版本下行为一致。
+if sys.version_info < (3, 7):
+    for _loader in (
+        _load_nim, _load_cpp, _load_cangjie, _load_go, _load_r, _load_julia,
+        _load_erlang, _load_elixir, _load_haskell, _load_ruby, _load_typescript,
+        _load_vbnet, _load_perl, _load_lua, _load_zig, _load_kotlin,
+        _load_swift, _load_php, _load_dart, _load_powershell, _load_vbscript,
+        _load_shell, _load_tnr, _load_lz, _load_zi, _load_pentad, _load_cypy,
+        _load_md,
+    ):
+        try:
+            _loader()
+        except Exception:
+            pass
+    del _loader

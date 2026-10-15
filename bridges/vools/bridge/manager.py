@@ -388,6 +388,15 @@ class BridgeManager:
         返回：
             LanguageStatus 实例
         """
+        # 惰性初始化运行时环境（首次查询时才做；loader 原本在 import 期
+        # 就调用 setup_all_runtimes，让 import vools.bridge 在 py3.6 上耗时
+        # 46-67s，已改为按需触发）
+        try:
+            from .core.loader import ensure_runtimes_setup
+            ensure_runtimes_setup()
+        except Exception:
+            pass
+
         name_lower = name.lower()
 
         # 检查缓存

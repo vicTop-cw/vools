@@ -23,6 +23,7 @@ import textwrap
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Optional, Tuple, Any
+from ..core.ast_compat import is_none_literal
 
 
 _executor = None
@@ -165,7 +166,7 @@ def _function_body_is_pass(func: Callable) -> bool:
             return True
         if len(body) == 1 and isinstance(body[0], ast.Pass):
             return True
-        if len(body) == 1 and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and body[0].value.value is None:
+        if len(body) == 1 and isinstance(body[0], ast.Expr) and is_none_literal(body[0].value):
             return True
         return False
     except Exception:

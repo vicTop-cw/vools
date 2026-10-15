@@ -62,6 +62,7 @@ from typing import (
 )
 from .core.compat.dataclass_compat import dataclass, field
 from .core.compat.asyncio_compat import run as asyncio_run, get_running_loop as asyncio_get_running_loop
+from vools.core.ast_compat import is_literal, literal_value
 from .core.tracker import get_tracker, CompileTracker
 from .core.types import CompileMode, LangType
 
@@ -312,13 +313,13 @@ class DepResolver:
             if func_def:
                 for node in ast.walk(func_def):
                     if isinstance(node, ast.Return):
-                        if isinstance(node.value, ast.Constant):
-                            return str(node.value.value)
+                        if is_literal(node.value):
+                            return str(literal_value(node.value))
                         elif isinstance(node.value, ast.JoinedStr):
                             parts = []
                             for v in node.value.values:
-                                if isinstance(v, ast.Constant):
-                                    parts.append(str(v.value))
+                                if is_literal(v):
+                                    parts.append(str(literal_value(v)))
                             return ''.join(parts)
         except Exception:
             pass
