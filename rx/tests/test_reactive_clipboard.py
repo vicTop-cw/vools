@@ -445,8 +445,17 @@ def test_clip_observer_attach_chain():
 # 测试 13: ClipSubject + ClipObserver 协同工作（集成）
 # ---------------------------------------------------------------------------
 
+@clipboard_or_degrade
 def test_clip_subject_with_observer():
-    """真实的 ClipSubject + ClipObserver 组合。"""
+    """真实的 ClipSubject + ClipObserver 组合。
+
+    与 test_win32_event_trigger / test_self_filter_default 等一致挂
+    @clipboard_or_degrade：剪贴板能正常打开时跑完整真实路径（含 set_text 实写）；
+    被外部进程占用 / headless 会话里 set_text 的 OpenClipboard 必然失败时，
+    走降级契约（backend∈{win32,polling} 且 clipboard_usable()==False 的真实断言），
+    既非假 skip 也非放宽校验。本测试此前漏挂该装饰器，导致外部持有剪贴板时
+    整条 with 块抛 OSError、误报为框架缺陷。
+    """
     received: list = []
 
     with ClipSubject(backend="polling", interval=0.1) as clip:
