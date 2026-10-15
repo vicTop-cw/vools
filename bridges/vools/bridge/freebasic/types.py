@@ -71,11 +71,25 @@ def get_fb_type(py_type):
         return PY_TO_FB_TYPE[py_type]
 
     # 处理泛型别名（如 list[int]、list[float]），get_type_hints 会解析字符串注解
+    # typing.get_origin / get_args 是 py3.8+ API；py3.6/3.7 需回退：
+    #   - typing_extensions 提供同义实现（若已安装）
+    #   - 否则用 __origin__ / __args__ 属性（PEP 560 起 typing 泛型别名带这些属性）
     import typing as _typing
-    origin = _typing.get_origin(py_type)
+    _get_origin = getattr(_typing, 'get_origin', None)
+    _get_args = getattr(_typing, 'get_args', None)
+    if _get_origin is None:
+        try:
+            from typing_extensions import get_origin as _get_origin, get_args as _get_args
+        except ImportError:
+            def _get_origin(tp):
+                return getattr(tp, '__origin__', None)
+
+            def _get_args(tp):
+                return getattr(tp, '__args__', ()) or ()
+    origin = _get_origin(py_type)
     if origin is not None:
         if origin is list:
-            args = _typing.get_args(py_type)
+            args = _get_args(py_type)
             if args and args[0] is float:
                 return 'Double Ptr'
             return 'Long Ptr'
