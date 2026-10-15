@@ -69,17 +69,9 @@ def _get_shell_path() -> str:
 
 
 def _wsl_available() -> bool:
-    try:
-        result = subprocess.run(
-            ['wsl', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            universal_newlines=True, timeout=5,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, OSError):
-        return False
-    except Exception:
-        return False
+    """检查 WSL 是否可用（走 core.wsl，冷启动容错 + 进程级缓存）"""
+    from ..core import wsl as _wsl
+    return _wsl.is_wsl_available()
 
 
 _SHELL_PATH = _setup_shell_env()

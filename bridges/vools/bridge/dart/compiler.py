@@ -37,31 +37,15 @@ _DART_CACHE_DIR = os.path.join(tempfile.gettempdir(), 'vools_dart_cache')
 
 
 def _check_wsl() -> bool:
-    """检查是否可以使用 WSL"""
-    if not _IS_WINDOWS:
-        return False
-    try:
-        result = subprocess.run(
-            ['wsl', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=5
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    """检查是否可以使用 WSL（走 core.wsl 的冷启动容错 + 进程级缓存）"""
+    from ..core import wsl as _wsl
+    return _wsl.is_wsl_available()
 
 
 def _check_wsl_dart() -> bool:
-    """检查 WSL 中是否有 dart"""
-    try:
-        result = subprocess.run(
-            ['wsl', 'dart', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=10
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    """检查 WSL 中是否有 dart（走 core.wsl，冷启动超时会退避重试而非误判不可用）"""
+    from ..core import wsl as _wsl
+    return _wsl.check_wsl_command('dart')
 
 
 _USE_WSL = _IS_WINDOWS and shutil.which('dart') is None and _check_wsl() and _check_wsl_dart()

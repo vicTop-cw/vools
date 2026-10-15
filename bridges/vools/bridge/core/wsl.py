@@ -6,6 +6,7 @@ vools.bridge.core.wsl - WSL 辅助工具
 
 import os
 import shutil
+import time
 import platform
 import subprocess
 from typing import Optional, List
@@ -22,42 +23,75 @@ _WSL_AVAILABLE_CACHE: Optional[bool] = None
 _WSL_COMMAND_CACHE: dict = {}
 
 
+def _probe_wsl(cmd, per_try_timeout: float, attempts: int = 4, backoff: float = 1.0):
+    """对 WSL 命令做带退避的探测，区分「确证结果」与「超时/瞬时不可用」。
+
+    WSL 虚拟机冷启动（例如上一个进程把 wsl.exe 杀掉后，下一次要等 VM 重新拉起）
+    会让前几次调用超时。冷启动期间的超时【不是】"WSL 不可用"，若据此缓存 False，
+    会在整个进程生命周期内把可用环境误判为不可用（表现为 dart/kotlin/… 的
+    "compiler not available" 假 skip）。
+
+    Returns:
+        (result, definitive): result 为最后一次观察到的 bool；definitive=True 表示
+        命令确实在超时之外跑出来了（可安全缓存）；definitive=False 表示每次都超时，
+        属瞬时状态，不应被缓存。
+    """
+    for i in range(max(1, attempts)):
+        try:
+            r = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=per_try_timeout,
+            )
+            return (r.returncode == 0), True
+        except subprocess.TimeoutExpired:
+            # 冷启动/瞬时挂起：不算确证，退避后重试
+            if i < attempts - 1:
+                time.sleep(backoff * (i + 1))
+            continue
+        except (FileNotFoundError, OSError):
+            # wsl 不存在或无法启动子进程：确证不可用
+            return False, True
+    return False, False
+
+
 def is_wsl_available() -> bool:
-    """检查 WSL 是否可用（仅 Windows 上）。结果在进程内缓存。"""
+    """检查 WSL 是否可用（仅 Windows 上）。结果在进程内缓存（瞬时超时不缓存）。"""
     global _WSL_AVAILABLE_CACHE
     if not _IS_WINDOWS:
         return False
     if _WSL_AVAILABLE_CACHE is not None:
         return _WSL_AVAILABLE_CACHE
-    try:
-        result = subprocess.run(
-            ['wsl', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=5,
-        )
-        _WSL_AVAILABLE_CACHE = result.returncode == 0
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        _WSL_AVAILABLE_CACHE = False
-    return _WSL_AVAILABLE_CACHE
+    ok, definitive = _probe_wsl(['wsl', '--version'], per_try_timeout=5)
+    if definitive:
+        _WSL_AVAILABLE_CACHE = ok
+    return ok
 
 
 def check_wsl_command(cmd: str) -> bool:
-    """检查 WSL 中是否存在指定命令。结果按命令名在进程内缓存。"""
+    """检查 WSL 中是否存在指定命令。结果按命令名在进程内缓存（瞬时超时不缓存）。"""
     if cmd in _WSL_COMMAND_CACHE:
         return _WSL_COMMAND_CACHE[cmd]
     if not is_wsl_available():
-        _WSL_COMMAND_CACHE[cmd] = False
+        # 若可用性判定是瞬时超时（未缓存），这里不写命令缓存，避免固化冷启动误判。
         return False
-    try:
-        result = subprocess.run(
-            ['wsl', 'which', cmd],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=10,
-        )
-        ok = result.returncode == 0 and result.stdout.strip() != b''
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        ok = False
-    _WSL_COMMAND_CACHE[cmd] = ok
+    ok, definitive = _probe_wsl(['wsl', 'which', cmd], per_try_timeout=10)
+    if definitive:
+        _WSL_COMMAND_CACHE[cmd] = ok
+    return ok
+
+
+def probe_wsl_cmd(args, per_try_timeout: float = 15) -> bool:
+    """在 WSL 中运行 `wsl <args...>` 并判断返回码是否为 0（冷启动容错 + 退避重试）。
+
+    给各语言桥接模块做"WSL 里有没有这个工具链"探测用（例如 `wsl dart --version`、
+    `wsl bash -c "which kotlinc && which kotlin"`），替代每个模块自己写、且会把
+    WSL 冷启动超时误判成"不可用"并进程级缓存的死代码。冷启动期间命令超时会退避重试。
+    """
+    if not is_wsl_available():
+        return False
+    cmd = ['wsl'] + list(args)
+    ok, _definitive = _probe_wsl(cmd, per_try_timeout=per_try_timeout)
     return ok
 
 

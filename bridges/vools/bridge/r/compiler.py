@@ -108,14 +108,9 @@ def _safe_subprocess_run(cmd, input_data=None, timeout=120):
 
 
 def _check_wsl_available():
-    """检查 WSL 是否可用（仅 Windows）"""
-    if not _IS_WINDOWS:
-        return False
-    try:
-        result = _safe_subprocess_run(['wsl', '--version'], timeout=10)
-        return result.returncode == 0
-    except Exception:
-        return False
+    """检查 WSL 是否可用（走 core.wsl，冷启动容错 + 进程级缓存）"""
+    from ..core import wsl as _wsl
+    return _wsl.is_wsl_available()
 
 
 def _check_rscript_available(use_wsl=None):

@@ -42,31 +42,15 @@ def _check_moonbit() -> bool:
 
 
 def _check_wsl() -> bool:
-    """检查是否可以使用 WSL"""
-    if not _IS_WINDOWS:
-        return False
-    try:
-        result = subprocess.run(
-            ['wsl', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=5
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    """检查是否可以使用 WSL（走 core.wsl 冷启动容错 + 进程级缓存）"""
+    from ..core import wsl as _wsl
+    return _wsl.is_wsl_available()
 
 
 def _check_wsl_moonbit() -> bool:
-    """检查 WSL 中是否有 moon"""
-    try:
-        result = subprocess.run(
-            ['wsl', 'moon', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=10
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    """检查 WSL 中是否有 moon（走 core.wsl，冷启动超时退避重试）"""
+    from ..core import wsl as _wsl
+    return _wsl.probe_wsl_cmd(['moon', '--version'], per_try_timeout=15)
 
 
 _USE_WSL = _IS_WINDOWS and not _check_moonbit() and _check_wsl() and _check_wsl_moonbit()
