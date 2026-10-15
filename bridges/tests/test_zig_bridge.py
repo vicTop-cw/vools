@@ -154,11 +154,6 @@ ZIG_AVAILABLE = zig_compiler_available()
 
 
 @pytest.mark.skipif(not ZIG_AVAILABLE, reason="Zig compiler not available")
-# Windows py3.6 上 Zig 链接器（lld-link）找不到运行时库（ubsan_rt.lib/compiler_rt.lib），
-# 这属于本地环境配置问题而非 vools.zig 代码缺陷。如需在 Windows py3.6 运行这些测试，
-# 需完整安装 Zig SDK 并正确配置 LINK/LIBPATH 环境变量指向 runtime libs 目录。
-# 暂且标记为 xfail，待有合适的 CI 环境后再恢复。
-@pytest.mark.xfail(reason="Zig linker can't find runtime libs on local Windows py3.6; needs complete Zig SDK + LIBPATH setup")
 class TestZigDecorator:
     """测试 @zig 装饰器（需要 Zig 编译器）"""
 
