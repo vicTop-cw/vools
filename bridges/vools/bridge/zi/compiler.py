@@ -68,19 +68,83 @@ def _resolve_zhi_src() -> Optional[str]:
     return None
 
 
+def _candidate_interpreters() -> list:
+    """可能能 import zhi 的解释器命令（列表，每个是可执行+可选参数）。
+
+    第一个总是当前 sys.executable；再补 PATH 上的 python/python3/py。
+    """
+    cands = [[sys.executable]]
+    for name in ('python', 'python3', 'py'):
+        w = shutil.which(name)
+        if not w:
+            continue
+        if name == 'py':
+            cands.append([w, '-3'])
+        else:
+            cands.append([w])
+    # 去重（按命令元组）
+    seen = set()
+    out = []
+    for c in cands:
+        key = tuple(c)
+        if key not in seen:
+            seen.add(key)
+            out.append(c)
+    return out
+
+
+def _probe_can_import_zhi(python_cmd: list, src: str) -> bool:
+    """在子进程里探测某解释器能否 import zhi（不污染当前进程 sys.path）。"""
+    env = dict(os.environ)
+    env['PYTHONPATH'] = src + os.pathsep + env.get('PYTHONPATH', '')
+    try:
+        r = subprocess.run(
+            python_cmd + ['-c', 'import zhi'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=env, timeout=15,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+_ZHI_PYTHON = None
+_ZHI_PYTHON_RESOLVED = False
+
+
+def _resolve_zhi_python(src: str):
+    """挑一个能 import zhi 的解释器命令（进程内缓存）。
+
+    zhi 源码用了 `from __future__ import annotations`（PEP 563），要求 Python 3.7+，
+    故在 py3.6 宿主里 sys.executable 直接 import 会 SyntaxError。执行路径本就是
+    子进程 `python -m zhi.cli`，解释器不必绑死 sys.executable——这里在候选里选第一个
+    能 import zhi 的（py3.7+ 环境时第一个 sys.executable 即命中，零额外开销）。
+    全都不行才返回 None（此时 zi 确不可用）。
+    """
+    global _ZHI_PYTHON, _ZHI_PYTHON_RESOLVED
+    if _ZHI_PYTHON_RESOLVED:
+        return _ZHI_PYTHON
+    for cmd in _candidate_interpreters():
+        if _probe_can_import_zhi(cmd, src):
+            _ZHI_PYTHON = cmd
+            break
+    _ZHI_PYTHON_RESOLVED = True
+    return _ZHI_PYTHON
+
+
 def _zhi_available() -> bool:
-    """探测 zhi 编译器是否可导入。"""
+    """探测 zhi 编译器是否可用（存在能 import 它的解释器）。
+
+    旧实现在当前进程内 sys.path.insert(0, src) 后 import zhi，成功则永久污染
+    sys.path、失败则连"有别的解释器能跑"这种情况也判不可用；且与执行模型
+    （子进程 -m zhi.cli）不一致。改为子进程探测，修掉这些缺陷。
+    """
     src = _resolve_zhi_src()
     if not src:
         return False
     if not os.path.isdir(os.path.join(src, 'zhi')):
         return False
-    try:
-        sys.path.insert(0, src)
-        import zhi  # noqa: F401
-        return True
-    except Exception:
-        return False
+    return _resolve_zhi_python(src) is not None
 
 
 def _elixir_available() -> bool:
@@ -220,8 +284,14 @@ def _execute_zi_code(code: str, func_name: str,
         if zhi_src:
             env['PYTHONPATH'] = zhi_src + os.pathsep + env.get('PYTHONPATH', '')
 
+        # 用能 import zhi 的解释器跑（zhi 需 py3.7+，py3.6 宿主下 sys.executable
+        # 直接 import 会 SyntaxError；执行本就是子进程 -m zhi.cli，不必绑死宿主）。
+        py_cmd = _resolve_zhi_python(zhi_src) if zhi_src else None
+        if py_cmd is None:
+            py_cmd = [sys.executable]
+
         result = subprocess.run(
-            [sys.executable, '-m', 'zhi.cli', 'compile', src_path, '--run'],
+            py_cmd + ['-m', 'zhi.cli', 'compile', src_path, '--run'],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding='utf-8', errors='replace',
             env=env, timeout=timeout,
