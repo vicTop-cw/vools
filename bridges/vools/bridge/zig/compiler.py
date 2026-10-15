@@ -214,8 +214,44 @@ class ZigBridge(LangBridge):
         cache_dir = cache_dir or tempfile.gettempdir()
         os.makedirs(cache_dir, exist_ok=True)
 
-        # Zig 编译缓存目录（避免全局缓存损坏导致编译挂起）
+        # Zig 编译缓存目录（避免默认全局缓存挂起）
         zig_cache_dir = os.path.join(cache_dir, 'vools_zig_cache')
+        os.makedirs(zig_cache_dir, exist_ok=True)
+
+        # 先用共享缓存目录编译一次。若失败，多半是共享 global-cache 被历史
+        # 中断/并发的编译写坏（表现为 lld-link "could not open *.lib"）——
+        # 本会话就因中途 kill 掉挂起的编译进程把共享缓存污染过，之后所有 zig
+        # build-lib 都报缺 ntdll.lib/kernel32.lib 等。此时退到一个一次性干净
+        # 缓存目录重试一次，避免一次被杀的编译永久毒化后续所有 zig 编译。
+        lib, err = self._build_lib(code, func_name, cache_dir, zig_cache_dir)
+        if lib is not None:
+            return lib
+
+        err2 = None
+        fresh = tempfile.mkdtemp(prefix='vools_zig_cache_fresh_')
+        try:
+            lib, err2 = self._build_lib(code, func_name, cache_dir, fresh)
+            if lib is not None:
+                return lib
+        finally:
+            shutil.rmtree(fresh, ignore_errors=True)
+
+        # 两次都失败：抛出最后一次的 zig 原始报错（保持与旧实现同样的诊断信息）
+        raise RuntimeError(f'Zig compilation failed:\n{err2 or err}')
+
+    def _build_lib(self, code: str, func_name: str, cache_dir: str,
+                   zig_cache_dir: str):
+        """用给定的 zig global-cache 目录执行一次 zig build-lib。
+
+        Returns:
+            (lib_path, None)  成功；
+            (None, error_text) 失败（调用方据此决定是否换干净缓存重试）。
+        Raises:
+            RuntimeError: 编译器不可用时。
+        """
+        if not self.compiler_available():
+            raise RuntimeError("Zig compiler not available")
+
         os.makedirs(zig_cache_dir, exist_ok=True)
 
         # 创建临时目录存放源文件
@@ -249,17 +285,16 @@ class ZigBridge(LangBridge):
             )
 
             if result.returncode != 0:
-                error_msg = result.stderr or result.stdout
-                raise RuntimeError(f'Zig compilation failed:\n{error_msg}')
+                return (None, result.stderr or result.stdout)
 
             if not os.path.exists(output_lib):
-                raise RuntimeError(f'Library not generated at {output_lib}')
+                return (None, 'Library not generated at %s' % output_lib)
 
             # 复制到缓存目录
             final_lib = os.path.join(cache_dir, os.path.basename(output_lib))
             shutil.copy2(output_lib, final_lib)
 
-            return final_lib
+            return (final_lib, None)
 
     def compile_project(self, project_dir: str, entry: str, output_dir: Optional[str] = None) -> str:
         """编译整个 Zig 项目目录
