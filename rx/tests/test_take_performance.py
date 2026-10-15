@@ -1,17 +1,15 @@
 """take 操作符性能基准测试 - 验证优化效果
 
-reactivex(RxPY) 是【可选】的第三方对比基准，不属于 vools-rx 的必需依赖；
-未安装时整个模块 skip，而不是在收集期 ImportError 拖垮 rx 套件。
+reactivex(RxPY) 是【可选】的第三方对比基准，只在 benchmark_* 函数内部按需
+导入。vools 自身的正确性测试（test_take_correctness）不依赖它，因此无论
+reactivex 是否安装都应可运行——不能因模块级 importorskip 而把 vools 自己的
+测试也一并 skip（reactivex 仅支持 py3.10+，在 py3.6/3.11 老环境装不上会让
+整个文件假 skip）。benchmark_* 不以 test_ 开头、不被 pytest 收集，缺库时
+仅手动运行才需要 reactivex。
 """
-import pytest
-
-pytest.importorskip("reactivex")
-
 import timeit
 import gc
 import vools.reactive as rx
-import reactivex as rxx
-from reactivex.operators import take
 
 
 def benchmark_take():
