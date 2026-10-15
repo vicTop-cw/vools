@@ -29,7 +29,11 @@ import inspect
 import textwrap
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Optional, Tuple, Any, Literal
+from typing import Callable, Optional, Tuple, Any
+try:
+    from typing import Literal  # py3.8+
+except ImportError:  # py3.6/3.7 的 typing 无 Literal，回退 typing_extensions（仓库其它模块已依赖它）
+    from typing_extensions import Literal
 from ..core.ast_compat import is_none_literal
 
 

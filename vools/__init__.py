@@ -9,6 +9,13 @@ import os
 import sys
 import types
 
+# 注意：`import vools.sys`（子模块）会让导入机制把父包属性 vools.sys 指向该子模块，
+# 从而【覆盖】本模块全局里的标准库 sys 名字——任何在运行时（非导入时）用裸 `sys.`
+# 的地方都会变成访问 vools.sys（例如 `sys.version_info` 抛 AttributeError）。
+# 与文件下方对 vools/concurrent 屏蔽标准库 concurrent 的处理同理。这里绑一个不会被
+# 子模块名覆盖的私有别名 _sys，供 _popen_init 等运行期回调安全引用。
+_sys = sys
+
 # 允许 vools-rx / vools-bridges 等子包作为同一 vools 命名空间下的独立分发包被合并
 __path__ = pkgutil.extend_path(__path__, __name__)
 
@@ -46,7 +53,7 @@ if not hasattr(subprocess.Popen.__init__, '_vools_patched'):
         # universal_newlines 的别名）。subprocess.run 会把 text 原样透传给
         # Popen，导致 py3.6 下任何 subprocess.run(..., text=True) 都抛
         # TypeError。这里统一转为 universal_newlines。
-        if sys.version_info < (3, 7) and 'text' in kwargs:
+        if _sys.version_info < (3, 7) and 'text' in kwargs:
             text_val = kwargs.pop('text')
             if 'universal_newlines' not in kwargs:
                 kwargs['universal_newlines'] = text_val
@@ -56,7 +63,7 @@ if not hasattr(subprocess.Popen.__init__, '_vools_patched'):
         # 这里按 3.7+ run() 的语义还原：capture_output=True 等价于
         # stdout=PIPE, stderr=PIPE；若调用方已显式指定 stdout/stderr 则保持
         # 3.7+ 的行为报 ValueError。
-        if sys.version_info < (3, 7) and 'capture_output' in kwargs:
+        if _sys.version_info < (3, 7) and 'capture_output' in kwargs:
             capture = kwargs.pop('capture_output')
             if capture:
                 if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
