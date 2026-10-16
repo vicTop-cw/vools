@@ -8,6 +8,60 @@
 pip install vools-actus
 ```
 
+## 资源与路径（开发必读）
+
+> 本模块已迁入 `vools.actus`，而仓库资源（`contracts/`、`actions/`、`_meta/`）随宿主
+> 仓库走。**不要用 `__file__` 直接推导这些路径** —— 迁入后落点不再是原位置。
+> 以下规则是实测总结，违反会在 Windows 中文系统上出现难查的崩溃或空索引。
+
+### 1. `ACTUS_REPO_ROOT` 环境变量契约
+
+所有需要"仓库根"的模块（`validate`、`adapter`、`desktop`、`indexer`、`cost`、
+`omega_strong`、`records`、`scaffold`、`bugreport`、`calllog`）都应：
+
+```python
+root = os.environ.get('ACTUS_REPO_ROOT')      # 1. 环境变量优先
+if root:
+    return root
+# 2. 兜底：本文件上三级（= vools/actus 子项目根，standalone 时正确）
+return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+```
+
+**为什么不能只用 `__file__`**：模块在 `vools/actus/vools/actus/<mod>.py`，
+`dirname^2` 落在无意义的中间层（`.../vools/actus/vools`），不是任何项目根。
+`dirname^3` 才是 vools/actus 子项目根。而 Actus 宿主模式下真正要的是
+`ACTUS_REPO_ROOT/...`。**实测落点必须是真实项目根**，不能只看用了几个 `dirname`。
+
+### 2. 打开仓库/用户文件必须显式 `encoding="utf-8"`
+
+Windows 中文系统 `locale.getpreferredencoding(False)` = **cp936**（GBK）。默认
+`open()` 读仓库提交的 UTF-8 文本（含中文注释/文案）会 `UnicodeDecodeError`。
+
+```python
+with open(path, encoding="utf-8") as f:      # 必须写 encoding
+    data = json.load(f)
+```
+
+判据（按读的是什么文件）：
+- **用户自建**配置（`mcp_servers.json`、`workflow.json`）→ **必须** UTF-8，用户可能在 UTF-8 环境生成
+- **工具自产**产物（npm `package.json`）→ 恒 ASCII，可省
+- **自己写自己读**（round-trip）→ 自洽，可省但建议仍写
+
+### 3. `_shiki/node_modules` 取舍（已知、接受）
+
+`vools/actus/_shiki/node_modules/`（约 14.3MB）**刻意不入 wheel**：体积过大。
+- **仓库内**：Shiki 完整可用，`check_shiki_available()=True`，真渲 ANSI 色码
+- **pip 安装态**：`node` 缺 `node_modules` → **优雅降级**为回退着色（`shiki available=False`）
+- 这是功能取舍，不是缺陷。若要安装态也全量 Shiki，需预打包单文件 bundle（esbuild）
+
+### 4. `contracts/` 与 `schemas/` 的落点
+
+- `contracts/` 保留在宿主仓库（`ACTUS_REPO_ROOT/contracts/`），**不在 wheel 内**
+- `vools/actus/schemas/*.json` 是打包进来的**可移植副本**，供安装态回退
+- `pyproject.toml` 的 `package-data "vools.actus"` 已包含 `_shiki/*.mjs`、
+  `_shiki/*.json`、`schemas/*.json` 等资源；`templates/*`、`static/*`、
+  `config.template.py` 三条 glob **指向不存在的路径**（0 文件），保留无害但已过时
+
 ## 核心功能
 
 ### 1. 动作数据模型
