@@ -133,6 +133,28 @@ def _compile_csharp_code(cs_code, func_name, cache_dir=None):
         if _cache_entry_valid(cache_dir, dll_name):
             return dll_path
 
+        # 半截产物被中断（如批跑杀 dotnet）后，project_dir 的 obj/bin 里已有
+        # 「编译完成」标记，直接再 publish 会被 dotnet 判为 up-to-date 而跳过
+        # apphost(.exe) 生成，自愈变空转（实测：毒缓存下重发后仍缺 exe）。
+        # 重发前清掉增量目录，强制完整构建。
+        for _stale in ('obj', 'bin'):
+            _sd = os.path.join(project_dir, _stale)
+            if os.path.isdir(_sd):
+                shutil.rmtree(_sd, ignore_errors=True)
+
+        # 同理清掉 cache_dir 里「同名 .dll 无 .exe」的半截条目（含伴生文件），
+        # 否则 publish 即使成功，陈旧半截 dll 也可能让命中逻辑指到坏文件。
+        _exe_path = _exe_path_for(dll_path)
+        if os.path.exists(dll_path) and not os.path.exists(_exe_path):
+            for _stale in (dll_path,
+                           os.path.splitext(dll_path)[0] + '.pdb',
+                           dll_path + '.runtimeconfig.json'):
+                if os.path.exists(_stale):
+                    try:
+                        os.remove(_stale)
+                    except OSError:
+                        pass
+
         result = subprocess.run(
             ['dotnet', 'publish', '-c', 'Release', '-o', cache_dir],
             cwd=project_dir,
@@ -143,17 +165,25 @@ def _compile_csharp_code(cs_code, func_name, cache_dir=None):
         if result.returncode != 0:
             raise RuntimeError(f'C# 编译失败:\n{result.stderr}\n{result.stdout}')
 
-    # 验证 DLL 是否生成
-    if not os.path.exists(dll_path):
-        # 可能 DLL 名称不同，查找生成的 DLL
-        for file in os.listdir(cache_dir):
-            if file.endswith('.dll') and file.startswith('cs_'):
-                dll_path = os.path.join(cache_dir, file)
-                break
-        else:
-            raise RuntimeError(f'DLL 未生成: {dll_path}')
+    # 验证产物齐全。_call_csharp_func 实际跑的是【同目录同名的 apphost/exe】
+    # （见下方 line 184 的调用期检查），而 dotnet publish 偶发只产出 .dll 不产出
+    # .exe。旧实现只用 os.path.exists(dll_path) 验 DLL，半截产物被原样返回、
+    # 调用期才抛 FileNotFoundError——报错不指向真因。这里按调用方真实不变式校验：
+    # DLL 与同名 exe 必须同时存在；仍不齐才抛带上下文的 RuntimeError。
+    if _cache_entry_valid(cache_dir, dll_name):
+        return dll_path
 
-    return dll_path
+    # 兼容旧命名：dotnet 可能以 cs_ 前缀产出 DLL。找到「DLL + 同名 exe」齐全的一份。
+    for file in sorted(os.listdir(cache_dir)):
+        if file.endswith('.dll') and file.startswith('cs_'):
+            cand = os.path.join(cache_dir, file)
+            if os.path.exists(_exe_path_for(cand)):
+                return cand
+
+    raise RuntimeError(
+        f'C# 编译产物不完整：{dll_path} 及其同名 .exe 必须同时存在（_call_csharp_func '
+        f'跑的是 exe），但重发后仍缺失。\nstderr:\n{result.stderr}\nstdout:\n{result.stdout}'
+    )
 
 
 def _call_csharp_func(dll_path, func_name, args, ret_type=None):
@@ -262,6 +292,23 @@ class CSharpBridge(LangBridge):
     def compiler_available(self) -> bool:
         """编译器是否可用"""
         return csharp_compiler_available()
+
+    def check_cache(self, code, func_name, cache_dir=None):
+        """C# 缓存命中判定：DLL 与【同名 .exe】必须同时存在。
+
+        基类 check_cache 只用 os.path.exists 验 .dll；而 _call_csharp_func 实际跑的是
+        同目录同名的 apphost/.exe。当缓存被半截产物污染（dotnet publish 被中断、只留下
+        .dll 没有 .exe）时，基类会返回这个坏路径，调用期抛 FileNotFoundError——@csharp
+        装饰器走的是这条基类缓存路径（csharp = _csharp_bridge.decorator），实测批跑中断
+        dotnet 后就是这样失败。这里覆盖判定：要求 .dll 与 .exe 都在，否则视为未命中，
+        让上层 _compile_with_cache 触发重新编译（自愈）。
+        """
+        cache_dir = self.get_cache_dir(cache_dir)
+        cache_key = self.get_cache_key(code, func_name)
+        dll_name = cache_key  # get_lib_filename 追加 .dll
+        if _cache_entry_valid(cache_dir, dll_name):
+            return os.path.join(cache_dir, self.get_lib_filename(cache_key))
+        return None
 
     def generate_code(self, spec: FunctionSpec) -> str:
         """
