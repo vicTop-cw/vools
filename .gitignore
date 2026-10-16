@@ -145,3 +145,7 @@ __rust__/cache/
 # Node.js deps (npm ci regenerates; never commit)
 **/node_modules/
 
+# 测试产物：dll_cmd bridge 自动发现测试写出的 _b3test_*.log/.err（仓库根，90+ 个）
+_b3test_*.log
+_b3test_*.err
+
