@@ -2140,7 +2140,7 @@ def _cmd_viz(args) -> int:
         wf_path = os.path.join(root, ".actus.workflow.json")
         if os.path.exists(wf_path):
             import json
-            with open(wf_path) as f:
+            with open(wf_path, encoding="utf-8") as f:
                 wf = json.load(f)
             result = visualize_workflow(wf, args.format)
         else:
