@@ -576,3 +576,29 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
   回归锁 tests/datetime/test_vdate_time_preserved.py（12 格：两版崩溃分支修复后六分量正确、两版非'-'分隔时间保留、带横杠对照组不变、纯日期行为不变、两种写法解析一致）。
   判据（py3.6 + py3.11）：① 先证 RED —— git stash 掉两份源文件后新锁在 py3.11 下 7 FAILED（崩溃与清零全部命中）；② 修复后 12 passed、双版本 exit=0；③ 全量 tests/datetime 双版本 exit=0 SKIP=0 FAIL=0，消费方 tests/data/test_vicdate.py 与 tests/core/test_vools.py 双版本 exit=0；④ 先核查无任何现存测试断言 00:00:00 旧行为（不是改测试迁就实现）；⑤ py_compile 双版本。
 
+## BUG-68 [2026-10-16T19:00:00Z] [medium] FIXED
+- summary: vools/task/decorators/__init__.py 的 __all__ 声明 batch_execute 但 import 行只取了 task —— `from vools.task.decorators import *` 直接 AttributeError
+- detail: 该 __init__ 全文三行：`from .task_decorator import task` + `__all__ = ['task','batch_execute']`。star import 会逐名 getattr，命中不存在的 batch_execute 即抛 `AttributeError: module 'vools.task.decorators' has no attribute 'batch_execute'`（py3.11 与 py3.6 实测同样崩，两版本都炸说明不是兼容问题而是纯漏写）。batch_execute 实际定义在 task_decorator.py:161，且上级 vools/task/__init__.py:42 正常再导出（`from .decorators.task_decorator import task, batch_execute`）、主包 vools/__init__.py 也把 'batch_execute' 放进 _lazy_modules 与 __all__ —— 唯独中间这层 __init__ 漏了，属"声明与实现脱节"。
+  发现手段：__all__ 完整性审计（385 个含 __all__ 的模块做 AST 预筛出 16 个候选，再【真的 import + 真的 from m import *】逐个运行时核验）—— AST 预筛里有 6 个是 *_compat 模块的假阳性（名字在 try/except 条件分支里定义，静态看不全），运行时一律 OK；只有本条运行时真的炸。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（公开面/导出面一致性审计）
+
+
+### FIXED(2026-10-16T19:10:00Z / BUG-68)
+- evidence: 真源修复 vools/task/decorators/__init__.py:1 改 `from .task_decorator import task, batch_execute`（与 __all__ 对齐，也和上级 task/__init__.py 同口径）。
+  判据（py3.6 + py3.11）：① 先证 RED —— 单独 stash 这一个文件后 py3.11 下锁 2 FAILED（star-import 格 + as-链格），且此前实测 py3.11/py3.6 直接 exec('from vools.task.decorators import *') 均 AttributeError；② 修复后 star import 拿到的命名空间含 batch_execute，双版本 5 passed；③ tests/task + tests/core + tests/datetime 合跑双版本 exit=0 SKIP=0 FAIL=0；④ 回归锁 tests/task/test_public_surface_parity.py 内含"__all__ 每个名字必须 hasattr 得到"的通用断言（不只钉这一个名字）。
+
+## BUG-69 [2026-10-16T19:00:00Z] [medium] FIXED
+- summary: vools.task 在 py3.6 解析成【函数】、py3.11 解析成【模块】—— 主包 py3.6 eager 兼容块漏查 _module_names，同一公开名两副面孔
+- detail: vools/__init__.py 声明 'task' ∈ _module_names（L342），且 L339 注释明确「模块名键：这些名字在 __getattr__ 中直接返回模块本身」；__getattr__（L495）确实遵此。但 py3.6 的 eager 兼容块（L711-719，为补 PEP 562 缺失而存在）写的是 `if hasattr(_module, _name): globals()[_name] = getattr(...)` —— 没查 _module_names。vools.task.task（同名装饰器函数）存在，于是 py3.6 把 vools.task 绑成【函数】。
+  实测后果：`from vools import task` py3.11 得 module（@task 反而 TypeError）、py3.6 得 function（@task 可用）；且 py3.6 下 `import vools.task.decorators as d` 直接 AttributeError —— import as 链要逐级 getattr，第一级拿到函数后再取 .decorators 就炸，而 py3.11 正常。与本文件 L96 自述意图「Python 3.6 兼容块会主动预导入全部延迟名称，保证 3.6 下行为一致」直接相违。
+  影响面实测收敛：遍历全部 _module_names 键，只有 'task' 存在"模块与同名属性并存"，其余键 py3.6 本来就走 else 分支绑模块 —— 修复不改任何其它键的行为（不是大爆破）。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（双版本公开面一致性对拍；续 BUG-56/57 惰性化族）
+
+
+### FIXED(2026-10-16T19:10:00Z / BUG-69)
+- evidence: 真源修复 vools/__init__.py py3.6 eager 块：`if _name not in _module_names and hasattr(_module, _name)` 才绑属性，否则绑模块 —— 与 __getattr__ L495 同口径，一处判据两处一致。
+  判据（py3.6 + py3.11）：① 24 键类型矩阵对拍（core/decorators/functional/data/datetime/utils/security/oop/md/task/encoding/crypto + TaskQueue/WorkerPool/batch_execute/VDate/VList/rule/Rule/Task/generate_token 等）：修复后两版本【逐键完全一致】，task 两版本均为 module:vools.task；② 先证 RED —— 单独 stash vools/__init__.py 后 py3.6 下锁 4 FAILED（含 test_vools_task_is_module、as-链、module_names 全键断言）；③ 修复后双版本 5 passed、`import vools.task.decorators as d` 在 py3.6 恢复正常；④ tests/task+tests/core+tests/datetime 合跑双版本 exit=0 SKIP=0 FAIL=0；⑤ 回归锁里含"遍历 _module_names 全部键必须是 ModuleType"的通用断言，防下一个同名并存键复发。
+  诚实记录：本轮 __all__ 审计的 16 个 AST 候选里 6 个是 *_compat 条件定义的假阳性（运行时全 OK），说明纯静态判据在此类形状会误报；剩余 rx/bridges/pyk/actus 的重树候选（vools.reactive 顶层等约 47 名）因 import 触发 WSL 探测、单进程跑会卡住，【本轮未完成运行时核验】，留作下轮分进程逐个验证。
+
