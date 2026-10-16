@@ -547,3 +547,17 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
   判据（py3.6 + py3.11）：① 新闸 2 格双版本 passed（2.03s/1.36s）；② 负向对照在进程内做（不改动仓库文件）：判定器认出 desktop.py 顶层 fastapi 共 4 处、当前声明集含 fastapi（豁免成立）、剥掉 desktop 段后声明集不再含 fastapi ⇒ 同一条会被判违规（非空洞）；③ 反向守卫 assert judged>=5 棵树且每树 pyproject 解析出 >0 条声明，防"解析不到就全放过"；④ tests/core 全量双版本 exit=0 SKIP=0 FAIL=0。
   方法论记录：本轮第一版探针因相对路径过滤写成 relpath(REPO) 而起手匹配不到 'vools.'，输出 scanned=0/FAILED=0 —— 一次【空扫描面伪装成全绿】。因探针打印了计数才被抓到，故新闸内置反向守卫（扫描/判定数不足即报错），与此前 py3.6 语法守卫同一原则。
 
+## BUG-66 [2026-10-16T18:05:00Z] [medium] FIXED
+- summary: rx _GroupedObserver 分发直接遍历活列表 self._observers，观察者在回调内退订会让【下一个观察者被静默跳过】（漏通知，不报错）
+- detail: _GroupedObserver（operators.py，group_by 的内层观察者）三个分发方法 on_next/on_error/on_completed 都写 `for obs in self._observers:`，而它自己 subscribe() 返回的 unsubscribe 闭包执行 `self._observers.remove(observer)`。「观察者在自己的回调里退订」是响应式常规用法（take(n) 收满即 unsubscribe），于是：observers=[A,B,C]，迭代到 index 0 = A，A 的回调把 A 删掉 → 列表变 [B,C]，迭代器下一步取 index 1 = C，**B 整个被漏掉一次通知**。实测 RED 输出：on_next 得 ['A','C']（期望 ['A','B','C']）、on_completed 漏 B、on_error 漏 B。
+  同仓 Subject 早已是正确写法（subject.py:79/88/303/305 一律 `for observer in list(self._observers)`，已逐行核对），本类是唯一漏网；同族先例 f25e417（actus eventbus 锁外遍历共享列表）。
+  发现手段：f25e417 修完后顺着「遍历共享可变结构 vs 回调内退订」这一形状全仓找同族。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（并发/遍历同族横扫，续 f25e417）
+
+
+### FIXED(2026-10-16T18:15:00Z / BUG-66)
+- evidence: 真源修复 rx/vools/reactive/operators/operators.py `_GroupedObserver`：三处分发改 `for obs in list(self._observers)` 取快照（与 Subject 同口径，注释写明"活列表边遍历边删不抛异常而是静默跳过，比崩更难查"）。全仓复查 `for \w+ in self._observers:` 已无残留。补回归锁 rx/tests/test_grouped_observer_dispose.py（4 格：A 于 on_next 内退订后 B/C 均须收到、on_completed/on_error 同样不漏、以及不退订时的正向保底）。
+  判据：① 先证 RED —— 修复前 3 格失败，断言输出 ['A','C'] == ['A','B','C']（B 被跳过）；② 修复后 4 格 py3.11/py3.6 均 exit=0（.... [100%]）；③ 全量 rx tests 双版本 exit=0 SKIP=0 FAIL=0（分发语义改动无回归）。
+  方法论修正（诚实记录）：起初照 f25e417 先例假设症状是 RuntimeError: list changed size during iteration，并据此写了"会崩"的测试 —— 跑出来却全绿。事实是**该异常只由 dict 迭代器抛**，list 边遍历边删【不报错】，症状是静默漏通知。于是把测试改成断言"每个观察者都收到"才真正 RED。教训：先例的异常类型不可照搬到不同数据结构，症状必须以实测为准。
+
