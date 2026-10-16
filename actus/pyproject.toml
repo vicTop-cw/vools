@@ -97,6 +97,19 @@ include = ["vools*"]
     "*.md",
     "templates/*",
     "static/*",
+    # _shiki/：highlight.py 的 SHIKI_SCRIPT 指向 _shiki/render.mjs（Shiki 高亮）。
+    # 此前 package-data 未包含它，wheel 落盘后 render.mjs 缺失，
+    # `check_shiki_available()` 恒为 False（与"迁移漏搬 bundle"同族缺陷，只是发生在打包层）。
+    # 只带 .mjs/.json（render.mjs + package.json + package-lock.json，~26KB）；
+    # node_modules/（14.3MB）不入 wheel —— 缺 node_modules 时 check_shiki_available()
+    # 返回 False，高亮降级到兜底着色（优雅降级，不硬失败）。
+    "_shiki/*.mjs",
+    "_shiki/*.json",
+    # schemas/*.json：adapter.py 的 JSON Schema 校验在源树走
+    # `<repo-root>/contracts/adapter.schema.json`，但 `contracts/` 位于包外，
+    # wheel 不会安装它 —— 装完后 schema_path 不存在、校验静默跳过（同族缺陷）。
+    # 包内 schemas/ 副本随 wheel 安装，adapter.py 优先用包内、回退源树 contracts/。
+    "schemas/*.json",
 ]
 
 # ============ pytest ============

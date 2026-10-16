@@ -641,8 +641,18 @@ def validate_adapter_spec(spec: AdapterSpec) -> Tuple[bool, List[str]]:
     # JSON Schema 验证（如果可用）
     if _HAS_JSONSCHEMA:
         try:
-            schema_path = Path(__file__).parent.parent.parent / "contracts" / "adapter.schema.json"
-            if schema_path.exists():
+            # 候选路径：① 包内 schemas/（wheel 安装后可用）② 源树 contracts/
+            # （仓库开发态）。`contracts/` 在包外，wheel 不会带它，故必须让包内
+            # schemas/ 副本兜底，否则装完后 schema_path 缺失、校验被静默跳过。
+            schema_path = None
+            for cand in (
+                Path(__file__).parent / "schemas" / "adapter.schema.json",
+                Path(__file__).parent.parent.parent / "contracts" / "adapter.schema.json",
+            ):
+                if cand.exists():
+                    schema_path = cand
+                    break
+            if schema_path:
                 with open(schema_path, encoding="utf-8") as f:
                     schema = json.load(f)
                 # 构建完整数据
