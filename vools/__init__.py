@@ -713,7 +713,12 @@ if _sys.version_info < (3, 7):
             try:
                 _module_path = _lazy_modules[_name]
                 _module = importlib.import_module(_module_path, package='vools')
-                if hasattr(_module, _name):
+                # 与 __getattr__（L495）同口径：_module_names 里的【模块名键】必须
+                # 绑定模块本身。此前这里只看 hasattr，把 'task' 这类"模块与同名
+                # 属性并存"的键在 py3.6 上绑成了属性（函数），py3.11 却绑模块
+                # —— 同一个公开名两版本类型不同，且 `import vools.task.decorators
+                # as d` 在 py3.6 直接 AttributeError（as 链对函数做 getattr）。
+                if _name not in _module_names and hasattr(_module, _name):
                     globals()[_name] = getattr(_module, _name)
                 else:
                     globals()[_name] = _module
