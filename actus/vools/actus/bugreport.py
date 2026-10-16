@@ -42,6 +42,13 @@ _HDR = re.compile(
 
 _FIELDS = ('摘要', '详情', '关联调用', '来源', '上报人', '命中')
 
+# YAML 风格别名（`- summary: xxx` 这种手写条目的字段名 → 中文键）。
+# 2026-10-17 补：账本里 BUG-25~39 用的是 YAML 风格字段（`- summary:` / `- detail:`），
+# 旧解析器只认中文冒号键，把这些条目解析成全空字段，导致 repro_ledger_02 判"11 条重复"
+# （空摘要 + 空关联调用 全归为一组）、repro_ledger_03 判"BUG-0027 证据链断"。
+_YAML_ALIAS = {'summary': '摘要', 'detail': '详情', 'ref_call_id': '关联调用',
+               'source': '来源', 'reported_by': '上报人', 'hits': '命中'}
+
 
 class BugreportError(ValueError):
     """入参不合规（级别非法 / 出处不可核实）——账本拒绝写入。"""
@@ -249,9 +256,19 @@ def bug_list(status: Optional[str] = None,
             line = line.strip()
             if not line or line == '---':
                 continue
+            hit = False
             for key in _FIELDS:
                 if line.startswith(key + '：'):
-                    fields[key] = line[len(key) + 1:]
+                    fields[key] = line[len(key) + 1:].strip()
+                    hit = True
+                    break
+            if hit:
+                continue
+            # YAML 别名：`- summary: xxx` → `摘要`
+            yaml_line = line.lstrip('-').strip()
+            for yk, ck in _YAML_ALIAS.items():
+                if yaml_line.startswith(yk + ':'):
+                    fields[ck] = yaml_line[len(yk) + 1:].strip()
                     break
         entry = {
             'id': f'BUG-{seq:04d}', 'seq': seq, 'ts': ts,
