@@ -141,7 +141,9 @@ def check_network() -> HealthCheckResult:
     start = time.time()
     import urllib.request
     try:
-        urllib.request.urlopen("https://pypi.org", timeout=5)
+        # `with` 关闭响应体：健康检查会周期被调用，漏关 fd 会随轮次累积
+        with urllib.request.urlopen("https://pypi.org", timeout=5):
+            pass
         return HealthCheckResult("network", "ok", "网络连通", time.time() - start)
     except Exception:
         return HealthCheckResult("network", "warn", "无法访问 PyPI（部分功能可能受限）", time.time() - start)

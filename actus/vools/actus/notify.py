@@ -170,7 +170,10 @@ class WebhookSender:
             self.url, data=payload, method="POST", headers=self.headers
         )
         try:
-            urllib.request.urlopen(req, timeout=10)
+            # `with` 确保响应体被及时关闭：长驻进程里 urlopen 不关会累积 fd
+            # 直到 GC，反复发通知最终耗尽句柄（2026-10-16 巡检发现）。
+            with urllib.request.urlopen(req, timeout=10):
+                pass
         except Exception as e:
             logger.warning(f"Webhook 发送失败: {e}")
 
