@@ -1843,44 +1843,6 @@ class Table(Seq):
         
         return '\n'.join(lines)
 
-    @classmethod
-    def from_dicts(cls, dicts: List[Dict[str, Any]],
-                   columns: List[str] = None) -> 'Table':
-        """从字典列表创建
-
-        Args:
-            dicts: 字典列表
-            columns: 列名列表 (可选)
-
-        Returns:
-            Table 实例
-        """
-        if not dicts:
-            return cls()
-
-        if columns is None:
-            columns = list(dicts[0].keys())
-
-        data = [
-            [d.get(c) for c in columns]
-            for d in dicts
-        ]
-        return cls(data, columns=columns)
-
-    @classmethod
-    def from_dataframe(cls, df) -> 'Table':
-        """从 pandas DataFrame 创建
-
-        Args:
-            df: pandas DataFrame
-
-        Returns:
-            Table 实例
-        """
-        columns = list(df.columns)
-        data = df.values.tolist()
-        return cls(data, columns=columns)
-
     # ==================== Excel IO ====================
 
     @classmethod

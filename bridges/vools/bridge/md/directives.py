@@ -40,6 +40,10 @@ BLOCK_DIRECTIVE_KEYS: Set[str] = {
     "blocking",
     "html",
     "inject",
+    # 富内容展示指令（计划 §4.2，P1）
+    "svg",
+    "rich",
+    "level",
 }
 
 # ═══════════════════════════════════════════════════════
@@ -133,5 +137,23 @@ def validate_directives(directives: Dict[str, str], language: str) -> List[str]:
     # export 和 import 不能同时用
     if "export" in directives and "import" in directives:
         errors.append("export 和 import 不能同时使用")
+
+    # level 必须是 1-4 整数（富内容展示档位，计划 §4.2）
+    if "level" in directives:
+        try:
+            lv = int(directives["level"])
+        except ValueError:
+            errors.append(f"level 必须是整数: {directives['level']}")
+        else:
+            if lv not in (1, 2, 3, 4):
+                errors.append(f"level 必须是 1-4: {directives['level']}")
+
+    # 富内容块（html/svg/rich）与执行指令互斥：富内容只做展示，不执行。
+    # 无指令块会被 parse_block_directives 默认注入 {"run": ""}，空值放行（默认展示）。
+    if language in ("html", "svg", "rich"):
+        if "compile" in directives:
+            errors.append(f"{language} 块是富内容展示块，不能带 compile 指令")
+        if "run" in directives and directives["run"]:
+            errors.append(f"{language} 块是富内容展示块，不能带 run= 执行指令")
 
     return errors

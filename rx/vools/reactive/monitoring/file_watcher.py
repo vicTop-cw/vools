@@ -24,8 +24,10 @@ import json
 import logging
 import os
 import pickle
+import shutil
 import struct
 import sys
+import tempfile
 import threading
 import time
 from collections import deque
@@ -411,12 +413,21 @@ class _Win32WatchBackend:
 
         ERROR_OPERATION_ABORTED = 995
 
-        # ---- 打开所有目录句柄 ----
-        per_dir_handles: List[Tuple[int, str]] = []
+        # ---- 打开所有目录句柄（文件路径 -> 监控父目录 + 文件名过滤）----
+        per_dir_handles: List[Tuple[int, str, Optional[str]]] = []
         for path_str in self._paths:
             abs_path = os.path.abspath(path_str)
+            filter_name: Optional[str] = None
+            if os.path.isfile(abs_path):
+                # ReadDirectoryChangesW 只接受目录句柄：单文件监控需
+                # 打开父目录并按下层文件名过滤，否则对文件句柄调用会
+                # 返回 0（ERROR_INVALID_PARAMETER）导致线程静默退出。
+                base_dir = os.path.dirname(abs_path)
+                filter_name = os.path.basename(abs_path)
+            else:
+                base_dir = abs_path
             hDir = kernel32.CreateFileW(
-                abs_path,
+                base_dir,
                 GENERIC_READ,
                 FILE_SHARE_READ | FILE_SHARE_WRITE,
                 None,
@@ -425,13 +436,13 @@ class _Win32WatchBackend:
                 None,
             )
             if hDir == INVALID_HANDLE_VALUE:
-                log.debug("无法打开目录 %s", abs_path)
+                log.debug("无法打开目录 %s", base_dir)
                 continue
-            per_dir_handles.append((hDir, abs_path))
+            per_dir_handles.append((hDir, base_dir, filter_name))
 
         # 原子写入 self._open_handles（外部 stop 可能并发访问）
         with self._lock:
-            self._open_handles = [h for h, _ in per_dir_handles]
+            self._open_handles = [h for h, _, _ in per_dir_handles]
 
         if not per_dir_handles:
             self._running = False
@@ -440,7 +451,7 @@ class _Win32WatchBackend:
         inner_stop = threading.Event()
         threads: List[threading.Thread] = []
 
-        def _watch_one(hDir: int, base_path: str) -> None:
+        def _watch_one(hDir: int, base_path: str, filter_name: Optional[str]) -> None:
             # 重命名配对: old_name 事件后紧跟 new_name 事件
             pending_old: Optional[str] = None
 
@@ -495,6 +506,13 @@ class _Win32WatchBackend:
                     except Exception:
                         pass
 
+                    # 单文件监控过滤：只上报目标文件自身的事件
+                    if filter_name is not None and fname != filter_name:
+                        if next_offset == 0:
+                            break
+                        pos += next_offset
+                        continue
+
                     full_path = os.path.join(base_path, fname)
 
                     # 确定是否为目录
@@ -538,9 +556,9 @@ class _Win32WatchBackend:
                         break
                     pos += next_offset
 
-        for hDir, abs_path in per_dir_handles:
+        for hDir, abs_path, filter_name in per_dir_handles:
             t = threading.Thread(
-                target=_watch_one, args=(hDir, abs_path), daemon=True,
+                target=_watch_one, args=(hDir, abs_path, filter_name), daemon=True,
             )
             t.start()
             threads.append(t)
@@ -550,7 +568,7 @@ class _Win32WatchBackend:
                 time.sleep(0.1)
         finally:
             inner_stop.set()
-            for hDir, _ in per_dir_handles:
+            for hDir, _, _ in per_dir_handles:
                 try:
                     kernel32.CloseHandle(hDir)
                 except Exception:
@@ -653,6 +671,108 @@ class _MacWatchBackend:
             sub_f(rs)
         return self
 
+
+def _probe_inotify(paths: Optional[Iterable[str]] = None) -> Tuple[bool, str]:
+    """探测当前 Linux 环境的 inotify 事件驱动是否真实可用。
+
+    返回 (True, "") 表示可用；(False, 原因) 表示不可用，调用方应回退
+    到 polling 保底。原因会区分权限问题（EPERM/EACCES）与版本/配置问题
+    （ENOSYS/EINVAL），避免"看似选中 inotify 实际线程静默退出"的假监控。
+
+    paths 可选：传入监控目标路径时，探测目录会创建在目标路径所在文件系统，
+    并做真实事件可达性验证（9p/drvfs 等文件系统 inotify_add_watch 可成功但
+    事件永不送达，必须实测排除）。
+    """
+    if not sys.platform.startswith("linux"):
+        return False, "非 Linux 平台"
+    try:
+        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    except (OSError, AttributeError):
+        try:
+            _libc = ctypes.CDLL("libc.so.7", use_errno=True)
+        except (OSError, AttributeError):
+            return False, "libc 无法加载"
+    _libc.inotify_init.argtypes = []
+    _libc.inotify_init.restype = ctypes.c_int
+    _libc.inotify_add_watch.argtypes = [
+        ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32,
+    ]
+    _libc.inotify_add_watch.restype = ctypes.c_int
+    _libc.close.argtypes = [ctypes.c_int]
+    _libc.close.restype = ctypes.c_int
+
+    fd = _libc.inotify_init()
+    if fd < 0:
+        err = ctypes.get_errno()
+        reason = "inotify_init 失败 errno=%d" % err
+        if err in (1, 13):  # EPERM / EACCES
+            reason += "（权限受限，容器/seccomp 常见）"
+        elif err in (22, 38):  # EINVAL / ENOSYS
+            reason += "（内核/版本不支持）"
+        return False, reason
+    try:
+        os.set_blocking(fd, False)  # 非阻塞读，避免 9p 等无声事件文件系统上卡死
+    except OSError:
+        pass
+    # 探测目录建在目标路径所在文件系统（默认 /tmp），确保事件可达性验证真实有效
+    probe_dir_base = None
+    if paths:
+        for p in paths:
+            if not p:
+                continue
+            abs_p = os.path.abspath(p)
+            cand = abs_p if os.path.isdir(abs_p) else os.path.dirname(abs_p)
+            if cand and os.path.isdir(cand) and os.access(cand, os.W_OK):
+                probe_dir_base = cand
+                break
+    tmpdir = tempfile.mkdtemp(prefix="vools_inotify_probe_", dir=probe_dir_base)
+    try:
+        wd = _libc.inotify_add_watch(
+            fd, tmpdir.encode("utf-8"), 0xFFF,
+        )
+        if wd < 0:
+            err = ctypes.get_errno()
+            reason = "inotify_add_watch 失败 errno=%d" % err
+            if err in (1, 13):  # EPERM / EACCES
+                reason += "（权限受限）"
+            elif err in (22, 38):  # EINVAL / ENOSYS
+                reason += "（内核/版本不支持）"
+            return False, reason
+        # 真实事件可达性验证：创建子目录，等待 IN_CREATE|IN_ISDIR 事件
+        probe_child = os.path.join(tmpdir, "probe_child")
+        try:
+            os.mkdir(probe_child)
+        except OSError:
+            os.makedirs(probe_child, exist_ok=True)
+        import struct as _struct
+
+        deadline = time.time() + 1.0
+        ok = False
+        while time.time() < deadline:
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                break
+            if data:
+                pos = 0
+                while pos + 16 <= len(data):
+                    wd_, mask = _struct.unpack("iI", data[pos:pos + 8])
+                    if wd_ == wd and (mask & 0x40000100) == 0x40000100:  # IN_CREATE|IN_ISDIR
+                        ok = True
+                    name_len = _struct.unpack("I", data[pos + 12:pos + 16])[0]
+                    pos += 16 + ((name_len + 8) // 8) * 8
+                if ok:
+                    break
+            time.sleep(0.05)
+        if not ok:
+            return False, "inotify 事件不可达（文件系统不支持事件通知，如 9p/drvfs）"
+        return True, ""
+    finally:
+        try:
+            _libc.close(fd)
+        except Exception:
+            pass
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class _InotifyWatchBackend:
@@ -948,7 +1068,17 @@ class _PollingWatchBackend:
         state: Dict[str, Tuple[float, int, bool]] = {}
 
         def _scan_path(base_path: str) -> Dict[str, Tuple[float, int, bool]]:
-            """扫描路径下所有文件, 返回 {rel_path: (mtime, size, is_dir)}"""
+            """扫描路径下所有文件, 返回 {rel_path: (mtime, size, is_dir)}
+
+            单文件路径时直接返回文件自身（rel 为 ""），与目录扫描统一键空间。
+            """
+            if os.path.isfile(base_path):
+                try:
+                    mtime = os.path.getmtime(base_path)
+                    size = os.path.getsize(base_path)
+                    return {"": (mtime, size, False)}
+                except OSError:
+                    return {}
             result: Dict[str, Tuple[float, int, bool]] = {}
             try:
                 for root, dirs, files in os.walk(base_path):
@@ -975,7 +1105,7 @@ class _PollingWatchBackend:
             abs_path = os.path.abspath(path_str)
             snapshot = _scan_path(abs_path)
             for rel, info in snapshot.items():
-                full = os.path.join(abs_path, rel)
+                full = abs_path if rel == "" else os.path.join(abs_path, rel)
                 state[full] = info
 
         try:
@@ -986,7 +1116,8 @@ class _PollingWatchBackend:
                     abs_path = os.path.abspath(path_str)
                     snapshot = _scan_path(abs_path)
                     current_files = set(
-                        os.path.join(abs_path, rel) for rel in snapshot
+                        abs_path if rel == "" else os.path.join(abs_path, rel)
+                        for rel in snapshot
                     )
                     known_files = set(state.keys())
 
@@ -1003,7 +1134,7 @@ class _PollingWatchBackend:
 
                     # 检测新增和修改
                     for rel, info in snapshot.items():
-                        full = os.path.join(abs_path, rel)
+                        full = abs_path if rel == "" else os.path.join(abs_path, rel)
                         mtime, size, is_dir = info
                         prev = state.get(full)
                         if prev is None:
@@ -1083,6 +1214,7 @@ class FileDispatcher:
         "_dispatch_count",
         "_error_count",
         "_backend_name",
+        "_backend_fallback_reason",
         "_running",
         "filter_self",
         "_self_signatures",
@@ -1095,6 +1227,7 @@ class FileDispatcher:
         *,
         paths: Optional[Iterable[str]] = None,
         backend: str = "auto",
+        force_polling: bool = False,
         change_types: Optional[Iterable[FileChangeType]] = None,
         tags: Iterable[str] = (),
         interval: float = 0.5,
@@ -1121,6 +1254,14 @@ class FileDispatcher:
         backend = (backend or "auto").lower()
         be: Optional[Any] = None
         self._backend_name = "polling"
+        self._backend_fallback_reason = ""
+
+        if force_polling:
+            # 网络挂载/跨机器文件系统等明确不支持事件通知的场景，调用方强制轮询
+            self._backend_fallback_reason = (
+                "force_polling=True：调用方强制轮询（如网络挂载/跨机器文件系统）"
+            )
+            backend = "polling"
 
         if backend in ("auto", "win32") and sys.platform == "win32":
             try:
@@ -1133,6 +1274,7 @@ class FileDispatcher:
                 self._backend_name = "win32"
             except Exception as e:
                 log.debug("win32 后端不可用，回退到 polling: %s", e)
+                self._backend_fallback_reason = "win32 后端不可用: %s" % e
                 be = None
 
         elif backend in ("auto", "macos") and sys.platform == "darwin":
@@ -1146,19 +1288,27 @@ class FileDispatcher:
                 self._backend_name = "macos"
             except Exception as e:
                 log.debug("macOS 后端不可用，回退到 polling: %s", e)
+                self._backend_fallback_reason = "macOS 后端不可用: %s" % e
                 be = None
 
         elif backend in ("auto", "inotify") and sys.platform.startswith("linux"):
-            try:
-                be = _InotifyWatchBackend(
-                    self._dispatch_once,
-                    paths=self._paths,
-                    change_types=self._change_types_allowed,
-                    interval=self._interval,
-                )
-                self._backend_name = "inotify"
-            except Exception as e:
-                log.debug("inotify 后端不可用，回退到 polling: %s", e)
+            ok, reason = _probe_inotify(self._paths)
+            if ok:
+                try:
+                    be = _InotifyWatchBackend(
+                        self._dispatch_once,
+                        paths=self._paths,
+                        change_types=self._change_types_allowed,
+                        interval=self._interval,
+                    )
+                    self._backend_name = "inotify"
+                except Exception as e:
+                    log.debug("inotify 后端不可用，回退到 polling: %s", e)
+                    self._backend_fallback_reason = "inotify 后端不可用: %s" % e
+                    be = None
+            else:
+                log.warning("inotify 事件驱动不可用（%s），回退到 polling", reason)
+                self._backend_fallback_reason = reason
                 be = None
 
         if be is None:
@@ -1181,6 +1331,11 @@ class FileDispatcher:
     @property
     def backend_name(self) -> str:
         return self._backend_name
+
+    @property
+    def backend_fallback_reason(self) -> str:
+        """事件驱动不可用时的回退原因；为空表示未发生回退（事件驱动在用）。"""
+        return self._backend_fallback_reason
 
     @property
     def dispatch_count(self) -> int:
@@ -1448,6 +1603,7 @@ class FileSubject(MonitorSubject):
         *,
         paths: Optional[Any] = None,
         backend: str = "auto",
+        force_polling: bool = False,
         interval: float = 0.5,
         tags: Tuple[str, ...] = (),
         change_types: Optional[Any] = None,
@@ -1459,6 +1615,7 @@ class FileSubject(MonitorSubject):
         Args:
             paths: 监控路径列表
             backend: 后端类型，"auto" | "win32" | "macos" | "inotify" | "polling"
+            force_polling: True 时强制走轮询后端，跳过事件驱动探测
             interval: 轮询间隔（秒）
             tags: 默认附加的标签
             change_types: 白名单；仅分发列出的 FileChangeType
@@ -1467,6 +1624,7 @@ class FileSubject(MonitorSubject):
         """
         self._paths = paths
         self._backend = backend
+        self._force_polling = force_polling
         self._interval = interval
         self._tags = tags
         self._change_types = change_types
@@ -1480,6 +1638,7 @@ class FileSubject(MonitorSubject):
         return FileDispatcher(
             paths=self._paths,
             backend=self._backend,
+            force_polling=self._force_polling,
             interval=self._interval,
             tags=self._tags,
             change_types=self._change_types,

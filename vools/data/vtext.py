@@ -17,6 +17,7 @@ from typing import Any, Optional, Union, Tuple, Dict, List, Callable
 from ..decorators import rself
 from ..datetime.dates_format import EnhancedDateFormatter
 from ..serialize.context import get_protocol
+from .vlist import VList
 
 # vicText 加密模块默认密钥（仅兜底用；生产务必用环境变量 VQ_ENC_KEY 独立存放）
 _VQ_ENC_KEY_DEFAULT = b"sparksql_exe_2026_share_key_0123456789ab"

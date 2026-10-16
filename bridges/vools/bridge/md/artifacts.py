@@ -16,6 +16,7 @@ def ensure_build_dir(build_dir: str) -> None:
     """创建 .mdbuild/ 及子目录。"""
     os.makedirs(build_dir, exist_ok=True)
     os.makedirs(os.path.join(build_dir, "artifacts"), exist_ok=True)
+    os.makedirs(os.path.join(build_dir, "artifacts", "rich"), exist_ok=True)
     os.makedirs(os.path.join(build_dir, "sources"), exist_ok=True)
     os.makedirs(os.path.join(build_dir, "tmp"), exist_ok=True)
 

@@ -2179,8 +2179,8 @@ def throttle_latest(period: float) -> Callable[[Observable[T]], Observable[T]]:
             def unsubscribe():
                 nonlocal is_closed
                 is_closed[0] = True
-                if task[0]:
-                    task[0].cancel()
+                if timer[0]:
+                    timer[0].set()
                 source_sub.unsubscribe()
             
             return Subscription(unsubscribe)
@@ -2286,6 +2286,7 @@ def sample(period: float) -> Callable[[Observable[T]], Observable[T]]:
             latest_value = [None]
             has_value = [False]
             is_closed = [False]
+            timer = [None]
             
             def emit_sample():
                 while not is_closed[0]:
@@ -2294,7 +2295,9 @@ def sample(period: float) -> Callable[[Observable[T]], Observable[T]]:
                     if has_value[0]:
                         observer.on_next(latest_value[0])
                     # Wait
-                    _threading.Event().wait(timeout=period)
+                    ev = _threading.Event()
+                    timer[0] = ev
+                    ev.wait(timeout=period)
             
             def on_next(value: T) -> None:
                 latest_value[0] = value
@@ -2317,8 +2320,8 @@ def sample(period: float) -> Callable[[Observable[T]], Observable[T]]:
             def unsubscribe():
                 nonlocal is_closed
                 is_closed[0] = True
-                if task[0]:
-                    task[0].cancel()
+                if timer[0]:
+                    timer[0].set()
                 source_sub.unsubscribe()
             
             return Subscription(unsubscribe)

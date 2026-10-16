@@ -8,6 +8,8 @@ vools.sql.core.connection - 数据库连接抽象基类
 import abc
 from typing import Any, Optional, Sequence
 
+from .result import ResultSet
+
 
 class Connection(abc.ABC):
     """

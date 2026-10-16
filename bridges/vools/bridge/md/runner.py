@@ -10,8 +10,10 @@ M5 增强：
 
 import json
 import os
+import platform
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -572,9 +574,11 @@ def run_block(
     # 处理 export
     if "export" in block.directives:
         export_name = block.directives["export"]
+        # 决策 1：export 产物落 artifacts/rich/（旧 tmp/ 仅保留读取兼容，见 rich/resolver.py）
         artifact_path = os.path.join(
             context.get("build_dir", ".mdbuild"),
-            "tmp",
+            "artifacts",
+            "rich",
             f"block_{index}_{export_name}.txt",
         )
         os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
@@ -632,9 +636,23 @@ def _execute_block(
     if lang in ("shell", "bash", "sh"):
         return _execute_shell(block.content, context, config, workdir, timeout, args)
 
+    # Windows 批处理：bat / batch / cmd —— 直接用系统 cmd.exe 执行
+    if lang in ("bat", "batch", "cmd"):
+        return _execute_windows_cmd(block.content, context, config, workdir, timeout, args)
+
+    # PowerShell：powershell（Windows PowerShell 5.1）/ pwsh（PowerShell Core 7+）
+    if lang in ("powershell", "pwsh"):
+        return _execute_powershell(block.content, context, config, workdir, timeout, args)
+
     # webview2: WebView2 GUI 渲染
     if lang in ("webview2", "webview", "htmlview"):
         return _execute_webview2(block, context, config)
+
+    # 富内容展示块：html（计划 §4.2，P1）
+    # - level=1..3：L1 sanitize + 卡片渲染（静态展示）
+    # - level=4：源码展示降级形态（转义 + 复制/折叠按钮）
+    if lang in ("html", "svg", "rich"):
+        return _execute_rich_block(block, context, config)
 
     # sigma / sigma-spec / sigma-md: ΣLang 规约块（docs/41 主题 A · A1 语言路由）
     # 真源在 vools.actus.sigma；此处只做路由，不复制任何规约语义。
@@ -647,9 +665,15 @@ def _execute_block(
 #: docs/41 §A1：sigma 语言标记集（与 vools.actus.sigma.SIGMA_LANGUAGE_TAGS 同集合）
 SIGMA_LANGUAGE_TAGS = ("sigma", "sigma-spec", "sigma-md")
 
+_IS_WINDOWS = platform.system() == 'Windows'
+
 #: `_execute_block` 里直接处理、不走 bridge 的语言标记。
 BUILTIN_BLOCK_LANGUAGES: Tuple[str, ...] = (
-    "python", "shell", "bash", "sh", "webview2", "webview", "htmlview",
+    "python", "shell", "bash", "sh",
+    "bat", "batch", "cmd", "powershell", "pwsh",
+    "webview2", "webview", "htmlview",
+    # 富内容展示块：html（计划 §4.2，P1；默认 L1 静态，L4 源码展示降级）
+    "html",
 ) + SIGMA_LANGUAGE_TAGS
 
 
@@ -900,6 +924,113 @@ def _execute_shell(
     return proc.stdout, proc.stderr, proc.returncode
 
 
+def _execute_windows_cmd(
+    content: str,
+    context: Dict,
+    config: Dict,
+    workdir: str,
+    timeout: int,
+    args: Optional[str],
+) -> Tuple[str, str, int]:
+    """执行 Windows 批处理代码（bat / batch / cmd）。
+
+    源码写入临时 .bat（UTF-8 无 BOM + 前置 chcp 65001 避免中文乱码），
+    用系统 cmd.exe 执行；非 Windows 平台显式报不可用。
+    """
+    if not _IS_WINDOWS:
+        return "", "bat/cmd 仅支持 Windows 平台", 1
+
+    env = dict(os.environ)
+    env.update(context.get("env", {}))
+    stdin_data = context.get("stdin")
+
+    script = '@echo off\r\nchcp 65001 >nul\r\n' + content
+    if args:
+        script += '\r\n' + args
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            'w', suffix='.bat', delete=False,
+            encoding='utf-8', newline='\r\n', dir=tempfile.gettempdir(),
+        ) as f:
+            f.write(script)
+            tmp_path = f.name
+
+        proc = subprocess.run(
+            ['cmd.exe', '/d', '/s', '/c', tmp_path],
+            cwd=workdir,
+            capture_output=True,
+            timeout=timeout,
+            env=env,
+            input=stdin_data.encode('utf-8') if stdin_data else None,
+        )
+        stdout = proc.stdout.decode('utf-8', errors='replace')
+        stderr = proc.stderr.decode('utf-8', errors='replace')
+        return stdout, stderr, proc.returncode
+    except FileNotFoundError:
+        return "", "cmd.exe 不可用", 1
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+def _execute_powershell(
+    content: str,
+    context: Dict,
+    config: Dict,
+    workdir: str,
+    timeout: int,
+    args: Optional[str],
+) -> Tuple[str, str, int]:
+    """执行 PowerShell 代码（powershell / pwsh）。
+
+    源码写入临时 .ps1（UTF-8 with BOM，PS 5.1 对无 BOM UTF-8 会按 ANSI 解析），
+    用 -File 方式执行，避免 -Command 长串转义地狱。
+    """
+    exe = 'powershell.exe' if _IS_WINDOWS else 'pwsh'
+
+    env = dict(os.environ)
+    env.update(context.get("env", {}))
+    stdin_data = context.get("stdin")
+
+    full = content
+    if args:
+        full += '\n' + args
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            'w', suffix='.ps1', delete=False,
+            encoding='utf-8-sig', newline='\n', dir=tempfile.gettempdir(),
+        ) as f:
+            f.write(full)
+            tmp_path = f.name
+
+        proc = subprocess.run(
+            [exe, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', tmp_path],
+            cwd=workdir,
+            capture_output=True,
+            timeout=timeout,
+            env=env,
+            input=stdin_data.encode('utf-8') if stdin_data else None,
+        )
+        stdout = proc.stdout.decode('utf-8', errors='replace')
+        stderr = proc.stderr.decode('utf-8', errors='replace')
+        return stdout, stderr, proc.returncode
+    except FileNotFoundError:
+        return "", f"{exe} 未安装或不在 PATH 中", 1
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: int) -> Tuple[str, str, int]:
     """通过 bridge helper 执行代码 - 支持所有 31 种桥接语言。"""
     try:
@@ -924,6 +1055,94 @@ def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: 
         return "", f"{block.language} bridge 未安装", 1
     except Exception as e:
         return "", str(e), 1
+
+
+# ── 富内容展示：html / svg / rich（计划 §4.2，P1）──
+
+
+def _execute_rich_block(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+) -> Tuple[str, str, int]:
+    """
+    渲染富内容展示块（html / svg / rich）。
+
+    档位（#!level 指令）：
+    - level=1..3：L1 sanitize + 卡片渲染（默认 1，静态展示；决策 3）
+    - level=4：源码展示降级形态（整体转义 + 复制/折叠按钮，无脚本）
+
+    远程图片（决策 2）：默认禁止；仅 `rich=opt-in`（或 rich=allow-remote /
+    rich=1 / rich=true）显式开启时放行，并配套放宽 CSP img-src。
+
+    渲染产物写 build_dir/artifacts/rich/block_{index}.html（决策 1 的新位置），
+    stdout 返回卡片落盘路径与 L1 剥离审计，exit 0。
+    """
+    from .rich.sanitize import sanitize_html_fragment, build_csp_meta
+    from .rich.renderer import render_card, render_source_card
+
+    index = block.index
+    build_dir = context.get("build_dir", ".mdbuild")
+    rich_dir = os.path.join(build_dir, "artifacts", "rich")
+    os.makedirs(rich_dir, exist_ok=True)
+
+    level_raw = block.directives.get("level", "1") or "1"
+    try:
+        level = int(level_raw)
+    except ValueError:
+        level = 1
+    if level not in (1, 2, 3, 4):
+        level = 1
+
+    rich_opt = (block.directives.get("rich") or "").lower()
+    allow_remote = rich_opt in ("opt-in", "allow-remote", "1", "true", "yes")
+    title = block.directives.get("title") or f"rich block {index}"
+
+    try:
+        if level == 4:
+            # L4 源码展示降级形态：转义源码，宿主脚本提供复制/折叠（卡片内无脚本）
+            card_html = render_source_card(
+                block_id=f"block_{index}",
+                language="html",
+                source=block.content,
+                level=4,
+            )
+            audit: List[str] = []
+        else:
+            safe_html, audit = sanitize_html_fragment(
+                block.content,
+                allow_remote_images=allow_remote,
+            )
+            card_html = render_card(
+                block_id=f"block_{index}",
+                kind="html",
+                title=title,
+                body_html=safe_html,
+                level=level if level in (1, 2, 3) else 1,
+            )
+    except Exception as e:
+        return "", f"富内容渲染失败: {e}", 1
+
+    # 组装完整文档：L1 基线 CSP（决策 3，不可信动作不可越权提升）
+    csp_meta = build_csp_meta(level=level, allow_remote_images=allow_remote)
+    full_doc = (
+        "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n"
+        + csp_meta
+        + "\n</head>\n<body>\n"
+        + card_html
+        + "\n</body>\n</html>"
+    )
+
+    out_name = f"block_{index}.html"
+    out_path = os.path.join(rich_dir, out_name)
+    write_text(out_path, full_doc)
+
+    lines = [f"[rich] block {index} level={level} -> {out_path}"]
+    if audit:
+        shown = ", ".join(audit[:20])
+        more = f" 等 {len(audit)} 项" if len(audit) > 20 else ""
+        lines.append(f"[rich] L1 剥离 {len(audit)} 项: {shown}{more}")
+    return "\n".join(lines), "", 0
 
 
 # ── webview2: WebView2 GUI 渲染 ──

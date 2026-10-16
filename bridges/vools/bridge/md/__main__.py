@@ -7,6 +7,7 @@ vools.bridge.md CLI 入口
     python -m vools.bridge.md code script.md
     python -m vools.bridge.md check script.md
     python -m vools.bridge.md clean script.md [--stale] [--keep tag]
+    python -m vools.bridge.md rich script.md [--out FILE] [--no-open]
 """
 
 import argparse
@@ -46,6 +47,12 @@ def main():
     clean_parser.add_argument("--stale", action="store_true", help="只清清单外的孤儿文件")
     clean_parser.add_argument("--keep", help="保留指定 tag 的产物")
 
+    # rich: 富内容展示预览（计划 §4.2，P1）
+    rich_parser = subparsers.add_parser("rich", help="渲染富内容展示块（html/svg/rich）为预览 HTML")
+    rich_parser.add_argument("md_path", help=".md 文件路径")
+    rich_parser.add_argument("--out", help="预览 HTML 输出路径（默认 build_dir/artifacts/rich/rich-preview.html）")
+    rich_parser.add_argument("--no-open", action="store_true", help="渲染后不自动打开浏览器")
+
     args = parser.parse_args()
 
     if args.command == "run":
@@ -58,6 +65,8 @@ def main():
         _cmd_check(args)
     elif args.command == "clean":
         _cmd_clean(args)
+    elif args.command == "rich":
+        _cmd_rich(args)
     else:
         parser.print_help()
         sys.exit(1)
@@ -166,6 +175,72 @@ def _cmd_clean(args):
     keep = args.keep.split(",") if args.keep else None
     clean_build(build_dir, stale=args.stale, keep=keep)
     print(f"Cleaned: {build_dir}")
+
+
+def _cmd_rich(args):
+    """渲染 md 中的富内容展示块（html/svg/rich）为预览 HTML（计划 §4.2，P1）。"""
+    from .parser import parse_md
+    from .runner import _execute_rich_block
+    from .artifacts import ensure_build_dir
+    from .rich.sanitize import build_csp_meta
+
+    parsed = parse_md(args.md_path)
+    build_dir = parsed.file_directives.build_dir
+    if not os.path.isabs(build_dir):
+        md_dir = os.path.dirname(os.path.abspath(args.md_path))
+        build_dir = os.path.join(md_dir, build_dir)
+    ensure_build_dir(build_dir)
+
+    rich_blocks = [b for b in parsed.blocks if b.language in ("html", "svg", "rich")]
+    if not rich_blocks:
+        print(f"[rich] 未找到 html/svg/rich 展示块: {args.md_path}")
+        sys.exit(1)
+
+    context = {"build_dir": build_dir}
+    card_parts = []
+    for block in rich_blocks:
+        stdout, stderr, exit_code = _execute_rich_block(block, context, {})
+        if exit_code != 0:
+            print(f"[rich] block {block.index} 渲染失败: {stderr}")
+            sys.exit(1)
+        print(stdout)
+        card_path = os.path.join(build_dir, "artifacts", "rich", f"block_{block.index}.html")
+        if os.path.exists(card_path):
+            with open(card_path, "r", encoding="utf-8") as f:
+                card_parts.append(_extract_body(f.read()))
+
+    # 预览页：L1 基线 CSP + 各卡片 body 拼接（决策 3）
+    preview_html = (
+        "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n"
+        + build_csp_meta(level=1, allow_remote_images=False)
+        + "\n</head>\n<body>\n"
+        + "\n".join(card_parts)
+        + "\n</body>\n</html>"
+    )
+
+    if args.out:
+        out_path = os.path.abspath(args.out)
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    else:
+        out_path = os.path.join(build_dir, "artifacts", "rich", "rich-preview.html")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(preview_html)
+
+    print(f"[rich] 预览: {out_path}")
+    if not args.no_open:
+        import webbrowser
+
+        webbrowser.open(f"file:///{out_path.replace(os.sep, '/')}")
+    print(f"[rich] 完成: {len(card_parts)} 个卡片")
+
+
+def _extract_body(doc: str) -> str:
+    """提取完整 HTML 文档的 <body> 内容，用于预览页拼接。"""
+    start = doc.lower().find("<body>")
+    end = doc.lower().rfind("</body>")
+    if start >= 0 and end > start:
+        return doc[start + len("<body>") : end]
+    return doc
 
 
 if __name__ == "__main__":

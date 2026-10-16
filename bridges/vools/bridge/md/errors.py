@@ -88,3 +88,52 @@ class MDSandboxError(MDBridgeError):
     """沙箱错误（安全限制、路径越界等）"""
 
     pass
+
+
+# ═══════════════════════════════════════════════════════
+# 富内容异常族（rich/ 子包专用）
+# ═══════════════════════════════════════════════════════
+
+
+class MDRichError(MDBridgeError):
+    """富内容基础异常"""
+
+    def __init__(
+        self,
+        message: str,
+        md_path: Optional[str] = None,
+        block_index: Optional[int] = None,
+        code: Optional[str] = None,
+    ):
+        self.code = code
+        super().__init__(message, md_path, block_index)
+
+
+class MDRichPathError(MDRichError):
+    """富内容路径解析错误（路径不存在、非法引用等）"""
+
+    pass
+
+
+class MDRichAccessDeniedError(MDRichPathError):
+    """越权拒绝（.. 越权、绝对路径未 opt-in、符号链接逃逸、产物引用越界）"""
+
+    pass
+
+
+class MDRichSanitizeError(MDRichError):
+    """富内容过滤错误（L1 剥离、CSP 注入失败等）"""
+
+    pass
+
+
+class MDRichProtocolError(MDRichError):
+    """宿主消息协议错误（消息非法、request_id 不匹配等）"""
+
+    pass
+
+
+class MDRichRenderError(MDRichError):
+    """富内容渲染错误（卡片生成失败等）"""
+
+    pass

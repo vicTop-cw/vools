@@ -368,6 +368,13 @@ def execute(action_id: str, params: dict = None,
         _visibility_gate(action, action_id, exec_id)
 
         # ── trust 判定 ──
+        # ACTUS_DEBUG 开发模式（true/1/yes/on）：audit 级动作自动放行，
+        # 免去每次人工确认（git.ops 等 audit 动作在开发仓联调时不再卡 awaiting）。
+        # 使用模式（false/缺省）：audit 仍须人工确认，行为不变。
+        _dev = os.environ.get('ACTUS_DEBUG', '').strip().lower() in ('1', 'true', 'yes', 'on')
+        if _dev and action.trust == 'audit':
+            confirmed = True
+            record['dev_auto_confirm'] = True
         strategy = decide(action.trust, confirmed=confirmed)
         record['trust'] = action.trust
         record['strategy'] = strategy

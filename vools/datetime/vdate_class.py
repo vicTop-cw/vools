@@ -201,10 +201,11 @@ class VDate(datetime):
 
         simplified = []
         start = None
+        end = None
 
         for i, current_date in enumerate(dates):
             if start is None or (i > 0 and (current_date - dates[i - 1]).days != 1):
-                if start is not None:
+                if start is not None and end is not None:
                     simplified.append((start.strftime(fmt), end.strftime(fmt)))
                 start = current_date
             end = current_date

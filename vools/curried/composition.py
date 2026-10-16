@@ -8,6 +8,7 @@ from typing import TypeVar, Callable, List, Any, Optional
 from functools import lru_cache, wraps
 
 from ..decorators.curry_core import curry
+from .core import identity
 
 A = TypeVar('A')
 B = TypeVar('B')

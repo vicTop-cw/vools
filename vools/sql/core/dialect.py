@@ -10,6 +10,7 @@ import importlib
 from typing import Dict, List
 
 from .config import DialectConfig
+from .connection import Connection
 from .types import SqlTypeMapper
 
 
