@@ -17,8 +17,31 @@ from fastapi.templating import Jinja2Templates
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_repo_root() -> Path:
+    """解析宿主仓库根。
+
+    本模块已迁入 vools.actus（`…/vools/actus/vools/actus/`），所以
+    `Path(__file__).parent.parent` 早已不是仓库根 —— 迁移后直接按包位置推导会拿到
+    `…/vools/actus/vools`（不存在）。改为三档：
+    1. `ACTUS_REPO_ROOT` 环境变量（Actus 侧 `_vools_bootstrap` 会设它）；
+    2. 向上回溯找标记（`contracts/action.schema.json` 或 `engine/`）；
+    3. 兜底返回 vools-actus 子项目根（`…/vools/actus`）。
+    """
+    env = os.environ.get('ACTUS_REPO_ROOT')
+    if env:
+        return Path(env)
+    here = Path(__file__).resolve().parent
+    for p in (here, here.parent, here.parent.parent, here.parent.parent.parent):
+        if (p / 'contracts' / 'action.schema.json').exists() or (p / 'engine').is_dir():
+            return p
+    return here.parent.parent.parent
+
+
+_REPO_ROOT = _resolve_repo_root()
+
 # 引擎根目录
-ENGINE_DIR = Path(__file__).resolve().parent.parent / "engine"
+ENGINE_DIR = _REPO_ROOT / "engine"
 
 # 创建 FastAPI 应用
 app = FastAPI(title="Actus Desktop", version="0.1.0")
@@ -36,7 +59,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 def _get_repo_root() -> Path:
     """获取仓库根目录。"""
-    return Path(__file__).resolve().parent.parent
+    return _REPO_ROOT
 
 
 def _load_actions_index() -> dict:
