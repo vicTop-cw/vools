@@ -80,11 +80,19 @@ def vDate(dt=None, fmt=None, diffDays: Union[float, int] = 0):
             result = datetime(int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), int(tm[2]))
         elif re.search(r"^\d{4}\d{2}\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9]$", dt):
             tm = dt.split(" ")[1].split(":")
+            # 本分支漏了上一分支的 `dt = dt.split(" ")[0]`：dt 仍是整串
+            # '20240102 13:45:30'，int(dt[6:]) == int('02 13:45:30') 必 ValueError
+            # —— 命中本分支正则的输入【100% 崩溃】（2026-10-17 寻虫实测）。
+            dt = dt.split(" ")[0]
             result = datetime(int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), int(tm[2]))
         else:
             if fmt is None:
                 raise ValueError("需要指定日期格式")
-            result = datetime(*_parse_date(dt, fmt))
+            # 旧写法 datetime(*_parse_date(dt, fmt))：_parse_date 只回 (y,m,d)，
+            # strptime 明明按 fmt 解析出了时分秒，却在这里被静默清零
+            # （'2024.01.02 13:45:30' + '%Y.%m.%d %H:%M:%S' -> '2024.01.02 00:00:00'）。
+            # 直接用解析结果，时间不丢；无时间段的 fmt 行为不变。
+            result = datetime.strptime(dt, fmt)
     elif isinstance(dt, datetime):
         result = dt
     else:
