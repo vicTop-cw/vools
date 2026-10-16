@@ -463,3 +463,26 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 - evidence: 真源修复 bridges/vools/bridge/csharp/compiler.py（全部改动落在我 reserve_scope 申请的作用域内，不碰共享 _base.py）：① compile_to_dll 的 post-publish 校验改按调用方真实不变式 `_cache_entry_valid`（.dll 与同名 .exe 必须同时存在），不齐则在锁内清 project_dir 的 obj/bin 增量目录 + 清 cache_dir 里半截 .dll/.pdb/.runtimeconfig 再重发一次（清 obj/bin 正是为破 dotnet up-to-date 空转那道坑），仍不齐抛带 stderr/stdout 上下文的 RuntimeError；② CSharpBridge 覆盖 check_cache：要求 _cache_entry_valid 才返回缓存路径，否则返回 None 让 _compile_with_cache 触发重编（自愈）——堵上装饰器走基类 .dll-only 命中的口子。
   判据（py3.6 + py3.11 双版本）：① py_compile 通过；② 手动构造毒缓存（删 exe 保 dll）后 test_csharp_bridge 隔离跑由 exit=1 转 exit=0（装饰器路径自愈成功）；③ 清缓存全量编译路径双版本 exit=0 FAIL=0 SKIP=0（无回归）；④ _compile_csharp_code 直接探针：毒缓存下重发补齐、call 正确返回 5。此前批跑 fail=1 即此毒缓存所致。
 
+## BUG-59 [2026-10-16T15:50:00Z] [medium] FIXED
+- summary: tests_concurrent/test_concurrent_all.py 残留 `from __future__ import annotations`，py3.6 整个 tests_concurrent/ 无法收集
+- detail: 现象：`E:\Python36\python.exe -m pytest tests_concurrent --collect-only` 在该文件抛 `SyntaxError: future feature annotations is not defined`（该 future 要求 py3.7+），整个目录收集失败。全仓 py_compile 扫描（888 个 .py，排除 site-packages/_python32）命中。
+  根因：文件通体没有任何 PEP 585/604 新式注解（grep `list[/dict[/tuple[/-> ` 计数 = 0），这行 future import 纯属残留，删掉语义完全不变。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（全仓 py3.6 py_compile 扫描）
+
+
+### FIXED(2026-10-16T15:55:00Z / BUG-59)
+- evidence: 删除 tests_concurrent/test_concurrent_all.py 顶层该 future import 并留注释说明。判据：py3.6 `pytest tests_concurrent --collect-only` exit=0（此前 SyntaxError）；py_compile 双版本通过。
+
+## BUG-60 [2026-10-16T15:52:00Z] [medium] FIXED
+- summary: _probe_wsl 把 rc!=0 当确证结果一次即返回 False，多 agent 并发下 WSL 快速非零造成整个收集会话假 skip（swift 9 skip / shell fail）
+- detail: 现象：bridges py3.11 全量批跑（多 agent 并发跑 WSL 用例时段）test_swift_bridge 出现 9 个 skip（"Swift compiler not available"）、test_shell_bridge 1 个 fail；同批隔离复跑全部 exit=0/0 skip——典型收集期中毒。
+  根因：VM 正在重启时 wsl.exe 【快速】返回 rc!=0（不是超时）；旧 _probe_wsl 单次观测即 `return (r.returncode == 0), True` 判确证 False。pytest 的 skipif 只在收集期求值一次，撞上这一次就把整会话标 skip。rc!=0 与「工具真没装」在单次观测上不可分辨。
+  对照：此前已修「超时不缓存」（874e0ae）与「False 不缓存 + WSLGate」（23ade78），漏了「快速非零」这一路。
+- reported_by: polish-lead
+- ref_call: 组合模式验证轮（bridges 全量批跑 + 隔离复跑对照）
+
+
+### FIXED(2026-10-16T16:00:00Z / BUG-60)
+- evidence: 真源修复 bridges/vools/bridge/core/wsl.py `_probe_wsl`：rc!=0 不再一次定论，与超时同等退避重试（attempts=4、递增退避），全部用完仍非零才判 False。叠加既有「False 不缓存」策略，收集期撞上 VM 重启窗口会重试数秒跨过窗口。判据：① py_compile 双版本；② warm 探测语义不变——is_wsl_available=True（0.2s）、dart/swift=True、不存在工具=False（不误报可用）；③ 收集期敏感的 shell+swift+dart 三文件同批 py3.11 exit=0 SKIP=0 FAIL=0。
+

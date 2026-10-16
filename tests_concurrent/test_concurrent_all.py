@@ -3,7 +3,10 @@
 vools.concurrent 综合测试
 在独立测试文件夹中运行，不影响主项目测试
 """
-from __future__ import annotations
+# （曾有 `from __future__ import annotations`：本文件通体没有 PEP 585/604 新式
+#  注解，它纯属残留；而该行在 py3.6 触发 SyntaxError（future feature annotations
+#  要求 py3.7+），让整个 tests_concurrent/ 在 py3.6 下无法收集——寻虫扫描
+#  py_compile 全仓 888 文件时命中，移除。）
 
 import sys
 import os

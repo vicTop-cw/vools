@@ -43,7 +43,18 @@ def _probe_wsl(cmd, per_try_timeout: float, attempts: int = 4, backoff: float = 
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=per_try_timeout,
             )
-            return (r.returncode == 0), True
+            if r.returncode == 0:
+                return True, True
+            # rc!=0：WSL VM 正在重启时 wsl.exe 会【快速】返回非零（不是超时），单次
+            # 观测上与"工具确实没装"不可分辨。pytest 的 skipif 只在收集期求值一次，
+            # 撞上一次快速非零就把整个会话标成 skip——实测多 agent 并发跑 WSL 用例
+            # 时 test_swift_bridge 9 个 skip、test_shell_bridge 1 个 fail 即此形状
+            # （隔离复跑立即通过）。故 rc!=0 与超时同等对待：退避重试，全部用完
+            # 仍非零才判 False。
+            if i < attempts - 1:
+                time.sleep(backoff * (i + 1))
+                continue
+            return False, True
         except subprocess.TimeoutExpired:
             # 冷启动/瞬时挂起：不算确证，退避后重试
             if i < attempts - 1:
