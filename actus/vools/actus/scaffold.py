@@ -181,6 +181,14 @@ def scaffold_action(
     else:
         with open(template_path, 'r', encoding='utf-8') as f:
             template_body = f.read()
+        # 外部模板（如 Actus 仓 actions/templates/*.actus.md）也可能是旧版驱动协议：
+        # 只写 `params = json.loads(os.environ['ACTUS_PARAMS'])` + `print(...)`，
+        # 而 md 引擎以 __name__='__md_block__' 执行块，那种写法下 data 恒为 null
+        # （tests/actus/test_scaffold.py::test_entry_block_has_module_level_driver 钉此）。
+        # 这里与内联分支一致补上 ENTRY_DRIVER，保证无论模板来源都满足引擎契约。
+        # 注意：不能改 Actus 仓的模板文件，驱动由 vools 侧 scaffold 负责补齐。
+        if '_zparams' not in template_body:
+            template_body = _with_entry_driver(template_body)
 
     # 2) 生成 id / name
     aid = _generate_id(description, action_id)
@@ -305,9 +313,25 @@ import inspect as _zinspect, json as _zjson, os as _zos
 _zparams = _zjson.loads(_zos.environ.get('ACTUS_PARAMS') or '{}')
 if __name__ != "__main__" or _zparams:
     _zsig = _zinspect.signature(main).parameters
-    if not any(p.kind is _zinspect.Parameter.VAR_KEYWORD for p in _zsig.values()):
-        _zparams = {k: v for k, v in _zparams.items() if k in _zsig}
-    print(_zjson.dumps(main(**_zparams), ensure_ascii=False))
+    _zhas_var_kw = any(p.kind is _zinspect.Parameter.VAR_KEYWORD
+                       for p in _zsig.values())
+    _zrequired_pos = [n for n, p in _zsig.items()
+                      if p.kind in (_zinspect.Parameter.POSITIONAL_ONLY,
+                                    _zinspect.Parameter.POSITIONAL_OR_KEYWORD)
+                      and p.default is _zinspect.Parameter.empty]
+    if _zhas_var_kw:
+        # main(**kwargs) 形态：原样展开
+        print(_zjson.dumps(main(**_zparams), ensure_ascii=False))
+    elif _zrequired_pos and any(n not in _zparams for n in _zrequired_pos):
+        # 有"ACTUS_PARAMS 满足不了的必需位置参数"（如外部模板的 main(params: dict)，
+        # 而 ACTUS_PARAMS 给的是 {'param': ...}）：回退成位置调用 main(_zparams)。
+        # 否则 main(**_zparams) 会 TypeError: missing 1 required positional argument，
+        # 整个块 rc=1（实测 tests/actus/test_scaffold.py 端到端用例钉此）。
+        print(_zjson.dumps(main(_zparams), ensure_ascii=False))
+    else:
+        # 命名参数形态：过滤掉 main 不认识的键后展开
+        print(_zjson.dumps(main(**{k: v for k, v in _zparams.items()
+                                   if k in _zsig}), ensure_ascii=False))
 
 if __name__ == "__main__":
     import json, sys
@@ -369,14 +393,42 @@ def main(param: str) -> dict:
 
 
 # 闭栏前的驱动注入点：模板正文自带闭栏，所以驱动拼在最后一个块里而不是尾部。
+
+# 旧驱动协议（外部模板自带）：读 ACTUS_PARAMS → 直接 print。
+# 它在新驱动存在时会【重复输出一份 JSON】——executor 只用入口块 stdout 造 data，
+# 两份 JSON 会让 json.loads 抛 "Extra data"（实测 tests/actus 端到端用例钉此）。
+# 追加 ENTRY_DRIVER 前先把它剥掉。只匹配模块级调用尾巴，不动 `def main` 本体。
+_LEGACY_DRIVER_RE = None
+
+
+def _strip_legacy_driver(block_text):
+    """剥掉 python 块尾部旧协议的模块级调用/打印（返回新文本）。"""
+    global _LEGACY_DRIVER_RE
+    if _LEGACY_DRIVER_RE is None:
+        import re as _re
+        # 形如:
+        #   params = json.loads(os.environ.get('ACTUS_PARAMS') or '{}')
+        #   print(json.dumps(main(params), ensure_ascii=False))
+        # 允许夹注释行与空行；锚定到块尾。
+        _LEGACY_DRIVER_RE = _re.compile(
+            r'(?:\n[ \t]*(?:#[^\n]*)?)*'
+            r'\n[ \t]*params\s*=\s*json\.loads\(\s*os\.environ\.get\(\s*[\'"]ACTUS_PARAMS[\'"][^\n]*\n'
+            r'[ \t]*print\(\s*json\.dumps\(\s*main\([^\n]*\n?'
+            r'\s*\)?[^\n]*\n?'
+        )
+    return _LEGACY_DRIVER_RE.sub('\n', block_text)
+
+
 def _with_entry_driver(text):
     """把 ENTRY_DRIVER 插进最后一个 python 块的闭栏**之前**。
 
     插在闭栏之外就落进了 markdown，动作照旧静默空转且没人报错 ——
     这条上一轮踩过（插错位置得到的假绿被当成"补了驱动还是 ok"）。
+    注入前先剥掉模板自带的旧协议调用，避免与 ENTRY_DRIVER 重复输出两份 JSON。
     """
     close = text.rfind('```')
     opener = text.rfind('```python', 0, close)
     if close < 0 or opener < 0:
         return text + ENTRY_DRIVER + '\n'
-    return text[:close] + ENTRY_DRIVER + text[close:]
+    body = _strip_legacy_driver(text[opener:close])
+    return text[:opener] + body + ENTRY_DRIVER + text[close:]
