@@ -8,7 +8,12 @@ SSE 模式让浏览器 / 远程 AI 客户端通过 HTTP 长连接接入 Actus：
 与 stdio 版共用 MCPServer.handle() 逻辑，仅 I/O 适配层不同。
 """
 
-__all__ = ['SSEServerHandler', 'serve_sse', 'MCPServerSSE']
+# 注意（2026-10-17 寻虫 BUG-72）：曾列着 'MCPServerSSE' —— 全文件从未定义这个
+# 名字（本模块实际提供 SSEServerHandler + serve_sse；stdio 版 MCPServer 在
+# mcp_server.py，本模块没有 import 它）。空头名让
+# `from vools.actus.mcp_sse import *` 直接抛 AttributeError，两个真名字一并拿不到。
+# 要暴露 stdio 版请显式 import 后再列名。
+__all__ = ['SSEServerHandler', 'serve_sse']
 
 import json
 import threading

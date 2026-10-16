@@ -602,3 +602,97 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
   判据（py3.6 + py3.11）：① 24 键类型矩阵对拍（core/decorators/functional/data/datetime/utils/security/oop/md/task/encoding/crypto + TaskQueue/WorkerPool/batch_execute/VDate/VList/rule/Rule/Task/generate_token 等）：修复后两版本【逐键完全一致】，task 两版本均为 module:vools.task；② 先证 RED —— 单独 stash vools/__init__.py 后 py3.6 下锁 4 FAILED（含 test_vools_task_is_module、as-链、module_names 全键断言）；③ 修复后双版本 5 passed、`import vools.task.decorators as d` 在 py3.6 恢复正常；④ tests/task+tests/core+tests/datetime 合跑双版本 exit=0 SKIP=0 FAIL=0；⑤ 回归锁里含"遍历 _module_names 全部键必须是 ModuleType"的通用断言，防下一个同名并存键复发。
   诚实记录：本轮 __all__ 审计的 16 个 AST 候选里 6 个是 *_compat 条件定义的假阳性（运行时全 OK），说明纯静态判据在此类形状会误报；剩余 rx/bridges/pyk/actus 的重树候选（vools.reactive 顶层等约 47 名）因 import 触发 WSL 探测、单进程跑会卡住，【本轮未完成运行时核验】，留作下轮分进程逐个验证。
 
+
+## BUG-70 [2026-10-16T19:40:00Z] [medium] FIXED
+- summary: vools.reactive 的 __all__ 挂着 14 个从未实现的名字 —— `from vools.reactive import *` 整条 AttributeError（210 个真名字一起拿不到）
+- detail: rx/vools/reactive/__init__.py:161-164 在 __all__ 里列 combine_latest_map/merge_all/merge_map/pairwise/partition/race/repeat/retry_until/scan_with_index/switch_on_next/take_until_not/combine_latest_with/merge_with/switch_map_to，但全树 grep（`def <名>`）一个都不存在，operators 模块里也没有（hasattr 逐个实测 = 0 命中）。star import 逐名 getattr，命中第一个空头名即抛：`AttributeError: module 'vools.reactive' has no attribute 'combine_latest_map'`（py3.11/py3.6 双版本实测同样炸）—— 后果不是"少 14 个名字"，而是**整套 star import 连带 210 个真名字全部拿不到**。
+  __all__ 里挂空头名不是"还没写"的备忘录，是公开面的自我破坏。archive/reactive.md 与 dev-tools/scripts/*（rxpy 对照探索脚本）里出现这些名字，推断是从 rxpy API 清单抄来的愿望清单。
+  发现手段：__all__ 完整性审计第二段（运行时真 import + 真 star import，分进程带硬超时）。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（导出面运行时核验，续 BUG-68 同族）
+
+
+### FIXED(2026-10-16T19:55:00Z / BUG-70)
+- evidence: 真源修复 rx/vools/reactive/__init__.py：从 __all__ 摘掉这 14 个空头名，原位留注释点名"要加操作符请连实现带 __all__ 一起加"（防愿望清单再回来）。未新造实现——凭空补 14 个操作符不在寻虫轮授权范围内，且会让公开面比缺陷更难核对。
+  回归锁 rx/tests/test_public_surface.py（2 格，【通用断言】形状）：__all__ 每名字必须 hasattr 得到；star import 在独立命名空间必须不抛且绑到全部名字。今后任何空头名在 rx 套件直接亮灯。
+  判据：① 先证 RED —— 修复前运行时核验器对 vools.reactive 报 BAD（14 个缺失名）、exec star import 抛 AttributeError；② 修复后核验器 OK names=210，py3.11/py3.6 双版本；③ 负向对照：往 mcp_sse（同锁形状）注入 PhantomZZZ 空头名 → 锁两格全红（AssertionError + star import AttributeError），撤销即绿；④ 全量 rx tests（含新锁）双版本 exit=0 SKIP=0 FAIL=0。
+
+## BUG-71 [2026-10-16T19:40:00Z] [medium] FIXED
+- summary: vools.pyk.look_upon 的 __all__ 列 register_do/builtin_do，实现却是 LookUpon 的 @classmethod —— 模块层无同名绑定，star import 抛 AttributeError
+- detail: __all__（L216）与 pyk/tests/test_pyk.py 的 _EXPECTED_EXPORTS（L244）都按【模块级名字】声明 register_do/builtin_do；实现是 classmethod（L473/L490），文件里从未有模块级同名绑定。实测 `from vools.pyk.look_upon import *` 抛 AttributeError。
+  注意这份 pyk 测试用 ast 读源码比对【名字清单】，静态比对看不见"名字没绑定"这件事，所以它一直绿、star import 一直炸——两本账对不上。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（导出面运行时核验）
+
+
+### FIXED(2026-10-16T19:55:00Z / BUG-71)
+- evidence: 真源修复 pyk/vools/pyk/look_upon.py：LU 旁补两行模块级别名 `register_do = LookUpon.register_do` / `builtin_do = LookUpon.builtin_do` —— __all__、pyk 测试的名字清单、类上用法三者同时成立，且不改任何既有行为（LookUpon.register_do 原本就是那个对象）。
+  回归锁 pyk/tests/test_look_upon_aliases.py（2 格，静态 AST）：__all__ 全部名字必须在模块层可达绑定（遍历进顶层 try/if、认 AnnAssign）；两个别名必须存在。选静态不选运行时：look_upon 在无 pyspark 环境 import 带条件降级，运行锁容易变成"环境不对就 skip"的假绿（本仓红线）。
+  判据：① 先证 RED —— 剥掉两行别名后锁 2 格全红；② py3.11 exit=0、py3.6 exit=0；③ 运行时核验器对 vools.pyk.look_upon 报 OK names=26（py3.11 与 py3.6 双版本，star import 不再抛）；④ TestLookUpon 6 格本地仍全过（别名不影响原静态清单断言）。
+  自我纠偏记录：本锁初版在 py3.6 红 —— ast.Str(.s) 与 ast.Constant(.value) 形状差异把 __all__ 抽成空，另有 try/except 分支与 AnnAssign 未计入。守卫自己也要过双版本门。
+
+## BUG-72 [2026-10-16T19:40:00Z] [low] FIXED
+- summary: vools.actus.mcp_sse 的 __all__ 列 'MCPServerSSE'，全文件从未定义 —— star import 抛 AttributeError
+- detail: __all__=['SSEServerHandler','serve_sse','MCPServerSSE']，本模块只定义 _SseWriter/SSEServerHandler/serve_sse；stdio 版 MCPServer 在 mcp_server.py，这里没 import。实测 star import 抛 AttributeError，两个真名字一并拿不到。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（导出面运行时核验）
+
+
+### FIXED(2026-10-16T19:55:00Z / BUG-72)
+- evidence: 真源修复 actus/vools/actus/mcp_sse.py：__all__ 摘掉 MCPServerSSE（注释点名：要暴露 stdio 版请显式 import 后再列名）。
+  判据：① RED —— 修复前核验器 BAD ['MCPServerSSE']、star import 抛；② 修复后 OK names=2（双版本）；③ 负向对照注入 PhantomZZZ → actus/tests/test_public_surface.py 两格红、撤销即绿；④ actus 全量 tests（含新锁）双版本 exit=0 SKIP=0 FAIL=0。
+
+## BUG-73 [2026-10-16T19:40:00Z] [low] FIXED
+- summary: actus/vools/actus/panel_init.py 是 5 行历史遗留桩，__all__=['app'] 而 app 从未定义 —— star import 抛 AttributeError
+- detail: 文件只有 docstring/__version__/__all__。全仓 grep panel_init 引用为 0（仅我自己的探针）。真实面板入口在 vools.actus.panel（run_panel/PanelApp）。实测 star import 抛 AttributeError。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（导出面运行时核验）
+
+
+### FIXED(2026-10-16T19:55:00Z / BUG-73)
+- evidence: 真源修复 actus/vools/actus/panel_init.py：__all__ 改 []，注释点名"全仓零引用的历史桩；把 app 变真要么引入 FastAPI 硬依赖要么改语义，都不是一行桩文件该有的动作"（不投机造实现、不删文件——删除属他人域判断）。
+  判据：① RED —— 修复前 BAD ['app']；② 修复后 OK names=0（空 __all__ 的 star import 是安全 no-op），双版本；③ actus 全量双版本 exit=0。
+  留档：vools.sql 的 star-import 核验【未完成】—— 该模块 import 极慢（>3 分钟仍未返回，分进程 180s 超时），本轮如实标注未覆盖，不用 skip 冒充通过。
+
+## BUG-74 [2026-10-16T20:00:00Z] [medium] FIXED
+- summary: tests 根套件因测试文件同名（test_py36_compat.py 在 tests/core 与 tests/data 各一份、两目录都无 __init__.py）整体收集中断 exit=2
+- detail: pytest prepend 导入模式下两个无包目录的同名模块抢同一个 sys.modules 名，报 "import file mismatch ... remove __pycache__ / .pyc files and/or use a unique basename"，整个 `pytest tests` 中止（exit=2，SKIP=0 FAIL=3 全是收集错误）。这是我 round-15 加 tests/core/test_py36_compat.py 时引入的【碰撞】——当时分目录跑各自都绿，没跑过全量 tests/，把套件级碰撞留给了下一位。tests/core/test_utils.py 与 tests/md/test_utils.py 同形但 md 有 __init__.py，不炸。
+- reported_by: polish-lead
+- ref_call: 组合模式验证轮（root-tests 全量首跑暴露）
+
+
+### FIXED(2026-10-16T20:05:00Z / BUG-74)
+- evidence: 修复用【改我自己的文件名】而非给共享 tests 目录塞 __init__.py（后者会改整个收集语义、影响他人正在写的文件）：git mv tests/core/test_py36_compat.py -> tests/core/test_py36_syntax_guard.py（tests/data 那份是他人 405641b 的，未动）。
+  判据：改名后 `pytest tests` 根套件双版本重新可完整收集（结果见本轮提交说明与运行记录）。
+  教训（记账）：新增测试文件必须以【全量套件】跑一次收集，分目录各自绿不代表套件级不碰撞；同名 basename + 无 __init__.py 是 pytest 的经典断点。
+
+## BUG-75 [2026-10-16T20:20:00Z] [high] FIXED
+- summary: vools/security/safe_eval 字面量白名单只认 ast.Constant —— py3.6/3.7 上任何含字面量的表达式全部编译失败，iif 文档承诺的字符串条件在 3.6 整条不可用（bridges rust shim 同族）
+- detail: 81a2d25（2026-10-16 22:40，另一 agent）"删除 safe_eval 三个 dead legacy AST 分支 —— 消除 py3.14 潜在崩溃"：把 _eval_node 收成只走 `isinstance(node, ast.Constant)`。对 3.8+ 完全成立（Num/Str/Bytes/NameConstant 已并入 Constant，硬编码它们在 3.12+ 触发 DeprecationWarning、3.14 移除）；但 py3.6/3.7 下 ast.parse 产出的恰恰是 Num/Str/... —— 于是 3.6 上【任何带字面量的表达式】都被兜底分支拒为"不支持的表达式类型: Num"。
+  实测（py3.6）：safe_lambda(('x',), '5 > 3') 与 '10' 全抛 SafeEvalError；py3.11 正常。连带 tests/functional/test_iif.py 两格红（iif.py:287 把它翻译成 ValueError: 不安全的表达式）—— 文档承诺的 supp 字符串条件在 3.6 上整条不可用。
+  同族另一处：bridges/vools/bridge/rust/safe_eval_shim.py `_compile_node` 也只认 ast.Constant，实测 py3.6 `_compile_node(ast.parse('1 + 2'))` 返回 (b"", "不支持的表达式类型: Num")。该文件历史上从未有 legacy 分支（git log -S ast.Num = 0），属潜伏缺陷而非回归。
+  为何 5 天才暴露：这 2 格 iif 失败一直被 BUG-74 的整条收集中断（exit=2）挡住，`pytest tests` 根本跑不到；修掉碰撞后才现形。
+  修法不新造判据：仓内早有真源 vools.core.ast_compat（is_literal/literal_value，注释明确"只认 ast.Constant 的代码在 3.6/3.7 会漏判"），同目录 expression_handler.py:129 与 bridge/core/sigcache.py:25 都在用它 —— 两处改为复用同一口径即可，py3.14 安全与 py3.6 可用同时成立。
+  写锁过程中的实测纠偏：safe_lambda 的校验阶段用【占位字符串】('_v_0') 求值整个 body，所以 `x + 1` 这类"变量参与算术"本就被拒（str+int TypeError→SafeEvalError），是既有设计不是本缺陷；锁里的表达式全部按实测可编译集写入，不凭想当然。
+- reported_by: polish-lead
+- ref_call: 组合模式验证轮（BUG-74 解蔽后暴露；跨树同族横扫）
+
+
+### FIXED(2026-10-16T20:40:00Z / BUG-75)
+- evidence: 真源修复两处，均复用 vools.core.ast_compat：
+  ① vools/security/safe_eval.py：`if is_literal(node): return literal_value(node)`（+ from ..core.ast_compat import is_literal, literal_value）；
+  ② bridges/vools/bridge/rust/safe_eval_shim.py `_compile_node`：字面量分支改 is_literal/literal_value，bool/int/float/str 分派按解出的值判。
+  回归锁两把：tests/security/test_safe_eval_literals.py（A 面 8 个实测可编译字面量表达式 + B 面 8 个危险表达式必须仍被拒 —— 防"为修 3.6 把白名单放开"这种更坏修法 + 源码必须走 ast_compat 一格）；bridges/tests/test_rust_shim_encoding.py（纯 Python 字节断言，不需 .dll）。
+  判据（py3.6 + py3.11）：① RED —— stash 掉 safe_eval.py 后锁在 py3.6 9 FAILED / py3.11 1 FAILED（源码卫生格），pop 后双版本 17 格全过；② stash 掉 shim 后 py3.11 1 FAILED（浮点格，版本无关）/ py3.6 4 FAILED；③ 安全负向对照双版本 7/7 危险表达式仍被拒（__import__/eval/exec/open/__class__/__globals__/立即调用 lambda）；④ 修复前后 py3.11 输出逐项一致（无回归）；⑤ 被此缺陷打红的 tests/functional/test_iif.py 双版本回到 exit=0。
+
+## BUG-76 [2026-10-16T20:20:00Z] [medium] FIXED
+- summary: bridges rust safe_eval_shim._write_float 是 _write_int 的复制粘贴（value.to_bytes）—— 浮点字面量编译必 AttributeError，双版本都炸
+- detail: _write_float 写的是 `value.to_bytes(8, byteorder='little', signed=True)`，而 float 没有 to_bytes。任何浮点常量（如 '1.5'）编译即抛 AttributeError: 'float' object has no attribute 'to_bytes'。与 BUG-75 不同，这条 py3.11 也炸（与 AST 版本无关，是纯复制粘贴错误），且此前无任何测试触到浮点分支。
+  契约核对：Rust 侧 opcodes::PUSH_FLOAT 用 f64::from_le_bytes 读 8 字节小端 double（safe_eval/src/lib.rs:134），Python 等价写法是 struct.pack('<d', value)；同文件 _write_int(i64)/_write_uint(u32)/_write_string(len+utf8) 均与 Rust 侧一致，唯 float 错。
+- reported_by: polish-lead
+- ref_call: 组合模式验证轮（写 rust shim 锁时顺带实测到浮点分支）
+
+
+### FIXED(2026-10-16T20:40:00Z / BUG-76)
+- evidence: 真源修复 bridges/vools/bridge/rust/safe_eval_shim.py：_write_float 改 struct.pack('<d', value)（+ import struct），注释写明 Rust 侧契约出处。
+  判据：① RED —— 修复前 _compile_node('1.5') 双版本抛 AttributeError；修复后返回 9 字节，且 code[1:] == struct.pack('<d',1.5) 逐字节自证（本轮探针实测 payload_matches_struct=True）；② bridges/tests/test_rust_shim_encoding.py 双版本 4 格 exit=0（含 int 的 <q、str 的 <I+utf8 对照，证明只改了 float 一处分派）；③ 该锁不需 .dll（纯 Python 编码层），故在干净环境也真跑真断言、不会退化 skip。

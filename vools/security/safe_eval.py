@@ -21,6 +21,8 @@ import ast
 import operator
 from typing import Any, Dict, Optional, Tuple
 
+from ..core.ast_compat import is_literal, literal_value
+
 
 ALLOWED_OPERATORS = {
     ast.Add: operator.add,
@@ -89,12 +91,14 @@ class SafeExpressionEvaluator:
         self.allowed_vars = allowed_vars or {}
 
     def _eval_node(self, node: ast.AST) -> Any:
-        # Python 3.8+ 把 Num/Str/NameConstant 统一并入 Constant，此分支捕获全部
-        # 字面量。原本其后还有三个 legacy 分支（ast.Num/Str/NameConstant），在
-        # 3.8+ 恒不可达且会在 3.14 被移除，故已删除（有 hasattr 守卫仍触发
-        # DeprecationWarning）。
-        if isinstance(node, ast.Constant):
-            return node.value
+        # 字面量分支必须走 ast_compat（与同目录 expression_handler.py:129 同一
+        # 口径）：py3.8+ 才有 ast.Constant；py3.6/3.7 下 ast.parse 产出的是
+        # Num/Str/Bytes/NameConstant，且值分别藏在 .n/.s/.s/.value。
+        # 81a2d25 为消 py3.14 崩溃删掉了三个 legacy 分支、只留 ast.Constant ——
+        # 对 3.8+ 成立，但让 py3.6 的【任何带字面量的条件表达式】整体不可用
+        # （iif 文档承诺的字符串表达式在 3.6 全挂，实测见 BUG-75）。
+        if is_literal(node):
+            return literal_value(node)
 
         if isinstance(node, ast.Name):
             if node.id in self.allowed_vars:

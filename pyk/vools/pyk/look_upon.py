@@ -1767,6 +1767,14 @@ def update_failed_to_pending(dbtable:str = None):
 
 LU = LookUpon
 
+# __all__ 声明了这两个名字（pyk/tests/test_pyk.py 的 _EXPECTED_EXPORTS 也按
+# 模块级名字断言），但实现是 LookUpon 上的 @classmethod —— 模块层从未有同名
+# 绑定，`from vools.pyk.look_upon import *` 实测抛 AttributeError（2026-10-17
+# 寻虫 BUG-71）。绑到类方法本身：类上用法（LookUpon.register_do /
+# @LookUpon.builtin_do）与模块级用法从此同一入口、同一对象。
+register_do = LookUpon.register_do
+builtin_do = LookUpon.builtin_do
+
 if __name__ == '__main__':
     # 测试代码
     import random

@@ -11,6 +11,7 @@ Python AST → 栈式 VM 指令序列 → 调用 Rust
 import ctypes
 import json
 import os
+import struct
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -112,8 +113,15 @@ def _write_uint(value: int) -> bytes:
 
 
 def _write_float(value: float) -> bytes:
-    """将浮点数写入字节序列"""
-    return value.to_bytes(8, byteorder='little', signed=True)
+    """将浮点数写入字节序列
+
+    原先是 _write_int 的复制粘贴（value.to_bytes(...)），而 float 没有
+    to_bytes —— 任何浮点字面量编译即抛 AttributeError: 'float' object has
+    no attribute 'to_bytes'（双版本实测，py3.6/py3.11 都一样，2026-10-17 寻虫
+    BUG-76）。Rust 侧 PUSH_FLOAT 用 f64::from_le_bytes 读 8 字节小端 double
+    （safe_eval/src/lib.rs:134），Python 等价写法就是 struct.pack('<d', ...)。
+    """
+    return struct.pack('<d', value)
 
 
 def _write_string(value: str) -> bytes:
@@ -131,17 +139,25 @@ def _compile_node(node) -> Tuple[bytes, str]:
     """
     import ast
 
-    if isinstance(node, ast.Constant):
-        if isinstance(node.value, bool):
-            return bytes([_OP_PUSH_BOOL, 1 if node.value else 0]), ""
-        elif isinstance(node.value, int):
-            return bytes([_OP_PUSH_INT]) + _write_int(node.value), ""
-        elif isinstance(node.value, float):
-            return bytes([_OP_PUSH_FLOAT]) + _write_float(node.value), ""
-        elif isinstance(node.value, str):
-            return bytes([_OP_PUSH_STR]) + _write_string(node.value), ""
+    from vools.core.ast_compat import is_literal, literal_value
+
+    # 字面量分支走 ast_compat（同目录核心与 bridge/core/sigcache.py:25 同一口径）：
+    # 只认 ast.Constant 时 py3.6/3.7 产出的 Num/Str/Bytes/NameConstant 全部落到
+    # 兜底分支 —— 实测 py3.6 `_compile_node(ast.parse('1 + 2'))` 返回 (b"",
+    # "不支持的表达式类型: Num")，整个表达式编译不可用（2026-10-17 寻虫 BUG-75
+    # 同族；该函数历史上从未有 legacy 分支，属潜伏缺陷而非回归）。
+    if is_literal(node):
+        value = literal_value(node)
+        if isinstance(value, bool):
+            return bytes([_OP_PUSH_BOOL, 1 if value else 0]), ""
+        elif isinstance(value, int):
+            return bytes([_OP_PUSH_INT]) + _write_int(value), ""
+        elif isinstance(value, float):
+            return bytes([_OP_PUSH_FLOAT]) + _write_float(value), ""
+        elif isinstance(value, str):
+            return bytes([_OP_PUSH_STR]) + _write_string(value), ""
         else:
-            return b"", f"不支持的常量类型: {type(node.value).__name__}"
+            return b"", f"不支持的常量类型: {type(value).__name__}"
 
     elif isinstance(node, ast.Name):
         # 变量引用 - 在 Rust 端通过 LOAD_VAR 加载
