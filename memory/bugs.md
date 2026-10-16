@@ -450,3 +450,16 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 ### FIXED(2026-10-16T15:05:00Z / BUG-57)
 - evidence: 真源修复 vools/sys/dll_cmd.py：删顶层 `from ..bridge.core.loader import _LIB_DIR, _IS_WINDOWS`，改 `_IS_WINDOWS = platform.system() == 'Windows'`（本地判断，与同包 env.py:22 口径一致）+ 新增 `_lib_dir()` 函数级延迟导入（ImportError 返回 None，与 env_cmd.py:83 既定姿势一致）；_find_dll_path 用 _lib_dir()，None 即按「没有 DLL」降级。补回归锁 tests/core/test_sys_cli.py（4 格：隔离环境确认 vools.bridge 缺席 + dll_cmd 无 bridges 可导入并优雅降级 + `python -m vools sys` 退 0 + vools.sys 包含 fire_app 链无 bridges 可导入）。判据：① py_compile 双版本；② 核心隔离环境 `python -m vools sys` 由 exit=1 转 exit=0；③ _find_dll_path 无 bridges 返回 None、list()/func() 正常打印；④ bridges 在场时 _lib_dir()==loader._LIB_DIR、_IS_WINDOWS 一致（行为 parity 无回归）；⑤ tests/core 双版本 exit=0 SKIP=0 FAIL=0；⑥ import-all 复核 vools.sys/dll_cmd/env_cmd/fire_app 4/4 OK。全仓此前无任何测试引用 DllCommands/SysCLI，回归锁补上该缺口。
 
+## BUG-58 [2026-10-16T15:20:00Z] [high] FIXED
+- summary: csharp 半截缓存产物（有 .dll 无同名 .exe）让 @csharp 装饰器调用期 FileNotFoundError，且重发自愈空转
+- detail: 现象：bridges 全量批跑杀 dotnet 后，共享 Temp 缓存（vools_csharp_cache）残留 `add_<hash>.dll` 却无同名 `.exe`；再跑 test_csharp_bridge 时 @csharp 装饰器路径在调用期抛 `FileNotFoundError: C# 可执行文件不存在: ...add_xxx.exe`（compiler.py 调用期 exe 检查），py3.6 与 py3.11 全量批跑各 fail=1。手动构造该毒状态（删 exe 保 dll）稳定复现；清空缓存或隔离热跑则通过——证明是缓存污染，不是工具链缺失。
+  根因两层：① 模块级 compile_to_dll 的 post-publish 校验旧代码只 `os.path.exists(dll_path)`，半截产物被原样返回；② 更关键：@csharp = `_csharp_bridge.decorator`，装饰器实际走【基类】 LangBridge.check_cache（_base.py:608 `if os.path.exists(lib_path)`）——只看 .dll 就判命中，绕过我加的模块级校验。而 _call_csharp_func 真跑的是同名 apphost/.exe，基类的 .dll-only 判定对 C# 是错的。
+  自愈的隐藏坑：即便重发，dotnet publish 会因 project_dir 残留 obj/bin 的 up-to-date 标记【跳过 apphost 生成】，重发变空转（实测第一次只加 post-publish 校验后毒缓存仍不自愈）。
+- reported_by: polish-lead
+- ref_call: 组合模式验证轮（bridges 全量双版本批跑 fail=1）
+
+
+### FIXED(2026-10-16T15:35:00Z / BUG-58)
+- evidence: 真源修复 bridges/vools/bridge/csharp/compiler.py（全部改动落在我 reserve_scope 申请的作用域内，不碰共享 _base.py）：① compile_to_dll 的 post-publish 校验改按调用方真实不变式 `_cache_entry_valid`（.dll 与同名 .exe 必须同时存在），不齐则在锁内清 project_dir 的 obj/bin 增量目录 + 清 cache_dir 里半截 .dll/.pdb/.runtimeconfig 再重发一次（清 obj/bin 正是为破 dotnet up-to-date 空转那道坑），仍不齐抛带 stderr/stdout 上下文的 RuntimeError；② CSharpBridge 覆盖 check_cache：要求 _cache_entry_valid 才返回缓存路径，否则返回 None 让 _compile_with_cache 触发重编（自愈）——堵上装饰器走基类 .dll-only 命中的口子。
+  判据（py3.6 + py3.11 双版本）：① py_compile 通过；② 手动构造毒缓存（删 exe 保 dll）后 test_csharp_bridge 隔离跑由 exit=1 转 exit=0（装饰器路径自愈成功）；③ 清缓存全量编译路径双版本 exit=0 FAIL=0 SKIP=0（无回归）；④ _compile_csharp_code 直接探针：毒缓存下重发补齐、call 正确返回 5。此前批跑 fail=1 即此毒缓存所致。
+
