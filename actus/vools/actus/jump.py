@@ -288,10 +288,21 @@ def batch_upload(files: List[str], local_path: str, remote_path: str,
                  remote_host: str, remote_user: str,
                  port: int = 22, key_path: str = None,
                  password: str = None, timeout: int = 300) -> dict:
-    """批量上传文件。"""
+    """批量上传文件。
+
+    files 是调用方直接传入的相对路径清单（可能来自被持久化/再加载的同步计划，
+    而非当场由 scan_* 生成）。scan_* 已在入口过 _is_safe_relpath，但公开 API
+    不能依赖调用方一定先过扫描 —— 与 8425cfb 同一道闸补齐：含 `..`/绝对路径/
+    盘符的条目在这里【拒绝并记入 errors】，绝不参与 os.path.join 拼接
+    （否则 `os.path.join(local_path, '../../x')` 会逃出 local_path，
+    remote_join 同理丢 base）。
+    """
     count = 0
     errors = []
     for relpath in files:
+        if not _is_safe_relpath(relpath):
+            errors.append("拒绝不安全相对路径: %s" % relpath)
+            continue
         local_file = os.path.join(local_path, relpath)
         remote_file = remote_join(remote_path, relpath)
         if upload_single(local_file, remote_file, remote_host, remote_user,
@@ -306,10 +317,13 @@ def batch_download(files: List[str], local_path: str, remote_path: str,
                    remote_host: str, remote_user: str,
                    port: int = 22, key_path: str = None,
                    password: str = None, timeout: int = 300) -> dict:
-    """批量下载文件。"""
+    """批量下载文件。安全闸同 batch_upload（下载写【进】local_path，穿越后果更直接）。"""
     count = 0
     errors = []
     for relpath in files:
+        if not _is_safe_relpath(relpath):
+            errors.append("拒绝不安全相对路径: %s" % relpath)
+            continue
         local_file = os.path.join(local_path, relpath)
         remote_file = remote_join(remote_path, relpath)
         if download_single(remote_file, local_file, remote_host, remote_user,

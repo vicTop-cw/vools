@@ -498,3 +498,14 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 ### FIXED(2026-10-16T16:15:00Z / BUG-61)
 - evidence: 真源修复 actus/vools/actus/cli.py `_cmd_desktop`：import 改为 `from vools.actus.desktop import start`（正确模块路径），并把捕获到的真实 ImportError 文案带进提示——依赖真缺席时报 fastapi（名副其实），不再误报 desktop。补 dotnet-free/无 fastapi 依赖的回归锁 actus/tests/test_desktop_import.py（3 格：stub 桌面依赖证明正确路径能解析出 start；无 stub 时提示根因是 fastapi 非 desktop；依赖齐备时 _cmd_desktop 走成功分支 return 0）。判据：py_compile 双版本；desktop-lock py3.11/py3.6 均 exit=0；离线 A/B 探针 rc=1(fastapi 文案)/rc=0；全量 actus tests 双版本无回归。未动他人 WIP（dependency/vault2/jump）。
 
+## BUG-62 [2026-10-16T16:30:00Z] [medium] FIXED
+- summary: jump 路径穿越闸（8425cfb）只覆盖扫描入口，公开批量 API batch_upload/batch_download 仍能拼出越界本地路径（download 把远端影响来的相对路径写进本地）
+- detail: 8425cfb 给 scan_local_files / scan_remote_files* 加了 `_is_safe_relpath`，理由是「relpath 含 `..`/绝对路径/盘符时 os.path.join(local_path, relpath) 会逃出目标目录」。但同一道闸漏了【公开批量入口】：batch_upload/batch_download 的 files 由调用方直接传（同步计划常被持久化后再加载，不再经 scan），旧代码对每条 relpath 直接 os.path.join + remote_join 就发传输——download 尤其危险，它把远端影响来的相对路径【写进本地】，`../../` 可越界落盘。这是 8425cfb 自己点名要防的形状，只是闸的位置只挡了一半路径。
+  发现手段：组合模式寻虫轮 grep jump 全部 os.path.join(local_path, relpath) 汇入点，对照 8425cfb 已加固的 scan 入口，发现批量/paramiko-plan 汇入点未过闸。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（安全面：guard_write/relpath 穿越族）
+
+
+### FIXED(2026-10-16T16:40:00Z / BUG-62)
+- evidence: 真源修复 actus/vools/actus/jump.py：batch_upload/batch_download 循环体入口对每条 relpath 过 `_is_safe_relpath`，不安全条目【拒绝并记入 errors】、绝不参与 os.path.join/remote_join 拼接（与 8425cfb 同一道闸、同一口径，补齐其漏覆盖的公开 API 半边）。补回归锁 actus/tests/test_jump_batch_guard.py（3 格，monkeypatch upload_single/download_single 只记录不外发）：download 拒绝 ../ 与绝对/盘符且安全条目正常放行、远端拼接保持 POSIX 分隔符、被拒条记入 errors。判据：py_compile 双版本；jump-guard py3.11/py3.6 各 3 passed（... [100%]，非 0 收集）；负向对照探针证明未加闸时 `os.path.join('/data/local','../escape.txt')` 确实拼接、加闸后该条从未到达传输（transported=1, traversal leaked=False）。附带修 sandbox.py 文档 usage 的 prepare 形参漂移（写成 meta_dir/artifacts_dir/exec_id 三参、实际签名两参，照抄文档会 TypeError——改回两参对齐真实签名与 executor:762 的调用）。未动他人 WIP（dependency/vault2）。
+
