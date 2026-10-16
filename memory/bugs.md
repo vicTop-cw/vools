@@ -426,3 +426,15 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 - summary: look_upon 新增 CLI 执行通道，支持 Scala/Java/R/Go/Node/Shell/SQL 等无语言枚举限制
 - false_positive(2026-10-16T12:08:38Z): 非缺陷——是 feature 请求（功能需求描述，无失败现象/错误行为），bug 账不收 feature；遗留 OPEN 会让账实不符（账本显示有未解缺陷而实为功能需求）。
 
+## BUG-56 [2026-10-16T14:00:00Z] [high] FIXED
+- summary: vools.data <-> vools.functional 循环导入，`import vools.data` 在 py3.11 直接 ImportError
+- detail: 现象：裸 `import vools.data`（或 pytest 收集 tests/data）在 py3.11 抛 `ImportError: cannot import name 'Seq' from partially initialized module 'vools.data'`，tests/data 收集期 ERROR、exit=2。
+  根因：data/__init__:11 import seq → seq.py:14 `from ..functional.placeholder import _` 强制 vools.functional/__init__ 运行，其 :42 `from ..data import Seq` 撞上 data 尚在部分初始化（Seq 还没定义）。由提交 4ee264a「主包 PEP 562 惰性化」暴露：py3.6 因走 eager 预加载、字典序先加载 functional 而侥幸绕过，掩盖了这个一直存在的环。
+  影响面：任何在 functional 之前 import vools.data 的路径（py3.7+）全崩。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（bugfind）
+
+
+### FIXED(2026-10-16T14:10:00Z / BUG-56)
+- evidence: 真源修复 vools/data/seq.py：把顶层 `from ..functional.placeholder import _` + `_expr = _.__expr__` 延迟为 `_expr(*a,**k)` 函数（首次调用才 import placeholder），切断 data 加载期→functional 的反向触发。保留 functional/__init__:42 与 pipe_ops:30 的 `from ..data import Seq, NONE` 公共 API（tests/functional 用 `from vools.functional import Seq, NONE` 必须继续可用）。判据：① import vools.data / import vools.functional 双入口在 py3.11 与 py3.6 均 OK；② _expr 运行路径回归 Seq.filter/map/select/find 行为不变；③ tests/data + tests/functional 双版本 exit=0 SKIP=0 FAIL=0；④ 18 个 vools.* 子模块 data-first 顺序导入 18/18；⑤ core tests/ 全量 py3.11 exit=0 无回归。提交 069fca8 已推 gitcode main。
+
