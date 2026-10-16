@@ -47,13 +47,18 @@ def guard_write(path: str, root: str = None) -> str:
 
     返回规范化后的绝对路径；越界抛 PermissionError。
     root 缺省取环境变量 ACTUS_SANDBOX_ROOT；未启用沙箱时直接放行。
+
+    **解析用 realpath 而非 abspath**（2026-10-16 实测修复）：abspath 只折叠
+    `..`，不解析符号链接/目录联接 —— jail 内建一个 `link -> /etc` 的 symlink 或
+    Windows junction，再写 `jail/link/passwd` 就会逃出 jail。realpath 把链接解到
+    真实目标后 commonpath 才能拦住。空根（未启用沙箱）仍放行，语义不变。
     """
     if root is None:
         root = os.environ.get('ACTUS_SANDBOX_ROOT')
         if not root:
             return os.path.abspath(path)
-    root_abs = os.path.abspath(root)
-    target = os.path.abspath(path)
+    root_abs = os.path.realpath(root)
+    target = os.path.realpath(path)
     if os.path.commonpath([target, root_abs]) != root_abs:
         raise PermissionError(
             f'sandbox 越界写被拒绝: {target} 不在沙箱根 {root_abs} 内（docs/07 §5）')
