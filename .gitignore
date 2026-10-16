@@ -141,3 +141,7 @@ __rust__/cache/
 *.exe
 *.nim.c
 
+
+# Node.js deps (npm ci regenerates; never commit)
+**/node_modules/
+
