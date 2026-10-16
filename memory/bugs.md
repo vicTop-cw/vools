@@ -438,3 +438,15 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 ### FIXED(2026-10-16T14:10:00Z / BUG-56)
 - evidence: 真源修复 vools/data/seq.py：把顶层 `from ..functional.placeholder import _` + `_expr = _.__expr__` 延迟为 `_expr(*a,**k)` 函数（首次调用才 import placeholder），切断 data 加载期→functional 的反向触发。保留 functional/__init__:42 与 pipe_ops:30 的 `from ..data import Seq, NONE` 公共 API（tests/functional 用 `from vools.functional import Seq, NONE` 必须继续可用）。判据：① import vools.data / import vools.functional 双入口在 py3.11 与 py3.6 均 OK；② _expr 运行路径回归 Seq.filter/map/select/find 行为不变；③ tests/data + tests/functional 双版本 exit=0 SKIP=0 FAIL=0；④ 18 个 vools.* 子模块 data-first 顺序导入 18/18；⑤ core tests/ 全量 py3.11 exit=0 无回归。提交 069fca8 已推 gitcode main。
 
+## BUG-57 [2026-10-16T14:50:00Z] [high] FIXED
+- summary: vools.sys.dll_cmd 顶层硬 import 可选分发 vools.bridge，标准安装（核心不含 bridges）下 `python -m vools sys` 直接崩溃
+- detail: 现象：只挂仓库根（模拟 pip install vools 标准安装，不含 vools[bridges] extra）时 `python -m vools sys` 抛 `ModuleNotFoundError: No module named 'vools.bridge'`，exit=1。`import-all` 逐个独立导入也命中 vools.sys.dll_cmd / vools.sys.fire_app 两处失败（fire_app 经 `from . import dll_cmd` 链上中招）。
+  根因：vools/sys/dll_cmd.py:11 在【模块顶层】`from ..bridge.core.loader import _LIB_DIR, _IS_WINDOWS`，而 vools.bridge 是独立分发的**可选**子包（与 bridge/reactive/dll32/xl/pyk 同族）。BUG-3 早已立约「桥接不可用则优雅降级」，此处违反。
+  漏网原因：全仓没有任何测试引用 DllCommands / SysCLI / `vools sys`，CLI 面完全裸奔——这正是本 bug 能 shipped 的结构性缺口。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（bugfind import-all）
+
+
+### FIXED(2026-10-16T15:05:00Z / BUG-57)
+- evidence: 真源修复 vools/sys/dll_cmd.py：删顶层 `from ..bridge.core.loader import _LIB_DIR, _IS_WINDOWS`，改 `_IS_WINDOWS = platform.system() == 'Windows'`（本地判断，与同包 env.py:22 口径一致）+ 新增 `_lib_dir()` 函数级延迟导入（ImportError 返回 None，与 env_cmd.py:83 既定姿势一致）；_find_dll_path 用 _lib_dir()，None 即按「没有 DLL」降级。补回归锁 tests/core/test_sys_cli.py（4 格：隔离环境确认 vools.bridge 缺席 + dll_cmd 无 bridges 可导入并优雅降级 + `python -m vools sys` 退 0 + vools.sys 包含 fire_app 链无 bridges 可导入）。判据：① py_compile 双版本；② 核心隔离环境 `python -m vools sys` 由 exit=1 转 exit=0；③ _find_dll_path 无 bridges 返回 None、list()/func() 正常打印；④ bridges 在场时 _lib_dir()==loader._LIB_DIR、_IS_WINDOWS 一致（行为 parity 无回归）；⑤ tests/core 双版本 exit=0 SKIP=0 FAIL=0；⑥ import-all 复核 vools.sys/dll_cmd/env_cmd/fire_app 4/4 OK。全仓此前无任何测试引用 DllCommands/SysCLI，回归锁补上该缺口。
+
