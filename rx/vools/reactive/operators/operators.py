@@ -971,22 +971,30 @@ def group_by(key_fn: Callable[[T], Any]) -> Callable[[Observable[T]], Observable
 
 
 class _GroupedObserver(Observer[T]):
-    """分组观察者"""
+    """分组观察者
+
+    分发一律先取快照 `list(self._observers)` 再遍历：本类的 subscribe() 返回的
+    unsubscribe 会 `self._observers.remove(observer)`，而"观察者在自己的回调里退订"
+    是响应式的常规用法（take(n) 收满就 unsubscribe）。活列表边遍历边删不会抛异常，
+    而是【静默跳过】下一个元素（[A,B,C] 里 A 于 index 0 退订 → 列表变 [B,C]，
+    迭代器 index 1 取到 C，B 整个被漏通知）——比崩更难查。同仓 Subject
+    (subject.py:79/88/303/305) 早已用 list() 快照，这里对齐同一口径。
+    """
     def __init__(self):
         self._values: List[T] = []
         self._observers: List[Observer[T]] = []
 
     def on_next(self, value: T) -> None:
         self._values.append(value)
-        for obs in self._observers:
+        for obs in list(self._observers):
             obs.on_next(value)
 
     def on_error(self, error: Exception) -> None:
-        for obs in self._observers:
+        for obs in list(self._observers):
             obs.on_error(error)
 
     def on_completed(self) -> None:
-        for obs in self._observers:
+        for obs in list(self._observers):
             obs.on_completed()
 
     def subscribe(self, observer: Observer[T]) -> Subscription:
