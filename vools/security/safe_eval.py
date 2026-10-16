@@ -89,19 +89,14 @@ class SafeExpressionEvaluator:
         self.allowed_vars = allowed_vars or {}
 
     def _eval_node(self, node: ast.AST) -> Any:
+        # Python 3.8+ 把 Num/Str/NameConstant 统一并入 Constant，此分支捕获全部
+        # 字面量。原本其后还有三个 legacy 分支（ast.Num/Str/NameConstant），在
+        # 3.8+ 恒不可达且会在 3.14 被移除，故已删除（有 hasattr 守卫仍触发
+        # DeprecationWarning）。
         if isinstance(node, ast.Constant):
             return node.value
 
-        elif hasattr(ast, 'Num') and isinstance(node, ast.Num):
-            return node.n
-
-        elif hasattr(ast, 'Str') and isinstance(node, ast.Str):
-            return node.s
-
-        elif hasattr(ast, 'NameConstant') and isinstance(node, ast.NameConstant):
-            return node.value
-
-        elif isinstance(node, ast.Name):
+        if isinstance(node, ast.Name):
             if node.id in self.allowed_vars:
                 return self.allowed_vars[node.id]
             elif node.id in ALLOWED_BUILTINS:
