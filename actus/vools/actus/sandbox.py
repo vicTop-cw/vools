@@ -10,7 +10,7 @@
   直接调用 os API 的裸代码不受强制（这是"尽力而为"的边界）。
 
 用法（执行核心集成）：
-    root = sandbox.prepare(meta_dir, artifacts_dir, exec_id)
+    root = sandbox.prepare(artifacts_dir, exec_id)
     env = sandbox.sandbox_env(root)
     # executor 在 sandbox 策略下用 root 作为 build_dir/workdir 并注入 env
 """
