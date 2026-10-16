@@ -506,7 +506,7 @@ class MCPAdapter:
         mcp_config = Path.home() / ".actus" / "mcp_servers.json"
         if mcp_config.exists():
             try:
-                with open(mcp_config) as f:
+                with open(mcp_config, encoding="utf-8") as f:
                     servers = json.load(f)
                 if self.spec.mcp_server in servers:
                     return True, ""
