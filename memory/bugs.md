@@ -531,3 +531,19 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 ### FIXED(2026-10-16T17:25:00Z / BUG-64)
 - evidence: 真源修复 actus/vools/actus/jump.py `_sftp_walk_get`：循环体取 name 后先过 _is_safe_relpath，不安全 continue（与 scan_remote_files_paramiko(BUG-63)、ssh scan(8425cfb) 同一道闸同一口径）。回归锁 actus/tests/test_jump_paramiko_guard.py 扩到 5 格，新增 _pull_paramiko 目录直拉路径用例：伪造 sftp.stat→S_IFDIR 触发 _sftp_walk_get，根目录混入 ../escape.txt，断言所有 sftp.get 落盘无 `..` 段、正常文件照拉、status ok。判据：py_compile 双版本；5 格 lock py3.11/py3.6 各 exit=0（..... [100%]）；负向对照实证——关掉 _is_safe_relpath 后 got 出现 '/data/local\\../escape.txt'（真实逃出），开闸后消失（非空洞）。_sftp_walk_put 用 os.listdir（本地名，无 ..）不受影响，未动。
 
+## BUG-65 [2026-10-16T17:40:00Z] [medium] FIXED
+- summary: vools-actus 的 desktop.py 顶层 import fastapi，而 fastapi/uvicorn/jinja2 在 actus pyproject 里【一处都没声明】——装完即 ModuleNotFoundError，且没有任何 extra 能补救
+- detail: 现象：`pip install vools-actus` 后 `import vools.actus.desktop` 抛 ModuleNotFoundError: No module named 'fastapi'（desktop.py:13-16 是【模块顶层】绝对 import；uvicorn 在 start() 内、Jinja2Templates 运行期还要 jinja2）。用户只能手动 pip 装，包装元数据帮不上。
+  与 BUG-61 的关系：61 修的是 cli 里 stale 的 import 路径（改对后 ImportError 文案才如实指向 fastapi）；65 是【打包声明】这半边——依赖真没声明。
+  违反本仓惯例（同类都有 extra）：typer→root cli、cryptography→root security、pandas/numpy→pyk [spark]；desktop 三件套哪里都没有。审计证据：actus/pyproject.toml 全文 grep 'fastapi|uvicorn|jinja' = 0 命中。
+  发现手段：跨命名空间【逐个模块真 import】探针（py3.11 与 py3.6 双跑，rx 24/24、bridges 173/173、xl 16/16 全绿，actus 命中 desktop）。注意同一次探针里 actus.mdtest 报的 'No module named vools.bridge' 是【探针口径产物】——vools-bridge 是 actus 的硬依赖，探针没把兄弟树挂上 sys.path；已按 requires-python(>=3.7) 与声明核对后排除，未误记成缺陷。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（全命名空间 import-all + 依赖声明审计）
+
+
+### FIXED(2026-10-16T17:55:00Z / BUG-65)
+- evidence: 真源修复 actus/pyproject.toml：补 [project.optional-dependencies] desktop = ["fastapi>=0.68","uvicorn>=0.13","jinja2>=2.11"]（下限取仍满足 requires-python>=3.7 的版本），使 `pip install 'vools-actus[desktop]'` 成为正当安装路径，与本仓 cli/security/[spark] 惯例一致。tomllib 解析验证 extras 现为 [cli,desktop,dev,docs,serialize]。
+  永久闸（防同类复发，且这类缺陷【本机装了就一直看不见】）：新增 tests/core/test_declared_deps_discipline.py —— 静态闸，不 import 被测模块（故不依赖本机装没装），逐棵树 ast.parse【模块体层级】绝对 import 的第三方根名，要求出现在该树自己的 pyproject（dependencies 或任一 extra）；豁免名单解析自 pyproject 文本，不写死清单。函数体内的可选加速件（yaml/jsonschema/paramiko/cryptography/psutil 实测全部为函数级 try 降级）刻意不在范围内，避免误报。
+  判据（py3.6 + py3.11）：① 新闸 2 格双版本 passed（2.03s/1.36s）；② 负向对照在进程内做（不改动仓库文件）：判定器认出 desktop.py 顶层 fastapi 共 4 处、当前声明集含 fastapi（豁免成立）、剥掉 desktop 段后声明集不再含 fastapi ⇒ 同一条会被判违规（非空洞）；③ 反向守卫 assert judged>=5 棵树且每树 pyproject 解析出 >0 条声明，防"解析不到就全放过"；④ tests/core 全量双版本 exit=0 SKIP=0 FAIL=0。
+  方法论记录：本轮第一版探针因相对路径过滤写成 relpath(REPO) 而起手匹配不到 'vools.'，输出 scanned=0/FAILED=0 —— 一次【空扫描面伪装成全绿】。因探针打印了计数才被抓到，故新闸内置反向守卫（扫描/判定数不足即报错），与此前 py3.6 语法守卫同一原则。
+
