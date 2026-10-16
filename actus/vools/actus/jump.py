@@ -43,6 +43,24 @@ def remote_join(base: str, relpath: str) -> str:
     return posixpath.join(base, relpath.replace("\\", "/"))
 
 
+def _is_safe_relpath(relpath: str) -> bool:
+    """拒绝穿越型相对路径（`..`、绝对路径、盘符）。
+
+    正常来源（本地 `os.walk` / 远端 `find`）不会产出这类路径，这里只给「远端文件名被
+    恶意构造」这类边角再加一道闸：`os.path.join(local_path, relpath)` 若 relpath 含
+    `..` 就会逃出目标目录；含绝对路径/盘符同理（`join` 会直接丢掉 base 用 relpath）。
+    空串返回 True —— 表示目标目录本身。
+    """
+    if not relpath:
+        return True
+    p = relpath.replace("\\", "/")
+    if p.startswith("/"):
+        return False
+    if len(p) >= 2 and p[1] == ":":
+        return False                     # Windows 盘符，如 C:/x
+    return ".." not in p.split("/")
+
+
 # ── 排除规则 ──
 
 def should_exclude(name: str, patterns: List[str]) -> bool:
@@ -99,6 +117,8 @@ def scan_local_files(local_path: str, exclude: List[str] = None) -> Dict[str, di
                 continue
             fpath = os.path.join(root, fname)
             relpath = os.path.relpath(fpath, local_path).replace("\\", "/")
+            if not _is_safe_relpath(relpath):
+                continue                 # 防御：os.walk 不追符号链接，理论上不会出现
             try:
                 stat = os.stat(fpath)
                 files[relpath] = {"size": stat.st_size, "mtime": stat.st_mtime}
@@ -155,6 +175,8 @@ def scan_remote_files(remote_path: str, remote_host: str, remote_user: str,
                 size = int(parts[1])
                 fpath = parts[2]
                 relpath = posixpath.relpath(fpath, remote_path)
+                if not _is_safe_relpath(relpath):
+                    continue             # 防御：远端文件名被恶意构造时拒绝出逃
                 if not should_exclude(os.path.basename(relpath), exclude):
                     files[relpath] = {"size": size, "mtime": mtime}
             except (ValueError, OSError):
