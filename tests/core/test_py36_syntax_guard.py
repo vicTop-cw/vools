@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""tests/core/test_py36_compat.py — py3.6 语法合规守卫（钉住 BUG-59 族回归）
+"""tests/core/test_py36_syntax_guard.py — py3.6 语法合规守卫（钉住 BUG-59 族回归）
+
+（原名 tests/core/test_py36_compat.py；与既有 tests/data/test_py36_compat.py 撞
+pytest 有效模块名，导致 `pytest tests` 整条 import file mismatch 中止，故改名 ——
+账本 BUG-74，永久防撞守卫见 tests/test_collection_hygiene.py。）
 
 背景：本项目的验收口径要求双版本可跑（py3.11 + `E:\\Python36`），而 py3.6 对
 py3.7+ 才有的语法会直接 SyntaxError——例如 BUG-59：`tests_concurrent/` 里残留一行
