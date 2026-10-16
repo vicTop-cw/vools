@@ -480,7 +480,7 @@ def test_clip_subject_with_observer():
 
 def main():
     tests = [
-        test_changetype,
+        test_clipchangetype,
         test_clipdata_fields,
         test_clipdata_now_factory,
         test_clipdata_json_roundtrip,

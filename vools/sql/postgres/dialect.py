@@ -13,6 +13,7 @@ from ..core.dialect import Dialect
 from ..core.config import DialectConfig
 from ..core.types import SqlTypeMapper
 from ..core.builder import BaseSqlBuilder
+from .connection import PostgresConnection
 
 
 class PostgresDialect(Dialect):

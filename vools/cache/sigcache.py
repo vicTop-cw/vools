@@ -317,7 +317,6 @@ def _preload_builtins() -> None:
     P = Parameter.POSITIONAL_OR_KEYWORD
     K = Parameter.KEYWORD_ONLY
     VA = Parameter.VAR_POSITIONAL
-    VK = Parameter.VAR_KEYWORD
 
     # ---- 常见内置函数（用预定义签名避免 inspect 反射） ----
     _register_builtin("print", Signature([

@@ -2,7 +2,7 @@
 vools-reactive Observable Core
 """
 
-from typing import TypeVar, Callable, Optional, Any, Generic, Iterator, AsyncIterator, Union, Iterable
+from typing import TypeVar, Callable, Optional, Any, Generic, Iterator, AsyncIterator, Union, Iterable, List
 from abc import ABC, abstractmethod
 import asyncio
 import sys

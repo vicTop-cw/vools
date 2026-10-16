@@ -43,6 +43,7 @@ import shutil
 import ctypes
 import threading
 import json
+import importlib
 from typing import Dict, List, Optional, Callable, Any
 from .core.compat.dataclass_compat import dataclass, field, asdict
 
@@ -86,6 +87,7 @@ class LanguageConfig:
     library_prefix: str = ''
     library_suffix: str = ''
     extra_env: Dict[str, str] = field(default_factory=dict)
+    aliases: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         if self.version_check is None:
@@ -316,6 +318,11 @@ class BridgeManager:
             config: LanguageConfig 实例
         """
         self._configs[config.name.lower()] = config
+        # 别名登记：同一 LanguageConfig 挂在所有别名名下（get_status 直接可查）
+        for alias in config.aliases or ():
+            alias_l = str(alias).lower()
+            if alias_l and alias_l != config.name.lower():
+                self._configs.setdefault(alias_l, config)
         # 清除缓存
         with self._cache_lock:
             self._status_cache.pop(config.name.lower(), None)
@@ -357,9 +364,16 @@ class BridgeManager:
         返回：
             是否成功取消
         """
+        name_l = name.lower()
         with self._cache_lock:
-            self._status_cache.pop(name.lower(), None)
-        return self._configs.pop(name.lower(), None) is not None
+            self._status_cache.pop(name_l, None)
+        config = self._configs.pop(name_l, None)
+        if config is not None:
+            for alias in config.aliases or ():
+                alias_l = str(alias).lower()
+                if self._configs.get(alias_l) is config:
+                    self._configs.pop(alias_l, None)
+        return config is not None
 
     # ------------------------------------------------------------------------
     # 状态查询
@@ -1271,6 +1285,36 @@ def _register_builtin_languages():
         version_pattern=r'(\d+\.\d+\.\d+)',
     ))
 
+    # Windows 批处理（bat / cmd / batch）—— 无独立编译器，直接用系统 cmd.exe
+    _sys32 = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32') if _IS_WINDOWS else ''
+    manager.register(LanguageConfig(
+        name='bat',
+        compiler='cmd.exe',
+        compiler_paths=[_sys32] if _IS_WINDOWS else [],
+        aliases=['cmd', 'batch'],
+        version_check=['cmd.exe', '/c', 'ver'],
+        version_pattern=r'([0-9]+\.\d+\.\d+)',
+    ))
+
+    # PowerShell（Windows PowerShell 5.1 随系统自带；7+ 用 pwsh 标记单独注册）
+    _ps_paths = []
+    if _IS_WINDOWS:
+        _ps_paths = [os.path.join(_sys32, 'WindowsPowerShell', 'v1.0'), _sys32]
+    manager.register(LanguageConfig(
+        name='powershell',
+        compiler='powershell.exe',
+        compiler_paths=_ps_paths,
+        version_check=['powershell.exe', '-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'],
+        version_pattern=r'(\d+\.\d+\.\d+)',
+    ))
+    manager.register(LanguageConfig(
+        name='pwsh',
+        compiler='pwsh.exe' if _IS_WINDOWS else 'pwsh',
+        compiler_paths=[],
+        version_check=['pwsh', '-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'],
+        version_pattern=r'(\d+\.\d+\.\d+)',
+    ))
+
     # Erlang
     erlang_paths = []
     if _IS_WINDOWS:
@@ -1631,9 +1675,10 @@ class LanguageCompilerHelper:
         # 构建函数规范
         spec = FunctionSpec(
             name=func_name,
+            annotations={},
             body=code,
             args=(),
-            ret_type=None,
+            defaults={},
             module_code=None,
             dependencies=[]
         )
@@ -1666,6 +1711,46 @@ def get_helper(name: str) -> LanguageCompilerHelper:
 
 _BRIDGE_CACHE: Dict[str, Any] = {}
 _BRIDGE_LOCK = threading.Lock()
+
+
+def _discover_bridge_by_convention(name: str) -> Optional[Any]:
+    """约定式自动发现桥接实例（“任何语言即入口”的源头机制）。
+
+    手写分支覆盖不到的语言（bat/cmd 以及未来的自定义语言），只要按约定
+    在 ``vools/bridge/<lang>/compiler.py`` 提供模块级 bridge 实例
+    （``_<lang>_bridge`` 或 ``bridge``），并可选声明 ``BRIDGE_ALIASES``
+    元组，即可零改代码成为 md runner 的语言入口。
+
+    返回：
+        bridge 实例；模块不存在 / 未暴露实例时返回 None（不缓存，允许
+        运行时新增语言后自动生效）。
+    """
+    try:
+        mod = importlib.import_module(f'vools.bridge.{name}.compiler')
+    except Exception:
+        return None
+
+    inst = None
+    for attr in (f'_{name}_bridge', 'bridge'):
+        candidate = getattr(mod, attr, None)
+        if candidate is not None:
+            inst = candidate
+            break
+    if inst is None:
+        # 兜底：扫描模块级 `*_bridge` 变量（跳过下划线开头，避免抓到内部符号）
+        for key, value in vars(mod).items():
+            if key.endswith('_bridge') and not key.startswith('_'):
+                inst = value
+                break
+    if inst is None:
+        return None
+
+    # 别名声明：把实例挂到别名名下（如 bat 桥声明 cmd / batch）
+    for alias in getattr(mod, 'BRIDGE_ALIASES', ()) or ():
+        alias_l = str(alias).lower()
+        if alias_l:
+            _BRIDGE_CACHE[alias_l] = inst
+    return inst
 
 
 def get_bridge(name: str) -> Optional[Any]:
@@ -1798,10 +1883,15 @@ def get_bridge(name: str) -> Optional[Any]:
                 bridge = _cypy_bridge
         except ImportError:
             pass
-        
+
+        if bridge is None:
+            # 源头机制：约定式自动发现。手写分支未覆盖的语言（如 bat/cmd），
+            # 按 `vools/bridge/<lang>/compiler.py` 约定动态导入并解析 bridge 实例。
+            bridge = _discover_bridge_by_convention(name)
+
         if bridge:
             _BRIDGE_CACHE[name] = bridge
-        
+
         return bridge
 
 

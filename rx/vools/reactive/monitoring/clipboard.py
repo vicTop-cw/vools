@@ -1018,6 +1018,296 @@ else:
             pass
 
 
+class _X11EventBackend:
+    """Linux/X11（含 WSLg XWayland）下基于 XFixes SelectionNotify 的剪贴板事件驱动后端。
+
+    通过 XFixesSelectSelectionInput 订阅 CLIPBOARD 选择的所有者变化，
+    select 等待 X 连接可读（事件驱动，超时仅用于响应 stop），
+    读取 XFixesSelectionNotify 事件后触发 on_change 回调。
+    纯 ctypes 实现，不依赖 python-xlib。
+    """
+
+    name = "x11"
+
+    def __init__(self, on_change: Callable[[], None], interval: float = 0.2) -> None:
+        self._on_change = on_change
+        self._interval = max(0.02, float(interval))
+        self._thread: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+        self._running = False
+        self._lock = threading.Lock()
+        self._init_error: Optional[str] = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    def start(self) -> None:
+        with self._lock:
+            if self._running:
+                return
+            self._stop.clear()
+            self._running = True
+            self._thread = threading.Thread(
+                target=self._run, name="vools-clip-x11", daemon=True,
+            )
+            self._thread.start()
+
+    def stop(self) -> None:
+        with self._lock:
+            if not self._running:
+                return
+            self._running = False
+            self._stop.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=self._interval * 3 + 0.5)
+
+    def _run(self) -> None:
+        import select as _select
+
+        try:
+            libX11 = ctypes.CDLL("libX11.so.6")
+            libXfixes = ctypes.CDLL("libXfixes.so.3")
+        except OSError as e:
+            self._init_error = "libX11/libXfixes 不可用: %s" % e
+            self._running = False
+            return
+
+        libX11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        libX11.XOpenDisplay.restype = ctypes.c_void_p
+        libX11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+        libX11.XInternAtom.restype = ctypes.c_ulong
+        libX11.XQueryExtension.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p,
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+        ]
+        libX11.XQueryExtension.restype = ctypes.c_int
+        libX11.XConnectionNumber.argtypes = [ctypes.c_void_p]
+        libX11.XConnectionNumber.restype = ctypes.c_int
+        libX11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        libX11.XDefaultRootWindow.restype = ctypes.c_ulong
+        libX11.XEventsQueued.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        libX11.XEventsQueued.restype = ctypes.c_int
+        libX11.XNextEvent.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        libX11.XNextEvent.restype = ctypes.c_int
+        libX11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+        libX11.XCloseDisplay.restype = ctypes.c_int
+        libXfixes.XFixesSelectSelectionInput.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+        ]
+        libXfixes.XFixesSelectSelectionInput.restype = ctypes.c_int
+
+        dpy = libX11.XOpenDisplay(None)
+        if not dpy:
+            self._init_error = "XOpenDisplay 失败（DISPLAY=%s）" % os.environ.get("DISPLAY", "")
+            self._running = False
+            return
+
+        # 查询 XFIXES 扩展基事件号
+        event_base = ctypes.c_int()
+        error_base = ctypes.c_int()
+        major = ctypes.c_int()
+        minor = ctypes.c_int()
+        if not libX11.XQueryExtension(
+            dpy, b"XFIXES",
+            ctypes.byref(event_base), ctypes.byref(error_base),
+            ctypes.byref(major), ctypes.byref(minor),
+        ):
+            libX11.XCloseDisplay(dpy)
+            self._init_error = "XFIXES 扩展不可用"
+            self._running = False
+            return
+
+        # CLIPBOARD 选择（剪贴板语义）
+        clipboard_atom = libX11.XInternAtom(dpy, b"CLIPBOARD", 0)
+        if not clipboard_atom:
+            clipboard_atom = libX11.XInternAtom(dpy, b"CLIPBOARD", 1)
+        if not clipboard_atom:
+            libX11.XCloseDisplay(dpy)
+            self._init_error = "无法获取 CLIPBOARD atom"
+            self._running = False
+            return
+
+        XFixesSetSelectionOwnerNotifyMask = 1 << 0  # XFixesSelectionNotify
+        # XFixesSelectSelectionInput(Display*, Window win, Atom selection, unsigned long eventMask)
+        # 必须传入有效 Window（root 窗口即可），此前误把 selection atom 当作 window 导致 BadWindow
+        x11_win = libX11.XDefaultRootWindow(dpy)
+        libXfixes.XFixesSelectSelectionInput(
+            dpy, x11_win, clipboard_atom, XFixesSetSelectionOwnerNotifyMask,
+        )
+
+        class _XFixesSelectionNotifyEvent(ctypes.Structure):
+            """XFixesSelectionNotify 事件；补齐到 XEvent union 大小（64 位 192B），
+            避免 XNextEvent 写入越界（此前 80B 结构会破坏堆）。"""
+            _fields_ = [
+                ("type", ctypes.c_int),
+                ("serial", ctypes.c_ulong),
+                ("send_event", ctypes.c_int),
+                ("display", ctypes.c_void_p),
+                ("window", ctypes.c_ulong),
+                ("subtype", ctypes.c_int),
+                ("owner", ctypes.c_ulong),
+                ("selection", ctypes.c_ulong),
+                ("timestamp", ctypes.c_ulong),
+                ("selection_timestamp", ctypes.c_ulong),
+                ("_pad", ctypes.c_byte * 112),  # 192 - 80
+            ]
+
+        event = _XFixesSelectionNotifyEvent()
+        selection_notify_type = event_base.value + 0  # XFixesSelectionNotify == 0
+        xfd = libX11.XConnectionNumber(dpy)
+
+        try:
+            while not self._stop.is_set():
+                r, _, _ = _select.select([xfd], [], [], 0.5)
+                if not r:
+                    continue
+                while libX11.XEventsQueued(dpy, 1) > 0:  # QueuedAfterFlush
+                    libX11.XNextEvent(dpy, ctypes.byref(event))
+                    if event.type == selection_notify_type:
+                        try:
+                            self._on_change()
+                        except Exception as e:  # pragma: no cover
+                            log.debug("x11 on_change 异常: %s", e)
+        finally:
+            try:
+                libX11.XCloseDisplay(dpy)
+            except Exception:
+                pass
+            self._running = False
+
+    def do(self, f=print, pre_f=None, sub_f=None):
+        """Apply a function for side effects, return self for chaining.
+
+        Args:
+            f: Function to apply (default print)
+            pre_f: Pre-processing function applied before f
+            sub_f: Post-processing function (no return expected)
+
+        Returns:
+            self, for chaining
+        """
+        rs = self
+        if pre_f:
+            rs = pre_f(rs)
+        rs = f(rs)
+        if sub_f:
+            sub_f(rs)
+        return self
+
+
+def _probe_x11_clipboard() -> Tuple[bool, str]:
+    """探测 Linux 上 X11 XFixes 剪贴板事件驱动是否可用。
+
+    可用条件：linux 平台 + DISPLAY 已设置 + libX11/libXfixes 可加载 +
+    XOpenDisplay 成功 + XFIXES 扩展存在。任一项不满足即返回
+    (False, 原因)，调用方据此回退 polling 并暴露原因。
+    """
+    if not sys.platform.startswith("linux"):
+        return False, "非 Linux 平台"
+    if not os.environ.get("DISPLAY"):
+        return False, "DISPLAY 未设置（无 X 显示服务器/WSLg）"
+    try:
+        libX11 = ctypes.CDLL("libX11.so.6")
+        libXfixes = ctypes.CDLL("libXfixes.so.3")
+    except OSError as e:
+        return False, "libX11/libXfixes 不可用: %s" % e
+    libX11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    libX11.XOpenDisplay.restype = ctypes.c_void_p
+    libX11.XQueryExtension.argtypes = [
+        ctypes.c_void_p, ctypes.c_char_p,
+        ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+    ]
+    libX11.XQueryExtension.restype = ctypes.c_int
+    libX11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    libX11.XCloseDisplay.restype = ctypes.c_int
+    dpy = libX11.XOpenDisplay(None)
+    if not dpy:
+        return False, "XOpenDisplay 失败"
+    try:
+        event_base = ctypes.c_int()
+        error_base = ctypes.c_int()
+        major = ctypes.c_int()
+        minor = ctypes.c_int()
+        if not libX11.XQueryExtension(
+            dpy, b"XFIXES",
+            ctypes.byref(event_base), ctypes.byref(error_base),
+            ctypes.byref(major), ctypes.byref(minor),
+        ):
+            return False, "XFIXES 扩展不可用"
+        # ---- 事件可达性实测（仅扩展存在不代表事件能到达）----
+        # 在受限 X server（如 WSLg/Xwayland、无剪贴板桥的容器）上，
+        # XFixesSelectSelectionInput 可静默无效：设置 owner 后收不到
+        # SelectionNotify。此处临时设 owner 触发事件并限时等待，
+        # 收不到即判定事件驱动不可用，由调用方回退 polling。
+        import select as _select
+
+        libX11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        libX11.XDefaultRootWindow.restype = ctypes.c_ulong
+        libX11.XInternAtom.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int,
+        ]
+        libX11.XInternAtom.restype = ctypes.c_ulong
+        libX11.XGetSelectionOwner.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        libX11.XGetSelectionOwner.restype = ctypes.c_ulong
+        libX11.XSetSelectionOwner.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+        ]
+        libX11.XConnectionNumber.argtypes = [ctypes.c_void_p]
+        libX11.XConnectionNumber.restype = ctypes.c_int
+        libX11.XEventsQueued.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        libX11.XEventsQueued.restype = ctypes.c_int
+        libX11.XNextEvent.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        libX11.XFlush.argtypes = [ctypes.c_void_p]
+        libXfixes.XFixesSelectSelectionInput.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+        ]
+
+        root_win = libX11.XDefaultRootWindow(dpy)
+        clip_atom = libX11.XInternAtom(dpy, b"CLIPBOARD", 0)
+        orig_owner = libX11.XGetSelectionOwner(dpy, clip_atom)
+        libXfixes.XFixesSelectSelectionInput(
+            dpy, root_win, clip_atom, 1 << 0,  # SetSelectionOwnerNotify
+        )
+        libX11.XSetSelectionOwner(dpy, clip_atom, root_win, 0)
+        libX11.XFlush(dpy)
+
+        class _ProbeEvent(ctypes.Structure):
+            _fields_ = [
+                ("type", ctypes.c_int),
+                ("_pad", ctypes.c_byte * 252),
+            ]
+
+        ev = _ProbeEvent()
+        xfd = libX11.XConnectionNumber(dpy)
+        notify_type = event_base.value  # XFixesSelectionNotify == 0
+        reached = False
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline:
+            r, _, _ = _select.select([xfd], [], [], 0.3)
+            if not r:
+                continue
+            while libX11.XEventsQueued(dpy, 1) > 0:
+                libX11.XNextEvent(dpy, ctypes.byref(ev))
+                if ev.type == notify_type:
+                    reached = True
+
+        # 恢复原 owner（若有），避免探测破坏剪贴板状态
+        if orig_owner:
+            libX11.XSetSelectionOwner(dpy, clip_atom, orig_owner, 0)
+            libX11.XFlush(dpy)
+        if not reached:
+            return False, (
+                "XFixes SelectionNotify 事件不可达"
+                "（X server 未广播剪贴板事件，常见于 WSLg/Xwayland）"
+            )
+        return True, ""
+    finally:
+        libX11.XCloseDisplay(dpy)
+
+
 class _PollingBackend:
     """其它平台的保底路径：每隔 interval 秒检查一次剪贴板。"""
 
@@ -1173,6 +1463,7 @@ class ClipboardDispatcher:
         "self_filter",
         "self_source",
         "_backend_name",
+        "_backend_fallback_reason",
         "_running",
     )
 
@@ -1184,6 +1475,7 @@ class ClipboardDispatcher:
         change_types: Optional[Iterable[ClipChangeType]] = None,
         tags: Iterable[str] = (),
         backend: str = "auto",
+        force_polling: bool = False,
         filter_self: bool = True,
         self_filter: Optional[Callable[[ClipData], bool]] = None,
         self_source: Optional[str] = None,
@@ -1220,6 +1512,15 @@ class ClipboardDispatcher:
         # 选择后端
         backend = (backend or "auto").lower()
         be: Optional[Any] = None
+        self._backend_fallback_reason = ""
+
+        if force_polling:
+            # 网络挂载/跨机器文件系统等明确不支持事件通知的场景，调用方强制轮询
+            self._backend_fallback_reason = (
+                "force_polling=True：调用方强制轮询"
+            )
+            backend = "polling"
+
         if backend in ("auto", "win32") and sys.platform == "win32":
             try:
                 trial = _Win32HookBackend(self._dispatch_once)
@@ -1229,9 +1530,26 @@ class ClipboardDispatcher:
                 self._backend_name = "win32"
             except Exception as e:
                 log.debug("win32 hook 不可用，回退到 polling: %s", e)
+                self._backend_fallback_reason = "win32 hook 不可用: %s" % e
                 be = None
                 if backend == "win32":
                     raise
+        elif backend in ("auto", "x11") and sys.platform.startswith("linux"):
+            ok, reason = _probe_x11_clipboard()
+            if ok:
+                try:
+                    be = _X11EventBackend(self._dispatch_once, self._interval)
+                    self._backend_name = "x11"
+                except Exception as e:
+                    log.debug("x11 后端不可用，回退到 polling: %s", e)
+                    self._backend_fallback_reason = "x11 后端不可用: %s" % e
+                    be = None
+            else:
+                log.warning("X11 剪贴板事件驱动不可用（%s），回退到 polling", reason)
+                self._backend_fallback_reason = reason
+                be = None
+        elif backend == "x11" and not sys.platform.startswith("linux"):
+            raise OSError("x11 后端仅在 Linux 可用")
         if be is None:
             if backend == "win32" and sys.platform != "win32":
                 raise OSError("win32 后端仅在 Windows 可用")
@@ -1248,6 +1566,11 @@ class ClipboardDispatcher:
     @property
     def backend_name(self) -> str:
         return self._backend_name
+
+    @property
+    def backend_fallback_reason(self) -> str:
+        """事件驱动不可用时的回退原因；为空表示未发生回退（事件驱动在用）。"""
+        return self._backend_fallback_reason
 
     @property
     def dispatch_count(self) -> int:
@@ -1564,6 +1887,7 @@ class ClipSubject(MonitorSubject):
         self,
         *,
         backend: str = "auto",
+        force_polling: bool = False,
         interval: float = 0.3,
         tags: Tuple[str, ...] = (),
         filter_self: bool = True,
@@ -1578,6 +1902,7 @@ class ClipSubject(MonitorSubject):
 
         Args:
             backend: 后端类型，"auto" | "win32" | "polling"
+            force_polling: True 时强制走轮询后端，跳过事件驱动探测
             interval: 轮询间隔（秒）
             tags: 默认附加的标签
             filter_self: 是否启用自过滤
@@ -1589,6 +1914,7 @@ class ClipSubject(MonitorSubject):
             signature_ttl: 签名去重时间窗口（秒）
         """
         self._backend = backend
+        self._force_polling = force_polling
         self._interval = interval
         self._tags = tags
         self._filter_self = filter_self
@@ -1603,6 +1929,7 @@ class ClipSubject(MonitorSubject):
     def _create_dispatcher(self) -> "ClipboardDispatcher":
         return ClipboardDispatcher(
             backend=self._backend,
+            force_polling=self._force_polling,
             interval=self._interval,
             tags=self._tags,
             filter_self=self._filter_self,

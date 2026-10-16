@@ -471,7 +471,7 @@ if __name__ == "__main__":
     ]
 
     print("Running %d tests...\n" % len(tests))
-    failed = test_all(tests)
+    failed = _run_all_tests(tests)
     print("\n" + "=" * 40)
     if failed == 0:
         print("All %d tests PASSED" % len(tests))

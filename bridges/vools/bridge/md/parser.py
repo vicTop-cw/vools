@@ -219,7 +219,6 @@ def _extract_blocks_vools_md(text: str) -> List[tuple]:
                     tag_value = stripped.split(":", 1)[1].strip() if ":" in stripped else ""
                     if tag_value:
                         directive_parts.append(f"tag={tag_value}")
-                    content_lines.append(line)
                 else:
                     content_lines.append(line)
 

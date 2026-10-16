@@ -36,7 +36,6 @@ def from_range(start: int, stop: int = None, step: int = 1) -> Callable:
         >>> Observable.from_range(2, 6)  # 2, 3, 4, 5
         >>> Observable.from_range(0, 10, 2)  # 0, 2, 4, 6, 8
     """
-    from ..core.observable import Observable
     
     def subscribe(observer):
         try:
@@ -52,7 +51,6 @@ def from_range(start: int, stop: int = None, step: int = 1) -> Callable:
         except Exception as e:
             observer.on_error(e)
         
-        from ..core.observable import Subscription
         return Subscription(lambda: None)
     
     return Observable(subscribe)
@@ -67,7 +65,6 @@ def from_callable(func: Callable[[], T]) -> Callable:
     Returns:
         Observable[T]: 发出 Callable 返回的值
     """
-    from ..core.observable import Observable, Subscription
     
     def subscribe(observer):
         try:
@@ -91,7 +88,6 @@ def from_future(future) -> Callable:
     Returns:
         Observable[T]: 发出 Future 结果
     """
-    from ..core.observable import Observable, Subscription
     
     def subscribe(observer):
         def done_callback(f):
@@ -131,7 +127,6 @@ def sample(period: float) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -176,7 +171,6 @@ def sample(period: float) -> Callable:
                     task[0].cancel()
                 source_sub.unsubscribe()
             
-            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -193,7 +187,6 @@ def skip_last(n: int) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -224,7 +217,6 @@ def take_last(n: int) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -260,7 +252,6 @@ def throttle_latest(period: float) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -306,7 +297,6 @@ def throttle_latest(period: float) -> Callable:
                     task[0].cancel()
                 source_sub.unsubscribe()
             
-            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -320,7 +310,6 @@ def ignore_elements() -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -346,7 +335,6 @@ def to_map(key_fn: Callable[[T], K] = None) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -380,7 +368,6 @@ def to_set() -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -415,7 +402,6 @@ def observe_on(scheduler) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -448,7 +434,6 @@ def subscribe_on(scheduler) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -457,7 +442,6 @@ def subscribe_on(scheduler) -> Callable:
             
             scheduler.schedule(subscribe_inner)
             
-            from ..core.observable import Subscription
             return Subscription(lambda: None)
         
         return Observable(subscribe)
@@ -474,7 +458,6 @@ def do_on_next(fn: Callable[[T], None]) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -506,7 +489,6 @@ def do_on_error(fn: Callable[[Exception], None]) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -537,7 +519,6 @@ def do_on_completed(fn: Callable[[], None]) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -566,7 +547,6 @@ def time_interval() -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -600,7 +580,6 @@ def flat_map_latest(fn: Callable[[T], Observable]) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -636,7 +615,6 @@ def flat_map_latest(fn: Callable[[T], Observable]) -> Callable:
                     inner_sub[0].unsubscribe()
                 source_sub.unsubscribe()
             
-            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -653,7 +631,6 @@ def window(window_size: int) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -698,7 +675,6 @@ def amb() -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(*sources):
         def subscribe(observer):
@@ -735,7 +711,6 @@ def amb() -> Callable:
                 if winner_sub[0]:
                     winner_sub[0].unsubscribe()
             
-            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -749,7 +724,6 @@ def switch() -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -784,7 +758,6 @@ def switch() -> Callable:
                     inner_sub[0].unsubscribe()
                 source_sub.unsubscribe()
             
-            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -793,86 +766,7 @@ def switch() -> Callable:
 
 
 # ========== Connectable Observable ==========
-
-class ConnectableObservable(Generic[T]):
-    """可连接的 Observable"""
-    
-    __slots__ = ('_source', '_subject', '_connection', '_ref_count')
-    
-    def __init__(self, source, subject=None):
-        from ..core.subject import Subject
-        self._source = source
-        self._subject = subject or Subject()
-        self._connection = None
-        self._ref_count = [0]
-    
-    def connect(self):
-        """指示可连接 Observable 开始发出"""
-        self._connection = self._source.subscribe(self._subject)
-        return self._connection
-    
-    def ref_count() -> Callable:
-        """使可连接 Observable 像普通 Observable"""
-        def operator(source):
-            ref_count = [0]
-            connection = [None]
-            subject = None
-            
-            from ..core.subject import Subject
-            
-            def get_subject():
-                nonlocal subject
-                if subject is None:
-                    subject = Subject()
-                return subject
-            
-            def subscribe(observer):
-                ref_count[0] += 1
-                subj = get_subject()
-                subj.subscribe(observer)
-                
-                if ref_count[0] == 1:
-                    connection[0] = source.subscribe(subj)
-                
-                def unsubscribe():
-                    nonlocal subject
-                    ref_count[0] -= 1
-                    if ref_count[0] == 0:
-                        if connection[0]:
-                            connection[0].unsubscribe()
-                            connection[0] = None
-                        subject = None
-                
-                from ..core.observable import Subscription
-                return Subscription(unsubscribe)
-            
-            from ..core.observable import Observable
-            return Observable(subscribe)
-        
-        return operator
-    
-    def publish():
-        """转换为可连接 Observable"""
-        def operator(source):
-            subject = None
-            
-            from ..core.subject import Subject
-            
-            def subscribe(observer):
-                nonlocal subject
-                if subject is None:
-                    subject = Subject()
-                return subject.subscribe(observer)
-            
-            from ..core.observable import Observable
-            return Observable(subscribe)
-        
-        return operator
-    
-    def share():
-        """共享 Observable (publish + ref_count)"""
-        return ref_count()(publish()(lambda x: x))
-
+from ..core.connectable import ConnectableObservable, ref_count, publish, share
 
 # ========== Backpressure 操作符 ==========
 
@@ -885,7 +779,6 @@ def backpressure_buffer(max_size: int = None) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -928,7 +821,6 @@ def backpressure_drop() -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -957,7 +849,6 @@ def backpressure_error() -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source, max_size: int = 1):
         def subscribe(observer):
@@ -987,7 +878,6 @@ def backpressure_latest() -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -1029,7 +919,6 @@ def retry_with_backoff(max_retries: int = None, initial_delay: float = 1.0, max_
     Example:
         >>> obs.pipe(retry_with_backoff(max_retries=5, initial_delay=1.0))
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -1100,7 +989,6 @@ def circuit_breaker(threshold: int = 5, reset_timeout: float = 60.0) -> Callable
     Example:
         >>> obs.pipe(circuit_breaker(threshold=5, reset_timeout=30))
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -1148,7 +1036,6 @@ def debounce_evolution(due_time: float, estimator: Callable[[T], float] = None) 
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -1206,7 +1093,6 @@ def cache(duration: float = None, max_size: int = None) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         cached_values = []
@@ -1248,7 +1134,6 @@ def cache(duration: float = None, max_size: int = None) -> Callable:
                 if sub in subscriptions:
                     subscriptions.remove(sub)
             
-            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)
@@ -1267,7 +1152,6 @@ def parallel(max_concurrent: int = 4) -> Callable:
     Returns:
         操作符函数
     """
-    from ..core.observable import Observable
     
     def operator(source):
         def subscribe(observer):
@@ -1325,7 +1209,6 @@ def parallel(max_concurrent: int = 4) -> Callable:
                 executor.shutdown(wait=False)
                 source_sub.unsubscribe()
             
-            from ..core.observable import Subscription
             return Subscription(unsubscribe)
         
         return Observable(subscribe)

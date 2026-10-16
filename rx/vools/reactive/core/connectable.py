@@ -77,49 +77,52 @@ def _make_connectable(source, subject):
 
 def ref_count() -> Callable:
     """使可连接 Observable 像普通 Observable
-    
+
     当有订阅者时自动连接，当所有订阅者取消时自动断开。
-    
+
+    内部使用 ReplaySubject 多播：源只被订阅一次，所有订阅者共享
+    同一数据流，新订阅者可收到已发射的历史值。
+
     Returns:
         操作符函数
     """
-    from .observable import Observable
-    
+    from .observable import Observable, Subscription
+
     def operator(source):
         ref_count_val = [0]
         connection = [None]
         subject = [None]
-        
+
         def get_subject():
             if subject[0] is None:
                 from .subject import ReplaySubject
-                subject[0] = ReplaySubject()  # 使用 ReplaySubject 以支持历史重放
+                subject[0] = ReplaySubject()
             return subject[0]
-        
+
         def subscribe_fn(observer):
             nonlocal connection
             ref_count_val[0] += 1
-            
             subj = get_subject()
-            # 使用正确的回调方式订阅 Subject
-            sub = subj.subscribe(
-                on_next=observer.on_next if hasattr(observer, 'on_next') else observer,
-                on_error=observer.on_error if hasattr(observer, 'on_error') else None,
-                on_completed=observer.on_completed if hasattr(observer, 'on_completed') else None
-            )
-            
+            # 观察者订阅多播 ReplaySubject
+            sub = subj.subscribe(observer=observer)
+
             if ref_count_val[0] == 1:
-                # 如果 source 有 connect 方法（ConnectableObservable），使用它
+                # 首次订阅：把源接入多播 ReplaySubject（源只订阅一次）
                 if hasattr(source, 'connect'):
+                    # ConnectableObservable：先桥接内部 subject，再 connect 源
+                    source.subscribe(
+                        on_next=subj.on_next,
+                        on_error=subj.on_error,
+                        on_completed=subj.on_completed,
+                    )
                     connection[0] = source.connect()
                 else:
-                    # 否则直接订阅，使用 Subject 的多播接口
                     connection[0] = source.subscribe(
                         on_next=subj.on_next,
                         on_error=subj.on_error,
-                        on_completed=subj.on_completed
+                        on_completed=subj.on_completed,
                     )
-            
+
             def unsubscribe():
                 nonlocal connection
                 ref_count_val[0] -= 1
@@ -128,41 +131,45 @@ def ref_count() -> Callable:
                     if connection[0]:
                         connection[0].unsubscribe()
                         connection[0] = None
-            
-            from .observable import Subscription
+                        if hasattr(source, '_connection'):
+                            source._connection = None
+                    subject[0] = None
+
             return Subscription(unsubscribe)
-        
+
         return Observable(subscribe_fn)
-    
+
     return operator
 
 
 def publish() -> Callable:
     """转换为可连接 Observable
-    
-    使用 Subject 来多播数据。
-    
+
+    使用 ReplaySubject 多播数据，新订阅者可收到已发射的历史值。
+
     Returns:
         操作符函数
     """
-    from .subject import Subject
-    
+    from .subject import ReplaySubject
+
     def operator(source):
-        subject = Subject()
+        subject = ReplaySubject()
         return _make_connectable(source, subject)
-    
+
     return operator
 
 
 def share() -> Callable:
     """共享 Observable (publish + ref_count)
-    
+
     自动管理连接/断开连接。
-    
+
     Returns:
         操作符函数
     """
-    return ref_count()(publish())
+    def operator(source):
+        return ref_count()(publish()(source))
+    return operator
 
 
 def replay(buffer_size: int = None, window: float = None) -> Callable:

@@ -115,6 +115,7 @@ class WebView2Config:
     theme: Union[str, WebView2Theme] = WebView2Theme.LIGHT
     context_menu: bool = True  # 是否启用右键菜单
     user_data_dir: Optional[str] = None  # 用户数据目录
+    csp_policy: str = "l1"  # 内容安全策略档位：off=不注入 / l1=L1 基线（计划 §5，决策 3）
 
 
 @dataclass
@@ -246,6 +247,7 @@ class WebView2Manager:
         comm_script = self._get_communication_script(block_id, config)
         inject_js = config.inject_js or ""
         theme_styles = self._get_theme_styles(config.theme)
+        csp_meta = self._get_csp_meta(config)
 
         if "<html" in html_content.lower():
             if "</body>" in html_content.lower():
@@ -259,6 +261,10 @@ class WebView2Manager:
             if "<head>" not in html_content.lower() and "<html" in html_content.lower():
                 html_content = html_content.replace("<html>", "<html>\n<head>")
                 html_content = html_content.replace("</html>", "</head>\n</html>")
+
+            # CSP 注入点（计划 §5 / P1）：L1 基线，不可信内容不可越权提升
+            if csp_meta and "</head>" in html_content.lower():
+                html_content = html_content.replace("</head>", csp_meta + "\n</head>")
         else:
             full_html = f"""<!DOCTYPE html>
 <html>
@@ -266,6 +272,7 @@ class WebView2Manager:
     <meta charset="utf-8">
     <title>{html.escape(config.title)}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {csp_meta}
     <style>{theme_styles}</style>
 </head>
 <body>
@@ -277,6 +284,27 @@ class WebView2Manager:
             html_content = full_html
 
         return html_content
+
+    def _get_csp_meta(self, config: WebView2Config) -> str:
+        """按 config.csp_policy 生成 CSP meta（L1 基线，决策 3 不可越权提升）。
+
+        - off：不注入（仅显式声明者使用）
+        - l1（默认）：L1 静态基线，禁止 script-src 内联/远程、frame/object/embed
+        """
+        policy = (config.csp_policy or "l1").lower()
+        if policy == "off":
+            return ""
+        try:
+            from .rich.sanitize import build_csp_meta
+
+            return build_csp_meta(level=1, allow_remote_images=False)
+        except Exception:
+            # 富内容模块不可用时保守退化为最小基线
+            return (
+                '<meta http-equiv="Content-Security-Policy" content="'
+                "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; "
+                "script-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'\">"
+            )
 
     def _get_theme_styles(self, theme: Union[str, WebView2Theme]) -> str:
         """获取主题样式"""

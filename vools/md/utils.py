@@ -5,7 +5,7 @@ Markdown 工具函数
 """
 
 from .parser import (
-    parse, Document, Heading, Paragraph, CodeBlock, MdList, BlockQuote, Divider, InlineText
+    parse, Document, Heading, Paragraph, CodeBlock, MdList, BlockQuote, Divider, InlineText, ListItem
 )
 from typing import List, Dict, Optional, Tuple
 import re
