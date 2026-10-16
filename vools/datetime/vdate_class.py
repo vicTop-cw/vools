@@ -426,11 +426,19 @@ class VDate(datetime):
                 result = super().__new__(cls, int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), int(tm[2]))
             elif re.match(r"^\d{4}\d{2}\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9]$", dt):
                 tm = dt.split(" ")[1].split(":")
+                # 与 vools/datetime/utils.py 同步修：本分支原先漏掉
+                # `dt = dt.split(" ")[0]`，dt[6:] 会带上 ' 13:45:30' → int() 崩。
+                dt = dt.split(" ")[0]
                 result = super().__new__(cls, int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), int(tm[2]))
             else:
                 if fmt is None:
                     raise ValueError("需要指定日期格式")
-                result = super().__new__(cls, *cls._parse_date(dt, fmt))
+                # 与 utils.py 同步修：_parse_date 只回 (y,m,d)，带时间的 fmt 会被
+                # 静默清零；直接用 strptime 结果保留时分秒。
+                _parsed = datetime.strptime(dt, fmt)
+                result = super().__new__(cls, _parsed.year, _parsed.month, _parsed.day,
+                                         _parsed.hour, _parsed.minute, _parsed.second,
+                                         _parsed.microsecond)
         elif isinstance(dt, (datetime, cls)):
             result = super().__new__(cls, dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, dt.microsecond)
         else:

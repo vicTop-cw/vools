@@ -561,3 +561,18 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
   判据：① 先证 RED —— 修复前 3 格失败，断言输出 ['A','C'] == ['A','B','C']（B 被跳过）；② 修复后 4 格 py3.11/py3.6 均 exit=0（.... [100%]）；③ 全量 rx tests 双版本 exit=0 SKIP=0 FAIL=0（分发语义改动无回归）。
   方法论修正（诚实记录）：起初照 f25e417 先例假设症状是 RuntimeError: list changed size during iteration，并据此写了"会崩"的测试 —— 跑出来却全绿。事实是**该异常只由 dict 迭代器抛**，list 边遍历边删【不报错】，症状是静默漏通知。于是把测试改成断言"每个观察者都收到"才真正 RED。教训：先例的异常类型不可照搬到不同数据结构，症状必须以实测为准。
 
+## BUG-67 [2026-10-16T18:30:00Z] [high] FIXED
+- summary: vools.datetime 字符串日期解析两处同源缺陷（函数版 vDate 与类版 VDate 各一份）：命中紧凑+空格+时间分支必 ValueError；非'-'分隔格式下时分秒被静默清零
+- detail:
+  ① utils.py:81-83（类版 vdate_class.py:427-429）分支 `^\d{4}\d{2}\d{2} \d{2}:\d{2}:\d{2}$` 取了 tm 却【漏了 `dt = dt.split(" ")[0]`】（上一分支有这句、本分支漏），于是 int(dt[6:]) == int('02 13:45:30') 必 ValueError —— 命中自己正则的输入 100% 崩（实测 traceback 落在 utils.py:83 与 vdate_class.py:429）。
+  ② 兜底分支 `datetime(*_parse_date(dt, fmt))`（类版 `super().__new__(cls, *cls._parse_date(...))`）：_parse_date 只回 (year,month,day)，strptime 明明按 fmt 解析出了时分秒，组装时被丢弃。实测 vDate('2024.01.02 13:45:30', fmt='%Y.%m.%d %H:%M:%S') 返回 '2024.01.02 00:00:00'：不抛异常、时间是错的，比崩更难查（与 BUG-66 同族形状：静默出错数据）。凡分隔符不是 '-' 且带时间段的格式均受影响。
+  发现手段：横扫途中改走"实测优先"——对 vDate 跑真实调用矩阵 + sys.settrace 逐行轨迹取证（traceback 直接落 L83 证实 ①；带横杠对照组走另一分支正常，证实 ②）。期间两次自我纠偏：一度以为读到的源码与行为矛盾（怀疑陈旧 pyc，用 -B 与 trace 排除后确认是自己读漏分支），补丁里误写未定义名 date_str 靠复读抓出。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（静默出错数据族，续 BUG-66 纪律）
+
+
+### FIXED(2026-10-16T18:45:00Z / BUG-67)
+- evidence: 真源修复（两处同源全改）：① 紧凑+空格+时间分支补 `dt = dt.split(" ")[0]`；② 兜底不再经 _parse_date，直接用 datetime.strptime(dt, fmt) 结果（类版把 year..microsecond 全分量传 __new__）。_parse_date 保留不删（已无调用方，删除收益低）。
+  回归锁 tests/datetime/test_vdate_time_preserved.py（12 格：两版崩溃分支修复后六分量正确、两版非'-'分隔时间保留、带横杠对照组不变、纯日期行为不变、两种写法解析一致）。
+  判据（py3.6 + py3.11）：① 先证 RED —— git stash 掉两份源文件后新锁在 py3.11 下 7 FAILED（崩溃与清零全部命中）；② 修复后 12 passed、双版本 exit=0；③ 全量 tests/datetime 双版本 exit=0 SKIP=0 FAIL=0，消费方 tests/data/test_vicdate.py 与 tests/core/test_vools.py 双版本 exit=0；④ 先核查无任何现存测试断言 00:00:00 旧行为（不是改测试迁就实现）；⑤ py_compile 双版本。
+
