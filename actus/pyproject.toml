@@ -78,6 +78,19 @@ serialize = [
     "msgpack>=1.0",
     "orjson>=3.9",
 ]
+# vools.actus.desktop 在【模块顶层】import fastapi（uvicorn 在 start() 内），
+# 此前这三样在 dependencies / 任何 extra 里都没声明（2026-10-17 审计：全文件
+# grep fastapi|uvicorn|jinja = 0）——`pip install vools-actus` 之后
+# import vools.actus.desktop 必 ModuleNotFoundError，且【没有任何 extra 能补救】，
+# 只能手 pip。与本仓惯例相违（typer→cli、cryptography→security、pandas→pyk 的
+# [spark]）。补 desktop extra：fastapi 提供 app 与 Jinja2Templates（后者运行期
+# 需要 jinja2），uvicorn 是 start() 的服务器。下限取仍支持 requires-python
+# (>=3.7) 的版本，新版 pip 会各自挑兼容解析。
+desktop = [
+    "fastapi>=0.68",
+    "uvicorn>=0.13",
+    "jinja2>=2.11",
+]
 
 [project.scripts]
 actus = "vools.actus.cli:main"
