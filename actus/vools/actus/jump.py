@@ -341,8 +341,15 @@ def resolve_conflict(conflict: dict, local_path: str, remote_path: str,
                      port: int = 22, key_path: str = None,
                      password: str = None, strategy: str = "newer",
                      timeout: int = 300) -> bool:
-    """解决文件冲突。"""
+    """解决文件冲突。
+
+    公开入口、conflict 由调用方传入（可能是持久化再加载的计划）——与
+    batch_upload/batch_download 同口径先过 _is_safe_relpath，不安全条目
+    直接判失败，绝不参与本地/远端路径拼接（BUG-62/63 同族）。
+    """
     relpath = conflict["relpath"]
+    if not _is_safe_relpath(relpath):
+        return False
     local = conflict["local"]
     remote = conflict["remote"]
 
@@ -1033,6 +1040,13 @@ def scan_remote_files_paramiko(remote_path: str, remote_host: str,
                 continue
             relpath = (posixpath.join(rel_base, attr.filename)
                        if rel_base else attr.filename)
+            # 与 ssh 侧 scan_remote_files（含 8425cfb 的 _is_safe_relpath 闸）对齐：
+            # attr.filename 由远端控制，含 `..`/绝对/盘符时 relpath 会把「远端文件」
+            # 带出同步根。不拦的话它在 compute_sync_plan 里进 plan["download"]，
+            # 下游 `os.path.join(local_path, relpath)` + makedirs + sftp.get 就成了
+            # 恶意远端列表驱动的本地越界写（pull/sync 全程无需本地文件配合）。
+            if not _is_safe_relpath(relpath):
+                continue
             kind, inferred = _sftp_entry_kind(attr)
             if kind == SFTP_KIND_DIR:
                 walk(posixpath.join(remote_dir, attr.filename), relpath)
