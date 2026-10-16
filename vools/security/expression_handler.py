@@ -7,6 +7,8 @@ import ast
 import operator
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
+from ..core.ast_compat import LITERAL_TYPES
+
 
 ALLOWED_OPERATORS = {
     ast.Add: operator.add,
@@ -121,7 +123,10 @@ def _validate_ast_node(node: ast.AST, allowed_names: Optional[set] = None) -> No
     """验证 AST 节点是否安全"""
     allowed_names = allowed_names or set()
     
-    if isinstance(node, (ast.Constant, ast.Num, ast.Str, ast.Bytes)):
+    # 用 ast_compat.LITERAL_TYPES：py3.8+ 仅 ast.Constant；py3.6/3.7 才含
+    # legacy 类。直接硬编码 (ast.Num, ast.Str, ast.Bytes) 在 py3.14 会
+    # AttributeError（这三个类已移除），且 3.12 起已触发 DeprecationWarning。
+    if isinstance(node, LITERAL_TYPES):
         return
     
     elif isinstance(node, ast.Name):
