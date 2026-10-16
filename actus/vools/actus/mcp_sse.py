@@ -25,18 +25,26 @@ class _SseWriter:
     def __init__(self):
         self._queue = []
         self._event = threading.Event()
+        # 队列读改写必须串行化：旧实现 `list(_queue)` + `_queue.clear()` 两步
+        # 之间若插入一次 `write()`，那段数据会被 clear 一起抹掉——**静默丢失**
+        # MCP 响应（不发异常，客户端只见「请求石沉大海」），2026-10-16 巡检发现。
+        self._lock = threading.Lock()
 
     def write(self, data: bytes):
-        self._queue.append(data)
+        with self._lock:
+            self._queue.append(data)
         self._event.set()
 
     def read_batch(self, timeout: float = 30.0):
         """阻塞等待下一批数据，超时返回空列表。"""
         if not self._event.wait(timeout=timeout):
             return []
-        batch = list(self._queue)
-        self._queue.clear()
-        self._event.clear()
+        with self._lock:
+            # 先 clear 事件再取队列：若 clear 后、释放锁前有 write 进来，
+            # 它会在释放后再 set 事件，下一轮 read_batch 仍能收到，不丢数据。
+            self._event.clear()
+            batch = list(self._queue)
+            self._queue.clear()
         return batch
 
 
