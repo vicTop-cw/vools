@@ -83,8 +83,12 @@ class EventBus:
             if len(self._history) > self._history_limit:
                 self._history = self._history[-self._history_limit:]
 
-        # 异步通知订阅者
-        subs = self._subscribers.get(event_type, [])
+        # 同步通知订阅者：**在锁内取一份快照**再遍历。
+        # 旧实现在锁外直接 `get(event_type, [])` 拿到列表对象本身，若发布循环期间
+        # 另一线程 `unsubscribe`（`subs.remove(cb)`）改同一列表，遍历会抛
+        # `RuntimeError: list changed size during iteration`（2026-10-16 巡检）。
+        with self._lock:
+            subs = list(self._subscribers.get(event_type, []))
         for cb in subs:
             try:
                 cb(event)
