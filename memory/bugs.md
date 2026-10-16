@@ -486,3 +486,15 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 ### FIXED(2026-10-16T16:00:00Z / BUG-60)
 - evidence: 真源修复 bridges/vools/bridge/core/wsl.py `_probe_wsl`：rc!=0 不再一次定论，与超时同等退避重试（attempts=4、递增退避），全部用完仍非零才判 False。叠加既有「False 不缓存」策略，收集期撞上 VM 重启窗口会重试数秒跨过窗口。判据：① py_compile 双版本；② warm 探测语义不变——is_wsl_available=True（0.2s）、dart/swift=True、不存在工具=False（不误报可用）；③ 收集期敏感的 shell+swift+dart 三文件同批 py3.11 exit=0 SKIP=0 FAIL=0。
 
+## BUG-61 [2026-10-16T16:10:00Z] [medium] FIXED
+- summary: actus cli `desktop` 子命令 import 路径 stale（`from desktop.app import start`），桌面依赖装了也起不来、且误导用户去装 fastapi
+- detail: 现象：`actus desktop` 恒失败——`_cmd_desktop` 走 `except ImportError` 打印"pip install fastapi uvicorn jinja2"并 return 1，即使 fastapi/uvicorn 已装也起不来。实测 `from desktop.app import start` 抛的是 `ModuleNotFoundError: No module named 'desktop'`，与 fastapi 无关。
+  根因：desktop.py 迁入 vools.actus 后（f060d16 独立成包 + e03f24a 引擎根按包位置推导），start 位于 `vools.actus.desktop` 顶层、`app` 是 FastAPI 实例（非子模块）；cli.py 的旧 import 路径既没有 top-level `desktop` 包、也拿不到 start。except 只按 ImportError 兜底，把"模块路径错"误判成"缺桌面依赖"，提示误导。
+  发现手段：全命名空间逐个独立导入探针（core 181/181、bridges 174/174、rx 24/24、xl 16/16 全绿；actus 命中 desktop/fastapi 一例，顺藤到 cli import 路径）。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（全命名空间 import-all）
+
+
+### FIXED(2026-10-16T16:15:00Z / BUG-61)
+- evidence: 真源修复 actus/vools/actus/cli.py `_cmd_desktop`：import 改为 `from vools.actus.desktop import start`（正确模块路径），并把捕获到的真实 ImportError 文案带进提示——依赖真缺席时报 fastapi（名副其实），不再误报 desktop。补 dotnet-free/无 fastapi 依赖的回归锁 actus/tests/test_desktop_import.py（3 格：stub 桌面依赖证明正确路径能解析出 start；无 stub 时提示根因是 fastapi 非 desktop；依赖齐备时 _cmd_desktop 走成功分支 return 0）。判据：py_compile 双版本；desktop-lock py3.11/py3.6 均 exit=0；离线 A/B 探针 rc=1(fastapi 文案)/rc=0；全量 actus tests 双版本无回归。未动他人 WIP（dependency/vault2/jump）。
+
