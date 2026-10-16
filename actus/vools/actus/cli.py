@@ -2069,10 +2069,16 @@ def _cmd_dep_tree(args) -> int:
 
 def _cmd_desktop(args) -> int:
     """desktop 子命令：启动 Actus Desktop Web UI。"""
+    # 本模块迁移进 vools.actus 后（f060d16「独立成包」+ e03f24a「引擎根按包位置推导」），
+    # start 位于 vools.actus.desktop 顶层；旧写法 `from desktop.app import start`
+    # 既没有 top-level desktop 包、app 也只是 FastAPI 实例（非子模块）——
+    # 实测 ImportError 恒为「No module named 'desktop'」，会走到下面的 except 打印
+    # "pip install fastapi" 误导提示并 return 1，即使 fastapi/uvicorn 已装也起不来。
+    # 改为正确的模块路径：ImportError 只在桌面依赖真缺席时触发，提示才名副其实。
     try:
-        from desktop.app import start
-    except ImportError:
-        print('❌ 需要安装桌面依赖: pip install fastapi uvicorn jinja2')
+        from vools.actus.desktop import start
+    except ImportError as e:
+        print(f'❌ 需要安装桌面依赖: pip install fastapi uvicorn jinja2（{e}）')
         return 1
     
     host = args.host
