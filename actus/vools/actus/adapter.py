@@ -643,7 +643,7 @@ def validate_adapter_spec(spec: AdapterSpec) -> Tuple[bool, List[str]]:
         try:
             schema_path = Path(__file__).parent.parent.parent / "contracts" / "adapter.schema.json"
             if schema_path.exists():
-                with open(schema_path) as f:
+                with open(schema_path, encoding="utf-8") as f:
                     schema = json.load(f)
                 # 构建完整数据
                 data = {
