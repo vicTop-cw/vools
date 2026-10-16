@@ -6,9 +6,25 @@ vools.sys.dll_cmd - DLL 管理子命令
 
 import ctypes
 import os
+import platform
 import sys
 
-from ..bridge.core.loader import _LIB_DIR, _IS_WINDOWS
+# vools.bridge 是**可选**分发（pip install 'vools[bridges]'），本模块过去在
+# 顶层 `from ..bridge.core.loader import _LIB_DIR, _IS_WINDOWS` —— 标准安装
+# （核心不含 bridges）下 `python -m vools sys` 直接 ModuleNotFoundError 崩溃
+# （实测 exit=1），违反「桥接不可用则优雅降级」的既定契约（BUG-3 同族）。
+# 同包的 env.py:22 与 env_cmd.py:83 早就用「本地 platform 判断 + 函数内延迟
+# 导入」的正确姿势，这里统一到同一口径。
+_IS_WINDOWS = platform.system() == 'Windows'
+
+
+def _lib_dir():
+    """Nim DLL 所在目录；vools-bridges 缺席时返回 None（调用方按「没有 DLL」处理）。"""
+    try:
+        from ..bridge.core.loader import _LIB_DIR
+    except ImportError:
+        return None
+    return _LIB_DIR
 
 
 # 已知的 Nim DLL 及其函数映射
@@ -31,10 +47,13 @@ _NIM_DLLS = {
 
 
 def _find_dll_path(name):
-    """查找 DLL 路径"""
+    """查找 DLL 路径；bridges 未安装或该 DLL 不存在时返回 None"""
+    lib_dir = _lib_dir()
+    if not lib_dir:
+        return None
     if _IS_WINDOWS:
         for ext in ('.dll', '.so', '.pyd'):
-            path = os.path.join(_LIB_DIR, name + ext)
+            path = os.path.join(lib_dir, name + ext)
             if os.path.exists(path):
                 return path
     return None
