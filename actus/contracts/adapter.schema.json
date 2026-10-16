@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Actus Adapter Protocol",
+  "description": "适配器协议规范 — 用于包装外部工具（CLI/Quicker/MCP/HTTP）为 Actus 动作",
+  "type": "object",
+  "required": ["id", "adapter"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^adapter\\.[a-z]+\\.[a-z0-9_.-]+$",
+      "description": "适配器 ID，格式: adapter.<type>.<name>"
+    },
+    "name": {
+      "type": "string",
+      "description": "适配器显示名称"
+    },
+    "description": {
+      "type": "string",
+      "description": "适配器描述"
+    },
+    "version": {
+      "type": "string",
+      "default": "1.0.0"
+    },
+    "author": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "adapter": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["cli", "quicker", "mcp", "http"],
+          "description": "适配器类型"
+        },
+        "command": {
+          "type": "string",
+          "description": "可执行命令（cli 类型）"
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "参数模板，支持 ${param} 占位符"
+        },
+        "check": {
+          "type": "string",
+          "description": "启动前自检命令"
+        },
+        "install": {
+          "type": "string",
+          "description": "缺失时的安装命令或脚本"
+        },
+        "url": {
+          "type": "string",
+          "description": "HTTP 端点 URL（http 类型）"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+          "default": "GET"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "body": {
+          "type": "object",
+          "description": "请求体模板（http 类型）"
+        },
+        "timeout": {
+          "type": "number",
+          "default": 30,
+          "description": "超时时间（秒）"
+        },
+        "starter": {
+          "type": "string",
+          "description": "启动器路径（quicker 类型）"
+        },
+        "action": {
+          "type": "string",
+          "description": "Quicker 动作 ID（quicker 类型）"
+        },
+        "mcp_server": {
+          "type": "string",
+          "description": "MCP 服务器名称（mcp 类型）"
+        },
+        "mcp_tool": {
+          "type": "string",
+          "description": "MCP 工具名称（mcp 类型）"
+        }
+      }
+    },
+    "params": {
+      "type": "array",
+      "description": "参数定义",
+      "items": {
+        "type": "object",
+        "required": ["name", "type"],
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["string", "number", "boolean", "file", "path", "json"] },
+          "description": { "type": "string" },
+          "required": { "type": "boolean", "default": false },
+          "default": {},
+          "enum": { "type": "array", "items": {} }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "description": "输出定义",
+      "properties": {
+        "type": { "type": "string", "enum": ["text", "json", "file", "binary"], "default": "text" },
+        "path": { "type": "string", "description": "输出文件路径模板" },
+        "encoding": { "type": "string", "default": "utf-8" }
+      }
+    },
+    "trust": {
+      "type": "string",
+      "enum": ["trusted", "community", "unverified"],
+      "default": "community"
+    }
+  }
+}
