@@ -158,10 +158,15 @@ __all__ = [
     'when', 'when_error', 'when_start', 'when_stop',
     'window', 'with_latest_from', 'with_state',
     
-    'combine_latest_map', 'merge_all', 'merge_map',
-    'pairwise', 'partition', 'race', 'repeat', 'retry_until',
-    'scan_with_index', 'switch_on_next', 'take_until_not',
-    'combine_latest_with', 'merge_with', 'switch_map_to',
+    # 注意（2026-10-17 寻虫 BUG-70）：这里曾列着 14 个【从未实现】的名字
+    # （combine_latest_map/merge_all/merge_map/pairwise/partition/race/repeat/
+    #  retry_until/scan_with_index/switch_on_next/take_until_not/
+    #  combine_latest_with/merge_with/switch_map_to）。__all__ 里挂空头名不是
+    #  "还没写"的备忘录 —— `from vools.reactive import *` 会逐名 getattr，
+    #  实测直接抛 AttributeError: module 'vools.reactive' has no attribute
+    #  'combine_latest_map'，整个 star-import 连带所有真存在的名字一起拿不到。
+    #  要加这些操作符请连实现带 __all__ 一起加（operators.py + ops 导出链）。
+
     'from_range', 'from_callable', 'from_future', 'start',
     
     'median', 'variance', 'std', 'quantile',
