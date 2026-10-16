@@ -509,3 +509,14 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 ### FIXED(2026-10-16T16:40:00Z / BUG-62)
 - evidence: 真源修复 actus/vools/actus/jump.py：batch_upload/batch_download 循环体入口对每条 relpath 过 `_is_safe_relpath`，不安全条目【拒绝并记入 errors】、绝不参与 os.path.join/remote_join 拼接（与 8425cfb 同一道闸、同一口径，补齐其漏覆盖的公开 API 半边）。补回归锁 actus/tests/test_jump_batch_guard.py（3 格，monkeypatch upload_single/download_single 只记录不外发）：download 拒绝 ../ 与绝对/盘符且安全条目正常放行、远端拼接保持 POSIX 分隔符、被拒条记入 errors。判据：py_compile 双版本；jump-guard py3.11/py3.6 各 3 passed（... [100%]，非 0 收集）；负向对照探针证明未加闸时 `os.path.join('/data/local','../escape.txt')` 确实拼接、加闸后该条从未到达传输（transported=1, traversal leaked=False）。附带修 sandbox.py 文档 usage 的 prepare 形参漂移（写成 meta_dir/artifacts_dir/exec_id 三参、实际签名两参，照抄文档会 TypeError——改回两参对齐真实签名与 executor:762 的调用）。未动他人 WIP（dependency/vault2）。
 
+## BUG-63 [2026-10-16T16:50:00Z] [medium] FIXED
+- summary: scan_remote_files_paramiko 不校验远端文件名——恶意服务端目录列表可驱动 pull/sync 的本地越界写（BUG-62 同族的另一半：ssh 路有闸、paramiko 路没有）
+- detail: 威胁模型比 BUG-62 更强：relpath 直接来自【远端完全可控】的 attr.filename（恶意跳板机的 sftp 目录里放一个名为 `../evil.txt` 的文件）。8425cfb 给 ssh 路 scan_remote_files 加了 _is_safe_relpath（178 行），但 paramiko 路的 scan 没加；该恶意名进 compute_sync_plan 的 download 侧后，_sync_paramiko 的下载循环执行 `lpath = os.path.join(local_path, relpath)` + `os.makedirs(dirname)` + `sftp.get(rpath, lpath)` —— 本地落盘点逃出 base，全程不需要任何本地文件配合。_push_paramiko(883)/resolve_conflict(公开、conflict dict 由调用方传) 同理。
+  发现手段：BUG-62 同轮审计顺延——grep 全部 os.path.join(local_path, relpath) 汇入点，对照两条 scan 路的防护，发现 ssh 有闸、paramiko 没有（8425cfb 只修了一半的 scan）。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（安全面：jump 穿越闸全入口收口）
+
+
+### FIXED(2026-10-16T17:00:00Z / BUG-63)
+- evidence: 真源修复 actus/vools/actus/jump.py：① scan_remote_files_paramiko 的 walk() 对每条 relpath 过 _is_safe_relpath（continue 跳过不安全条目，与 ssh 路 178 行完全同口径——闸放在扫描边界，下游 plan/两条 push/pull/sync 路一次性全部受保护，不在每个传输循环重复打补丁）；② resolve_conflict（公开、入参 dict 调用方可造）入口同样过闸，不安全直接判 False。_push_paramiko 的 883 行循环消费的是本地扫描 + 已过闸远端名，同口径复验。补回归锁 actus/tests/test_jump_paramiko_guard.py（4 格，伪造 _sftp_connect/sftp/attrs，不打真实网络）：_sync_paramiko 全路径中 sftp.get 落盘绝不含 `..` 段、扫描返回值拒绝 `../evil.txt`、正常文件照常同步（好人不被拦死）、resolve_conflict 穿越条目判失败且零触达传输原语。判据：py_compile 双版本；4 格 lock py3.11/py3.6 各 exit=0（[100%]）；负向对照实证——monkeypatch 掉 _is_safe_relpath 后扫描输出 ['../evil.txt','a.txt']、加闸后只剩 ['a.txt']（非空洞）；全量 actus tests 双版本无回归。未动他人 WIP（dependency/vault2 全程未纳入）。
+
