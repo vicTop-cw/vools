@@ -882,6 +882,13 @@ def _sftp_walk_get(sftp, remote_root, local_root, exclude, counter, errors):
     """
     for attr in sftp.listdir_attr(remote_root):
         name = attr.filename
+        # 远端可控文件名：恶意服务端可让 listdir 返回名为 `../escape` 的条目，
+        # 下面 os.path.join(local_root, name) 就把本地写点带出 local_root
+        # （sftp.get / makedirs 同理）。与 scan_remote_files_paramiko(BUG-63)、
+        # ssh 路 scan_remote_files(8425cfb) 同一道 _is_safe_relpath 闸，补这条
+        # 递归直拉路径（_pull_paramiko 对目录走的正是这里，不经过 scan）。
+        if not _is_safe_relpath(name):
+            continue
         if should_exclude(name, exclude):
             continue
         rpath = posixpath.join(remote_root, name)

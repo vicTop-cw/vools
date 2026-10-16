@@ -520,3 +520,14 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 ### FIXED(2026-10-16T17:00:00Z / BUG-63)
 - evidence: 真源修复 actus/vools/actus/jump.py：① scan_remote_files_paramiko 的 walk() 对每条 relpath 过 _is_safe_relpath（continue 跳过不安全条目，与 ssh 路 178 行完全同口径——闸放在扫描边界，下游 plan/两条 push/pull/sync 路一次性全部受保护，不在每个传输循环重复打补丁）；② resolve_conflict（公开、入参 dict 调用方可造）入口同样过闸，不安全直接判 False。_push_paramiko 的 883 行循环消费的是本地扫描 + 已过闸远端名，同口径复验。补回归锁 actus/tests/test_jump_paramiko_guard.py（4 格，伪造 _sftp_connect/sftp/attrs，不打真实网络）：_sync_paramiko 全路径中 sftp.get 落盘绝不含 `..` 段、扫描返回值拒绝 `../evil.txt`、正常文件照常同步（好人不被拦死）、resolve_conflict 穿越条目判失败且零触达传输原语。判据：py_compile 双版本；4 格 lock py3.11/py3.6 各 exit=0（[100%]）；负向对照实证——monkeypatch 掉 _is_safe_relpath 后扫描输出 ['../evil.txt','a.txt']、加闸后只剩 ['a.txt']（非空洞）；全量 actus tests 双版本无回归。未动他人 WIP（dependency/vault2 全程未纳入）。
 
+## BUG-64 [2026-10-16T17:20:00Z] [medium] FIXED
+- summary: _sftp_walk_get（_pull_paramiko 对目录走的递归直拉路径）用远端可控 attr.filename 直接 os.path.join(local_root,name) → sftp.get，绕过 BUG-63 的 scan 闸，恶意服务端目录列表仍可驱动本地越界写
+- detail: BUG-63 把闸放在 scan_remote_files_paramiko，但 `actus pull <远端目录>` 的 _pull_paramiko 在远端是目录时【不经过 scan】，直接 _sftp_walk_get 递归：`name = attr.filename; lpath = os.path.join(local_root, name); sftp.get(rpath, lpath)`。should_exclude 也不校验穿越。恶意 SFTP 服务端让根目录返回一个名为 `../escape.txt` 的条目，lpath 就成了 `<local_root>/../escape.txt`，落盘逃出 local_root——与 BUG-63 同威胁模型（远端驱动、无需本地配合）的另一条独立向量，BUG-63 只堵了 sync 路的 scan 入口，没堵 pull/sync 的递归 walk。
+  发现手段：BUG-63 收口时通读 paramiko 三入口（push/pull/sync）的落盘点，发现 _pull_paramiko 目录分支的 _sftp_walk_get 独立于 scan。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（jump 穿越闸全入口收口，续 BUG-62/63）
+
+
+### FIXED(2026-10-16T17:25:00Z / BUG-64)
+- evidence: 真源修复 actus/vools/actus/jump.py `_sftp_walk_get`：循环体取 name 后先过 _is_safe_relpath，不安全 continue（与 scan_remote_files_paramiko(BUG-63)、ssh scan(8425cfb) 同一道闸同一口径）。回归锁 actus/tests/test_jump_paramiko_guard.py 扩到 5 格，新增 _pull_paramiko 目录直拉路径用例：伪造 sftp.stat→S_IFDIR 触发 _sftp_walk_get，根目录混入 ../escape.txt，断言所有 sftp.get 落盘无 `..` 段、正常文件照拉、status ok。判据：py_compile 双版本；5 格 lock py3.11/py3.6 各 exit=0（..... [100%]）；负向对照实证——关掉 _is_safe_relpath 后 got 出现 '/data/local\\../escape.txt'（真实逃出），开闸后消失（非空洞）。_sftp_walk_put 用 os.listdir（本地名，无 ..）不受影响，未动。
+

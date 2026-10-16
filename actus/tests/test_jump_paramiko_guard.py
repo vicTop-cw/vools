@@ -152,3 +152,52 @@ def test_resolve_conflict_rejects_traversal(monkeypatch):
     assert jump.resolve_conflict(good, '/data/local', '/data/remote',
                                  'h', 'u') is True
     assert touched == ['up']
+
+
+class _DirStat(object):
+    """sftp.stat 对目录返回 S_IFDIR，好让 _pull_paramiko 走递归拉取分支。"""
+
+    def __init__(self, is_dir=True):
+        self.st_mode = (S_IFDIR if is_dir else S_IFREG) | 0o644
+        self.st_size = 0
+        self.st_mtime = 100.0
+
+
+class _WalkSFTP(object):
+    """直拉路径（_sftp_walk_get）用的假 SFTP：根目录混入穿越名。"""
+
+    def __init__(self):
+        self.got = []
+
+    def stat(self, p):
+        return _DirStat(is_dir=True)
+
+    def listdir_attr(self, p):
+        if p == '/data/remote':
+            return [_Attr('a.txt'), _Attr('../escape.txt'), _Attr('b.txt')]
+        return []
+
+    def get(self, remote, local):
+        self.got.append((remote, local))
+
+    def makedirs(self, *a, **k):
+        pass
+
+
+def test_pull_paramiko_dir_walk_rejects_traversal(monkeypatch):
+    """_pull_paramiko 对【目录】走 _sftp_walk_get，不经 scan 闸——BUG-64 独立向量。
+    恶意远端目录里名为 `../escape.txt` 的条目不得被写进 local_root 之外。"""
+    sftp = _WalkSFTP()
+    client = _FakeClient()
+    monkeypatch.setattr(jump, '_sftp_connect', lambda *a, **k: ((client, sftp), None))
+    monkeypatch.setattr(jump, '_sftp_close', lambda c, s: None)
+
+    res = jump._pull_paramiko('/data/remote', '/data/local', 'h', 'u', timeout=5)
+    # 落盘路径绝无 `..` 段（穿越名被扫描闸拦下，从不 sftp.get）
+    for _r, l in sftp.got:
+        assert '..' not in l.replace('\\', '/').split('/'), '本地写点逃出 base: %s' % l
+    assert any('escape' not in l for _r, l in sftp.got)   # 至少拦下 evil
+    # 正常文件照常拉（好人不被拦死）
+    assert any(l.endswith('a.txt') for _r, l in sftp.got)
+    assert any(l.endswith('b.txt') for _r, l in sftp.got)
+    assert res['status'] == 'ok'
