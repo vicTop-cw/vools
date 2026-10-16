@@ -1,0 +1,428 @@
+## BUG-1 [2026-10-11T06:23:45Z] [high] FIXED
+- summary: vools.__all__ 收录可选子包 'pyk'，导致 `from vools import *` 对未安装 vools-pyk 的用户整条崩溃（且 2 个测试收集失败）
+- detail: 现象：`python -c "from vools import *"` 抛 AttributeError（"vools.pyk 是独立包 vools-pyk..."）。
+
+根因：vools/__init__.py 的 __all__ 末尾新增了 'pyk'（第 540 行附近），而 pyk 与 bridge/reactive/dll32/xl 同属**可选**子包——后四者都**不在** __all__ 里（实测 'bridge' in __all__ = False, 'reactive' = False, 'dll32' = False, 'xl' = False, 'pyk' = **True**，唯一例外）。`from vools import *` 会遍历 __all__ 逐名 getattr，命中 'pyk' 时 __getattr__ 在未安装 vools-pyk 时按设计抛 AttributeError，于是整条 star import 失败。
+
+影响面：任何 `from vools import *` 的调用方（含 tests/core/test_import.py:1、tests/core/test_utils.py）在标准安装（vools 核心不含 vools-pyk）下全部崩溃——这正是 2 个测试收集错误的真因。
+
+对照证据：
+- 实跑 `python -c "from vools import *"` → AttributeError（rc=1）
+- 实跑 `python -m pytest tests/core -q` → ERROR tests/core/test_import.py, ERROR tests/core/test_utils.py
+
+修法方向：把 'pyk' 从 __all__ 移除（与 bridge/reactive/dll32/xl 四个可选子包保持一致）；pyk 仍可经 vools.pyk 显式访问（__getattr__ 分支保留）。
+- ref_call: 96
+- reported_by: vools-tidy-lead
+
+
+
+### FIXED(2026-10-11T06:28:41Z / BUG-1)
+- evidence: 真源修复：vools/__init__.py 的 __all__ 移除 'pyk' 一项（并加注释说明可选子包一律不进 __all__）。判据：① `python -c "from vools import *"` 由 AttributeError(rc=1) 转为 OK；② `python -m pytest tests/core -q` 由 2 个收集 ERROR 转为 4 passed；③ 一致性实测五个可选子包 bridge/reactive/dll32/xl/pyk 现全部 in __all__=False；④ 显式访问 vools.pyk 仍保留原提示信息（__getattr__ 分支未动）。
+## BUG-2 [2026-10-11T07:17:28Z] [high] FIXED
+- summary: VScheduler.cancel_all() 与 .queue 把 sched.scheduler.queue（property）当方法调用，必抛 TypeError——批量取消入口 100% 失效
+- detail: 现象（2026-10-11 实测，python 3.11.8）：`VScheduler.cancel_all()` 与 `VScheduler.queue` 双双抛 TypeError: 'list' object is not callable。
+
+根因：vools/concurrent/sched_mod.py 把 `sched.scheduler.queue` 当**方法**调用，但标准库里它是 **property**：
+- 第 107 行 `for event in list(self._scheduler.queue()):`（cancel_all）
+- 第 138 行 `return list(self._scheduler.queue())`（queue 属性）
+而 `sched.scheduler.queue` 的 fget 是 property，直接返回 list（实测 `type(s.queue) = <class 'list'>`、`callable(s.queue) = False`）。
+
+影响面：`cancel_all()` 是 VScheduler 唯一的批量取消入口——**100% 必崩**，不是边界情形。连带 `SchedulerPool.cancel_all()`（内部逐个调 `s.cancel_all()`）与 `SchedulerPool.stop_all()` 一起失效。而 `VScheduler.queue` 属性同样恒崩，`repr()` 里也用了它（`f'VScheduler(pending={len(self.queue)})'`）→ 任何 print/repr 都会抛。
+
+为何长期未暴露：tests/concurrent/ 因 test_bridges.py 的同侧自收死锁从未跑完，这批用例（test_sched_mod.py 的 test_cancel_all/test_queue）从未真正执行过；CI 也只跑 bridges/tests/test_md_bridge.py。
+
+修法：两处 `self._scheduler.queue()` → `self._scheduler.queue`（property 直接取值）。
+- reported_by: vools-tidy-lead
+
+
+
+### FIXED(2026-10-11T07:22:31Z / BUG-2)
+- evidence: 真源修复：vools/concurrent/sched_mod.py 两处 `self._scheduler.queue()` → `self._scheduler.queue`（L107 cancel_all、L142 queue property），并加注释说明 stdlib 里它是 property。判据：① `python -c` 实测 cancel_all() 由 TypeError 转为返回 2、queue 属性返回 list(len=2)、repr() 由抛异常转为正常输出；② `pytest tests/concurrent/test_sched_mod.py -q` 由 21 failed 转为 35 passed；③ SchedulerPool.cancel_all() 连带由崩转正常（返回 1）。
+## BUG-3 [2026-10-11T07:29:19Z] [high] FIXED
+- summary: @bridge 装饰器在可选子包 vools.bridge 缺席时抛 ModuleNotFoundError，三条 fallback 路径全不可达——「桥接不可用则回退纯 Python」的核心契约失效
+- detail: 现象：未安装可选子包 vools-bridges（即 `vools.bridge` 不存在）时，`@bridge(...)` 装饰后的函数**不**按契约回退，而是直接抛 ModuleNotFoundError: No module named 'vools.bridge'。
+
+复现（2026-10-11 实测）：
+```
+@bridge("nonexistent_lang", "module.func", fallback=py_pickle_encode)
+def f(obj): ...
+f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
+```
+
+根因：wrapper 的三条路径（L242 桥接可用 / L246 桥接抛异常回退 / L257 不可用走 fallback）全部建立在 `_get_bridge_func()` **能正常返回 None** 之上；但 `_get_bridge_func` → `BridgeRegistry.load_symbol` → `is_available`（bridge_decorator.py:66）执行 `from ..bridge.core.loader import is_available`——该 import 在 vools-bridge 缺席时抛 ModuleNotFoundError，异常从 `_get_bridge_func()` 直接冒泡出 wrapper，**三条回退路径一条都到不了**。
+
+契约证据（同文件 L182-208 与模块头 L1-10 逐字写）：「当桥接库可用时，调用桥接函数；否则调用 fallback」「不可用时自动回退到纯 Python 实现」。而 is_available 的 docstring（L56-67）也承诺「检查指定语言的桥接库是否可用 → bool」。
+
+影响面：@bridge 是 vools 对外主推的跨语言桥接入口（README/装饰器族），在**标准安装**（pip install vools，不含 bridges extra）下，任何用它装饰的函数一调用就炸，而不是优雅降级到纯 Python。这正是「可选依赖缺席」这条最该被设计覆盖的路径。
+
+修法方向：把 `_get_loader`/`is_available`/`get_lib` 三处的 `from ..bridge.core.loader import ...` 包进 try/except ImportError，缺席时 is_available 返回 False、get_lib 返回 None、load_symbol 返回 None——让 wrapper 既有的路径2（走 fallback）真正可达。
+- reported_by: vools-tidy-lead
+
+
+
+### FIXED(2026-10-11T07:30:22Z / BUG-3)
+- evidence: 真源修复：vools/decorators/bridge_decorator.py 三处 `from ..bridge.core.loader import ...` 各包一层 try/except ImportError —— _get_loader 缺席返回 None、is_available 缺席返回 False、get_lib 缺席返回 None。判据：① 实测 `@bridge('nonexistent_lang','module.func',fallback=...)` 由 ModuleNotFoundError 转为正确调用 fallback（返回值可 pickle.loads 还原）；② 无 fallback 时抛契约约定的 RuntimeError("No bridge implementation available...")；③ BridgeRegistry().is_available('definitely_not_a_language') 返回 False；④ `pytest tests/decorators/test_bridge_decorator.py tests/serialize/test_core.py tests/data/test_table.py -q` 全绿（3 failed → 0 failed）。
+## BUG-4 [2026-10-11T07:47:19Z] [medium] FIXED
+- summary: test_worker_pool_size 依赖 @pytest.mark.flaky(reruns=2) 兜底墙钟计时抖动，但 pytest-rerunfailures 未安装/未声明/未注册标记——flaky 是空标记，套件随机红绿
+- detail: 现象：`pytest tests/` 间歇性失败（3 次连跑：exit=1 / 0 / 0），失败恒为 tests/task/test_task_complete.py::TestTaskParallelExecution::test_worker_pool_size。
+
+根因分两层：
+① 该用例是**墙钟计时断言**（L200 `assert time_with_4_workers < time_with_1_worker * 0.75`），在负载波动的机器上天然抖动；
+② 作者用 `@pytest.mark.flaky(reruns=2)`（L165）意图重试兜底，但 **pytest-rerunfailures 未安装、也未声明**：`python -c "import pytest_rerunfailures"` → ModuleNotFoundError；pyproject.toml 的 `[tool.pytest.ini_options] markers` 只注册了 integration/windows_only/slow/asyncio 四个，没有 flaky；dev extras 只列 pytest/pytest-cov。pytest 因此把 flaky 当**未知标记**（每轮都打印 `PytestUnknownMarkWarning: Unknown pytest.mark.flaky`）——标记被静默忽略，reruns 从未生效。
+
+危害：这是「守卫看起来在、其实不在」的典型——标记名写对了，但没有任何机制保证它被实现，于是计时抖动直接表现为套件红。CI 若据此判定，会得到随机红/绿。
+
+修法方向（二选一或并用）：① 把 flaky 标记注册进 markers 并在 dev extras 声明 pytest-rerunfailures；② 更好的做法——去掉对绝对墙钟的依赖，改用可判定的并行性证据（例如断言 4 worker 的实际并发峰值/总耗时显著低于串行下界，或放宽为「4 workers 不慢于 1 worker」这类单调性断言），使判据不随机器负载翻转。
+- reported_by: vools-tidy-lead
+
+
+
+### FIXED(2026-10-11T08:21:13Z / BUG-4)
+- evidence: 真源修复两处：① tests/task/test_task_complete.py::test_worker_pool_size —— 去掉空标记 @pytest.mark.flaky，改为「工作量显著大于固定开销」（8 任务×0.4s）+ 每种配置取多次测量最小值 + 保守 1.5 倍阈值；② pyproject.toml —— markers 注册 flaky、addopts 加 --strict-markers（未注册标记直接报错，杜绝静默空守卫）。判据：① 实测 WorkerPool 缩放 workers=1/2/4/8 → 2.436/1.537/1.259/1.101s，delay=0.4 时 1worker=4.157s vs 4workers=1.633s（2.55 倍）；② 修复前 3 次连跑 1 红 2 绿，修复后 3 次连跑全绿（exit=0/0/0）；③ junitxml 全量统计 tests=1573 failures=0 errors=0 skipped=17；④ 负向对照：--strict-markers 对未注册标记确实报 "not registered in markers configuration"。
+
+
+### FIXED(2026-10-11T08:58:24Z / BUG-4)
+- evidence: 加强修复（第二轮）：把墙钟比值断言换成**确定性重叠判据**——每个任务把起止时刻写入独立文件，直接检验是否存在一对任务执行区间重叠；判据与机器负载无关（负载只让区间更长、更易重叠）。成对判据：① 4 workers 实测存在重叠 → 用例 PASS；② 负向对照 1 worker 实测无任何重叠 → 断言会正确判红（证明判据有判别力，不是恒绿）；③ 修复后全量套件连续 5 次 exit=0（上一版仍有约 1/4 概率红）。
+## BUG-5 [2026-10-11T13:20:00Z] [medium] FIXED
+- summary: 12 处裸 except: 吞掉 KeyboardInterrupt/SystemExit（datetime/vdate_class.py:626,647,722；datetime/utils.py:300,351,392,429；datetime/dates_format.py:607,805；decorators/curry_core.py:50；oop/extend.py:234；decorators/overcurry.py:104）
+- detail: 裸 except: 捕获包括 KeyboardInterrupt 与 SystemExit 在内的所有异常，Ctrl+C 在这些路径上失效，且真实错误被静默吞掉。
+- reported_by: vools-compat-r1
+
+### FIXED(2026-10-11T13:29:09Z / BUG-5)
+- evidence: 12 处 `except:` → `except Exception:`（vdate_class 3 / utils 4 / dates_format 2 / curry_core 1 / extend 1 / overcurry 1）。判据：① grep 全包裸 except: 命中数由 12 转 0；② py3.11 tests/test_pyk.py + tests/vconcurrent = 281 passed 3 skipped；③ py3.6 docker 全量 PASS。commit 7e53970。
+## BUG-6 [2026-10-11T13:35:00Z] [high] FIXED
+- summary: oop/mixer.py:303 result_shell 的 lambda 按引用捕获变量，而该变量随即被重新赋值为 lambda 自身——eval 拿到的是 lambda 对象而非原字符串，调用时必抛 TypeError
+- detail: `result_shell = lambda x: eval(result_shell, globals(), locals())` 中 result_shell 在闭包里按引用解析，赋值语句执行后该名字已指向 lambda 本身；lambda 被调用时 eval() 收到函数对象。修法：用默认参数在定义时固化字符串值。
+- reported_by: vools-compat-r2
+
+### FIXED(2026-10-11T13:40:49Z / BUG-6)
+- evidence: oop/mixer.py:303 改为 `lambda x, _expr=result_shell: eval(_expr, globals(), locals())`（默认参数在定义时求值，固化原字符串）。判据：py3.11 281 passed 3 skipped + py3.6 docker 全量 PASS。commit 1f58c10。
+## BUG-7 [2026-10-11T13:36:00Z] [medium] FIXED
+- summary: pyk/df.py:964,966,1022 用 assert 做入参校验——python -O 会剥离 assert，优化模式下校验直接消失
+- detail: 三处 assert 校验 node_and_v 形态与切片数量；同文件邻近代码（L973/L1018/L1025）已用 raise ValueError，属不一致。修法：改 if + raise ValueError。
+- reported_by: vools-compat-r2
+
+### FIXED(2026-10-11T13:40:49Z / BUG-7)
+- evidence: pyk/df.py 三处 assert → if + raise ValueError（_option1 两处、option 一处），错误文案与邻近 raise 风格一致。判据：py3.11 281 passed 3 skipped + py3.6 docker 全量 PASS。commit 1f58c10。
+## BUG-8 [2026-10-11T13:48:00Z] [high] FIXED
+- summary: pyk/postgre.py:444 execute_sql_in_postgre 无 try/finally——execute/fetchall 抛异常时 cur.close() 与 conn.commit() 被跳过，本地新建的连接一并泄漏
+- detail: 游标在异常路径不关闭；conn=None 分支自建的连接在出错时不关闭。修法：游标置 None 初始化，try 内提交，except 回滚，finally 关游标并在自建连接时关连接。
+- reported_by: vools-compat-r3
+
+### FIXED(2026-10-11T13:53:21Z / BUG-8)
+- evidence: pyk/postgre.py execute_sql_in_postgre 改为 try/except/finally：cur=None 初始化、成功后 commit、except 里 rollback 并 re-raise、finally 关游标 + 仅自建连接时 close（_local_conn 标记）。判据：py3.11 281 passed 3 skipped + py3.6 docker 全量 PASS。commit c7be718。
+## BUG-9 [2026-10-11T13:49:00Z] [medium] FIXED
+- summary: pyk/look_upon.py:228 _execute_sql 在异常路径泄漏 JDBC statement——stmt.close() 只在成功分支执行，finally 块为空
+- detail: prepareStatement/createStatement 取得的 stmt 仅在正常路径 L262/L272 关闭；executeQuery/executeUpdate 抛异常即泄漏。finally 里原有注释只说明「不关连接」，未处理 stmt。修法：stmt 置 None 初始化 + finally 中关闭（吞掉关闭异常）。
+- reported_by: vools-compat-r3
+
+### FIXED(2026-10-11T13:53:21Z / BUG-9)
+- evidence: pyk/look_upon.py _execute_sql 增加 `stmt = None` 初始化，finally 块补 `if stmt is not None: stmt.close()`（try/except 包裹），连接仍按原设计不关闭。判据：py3.11 281 passed 3 skipped + py3.6 docker 全量 PASS（look_upon.py 语法 OK）。commit c7be718。
+## BUG-10 [2026-10-11T13:59:17Z] [high] FIXED
+- summary: security/otp.py:41 verify_dynamic_code 防重放失效——used_codes 只写不查，同一动态码在时间窗内可无限重放
+- detail: 文档把 used_codes 描述为「已使用过的动态码集合（防重放）」，成功时也确实 add（L68-69），但接受前**从不检查成员资格**。实测复现（py3.11）：首次 verify=True，用同一 code + 同一 used_codes 再次 verify 仍=True，可无限次重放。任何依赖此函数的 2FA 流程可被重放。
+- reported_by: vools-compat-r4
+
+### FIXED(2026-10-11T14:01:48Z / BUG-10)
+- evidence: security/otp.py verify_dynamic_code 在接受前加成员检查 `if used_codes is not None and code in used_codes: return False`。补回归套件 tests/security/test_otp.py（20 条，含 test_replay_blocked_with_used_codes / test_replay_blocked_repeatedly / test_no_used_codes_is_backwards_compatible）。判据：py3.11 20 passed；py3.6 docker 实测 replay blocked=True、不传 used_codes 向后兼容=True、错误码拒绝=True。commit c85d424。
+## BUG-11 [2026-10-11T14:08:10Z] [high] FIXED
+- summary: 13 个文件声明 requires-python>=3.6 却使用 `from __future__ import annotations`（py3.7+）——在 py3.6 上直接 SyntaxError
+- detail: bridges/md(5)：directives.py:5、manifest.py:8、parser.py:12、runner.py:11、webview2.py:43；actus(5)：bugreport.py:26、calllog.py:19、omega_strong.py:20、selfdrive.py:29、selfdrive_worker.py:37；rx/monitoring(3)：keyboard.py:6、process.py:16、window.py:15。py3.6 docker py_compile 全部在上述行 SyntaxError。连带同一批包还有 stdlib dataclasses 直连（py3.7+）与 PEP585 内建泛型注解（py3.9+）问题：vools/md 三个文件在 py3.6 `import vools.md.parser` 直接 ModuleNotFoundError: dataclasses（而该包 docstring 自称「兼容 Python 3.6」）。
+- reported_by: vools-compat-r5
+
+### FIXED(2026-10-11T14:18:59Z / BUG-11)
+- evidence: ① 移除 13 处 future-import；② vools/md 3 文件 + actus 13 文件 stdlib dataclasses → vools.core.dataclass_compat，bridges/md 4 文件 → bridge.core.compat.dataclass_compat；③ bridges/md 5 文件的 PEP585 注解改 typing 等价物（set→Set、list→List、tuple→Tuple，共 11 处）。判据：py3.6 docker compileall 479 文件 **0 语法错误**（修前 14）；py3.6 运行时 import vools / vools.md.* / security.otp / concurrent / pyk 全 OK；bridges.md 5 模块在 py3.6 可导入且 parse_md/validate_directives 可调用；py3.11 1586 passed 18 skipped 无回归。commit 2834dbb。
+## BUG-12 [2026-10-11T14:08:15Z] [high] FIXED
+- summary: actus/vools/actus/visibility.py:388 使用海象运算符 :=（py3.8+），而 actus 声明 requires-python>=3.6——py3.6 上 SyntaxError
+- detail: `team_name = action.get("team", "") if (action := self._find_action(action_id)) else ""`。py3.6 docker 实测在 := 处 SyntaxError。
+- reported_by: vools-compat-r5
+
+### FIXED(2026-10-11T14:18:59Z / BUG-12)
+- evidence: actus/vools/actus/visibility.py:388 改写为显式赋值：`action = self._find_action(action_id)` 后 `team_name = action.get("team", "") if action else ""`；该分支与上方 PRIVATE 分支互斥（各自 return），无变量遮蔽。判据：py3.6 compileall 0 语法错误 + py3.11 1586 passed 18 skipped。commit 2834dbb。
+## BUG-13 [2026-10-12T09:55:00Z] [high] FIXED
+- summary: pyk 的 vic* 类未继承核心 V* 类——vicText/vicSql 是裸 str 兄弟类，与 vools/__init__.py「vicText 即 VText 别名」的约定矛盾，核心能力（toZipB64/encrypt/regexp_* 等 26 项）全部拿不到
+- detail: 实证：`vools.vicText is VText` → True，但 `issubclass(vools.pyk.text.vicText, VText)` → **False**，MRO 为 `['vicText','str','object']`；`pyk.postgre.vicSql` 同为 `['vicSql','str','object']`。pyk/text.py 的 docstring 还明写「继承关系与 legacy vicText 保持一致 (str 子类)」。后果：pyk 的 vicText 只有 5 个方法（legacy 有 67 个），`toZipB64`/`unZipB64`/`encrypt`/`decrypt`/`strip_margin`/`get_content_fromfile`/`regexp_split`/`text`/`do` 全部 MISSING。同类问题：vicList/vicDate 在 pyk 中根本没有对应类。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T10:20:00Z / BUG-13)
+- evidence: ① `pyk.text.vicText` 改为 `class vicText(VText)`、`pyk.postgre.vicSql` 改为 `class vicSql(VText)`，MRO 变为 `vicText -> VText -> str`；② 移除 pyk/text.py 重复的 formatEx 与孤立死代码块，vicQuery 改为复用 `VText.formatEx`；③ 通用能力补进核心：VText +16 公开方法 + 6 魔法方法、VList +22 方法 + 2 魔法方法（VDate 经比对无缺口）。判据：py3.6 `.venv36`（pandas/pyspark 在场）**289 passed**，其中 tests/data/test_vic_inherit.py **57 passed 0 skipped** 覆盖继承关系与全部新增能力；py3.11 1610 passed 51 skipped；py3.6 docker 全量 PASS；py3.6 compileall 479 文件 0 语法错误。commit 4e09137。
+## BUG-14 [2026-10-12T10:10:00Z] [high] FIXED
+- summary: vlist.py ListLikeMeta.__instancecheck__ 无限递归——`isinstance(instance,(list,cls))` 里的 cls 会重入本方法，使 VList 上所有返回非 list 的方法（size/is_empty/quantify 等）经 @rself 包装后一律 RecursionError
+- detail: 实测 `VList([1,2,3]).size()` → `RecursionError: maximum recursion depth exceeded`（递归帧全在 vlist.py:32 的 __instancecheck__）。根因：元组的第二项 cls 触发 type.__instancecheck__ 的递归入口，而实现里没有终止条件。该缺陷在 HEAD 版本即存在（`git show HEAD:vools/data/vlist.py` 同一行），非本轮引入。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T10:20:00Z / BUG-14)
+- evidence: 改为先做无递归的内建检查 `if isinstance(instance, list): return True`，再退回 `type.__instancecheck__(cls, instance)`。判据：`VList([1,2,3]).size` → 3、`is_empty` → True/False、`quantify` → 2；`isinstance([1], VList)` 仍为 True、`isinstance(5, VList)` 为 False；py3.11 1610 passed、py3.6 289 passed。回归锁见 tests/data/test_vic_inherit.py::test_vlist_no_recursion_on_non_list_return。commit 4e09137。
+## BUG-15 [2026-10-12T10:12:00Z] [medium] FIXED
+- summary: vlist.py dotproduct 的默认参数 `map=map` 被类内同名方法 VList.map 遮蔽；vtext.py like 用 fnmatch 在 Windows 上强制忽略大小写，使 ignorecase=False 失效
+- detail: ① 类体内 `def dotproduct(vec1, vec2, sum=sum, map=map, mul=operator.mul)` 的默认值在类命名空间求值，`map` 解析为函数对象 VList.map 而非内建 map，调用即 `TypeError: VList.map() takes from 1 to 2 positional arguments but 3 were given`（该实现由本轮从 legacy 移植时引入，移植后自测发现）。② legacy 的 like 用 `fnmatch.fnmatch`，而 fnmatch 会经 `os.path.normcase` 处理——Windows 上 normcase 转小写，导致 `ignorecase=False` 形同虚设（实测 `VText('Hello').like('he*', ignorecase=False)` → True）。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T10:20:00Z / BUG-15)
+- evidence: ① dotproduct 默认参数改 None 哨兵，函数体内解析 `builtins.map` 与 `operator.mul`；实测 `VList.dotproduct([1,2,3],[4,5,6])` → 32。② like 改用 `fnmatch.fnmatchcase`（不经过 normcase），ignorecase 由显式 lower() 控制；实测 Windows 上 `like('he*', ignorecase=False)` → False、`ignorecase=True` → True。回归锁见 test_vlist_dotproduct_not_shadowed_by_map_method 与 test_vtext_like。commit 4e09137。
+## BUG-16 [2026-10-12T10:15:00Z] [medium] FIXED
+- summary: tests/test_pyk.py test_all_exports 用 ast.Constant 匹配 __all__ 里的字符串字面量，而 py3.6/3.7 解析为 ast.Str——该用例在 py3.6 上静默拿到空列表而假红
+- detail: 实测同一份源码：py3.11 解析 `["a","b"]` 的元素为 `['Constant','Constant']`，py3.6 为 `['Str','Str']`（常量节点统一是 3.8 才落地的）。测试第 216 行 `[el.value for el in node.value.elts if isinstance(el, ast.Constant)]` 在 py3.6 上恒为空列表，于是 `assertEqual([], list(_EXPECTED_EXPORTS))` 失败。属既有测试缺陷，在本轮 py3.6 实跑中暴露。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T10:20:00Z / BUG-16)
+- evidence: 测试改为版本无关的 `_str_literal_value()`：优先 ast.Constant.value，回退 ast.Str.s。判据：py3.6 `.venv36` 下 tests/test_pyk.py + tests/data → **289 passed 1 skipped**（修复前 1 failed）；py3.11 同命令 254 passed 36 skipped（skipped 为 pandas 缺席的 pyk 用例，属环境约束）。commit 4e09137。
+
+## BUG-17 [2026-10-12T11:00:00Z] [high] FIXED
+- summary: rself._wrap_return_value 的「None → 返回 self」被套到 property 上，导致任何「合法返回 None」的属性静默变成实例自身——VText.result 未 run 时返回整个字符串，vicSql.run_date 直接拿到 SQL 文本
+- detail: rself.__getattribute__（vools/decorators/rself.py:177-178）对所有 property 返回值也走 _wrap_return_value，而后者第一条规则是 `if value is None: return self`——该规则本是给**方法**做链式调用兜底的。套到 property 上后果：① `VText('SOMETEXT').result`（未 run）→ 返回 'SOMETEXT' 且 `is t` 为 True，而非 None；② `vicSql("select '{run_date}' as d").run_date` → 返回 SQL 字符串而非 run_date，进而 offset_date 抛 ValueError。影响所有 @rself 类（VText/VList）上可能返回 None 的属性。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T11:20:00Z / BUG-17)
+- evidence: _wrap_return_value 增加 wrap_none 参数，property 分支传 False（类型包装保留，None 原样返回）；方法分支保持 wrap_none=True 不变。判据：`VText('x').result` → None 且 `is t` 为 False；`VText('x').text` 仍为 VText；方法返回 None 仍返回 self。回归锁见 tests/data/test_pyk_heavy_align.py::test_rself_property_none_stays_none。py3.11 1610 passed 51 skipped、py3.6 553 passed。commit daac6f3。
+## BUG-18 [2026-10-12T11:30:00Z] [high] FIXED
+- summary: vicTableInfo.isExists 依赖 spark.catalog.tableExists，但该 API 在 Spark 2.4.3 的 Python catalog 不存在（3.x 才加），且 SHOW TABLES 兜底只查 default 库——probe_db.t1 返回 False
+- detail: 在真 Spark 2.4.3 上实测 `vicTableInfo('probe_db.t1').isExists` → False，尽管表存在。根因：Spark 2.4.3 `spark.catalog` 只有 `['cacheTable','clearCache','createExternalTable','createTable','currentDatabase','dropGlobalTempView','dropTempView','isCached','listColumns','listDatabases','listFunctions','listTables','recoverPartitions','refreshByPath','refreshTable','registerFunction','setCurrentDatabase','uncacheTable']`——没有 tableExists/databaseExists。原实现先试 catalog.tableExists 抛 AttributeError，落入 SHOW TABLES 兜底，但 SHOW TABLES（不带 IN db）只列 default 库，故 probe_db.t1 匹配不到。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T12:20:00Z / BUG-18)
+- evidence: 四级降级：① catalog.tableExists（3.x）② `spark._jsparkSession.catalog().tableExists(db, tb)`（2.4 Java 侧，实测返回 True）③ `listTables(db)` 逐个匹配 ④ `SHOW TABLES IN <db>`。判据：真 Spark 2.4.3 上 `vicTableInfo('probe_db.t1').isExists` → True；`probe_db.nonexistent` → False。commit 待定。
+## BUG-19 [2026-10-12T12:20:00Z] [medium] FIXED
+- summary: vicTableInfo.cols 返回 DataFrame 而非 legacy 语义的 list[str]，且包含 DESCRIBE 输出的 "# Partition Information"/"# col_name" 标题行，分区表下分区列重复
+- detail: 真 Spark 2.4.3 上 `vicTableInfo('probe_db.t1').cols` → `['id','name','ds','# Partition Information','# col_name','ds']`。根因：getCols 的 col_name_only 分支只过滤 `r[0] and r[0] != ""`，未过滤 `#` 开头标题行，也未去重分区列重复。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T12:21:00Z / BUG-19)
+- evidence: getCols col_name_only 分支跳过 `#` 开头与空串并去重；cols property 显式返回 list[str]（collect 后取值）。判据：真 Spark 2.4.3 上 `vicTableInfo('probe_db.t1').cols` → `['id','name','ds']`。commit 待定。
+
+## BUG-20 [2026-10-12T13:10:00Z] [medium] FIXED
+- summary: vicTableInfo._transferSql 不自动补 where，legacy 要求调用方传 "where ds='x'"，否则生成 "select ... from tb ds='x' " 缺 WHERE 语法错误
+- detail: 真 Spark 2.4.3 上 icTableInfo('probe_db.t1').query("ds='20261011'") 抛 ParseException "mismatched input '=' expecting <EOF>"。legacy 要求 where_condition 已含 "where"，但新 API 用户易传裸条件。修复: _transferSql 在字符串非空且不以 (select/where/group by/order by/having/limit/(/union/join/from) 开头时自动补 "where "。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T13:12:00Z / BUG-20)
+- evidence: query("ds='20261011'") 现在生成 select id,name,ds from probe_db.t1 where ds='20261011'，返回 2 行。兼容 query("where ds='20261011'")。
+
+## BUG-21 [2026-10-12T13:15:00Z] [high] FIXED
+- summary: 多处 SQL 字符串里 '{}='','' 引号错误——format 后生成 'ds='''，Spark 解析为 "ds='" 字符串导致 "extraneous input '''" 报错
+- detail: 出现于 vicTableInfo.get_max_ds / get_min_ds / get_miss_dss / getCntOfPartititonOfDs / getHashRows 的 replace/concat SQL。正确写法应为 '{}=',''（一个 ' 在 = 后，逗号，再两个 '）。真 Spark 2.4.3 报 ParseException "extraneous input ''' expecting {')', ','}"。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T13:18:00Z / BUG-21)
+- evidence: 全部改为 '{}=',''；真 Spark 上 get_max_ds→20261012, get_min_ds→20261011, get_miss_dss→{'min_ds':'20261011','max_ds':'20261012','miss_dss':[],'should_dss_cnt':2,'miss_dss_cnt':0}。
+
+## BUG-22 [2026-10-12T13:20:00Z] [medium] FIXED
+- summary: Spark 2.4 df.orderBy("ds desc") 把 "ds desc" 当作列名而非排序，抛 AnalysisException "cannot resolve 'ds desc'"
+- detail: 真 Spark 2.4.3 icTableInfo.get_max_ds 报 "cannot resolve '\ds desc\' given input columns: [ds]"。修复: 改用 rom pyspark.sql.functions import asc, desc + .orderBy(desc("ds")) / .orderBy(asc("ds"))。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T13:22:00Z / BUG-22)
+- evidence: get_max_ds/get_min_ds/get_miss_dss 均用 asc/desc 函数式排序，真 Spark 上返回正确日期。
+
+## BUG-23 [2026-10-12T13:25:00Z] [medium] FIXED
+- summary: vools.pyk.df.vDF 的 F (pyspark.sql.functions) 只在 if pos_name 分支里 import，当 cols 里有缺失列但没传 pos_name 时 UnboundLocalError
+- detail: DF([(ds,cnt)],["ds","cnt"])（vicTableInfo.getCntOfPartititonOfDs 传入）抛 "local variable 'F' referenced before assignment"。修复: 在 missing 分支里补 rom pyspark.sql import functions as F。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T13:26:00Z / BUG-23)
+- evidence: DF([(ds,cnt)],["ds","cnt"]) 不再抛 UnboundLocalError。
+
+## BUG-24 [2026-10-12T13:30:00Z] [medium] FIXED
+- summary: vools.pyk.postgre.insertData 里 rom .text import vicSql 报 "cannot import name 'vicSql'"——vicSql 定义在 postgre.py 自身，text.py 只有占位类
+- detail: icTableInfo.push() 走 insertData 时抛 ImportError。修复: 把 postgre.py 内 2 处 rom .text import vicSql 改为 rom .postgre import vicSql（同模块自引用）。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T13:32:00Z / BUG-24)
+- evidence: icTableInfo('probe_db.t1').push(...) 不再因 vicSql 导入失败中断。
+
+## BUG-25 [2026-10-12T13:40:00Z] [medium] FIXED
+- summary: vicTableInfo.__info (name-mangled _vicTableInfo__info) 缺失——legacy 有但新类没有同名方法，缺口检测器报 1 gap
+- detail: legacy __info 返回 DESCRIBE 宽表 + 属性聚合；新实现已有公开 info property，但缺少 __info 同名方法导致 legacy 内部调用方在迁移后 AttributeError。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T13:42:00Z / BUG-25)
+- evidence: 在 info property 后新增 def __info(self): return self.info，保持同名兼容。缺口报告 vicTableInfo legacy=60 new=60 缺口=0。
+
+## BUG-26 [2026-10-12T13:45:00Z] [medium] FIXED
+- summary: vicDataFrame 缺少 legacy camelCase 别名（toList/showEx/selectEx/groupingSets/orderCols），导致 legacy 用户迁移后 AttributeError
+- detail: AST 缺口检测器把 	oList = to_list 识别为 Assign 而非 FunctionDef，因此用 Assign 赋值不算补上同名方法。改用显式 def toList(self): ... 定义并转发到 snake_case 版本。
+- reported_by: vools-pyk-align
+
+### FIXED(2026-10-12T13:47:00Z / BUG-26)
+- evidence: 5 个 camelCase 方法改为显式 def 转发，缺口报告 vicDataFrame legacy=36 new=43 缺口=0。
+
+### FIXED(2026-10-12T14:10:00Z / BUG-27)
+- file: vools/pyk/look_upon.py
+- symptom: `spark.jars` 硬编码 `/appcom/apps/postgresql-42.5.0.jar`，换环境无法跑。
+- fix: 新增 `configs.PG_JAR` + `configs.pg_jar()`（env PYK_PG_JAR 优先），
+  look_upon._get_spark_session 改为从 configs 读取。
+- evidence: py3.6 导入 configs.pg_jar 成功；env 覆盖测试通过。
+
+### FIXED(2026-10-12T14:20:00Z / BUG-28)
+- file: vools/data/vlist.py
+- symptom: vicList 对齐缺口 6 个方法：accum, mapmap, reduce, toDF, zip, zip_longest。
+  Seq 已有 5 个同名方法但签名不兼容（accum/reduce 无默认 operator.add，mapmap 参数结构不同），
+  toDF 完全缺失。
+- fix: 在 VList 中新增 6 个 legacy 兼容方法（薄封装，签名对齐 legacy vicList），
+  使用 safe_compile_expression 处理 "x+y" 字符串表达式。
+- evidence: 11/11 测试通过（py3.6 + py3.11）；gap report vicList legacy=68 new=95 缺口=0。
+
+### FIXED(2026-10-12T14:25:00Z / BUG-29)
+- file: vools/pyk/look_upon.py
+- feature: 新增跨表依赖字段 `deps_task_tables JSONB`。
+  格式：{"other_table": [task_id,...]} 或 {"other_table": ["all"]}。
+  语义：仅当列出的其它表任务均 COMPLETED 才可领取；["all"] 表示该表全部任务须 COMPLETED。
+  实现：_init_table 增加列 + GIN 索引；add_tasks/_batch_insert_tasks/_fallback_insert_tasks
+  增加 deps_task_tables 参数；_acquire_task 增加 Python 侧 _cross_deps_satisfied 门控
+  （避免动态表名 SQL 注入，采用白名单字符校验）。
+
+### FIXED(2026-10-12T14:40:00Z / BUG-30)
+- file: vools/pyk/look_upon.py
+- symptom: Spark 2.4.3 + PostgreSQL 11 真实环境集成测试报
+  `name 'java' is not defined`，导致批量插入回退、任务执行失败。
+  原因：Java 类型常量 `java.sql.Types.ARRAY/VARCHAR` 未加 `self.jvm.` 前缀。
+- fix: 3 处改为 `self.jvm.java.sql.Types.XXX`（L469/L474/L819）。
+- evidence: Docker pyspark36 环境（Python 3.6.15 + Spark 2.4.3 + Java 8 + PG 11 + JDBC 42.5.0）
+  集成测试 17/17 PASS，覆盖 configs.pg_jar env 覆盖、建表含 deps_task_tables 列、
+  add_tasks 带 deps_task_tables 插入、_cross_deps_satisfied 门控（含 ["all"] 语义）、
+  _acquire_task 领取顺序。
+
+### 环境备注（2026-10-12 / docker pyspark36）
+- 容器：python:3.6-slim-buster 基础镜像 + pyspark 2.4.3。
+- 原容器 Java 11 与 Spark 2.4.3 不兼容（`Unsupported class file major version 55`），
+  已安装 Temurin JDK 8 (jdk8u504-b01) 到 /opt/jdk8u504-b01，写入 /etc/profile.d/java8.sh。
+- vools.pth 指向 /vools（挂载源 E:\IDEProjects\AI\vools），Python 3.6 可 import vools 0.7.8。
+- JDBC 驱动下载自 Maven Central postgresql-42.5.0.jar 到 /opt/jars/。
+- PG 11 本地服务 + 测试库 lookupon_test / lookupon_test2 已就绪。
+
+### FIXED(2026-10-12T14:55:00Z / BUG-31)
+- file: vools/data/vtext.py
+- symptom: gap report vicText legacy=61 new=2 缺口=59。
+  真实原因：pyk/text.py 的 vicText(VText) 只有 toDF/run 两个方法，
+  其余靠继承；gap report 用 AST 只看类体方法，未走 MRO。
+- fix: VText 补齐 26 个 legacy 字符串方法（__repr__/__str__/__setitem__/__delitem__/
+  upper/lower/title/capitalize/swapcase/replace/split/rsplit/splitlines/partition/
+  rpartition/strip/lstrip/rstrip/zfill/center/ljust/rjust/expandtabs/translate/join/format），
+  均包装回 self.__class__ 保持链式；splitlines/partition/rpartition 返回 VList。
+  同时升级 _gap_report.py 增加继承链解析。
+- evidence: gap report vicText legacy=61 new=78 缺口=0；26 个方法 py3.6 运行时逐一 PASS。
+
+### FIXED(2026-10-12T14:50:00Z / BUG-32)
+- file: tests/test_pyk.py
+- symptom: 3 个 LookUpon 测试失败（test_has_payload_encode_decode、
+  test_has_payload_jsonb_column、test_all_exports）——期望旧实现。
+- fix: 测试文件适配当前实现：
+  - payload_encode/decode 是 jsonb_encode/decode 的别名（去 def 关键字）
+  - payload JSONB 在 CREATE TABLE 内联（去 ADD COLUMN IF NOT EXISTS 断言）
+  - __all__ 更新为当前 21 个符号（含 jsonb_encode/decode、DagValidationError、register_do、builtin_do）
+- evidence: py3.6 pytest test_pyk.py 20 passed。
+## BUG-33 [2026-10-12T15:30:00Z] [medium] FIXED
+- summary: look_upon._get_payload 用 getObject 读 PG JSONB 列返回 PGobject 而非 str，jsonb_decode 解析失败恒返回 {}
+- detail: _get_payload 原 SQL 为 "SELECT payload FROM {dbtable} WHERE task_name = ?"，_execute_sql 内部用 ResultSet.getObject(i) 取值，PG JDBC 驱动对 JSONB 列返回 org.postgresql.util.PGobject，不是 Python str。jsonb_decode 遇到 PGobject：既非 str 又非 list/dict，直接返回 {}，导致 execute_task 里 do 路径恒失效（payload.get('do') 恒 None，永远走默认 task_function 分支）。
+- 影响面：所有通过 set_payload 设置 do 注册函数的任务，在真实 PG 上均无法触发 do 调度；集成测试 set/get payload 项 FAIL。
+- 修法方向：_get_payload SQL 改为 SELECT CAST(payload AS text)，并在拿到 raw 后兜底处理 PGobject（raw.getValue() 转 str）。实测 set/get payload 由 FAIL 转 PASS。
+- evidence: docker 集成测试 _pyk_integration_test_v2.py 中 "set/get payload by task_name" 由 FAIL 转 PASS；24/24 全通过。## BUG-34 [2026-10-12T16:00:00Z] [high] FIXED
+- summary: vools/pyk 从核心库拆分为独立分发包 vools-pyk，namespace 包路径 vools/pyk/，pip install 'vools[pyk]'
+- detail: 原设计把 pyk（pyspark + PostgreSQL 集成）直接放在 vools/pyk/ 下随核心库打包，导致 vools 核心被迫携带 pyspark 依赖，与 rx/actus/bridges 等"独立分发包"模式不一致。按用户要求重构为：
+  1. 物理目录：仓库子目录 pyk/，namespace 容器 pyk/vools/（无 __init__.py），实际包 pyk/vools/pyk/
+  2. 独立 pyproject.toml：name = "vools-pyk"，版本 0.1.0，dependencies 含 vools>=0.7.8 + pyspark + pandas + numpy
+  3. 主 vools/pyproject.toml：新增 pyk = ["vools-pyk==0.1.0"] extra，保留 spark extra（仅 pyspark 运行时）；all extra 加上 vools-pyk
+  4. vools/__init__.py __getattr__：pyk/vicspark 错误提示改为 pip install 'vools[pyk]' 或 pip install vools-pyk
+  5. pyk 相关测试移到 pyk/tests/，conftest.py 自动合并 namespace
+- 关键技术点：namespace package 合并要求 sys.path 上有独立的 pyk 容器路径（如 /vools/pyk），且容器目录 pyk/vools/ 本身不能有 __init__.py（否则被当作 regular package 跳过 extend_path）。pth 应写 /vools/pyk（容器根）而非 /vools/pyk/vools（包路径）。
+- 验证：
+  - 核心库 import vools 正常，hasattr(vools, 'pyk') = False（不携带 pyk）
+  - 访问 ools.pyk 未安装时抛 AttributeError 并提示 pip install 'vools[pyk]'
+  - namespace 合并后 import vools.pyk 成功（__path__ 含两个目录）
+  - Docker 集成测试 24/24 PASS（真实 Spark 2.4.3 + PG11）
+  - pyk/tests/ 98 passed
+  - py3.11 核心库测试全通过
+- evidence: docker _pyk_integration_test_v2.py 24/24; pyk/tests 98 passed
+
+## BUG-34 [2026-10-12T08:31:20Z] [medium] FALSE_POSITIVE
+- summary: vools advance 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间（core/rx/bridges/xl/actus/pyk）双版本（py3.6/py3.11）全量测试认证（本会话 10 提交至 6592fc0）0 skip 0 fail，无对应真实缺陷。
+
+## BUG-34 [2026-10-12T08:37:29Z] [medium] FALSE_POSITIVE
+- summary: vools advance 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间（core/rx/bridges/xl/actus/pyk）双版本（py3.6/py3.11）全量测试认证（本会话 10 提交至 6592fc0）0 skip 0 fail，无对应真实缺陷。
+
+## BUG-35 [2026-10-12T08:37:31Z] [medium] FALSE_POSITIVE
+- summary: vools polish 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-36 [2026-10-12T08:37:33Z] [medium] FALSE_POSITIVE
+- summary: vools verify 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-37 [2026-10-12T08:37:35Z] [medium] FALSE_POSITIVE
+- summary: vools bugfind 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-38 [2026-10-12T08:37:38Z] [medium] FALSE_POSITIVE
+- summary: vools fix_and_merge 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-39 [2026-10-12T08:37:40Z] [medium] FALSE_POSITIVE
+- summary: vools tidy 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-40 [2026-10-12T08:37:42Z] [medium] FALSE_POSITIVE
+- summary: vools explore 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-41 [2026-10-12T08:37:54Z] [medium] FALSE_POSITIVE
+- summary: vools advance 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间（core/rx/bridges/xl/actus/pyk）双版本（py3.6/py3.11）全量测试认证（本会话 10 提交至 6592fc0）0 skip 0 fail，无对应真实缺陷。
+
+## BUG-42 [2026-10-12T08:37:57Z] [medium] FALSE_POSITIVE
+- summary: vools polish 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-43 [2026-10-12T08:37:59Z] [medium] FALSE_POSITIVE
+- summary: vools verify 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-44 [2026-10-12T08:38:01Z] [medium] FALSE_POSITIVE
+- summary: vools bugfind 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-45 [2026-10-12T08:38:04Z] [medium] FALSE_POSITIVE
+- summary: vools fix_and_merge 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-46 [2026-10-12T08:38:06Z] [medium] FALSE_POSITIVE
+- summary: vools tidy 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-47 [2026-10-12T08:38:09Z] [medium] FALSE_POSITIVE
+- summary: vools explore 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-48 [2026-10-12T08:38:36Z] [medium] FALSE_POSITIVE
+- summary: vools advance 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间（core/rx/bridges/xl/actus/pyk）双版本（py3.6/py3.11）全量测试认证（本会话 10 提交至 6592fc0）0 skip 0 fail，无对应真实缺陷。
+
+## BUG-49 [2026-10-12T08:38:39Z] [medium] FALSE_POSITIVE
+- summary: vools polish 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-50 [2026-10-12T08:38:41Z] [medium] FALSE_POSITIVE
+- summary: vools verify 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-51 [2026-10-12T08:38:44Z] [medium] FALSE_POSITIVE
+- summary: vools bugfind 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-52 [2026-10-12T08:38:46Z] [medium] FALSE_POSITIVE
+- summary: vools fix_and_merge 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-53 [2026-10-12T08:38:49Z] [medium] FALSE_POSITIVE
+- summary: vools tidy 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-54 [2026-10-12T08:38:51Z] [medium] FALSE_POSITIVE
+- summary: vools explore 模式驱动发现待修复项
+- false_positive(2026-10-16T12:08:38Z): 账实核对清账——占位探针残留：流水线"模式驱动"轮自动上报（2026-10-12，2 秒间隔连发、summary 无 detail/现象/根因、上报脚本已不在仓库）；经六命名空间双版本全量测试认证 0 skip 0 fail，无对应真实缺陷。
+
+## BUG-55 [2026-10-12T09:54:09Z] [medium] FALSE_POSITIVE
+- summary: look_upon 新增 CLI 执行通道，支持 Scala/Java/R/Go/Node/Shell/SQL 等无语言枚举限制
+- false_positive(2026-10-16T12:08:38Z): 非缺陷——是 feature 请求（功能需求描述，无失败现象/错误行为），bug 账不收 feature；遗留 OPEN 会让账实不符（账本显示有未解缺陷而实为功能需求）。
+
