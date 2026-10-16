@@ -11,11 +11,19 @@ from functools import reduce,wraps
 from inspect import isgeneratorfunction,signature
 from collections import deque
 from operator import itemgetter
-from ..functional.placeholder import _
 from ..config import config
 
 __all__ = ['Seq','NONE','collect']
-_expr = _.__expr__
+
+# data <-> functional 循环依赖打破：seq 在包加载期【不能】顶层 import functional.placeholder。
+# 链路：import vools.data → data/__init__ :11 import seq → seq 若顶层 from ..functional.placeholder，
+# 会强制 vools.functional/__init__ 运行，其 :42 `from ..data import Seq` 撞上 data 尚在
+# 部分初始化（Seq 还没定义）→ ImportError（py3.11 实测必崩；py3.6 仅因主包 eager 预加载
+# 顺序不同侥幸绕过）。`_`/`_.__expr__` 只在这些 lambda 运行期才用到，故延迟到首次调用再取。
+def _expr(*args, **kwargs):
+    from ..functional.placeholder import _
+    return _.__expr__(*args, **kwargs)
+
 _NONE_is_None = config.other['NONE_is_None']
 
 class _NONE:
