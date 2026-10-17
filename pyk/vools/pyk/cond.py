@@ -9,6 +9,8 @@ legacy 文件位置: pyk/_dec7z/vools.py  L6005-6275
 import inspect as ins
 from collections.abc import Iterable
 
+__all__ = ["ConditionBuilder", "sig", "iif"]
+
 
 class ConditionBuilder:
     _OPERATORS = {
