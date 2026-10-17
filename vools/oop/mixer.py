@@ -261,7 +261,8 @@ class Mixer(Mixer_):
         Args:
             func_name: 函数名
         """
-        self._attr_code.pop(func_name)
+        self._attr_code.pop(func_name, None)
+        self._attr_cache.pop(func_name, None)
 
     def add_extra_code(self, func_name: str, 
                       func_shell: Optional[Callable[[Callable[..., Any]], Callable[..., Any]]] = None,
