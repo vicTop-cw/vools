@@ -39,13 +39,6 @@ __all__ = [
     "compile_and_run",
     "r_module",
     "RBridge",
-    "decorator",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
-    "run_project",
 ]
 
 import os

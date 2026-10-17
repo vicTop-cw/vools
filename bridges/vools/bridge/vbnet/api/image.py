@@ -7,16 +7,6 @@ Image 模块 - 图像处理与截图
 
 __all__ = [
     "ImageModule",
-    "ScreenCapture",
-    "CaptureFullScreen",
-    "OpenImage",
-    "SaveImage",
-    "GetPixelColor",
-    "SetPixelColor",
-    "ChangeSize",
-    "CropImage",
-    "RotateFlip",
-    "CreateNewBitmap",
 ]
 
 from typing import Any, Optional

@@ -12,7 +12,6 @@ __all__ = [
     "infer_r_types",
     "serialize_args",
     "deserialize_result",
-    "register_type",
     "get_r_type",
     "infer_r_types",
     "serialize_args",

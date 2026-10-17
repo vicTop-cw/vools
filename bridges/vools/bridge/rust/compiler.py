@@ -13,16 +13,6 @@ __all__ = [
     "compile_rust_code",
     "is_rust_available",
     "RustBridge",
-    "compile",
-    "is_available",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "rustc_available",
-    "cargo_available",
-    "call_func",
-    "set_dependencies",
 ]
 
 import os

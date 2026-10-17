@@ -42,12 +42,6 @@ __all__ = [
     "cjc_compiler_available",
     "compile_and_run",
     "CjBridge",
-    "result",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
 ]
 
 import os

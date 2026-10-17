@@ -13,13 +13,6 @@ __all__ = [
     "VBScriptFuture",
     "VBScriptBridge",
     "compile_and_run",
-    "result",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
-    "run_project",
 ]
 
 import os

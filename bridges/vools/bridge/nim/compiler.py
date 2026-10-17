@@ -15,12 +15,6 @@ __all__ = [
     "NimFuture",
     "compile_and_run",
     "NimBridge",
-    "result",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
     "PY_TO_NIM_TYPE",
     "NIM_TO_CTYPES",
 ]

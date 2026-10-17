@@ -16,15 +16,6 @@ __all__ = [
     "DartFuture",
     "compile_and_run",
     "DartBridge",
-    "result",
-    "done",
-    "add_done_callback",
-    "cancel",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
 ]
 
 import os

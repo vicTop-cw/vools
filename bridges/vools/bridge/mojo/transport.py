@@ -19,15 +19,6 @@ __all__ = [
     "ZincTransport",
     "get_transport",
     "set_transport",
-    "prepare_arg",
-    "prepare_ret",
-    "decode_result",
-    "prepare_arg",
-    "prepare_ret",
-    "decode_result",
-    "prepare_arg",
-    "prepare_ret",
-    "decode_result",
 ]
 
 from typing import Any, Tuple

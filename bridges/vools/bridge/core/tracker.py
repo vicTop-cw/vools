@@ -8,13 +8,6 @@ vools.bridge.core.tracker - 编译记录追踪器
 __all__ = [
     "CompileTracker",
     "get_tracker",
-    "make_record_key",
-    "get_record",
-    "upsert_record",
-    "is_changed",
-    "log_error",
-    "get_db_path",
-    "close",
 ]
 
 import os

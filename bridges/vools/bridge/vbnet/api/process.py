@@ -7,14 +7,6 @@ Process 模块 - 进程管理
 
 __all__ = [
     "ProcessModule",
-    "Start",
-    "Shell",
-    "GetProcesses",
-    "GetProcessesByName",
-    "Kill",
-    "WaitForExit",
-    "HasExited",
-    "GetProcessId",
 ]
 
 from typing import Optional

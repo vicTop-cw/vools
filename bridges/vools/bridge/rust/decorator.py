@@ -8,7 +8,6 @@ vools.bridge.rust.decorator - Rust 动态编译装饰器
 
 __all__ = [
     "rust_module",
-    "decorator",
 ]
 
 from .compiler import _rust_bridge
