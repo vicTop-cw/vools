@@ -20,6 +20,8 @@ from vools.core.dataclass_compat import dataclass, field
 from enum import Enum
 from collections import deque
 
+from ._proc import run_cmd_safe as _run_cmd_safe  # noqa: F401  (进程树安全 subprocess)
+
 
 class DepStrategy(Enum):
     """依赖懒加载策略。"""
@@ -295,14 +297,7 @@ class DependencyResolver:
     def _check_system_cmd(self, dep: Dependency) -> DepCheckResult:
         """检查系统命令。"""
         try:
-            r = subprocess.run(
-                ["where", dep.name],
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                timeout=5,
-            )
+            r = _run_cmd_safe(["where", dep.name], timeout=5)
             if r.returncode == 0 and r.stdout.strip():
                 return DepCheckResult(
                     dep.name, True,
@@ -461,8 +456,7 @@ class DependencyResolver:
         try:
             if result.fix_command.startswith("pip install"):
                 pkg = result.fix_command.replace("pip install ", "").strip()
-                r = subprocess.run([sys.executable, "-m", "pip", "install", pkg],
-                                   capture_output=True, text=True, timeout=120)
+                r = _run_cmd_safe([sys.executable, "-m", "pip", "install", pkg], timeout=120)
                 return r.returncode == 0
             elif result.fix_command.startswith("cd "):
                 # 提取 cd 路径和后续命令
@@ -470,10 +464,10 @@ class DependencyResolver:
                 if len(parts) >= 2:
                     cwd = parts[0].replace("cd ", "").strip()
                     cmd = " && ".join(parts[1:])
-                    r = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=120)
+                    r = _run_cmd_safe(cmd, shell=True, cwd=cwd, timeout=120)
                     return r.returncode == 0
             else:
-                r = subprocess.run(result.fix_command, shell=True, capture_output=True, text=True, timeout=120)
+                r = _run_cmd_safe(result.fix_command, shell=True, timeout=120)
                 return r.returncode == 0
         except Exception:
             return False
@@ -489,8 +483,8 @@ class DependencyResolver:
             else:
                 cmd = f"pipx run {dep.name}"
             try:
-                r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-                return r.returncode == 0, r.stdout + r.stderr
+                r = _run_cmd_safe(cmd, shell=True, timeout=60)
+                return r.returncode == 0, (r.stdout or '') + (r.stderr or '')
             except FileNotFoundError:
                 return False, f"ephemeral 工具不可用: {cmd}"
             except Exception as e:
