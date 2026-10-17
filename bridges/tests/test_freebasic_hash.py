@@ -1,27 +1,33 @@
-from vools.bridge.freebasic import fbc
-from vools.bridge.freebasic.modules import get_module
+"""Auto-converted to pytest function (fix BUG-298).
+Original script body now runs only when this test is invoked,
+so pytest collection no longer hangs on compiler probes.
+"""
 
-hash_code = get_module('hash_wrapper')
+def test_run_freebasic_hash():
+    from vools.bridge.freebasic import fbc
+    from vools.bridge.freebasic.modules import get_module
 
-@fbc(module_code=hash_code)
-def hash_string(input_str: str) -> str:
-    '''
-    dim as zstring * 1024 out_str
-    dim as long result = fb_hash_md5(input_str, @out_str, 1024)
-    return @out_str
-    '''
+    hash_code = get_module('hash_wrapper')
 
-result = hash_string('')
-print('MD5 of empty:', result)
+    @fbc(module_code=hash_code)
+    def hash_string(input_str: str) -> str:
+        '''
+        dim as zstring * 1024 out_str
+        dim as long result = fb_hash_md5(input_str, @out_str, 1024)
+        return @out_str
+        '''
 
-import hashlib
-expected = hashlib.md5(b'').hexdigest()
-print('Expected:', expected)
-print('Match:', result == expected)
+    result = hash_string('')
+    print('MD5 of empty:', result)
 
-print()
-result = hash_string('test')
-print('MD5 of test:', result)
-expected = hashlib.md5(b'test').hexdigest()
-print('Expected:', expected)
-print('Match:', result == expected)
+    import hashlib
+    expected = hashlib.md5(b'').hexdigest()
+    print('Expected:', expected)
+    print('Match:', result == expected)
+
+    print()
+    result = hash_string('test')
+    print('MD5 of test:', result)
+    expected = hashlib.md5(b'test').hexdigest()
+    print('Expected:', expected)
+    print('Match:', result == expected)
