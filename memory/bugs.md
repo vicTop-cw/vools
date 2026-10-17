@@ -755,3 +755,39 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 ### FIXED(2026-10-16T21:30:00Z / BUG-79)
 - evidence: 真源修复 vools/sql/__init__.py：__all__ 摘掉 mysql/oracle/mssql 三个空头名并注释点名"要加方言请连子模块实现一起加"；docstring 子模块清单改为实测存在的四个 + manager.py；去掉重复的 'manager'（保留函数区那条，子模块仍可用完整路径 importlib 取）。_load_mysql/_load_oracle/_load_mssql 保留（供将来补实现时复用），注释写明本分发目前没有这些子模块。
   判据：① RED —— 修复前锁报 `mysql 子模块在本分发不存在，却仍挂在 __all__ 上` 与 `__all__ 重复名: ['manager']`；② 修复后 tests/sql 6 格双版本 exit=0（含通用格 __all__ 每名字必须 hasattr 得到）；③ 属性访问三个存在的方言全部可得，不存在的 mysql 如实抛 AttributeError。
+## BUG-81 [2026-10-17T13:18:17Z] [medium] FIXED
+- summary: api.memoize.benchmark 极快函数 elapsed=0 触发 ZeroDivisionError（time.time 分辨率不足 + 未防除零）
+- detail: 现象：tests/test_api_memoize_cmd.py::TestBenchmark::test_basic 报 ZeroDivisionError: float division by zero。benchmark 命令用 time.time() 计时（Windows 上分辨率仅 ~1ms），10 次迭代的 lambda x: x+1 总耗时 < 1ms 被量成 0.0，line 119 的 iterations/elapsed 直接除零。修法：计时改用 time.perf_counter() + 加防御 if elapsed <= 0: elapsed = 1e-9。回归锁 TestBenchmarkZeroElapsed 用 monkeypatch 把 _now_sec 钉成恒 0，强制 elapsed=0，断言不再崩溃。RED-GREEN：去掉 guard 后 FAIL，恢复后 PASS。提交 d55c74b。
+- reported_by: polish-lead
+
+
+
+### FIXED(2026-10-17T13:18:27Z / BUG-81)
+- evidence: 真源修复：vools/api/memoize_cmd.py ① 计时改用 time.perf_counter()（Windows ~100ns 分辨率）；② 加防御 if elapsed <= 0: elapsed = 1e-9。回归锁 tests/test_api_memoize_cmd.py 新增 TestBenchmarkZeroElapsed，monkeypatch 把 _now_sec 钉成恒 0 强制 elapsed=0。RED-GREEN 实测：去掉 guard 后该测试 FAIL（ZeroDivisionError），恢复后 PASS（11 passed）。提交 d55c74b，已推 gitcode main。
+## BUG-82 [2026-10-17T13:32:59Z] [medium] FIXED
+- summary: api.memoize.call --repeat 0 触发 ZeroDivisionError（total_time/repeat 除零）+ timing_decorator 混用 time.time/perf_counter 导致 elapsed 为 -1.79e9
+- detail: 现象：call 命令传 --repeat 0 时，for i in range(0) 不执行，total_time 保持 0，line 83 total_time/repeat = 0/0 除零崩溃（ZeroDivisionError: division by zero）。附带发现：timing_decorator 的 start 仍用 time.time() 而 elapsed 用 _now_sec()（time.perf_counter），两者混用导致 elapsed ≈ perf_counter - time ≈ -1.79e9 秒，TestTimingDecorator::test_basic 断言 elapsed >= 0 失败。修法：① call 加 `if repeat <= 0: raise typer.BadParameter(...)`；② timing_decorator 的 start 也改用 _now_sec()。回归锁 TestCall::test_repeat_zero_no_crash。提交 743ec5b。
+- reported_by: polish-lead
+
+
+
+### FIXED(2026-10-17T13:33:08Z / BUG-82)
+- evidence: 真源修复：vools/api/memoize_cmd.py ① call 命令加 `if repeat <= 0: raise typer.BadParameter(...)`；② timing_decorator 的 start 改用 _now_sec()（原为 time.time()，与 elapsed 的 _now_sec() 混用导致 perf_counter - time ≈ -1.79e9）。回归锁 tests/test_api_memoize_cmd.py 新增 TestCall::test_repeat_zero_no_crash。RED-GREEN 实测：去掉 guard 后 FAIL（ZeroDivisionError），恢复后 PASS（12 passed）。提交 743ec5b，已推 gitcode main。
+## BUG-83 [2026-10-17T13:43:32Z] [medium] FIXED
+- summary: pipe_ops.Ops.mean 生成器/空迭代器 ZeroDivisionError（sum 消耗生成器后 len 得 0，或 0/0）
+- detail: 现象：vools.functional.pipe_ops.Ops.mean 对生成器或空迭代器抛 ZeroDivisionError。① 生成器 `(x for x in [1,2,3]) | Ops.mean`：sum(it) 消耗生成器后，第二遍 sum(1 for _ in it) 得 0，0/0 除零。② 空迭代器 `[] | Ops.mean`：sum=0 len=0，0/0 除零。修法：先 list(it) 材质化再算 mean，空列表返回 0。提交 f669b4c。
+- reported_by: polish-lead
+
+
+
+### FIXED(2026-10-17T13:43:40Z / BUG-83)
+- evidence: 真源修复：vools/functional/pipe_ops.py 把 `mean = static_pipe1(lambda it: sum(it) / sum(1 for _ in it))` 改为 `static_pipe1(lambda it: (lambda xs: sum(xs)/len(xs) if xs else 0)(list(it)))`。回归锁 tests/functional/test_pipe_ops.py 新增 TestPipeOpsMeanZeroDiv 4 条。RED-GREEN：去掉修复后 generator+empty 两条 FAIL（ZeroDivisionError），恢复后 PASS（24 passed）。提交 f669b4c，已推 gitcode main。
+## BUG-84 [2026-10-17T13:53:42Z] [medium] FIXED
+- summary: md.advanced.benchmark_parse/generate iterations=0 触发 ZeroDivisionError（sum/len 空列表除零）
+- detail: 现象：vools.md.advanced.benchmark_parse 和 benchmark_generate 传 iterations=0 时，times 列表为空，sum(times)/len(times) = 0/0 除零崩溃（ZeroDivisionError）。min/max 也会对空列表抛 ValueError。实测：benchmark_parse('# Hi', iterations=0) 与 benchmark_generate(doc, iterations=0) 均抛 ZeroDivisionError。修法：两个函数入口加 `if iterations <= 0: raise ValueError("iterations must be positive")`。提交 495d9ce。
+- reported_by: polish-lead
+
+
+
+### FIXED(2026-10-17T13:53:49Z / BUG-84)
+- evidence: 真源修复：vools/md/advanced.py 的 benchmark_parse 与 benchmark_generate 函数入口各加 `if iterations <= 0: raise ValueError("iterations must be positive")`。回归锁 tests/md/test_advanced.py 新增 TestBenchmarkZeroIterations 3 条。RED-GREEN：去掉 guard 后 parse/generate 两条 FAIL（ZeroDivisionError），恢复后 PASS（31 passed）。提交 495d9ce，已推 gitcode main。
