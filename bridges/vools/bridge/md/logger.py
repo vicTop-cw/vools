@@ -4,6 +4,14 @@ vools.bridge.md logger — 日志系统
 提供统一的日志接口，支持控制台和文件输出。
 """
 
+
+__all__ = [
+    "get_logger",
+    "set_level",
+    "add_file_handler",
+    "remove_file_handler",
+]
+
 import logging
 import sys
 from typing import Optional, Dict
@@ -62,3 +70,4 @@ def remove_file_handler(filepath: str) -> None:
     if key in _handlers:
         get_logger().removeHandler(_handlers[key])
         _handlers.pop(key)
+

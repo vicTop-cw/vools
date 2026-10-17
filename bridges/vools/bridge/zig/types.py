@@ -1,4 +1,10 @@
 """vools.bridge.zig.types - Python ↔ Zig 类型映射"""
+
+__all__ = [
+    "get_zig_type",
+    "get_zig_ctype",
+]
+
 import ctypes
 
 PY_TO_ZIG_TYPE = {
@@ -32,3 +38,4 @@ def get_zig_type(py_type):
 
 def get_zig_ctype(zig_type):
     return ZIG_TO_CTYPES.get(zig_type, ctypes.c_void_p)
+

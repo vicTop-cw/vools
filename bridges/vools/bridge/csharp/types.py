@@ -7,6 +7,13 @@ vools.bridge.csharp.types - Python ↔ C# ↔ ctypes 类型映射
 3. Python → ctypes 类型（复用 core.types）
 """
 
+
+__all__ = [
+    "get_cs_type",
+    "get_cs_ctype",
+    "infer_cs_argtypes",
+]
+
 import ctypes
 
 # Python → C# 类型映射（用于生成 C# 函数签名）

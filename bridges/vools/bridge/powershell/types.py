@@ -1,4 +1,10 @@
 """vools.bridge.powershell.types - Python ↔ PowerShell 类型映射"""
+
+__all__ = [
+    "get_ps_type",
+    "get_ps_ctype",
+]
+
 import ctypes
 
 PY_TO_PS_TYPE = {
@@ -26,3 +32,4 @@ def get_ps_type(py_type):
 
 def get_ps_ctype(ps_type):
     return PS_TO_CTYPES.get(ps_type, ctypes.c_void_p)
+

@@ -7,6 +7,13 @@ vools.bridge.vbnet.types - Python ↔ VB.NET ↔ ctypes 类型映射
 3. Python → ctypes 类型（复用 core.types）
 """
 
+
+__all__ = [
+    "get_vb_type",
+    "get_vb_ctype",
+    "infer_vb_argtypes",
+]
+
 import ctypes
 
 PY_TO_VB_TYPE = {
@@ -106,3 +113,4 @@ def infer_vb_argtypes(args):
         vb_types.append(vb_type)
         ctypes_types.append(get_vb_ctype(vb_type))
     return vb_types, ctypes_types
+

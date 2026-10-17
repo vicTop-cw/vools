@@ -1,5 +1,11 @@
 """MoonBit 类型映射"""
 
+
+__all__ = [
+    "get_moonbit_type",
+    "get_python_type",
+]
+
 from typing import Optional, Type
 
 # Python 类型到 MoonBit 类型的映射
@@ -43,3 +49,4 @@ def get_moonbit_type(py_type: Optional[Type]) -> str:
 def get_python_type(moonbit_type: str) -> Optional[Type]:
     """将 MoonBit 类型转换为 Python 类型"""
     return MOONBIT_TO_PY_TYPE.get(moonbit_type, str)
+

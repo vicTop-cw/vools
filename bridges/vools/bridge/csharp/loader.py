@@ -4,6 +4,12 @@ vools.bridge.csharp.loader - 预编译 C# 库加载器
 加载 vools/lib/ 下的预编译 C# DLL。
 """
 
+
+__all__ = [
+    "get_cs_lib",
+    "is_csharp_available",
+]
+
 from ..core.loader import load_library
 
 _CS_LIBS = {}

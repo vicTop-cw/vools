@@ -5,6 +5,13 @@ vools.bridge.nim.base64_shim - Base64 Nim 桥接 Python shim
 如果 Nim 库不可用，回退到纯 Python 实现。
 """
 
+
+__all__ = [
+    "base64_encode",
+    "base64_decode",
+    "is_nim_base64_available",
+]
+
 import sys
 import ctypes
 from pathlib import Path
@@ -91,3 +98,4 @@ def base64_decode(data: str) -> bytes:
 def is_nim_base64_available() -> bool:
     """检查 Nim Base64 库是否可用"""
     return _lib is not None
+

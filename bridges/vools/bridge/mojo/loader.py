@@ -6,6 +6,12 @@ vools.bridge.mojo.loader - 预编译 Mojo 共享库加载器
 本次不实现具体业务模块（crypto/seq/...），仅提供加载基础设施。
 """
 
+
+__all__ = [
+    "get_mojo_lib",
+    "is_mojo_available",
+]
+
 import ctypes
 import os
 
@@ -40,3 +46,4 @@ def is_mojo_available():
     调用方应回退到 Python 实现。
     """
     return get_mojo_lib('vools_mojo_demo') is not None
+

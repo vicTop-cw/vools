@@ -5,6 +5,12 @@ vools.bridge.rust.decorator - Rust 动态编译装饰器
 支持同步和异步两种模式。
 """
 
+
+__all__ = [
+    "rust_module",
+    "decorator",
+]
+
 from .compiler import _rust_bridge
 
 rust = _rust_bridge.decorator

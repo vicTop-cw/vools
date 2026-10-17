@@ -4,6 +4,12 @@ vools.bridge.md config — Lua 配置加载
 复用 vools.bridge.lua 桥接执行 Lua 配置代码，结果 JSON 回传。
 """
 
+
+__all__ = [
+    "load_config",
+    "load_config_from_block",
+]
+
 import json
 import os
 from typing import Dict, Any, Optional
@@ -100,3 +106,4 @@ def _execute_lua_config(lua_code: str, config_path: str) -> Dict[str, Any]:
         return {}
     except Exception:
         return {}
+

@@ -1,4 +1,10 @@
 """vools.bridge.kotlin.types - Python ↔ Kotlin 类型映射"""
+
+__all__ = [
+    "get_kotlin_type",
+    "get_kotlin_ctype",
+]
+
 import ctypes
 
 PY_TO_KOTLIN_TYPE = {
@@ -26,3 +32,4 @@ def get_kotlin_type(py_type):
 
 def get_kotlin_ctype(kotlin_type):
     return KOTLIN_TO_CTYPES.get(kotlin_type, ctypes.c_void_p)
+

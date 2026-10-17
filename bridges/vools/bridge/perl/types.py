@@ -1,4 +1,10 @@
 """vools.bridge.perl.types - Python ↔ Perl 类型映射"""
+
+__all__ = [
+    "get_perl_type",
+    "get_perl_ctype",
+]
+
 import ctypes
 
 PY_TO_PERL_TYPE = {
