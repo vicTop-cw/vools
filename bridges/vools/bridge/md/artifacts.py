@@ -9,6 +9,7 @@ __all__ = [
     "is_artifact_stale",
     "register_artifact",
     "clean_build",
+    "guess_type",
 ]
 
 import hashlib
@@ -176,4 +177,29 @@ def clean_build(
     if os.path.exists(tmp_dir):
         for fname in os.listdir(tmp_dir):
             os.unlink(os.path.join(tmp_dir, fname))
+
+
+# ═══════════════════════════════════════════════════════
+# 产物类型感知（计划 D5）
+# ═══════════════════════════════════════════════════════
+
+#: 扩展名 → 产物类型（D5 类型集合：text/image/svg/html/json/binary）
+_ARTIFACT_KIND_BY_EXT = {
+    "txt": "text", "md": "text", "markdown": "text", "log": "text",
+    "csv": "text", "yaml": "text", "yml": "text", "toml": "text", "ini": "text",
+    "py": "text", "js": "text", "ts": "text", "java": "text", "c": "text",
+    "cpp": "text", "h": "text", "rs": "text", "go": "text", "sh": "text",
+    "ps1": "text", "bat": "text", "xml": "text",
+    "png": "image", "jpg": "image", "jpeg": "image", "gif": "image",
+    "webp": "image", "bmp": "image", "tiff": "image", "ico": "image",
+    "svg": "svg",
+    "html": "html", "htm": "html",
+    "json": "json",
+}
+
+
+def guess_type(path: str) -> str:
+    """按扩展名判断产物类型（计划 D5；未知回退 binary）。"""
+    ext = os.path.splitext(str(path))[1].lower().lstrip(".")
+    return _ARTIFACT_KIND_BY_EXT.get(ext, "binary")
 

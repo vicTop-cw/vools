@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "vools-bridge-md": {
+      "command": "fist-mbt",
+      "args": ["serve"],
+      "timeout_ms": 30000,
+      "env": {
+        "FIST_CALLER": "vools-bridge-md"
+      },
+      "disabled": false
+    }
+  }
+}
