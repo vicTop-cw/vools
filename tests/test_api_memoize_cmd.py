@@ -11,7 +11,7 @@ from vools.api.memoize_cmd import (
 runner = CliRunner()
 
 __all__ = ["TestParseLambda", "TestTimingDecorator", "TestCall",
-           "TestBenchmark", "TestApp", "TestImport"]
+           "TestBenchmark", "TestBenchmarkZeroElapsed", "TestApp", "TestImport"]
 
 
 class TestParseLambda:
@@ -74,6 +74,19 @@ class TestBenchmark:
         ])
         assert result.exit_code == 0
         assert "总耗时" in result.output
+
+
+class TestBenchmarkZeroElapsed:
+    """回归：极快函数下 elapsed 可能为 0，除零直接崩溃（ZeroDivisionError）。"""
+
+    def test_zero_elapsed_no_crash(self, monkeypatch):
+        # 强制 perf_counter 恒返回同一值 -> elapsed = 0 -> 除零
+        monkeypatch.setattr("vools.api.memoize_cmd._now_sec", lambda: 0.0)
+        result = runner.invoke(memoize_app, [
+            "benchmark", "lambda x: x + 1", "1", "--iterations", "10"
+        ])
+        assert result.exit_code == 0
+        assert "每秒操作数" in result.output
 
 
 class TestApp:
