@@ -3,6 +3,15 @@
 
 负责调用 32 位 Python 来执行 DLL 函数。
 """
+
+__all__ = [
+    "Python32Process",
+    "get_process",
+    "start",
+    "call",
+    "stop",
+]
+
 import os
 import subprocess
 import json
@@ -357,3 +366,4 @@ def get_process():
     if _process is None:
         _process = Python32Process()
     return _process
+

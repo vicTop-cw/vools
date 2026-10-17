@@ -17,6 +17,15 @@ ProgID: RC6.cRC6
     crypto = rc6.Crypto
     http = rc6.Http
 """
+
+__all__ = [
+    "RC6",
+    "EncodingWrapper",
+    "CryptoWrapper",
+    "HttpWrapper",
+    "create",
+]
+
 from typing import Optional
 from ._base import COMObject
 
@@ -226,3 +235,4 @@ class HttpWrapper(COMObject):
             响应内容
         """
         return self._obj.Post(url, data, timeout)
+

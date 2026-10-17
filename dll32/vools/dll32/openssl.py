@@ -3,6 +3,13 @@ VB6OpenSSL.dll 包装模块
 
 提供便捷的 HTTPS 请求功能。
 """
+
+__all__ = [
+    "OpenSSL",
+    "get",
+    "post",
+]
+
 from .dll import dll32
 
 
@@ -52,3 +59,4 @@ class OpenSSL:
 
 # 全局实例
 openssl = OpenSSL()
+

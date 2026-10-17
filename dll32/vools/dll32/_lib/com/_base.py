@@ -3,6 +3,14 @@ COM 对象包装基类
 
 提供基于 comtypes 的 COM 对象封装。
 """
+
+__all__ = [
+    "COMObject",
+    "create_com_object",
+    "create",
+    "get_active",
+]
+
 from typing import Optional, Any, Dict
 import os
 import sys
@@ -101,3 +109,4 @@ def create_com_object(prog_id: str, *, cls: type = COMObject) -> COMObject:
         COMObject 实例
     """
     return cls.create(prog_id)
+

@@ -3,6 +3,12 @@
 
 提供与 32 位 Python 进程的 JSON-RPC 通信。
 """
+
+__all__ = [
+    "call_dll",
+    "ping",
+]
+
 from ._spawn32 import get_process
 
 

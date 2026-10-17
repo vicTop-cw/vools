@@ -30,6 +30,15 @@ VBRichClient5 是一个功能丰富的 VB6 扩展库，提供了：
     dc = DirectCOM()
     constructor = dc.create("vbRichClient5.cConstructor")
 """
+
+__all__ = [
+    "RC6Plus",
+    "get_rc6",
+    "constructor",
+    "crypt",
+    "fso",
+]
+
 from typing import Optional, Any, Dict, Tuple
 
 from .directcom import DirectCOM
@@ -371,3 +380,4 @@ def get_rc6() -> RC6Plus:
     if _rc6_plus is None:
         _rc6_plus = RC6Plus()
     return _rc6_plus
+

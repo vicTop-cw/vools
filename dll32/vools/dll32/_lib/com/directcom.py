@@ -25,6 +25,15 @@ DirectCOM 免注册 COM 加载支持
     dc = DirectCOM()
     obj = dc.create("vbRichClient5.cConstructor")
 """
+
+__all__ = [
+    "DirectCOM",
+    "create_object",
+    "enable_regfree",
+    "create",
+    "create_with_pythoncom",
+]
+
 import os
 import sys
 import ctypes
@@ -244,3 +253,4 @@ def create_object(prog_id: str, dll_dir: Optional[str] = None) -> Any:
     """
     dc = DirectCOM(dll_dir)
     return dc.create(prog_id)
+

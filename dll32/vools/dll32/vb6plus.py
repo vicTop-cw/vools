@@ -3,6 +3,15 @@ VB6Plus.dll 包装模块
 
 提供便捷的 VB6Plus.dll 函数调用。
 """
+
+__all__ = [
+    "VB6Plus",
+    "base64_encode_gb",
+    "base64_decode_gb",
+    "base64_encode_utf8",
+    "base64_decode_utf8",
+]
+
 from .dll import dll32
 
 
@@ -493,3 +502,4 @@ class VB6Plus:
 
 # 全局实例
 vb6plus = VB6Plus()
+
