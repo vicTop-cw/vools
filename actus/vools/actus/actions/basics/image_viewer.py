@@ -2,6 +2,11 @@
 Image Viewer Action - 图片浏览器
 """
 
+
+__all__ = [
+    "ImageViewerAction",
+]
+
 from typing import Dict, Any
 from ...model import Action
 from ...executor import execute
