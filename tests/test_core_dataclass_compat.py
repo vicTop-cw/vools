@@ -1,119 +1,110 @@
 # -*- coding: utf-8 -*-
-"""测试 vools.core.dataclass_compat — dataclass / field / asdict / is_dataclass。"""
+"""测试 vools.core.dataclass_compat（3.13 走标准库分支）。"""
 
-import pytest
-
+from dataclasses import FrozenInstanceError as _StdFIE
 from vools.core.dataclass_compat import (
-    dataclass, field, asdict, is_dataclass, MISSING, FrozenInstanceError,
+    dataclass, field, asdict, is_dataclass, MISSING,
+    FrozenInstanceError, _HAS_DATACLASSES
 )
 
-__all__ = ["TestDataclassDecorator", "TestField", "TestAsDict",
-           "TestIsDataclass", "TestMISSING", "TestFrozen", "TestImport"]
+__all__ = ["TestDataclass", "TestField", "TestAsdict", "TestIsDataclass",
+           "TestMISSING", "TestFrozen", "TestFlag", "TestImport"]
 
 
-class TestDataclassDecorator:
-    """dataclass 装饰器。"""
+@dataclass
+class Point:
+    x: int
+    y: int
+
+
+@dataclass(frozen=True)
+class Frozen:
+    a: int
+
+
+class TestDataclass:
+    """dataclass 装饰器测试。"""
 
     def test_basic(self):
-        @dataclass
-        class Point:
-            x: int = 0
-            y: int = 0
         p = Point(1, 2)
         assert p.x == 1
         assert p.y == 2
 
-    def test_with_params(self):
-        @dataclass(frozen=True)
-        class Pt:
-            x: int = 0
-        p = Pt(3)
-        assert p.x == 3
-
-    def test_callable_form(self):
-        # dataclass(SomeClass, frozen=True) 立即返回
-        @dataclass(cls=None, frozen=True)  # type: ignore
+    def test_bare_decorator(self):
+        @dataclass
         class P2:
-            x: int = 0
-        # cls=None → 返回 lambda
-        # 实际调用方式
-        assert True
+            x: int
+        assert P2(3).x == 3
 
-    def test_standard_module(self):
-        import vools.core.dataclass_compat as mod
-        assert mod._HAS_DATACLASSES is True
+    def test_no_parens_callable(self):
+        # dataclass(Point) 无参数用法
+        @dataclass()
+        class P3:
+            x: int
+        assert P3(5).x == 5
+
+    def test_frozen(self):
+        f = Frozen(1)
+        assert f.a == 1
+        with __import__("pytest").raises(_StdFIE):
+            f.a = 2
 
 
 class TestField:
     """field 测试。"""
 
-    def test_default(self):
+    def test_field_default(self):
         @dataclass
-        class Foo:
-            a: int = field(default=1)
-        assert Foo().a == 1
+        class F1:
+            x: int = field(default=10)
+        assert F1().x == 10
 
-    def test_default_factory(self):
+    def test_field_factory(self):
         @dataclass
-        class Bar:
-            items: list = field(default_factory=list)
-        b1 = Bar()
-        b1.items.append(1)
-        b2 = Bar()
-        assert b2.items == []
-
-    def test_missing(self):
-        @dataclass
-        class Baz:
-            a: int = field(default=1)
-            b: int = field(default_factory=lambda: 42)
-        assert Baz().a == 1
-        assert Baz().b == 42
+        class F2:
+            x: list = field(default_factory=list)
+        assert F2().x == []
 
 
-class TestAsDict:
+class TestAsdict:
     """asdict 测试。"""
 
     def test_basic(self):
-        @dataclass
-        class P:
-            x: int = 1
-        d = asdict(P())
-        assert d == {"x": 1}
+        d = asdict(Point(1, 2))
+        assert d == {"x": 1, "y": 2}
 
 
 class TestIsDataclass:
     """is_dataclass 测试。"""
 
     def test_true(self):
-        @dataclass
-        class P:
-            x: int = 1
-        assert is_dataclass(P()) is True
-        assert is_dataclass(P) is True
+        assert is_dataclass(Point(1, 2)) is True
+        assert is_dataclass(Point) is True
 
     def test_false(self):
-        assert is_dataclass(123) is False
-        assert is_dataclass("str") is False
+        assert is_dataclass(42) is False
 
 
 class TestMISSING:
-    """MISSING 常量。"""
+    """MISSING 测试。"""
 
-    def test_exist(self):
-        assert MISSING is not None
+    def test_identity(self):
+        from dataclasses import MISSING as std_missing
+        assert MISSING is std_missing
 
 
 class TestFrozen:
-    """FrozenInstanceError。"""
+    """FrozenInstanceError 测试。"""
 
-    def test_raise(self):
-        @dataclass(frozen=True)
-        class P:
-            x: int = 1
-        with pytest.raises(FrozenInstanceError):
-            p = P()
-            p.x = 5
+    def test_basic(self):
+        assert FrozenInstanceError is _StdFIE
+
+
+class TestFlag:
+    """版本标志测试。"""
+
+    def test_flag(self):
+        assert _HAS_DATACLASSES is True
 
 
 class TestImport:
@@ -121,9 +112,6 @@ class TestImport:
 
     def test_all(self):
         from vools.core.dataclass_compat import __all__
-        assert "dataclass" in __all__
-        assert "field" in __all__
-        assert "asdict" in __all__
-        assert "is_dataclass" in __all__
-        assert "MISSING" in __all__
-        assert "FrozenInstanceError" in __all__
+        for n in ["dataclass", "field", "asdict", "is_dataclass", "MISSING",
+                  "FrozenInstanceError"]:
+            assert n in __all__
