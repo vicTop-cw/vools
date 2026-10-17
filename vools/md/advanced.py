@@ -333,6 +333,8 @@ def benchmark_parse(text: str, iterations: int = 100) -> Dict:
     Returns:
         包含 avg_ms / min_ms / max_ms / total_ms 的字典
     """
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
     times = []
     for _ in range(iterations):
         start = time.perf_counter()
@@ -351,6 +353,8 @@ def benchmark_parse(text: str, iterations: int = 100) -> Dict:
 
 def benchmark_generate(ast, iterations: int = 100) -> Dict:
     """基准测试：生成性能。"""
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
     times = []
     for _ in range(iterations):
         start = time.perf_counter()
