@@ -57,11 +57,11 @@ def _probe_wsl(cmd, per_try_timeout: float, attempts: int = 4, backoff: float = 
     """
     for i in range(max(1, attempts)):
         try:
-            r = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                timeout=per_try_timeout,
-            )
+            # 用 `_run_cmd_timeout`：Windows 上 `subprocess.run(timeout=N)`
+            # 只杀直接子进程，wsl.exe 挂住会泄漏孤儿进程。
+            # 惰性 import 避免 core/wsl ↔ probe 循环依赖风险。
+            from ..probe import _run_cmd_timeout
+            r = _run_cmd_timeout(cmd, timeout=per_try_timeout)
             if r.returncode == 0:
                 return True, True
             # rc!=0：WSL VM 正在重启时 wsl.exe 会【快速】返回非零（不是超时），单次
@@ -206,16 +206,16 @@ def wsl_run(cmd_args: List[str], timeout: int = 60,
     """通过 WSL 运行命令，自动处理编码问题"""
     wsl_cmd = ['wsl'] + cmd_args
     if text:
-        result = subprocess.run(
+        from ..probe import _run_cmd_timeout
+        result = _run_cmd_timeout(
             wsl_cmd,
-            stdout=stdout, stderr=stderr,
             timeout=timeout,
         )
         result.stdout = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
         result.stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
         return result
-    return subprocess.run(wsl_cmd, stdout=stdout, stderr=stderr,
-                          timeout=timeout, text=text, **kwargs)
+    from ..probe import _run_cmd_timeout
+    return _run_cmd_timeout(wsl_cmd, timeout=timeout)
 
 
 def resolve_command(local_name: str) -> tuple:
