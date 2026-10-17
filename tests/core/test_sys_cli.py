@@ -33,8 +33,14 @@ def _core_only_env():
 
 
 def _run(args, code=None):
-    """跑一个子进程，返回 (returncode, stdout, stderr)。"""
-    cmd = [sys.executable] + args
+    """跑一个子进程，返回 (returncode, stdout, stderr)。
+
+    用 `-S` 关掉 site 初始化：仓库根以 editable 方式同时装了 vools-bridges /
+    vools-actus 等子包，它们的 `__editable__.*.finder.__path_hook__` 会被挂进
+    site-packages 的 sys.path，导致【即使 PYTHONPATH 只放 REPO_ROOT】`import
+    vools.bridge` 依然成功 —— 隔离失效。`-S` 确保只看到 PYTHONPATH 里的东西。
+    """
+    cmd = [sys.executable, '-S'] + args
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                        cwd=REPO_ROOT, env=_core_only_env(),
                        universal_newlines=True, timeout=180)

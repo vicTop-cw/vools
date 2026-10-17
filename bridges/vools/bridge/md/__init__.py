@@ -91,6 +91,36 @@ def __dir__():
     """在既有模块属性基础上追加惰性 webview2 导出名（保持 dir() 完整）。"""
     return sorted(set(globals().keys()) | set(_WEBVIEW2_EXPORTS))
 
+
+# ── py3.6 兜底（PEP 562 在 3.6 不生效）──────────────────
+# 本包声明 requires-python >= 3.6，而模块级 __getattr__ 只在 3.7+ 生效：
+# py3.6 下 `from vools.bridge.md import render_webview2` 不会触发 __getattr__，
+# 直接抛 AttributeError。这里在 3.6 上主动预加载 webview2 子模块，把
+# _WEBVIEW2_EXPORTS 里的名字提前绑进 globals()，使两种版本行为一致。
+# 与 vools.bridge / vools.sql 的做法对齐（try/except 兜住缺失 pythonnet）。
+import sys as _sys  # noqa: E402
+
+if _sys.version_info < (3, 7):
+    try:
+        from .webview2 import (  # type: ignore
+            render_webview2,
+            generate_html_file,
+            send_to_webview,
+            execute_script_in_webview,
+            close_webview_window,
+            get_active_webview_windows,
+            get_webview2_mode,
+            WebView2Config,
+            WebView2Event,
+            WebView2Result,
+            WebView2Manager,
+            WebView2Mode,
+            WebView2Theme,
+            WebView2EventType,
+        )
+    except Exception:  # pragma: no cover - py3.6 only; 缺 pythonnet/pywebview 时静默降级
+        pass
+
 __all__ = [
     # parser
     "parse_md",
