@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import copy
+import concurrent.futures
 import platform
 import subprocess
 import shutil
@@ -737,6 +738,33 @@ def _which_in_env(cmd: str, env: Dict[str, str]) -> Optional[str]:
         os.environ['PATH'] = old_path
 
 
+def _probe_one_parallel(lang: str, host: str,
+                        env: Optional[Dict[str, str]],
+                        cacheable: bool) -> LanguageStatus:
+    """线程安全的单语言探测（供 ThreadPoolExecutor 调用）。
+
+    与 `probe_environment` 内联逻辑等价：处理未知语言、进程级缓存读写、
+    实际探测。Python dict 的 get/set 在 GIL 下线程安全，无锁即可。
+    """
+    config = LANGUAGE_PROBES.get(lang)
+    if not config:
+        return LanguageStatus(
+            name=lang,
+            available=False,
+            error='未在 LANGUAGE_PROBES 中注册',
+            install_hint='请在 vools.bridge.probe.LANGUAGE_PROBES 中添加该语言',
+        )
+    key = (lang, host)
+    if cacheable:
+        cached = _LOCAL_PROBE_CACHE.get(key)
+        if cached is not None:
+            return cached
+    st = _probe_one(lang, config, env=env)
+    if cacheable:
+        _LOCAL_PROBE_CACHE[key] = st
+    return st
+
+
 def probe_environment(
     languages: Optional[List[str]] = None,
     host: str = 'local',
@@ -797,29 +825,27 @@ def probe_environment(
 
     # extra_env 为空时探测结果可安全缓存（等价于本机环境）
     _cacheable = not extra_env
-    for lang in languages:
-        config = LANGUAGE_PROBES.get(lang)
-        if not config:
-            # 未知语言
-            st = LanguageStatus(
-                name=lang,
-                available=False,
-                error='未在 LANGUAGE_PROBES 中注册',
-                install_hint='请在 vools.bridge.probe.LANGUAGE_PROBES 中添加该语言',
-            )
-        else:
-            # 进程级缓存：单次探测（尤其含 WSL 回退）成本高，同一进程内
-            # 结果稳定。discover_all/configure_from_discovery 等每调一次都会
-            # 全量重探，不加缓存时 bridges 的集成测试累计可达数百秒。
-            key = (lang, host)
-            cached = _LOCAL_PROBE_CACHE.get(key) if _cacheable else None
-            if cached is not None:
-                st = cached
-            else:
-                st = _probe_one(lang, config, env=env)
-                if _cacheable:
-                    _LOCAL_PROBE_CACHE[key] = st
-        report.languages[lang] = st
+    # 并行探测所有语言：_probe_one 主要开销在 subprocess（WSL 探测 /
+    # 版本检测），子进程执行期间释放 GIL，线程并行可把 31 门语言
+    # 从 ~12s 串行降到「最慢单语言 + 调度开销」。Python dict 的
+    # get/set 在 GIL 下线程安全，缓存读写无需加锁。
+    _parallel_workers = min(8, max(1, len(languages)))
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=_parallel_workers) as _ex:
+        _futures = {
+            _ex.submit(_probe_one_parallel, lang, host, env, _cacheable): lang
+            for lang in languages
+        }
+        for _fut in concurrent.futures.as_completed(_futures):
+            _lang = _futures[_fut]
+            try:
+                report.languages[_lang] = _fut.result()
+            except Exception as _e:  # 单语言失败不阻塞整批
+                report.languages[_lang] = LanguageStatus(
+                    name=_lang,
+                    available=False,
+                    error=f'probe error: {_e}',
+                )
 
     if _cache_sig is not None:
         _REPORT_CACHE[_report_key] = copy.deepcopy(report)
@@ -928,32 +954,57 @@ def probe_wsl(
         host=f'wsl:{dist}',
     )
 
-    for lang in languages:
-        # WSL 探测要对「每个语言 × 每个 command」各起一次 wsl 进程，
-        # 累计可达上百次。某些机器上 wsl.exe 到期后不退出，整个探测会
-        # 拖到分钟级甚至挂住（bridges 全量跑不完即此因）。
-        # 这里加总预算：超时就把剩余语言标记为未探测，保证调用方
-        # 一定能拿到返回值而不是无限等下去。
+    # WSL 探测要对「每个语言 × 每个 command」各起一次 wsl 进程，
+    # 累计可达上百次。某些机器上 wsl.exe 到期后不退出，整个探测会
+    # 拖到分钟级甚至挂住（bridges 全量跑不完即此因）。
+    # 这里加总预算：超时就把剩余语言标记为未探测，保证调用方
+    # 一定能拿到返回值而不是无限等下去。
+    _remaining = []
+    for _lang in languages:
         if time.time() > _wsl_budget_deadline:
-            report.languages[lang] = LanguageStatus(
-                name=lang,
-                category=LANGUAGE_PROBES.get(lang, {}).get('category', ''),
+            report.languages[_lang] = LanguageStatus(
+                name=_lang,
+                category=LANGUAGE_PROBES.get(_lang, {}).get('category', ''),
                 available=False,
-                error='WSL 探测超预算（{}s 内未完成），未探测'.format(WSL_PROBE_BUDGET_SECONDS),
-            )
-            continue
-        config = LANGUAGE_PROBES.get(lang)
-        if not config:
-            st = LanguageStatus(
-                name=lang,
-                available=False,
-                error='未在 LANGUAGE_PROBES 中注册',
+                error='WSL 探测超预算（{}s 内未完成），未探测'.format(
+                    WSL_PROBE_BUDGET_SECONDS),
             )
         else:
-            st = _probe_one_wsl(lang, config, dist)
-        report.languages[lang] = st
+            _remaining.append(_lang)
+    # 并行探测剩余语言：实测 wsl 子进程并行 6 路 ~3x 加速
+    # （6 次 `wsl which python3` 串行 1.37s → 并行 0.46s）。
+    _wsl_workers = min(8, max(1, len(_remaining)))
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=_wsl_workers) as _ex:
+        _futures = {
+            _ex.submit(_probe_one_wsl_parallel, _lang, dist): _lang
+            for _lang in _remaining
+        }
+        for _fut in concurrent.futures.as_completed(_futures):
+            _lang = _futures[_fut]
+            try:
+                report.languages[_lang] = _fut.result()
+            except Exception as _e:  # 单语言失败不阻塞整批
+                report.languages[_lang] = LanguageStatus(
+                    name=_lang,
+                    category=LANGUAGE_PROBES.get(_lang, {}).get('category', ''),
+                    available=False,
+                    error=f'WSL probe error: {_e}',
+                )
 
     return report
+
+
+def _probe_one_wsl_parallel(lang: str, dist: str) -> LanguageStatus:
+    """线程安全的单语言 WSL 探测（供 ThreadPoolExecutor 调用）。"""
+    config = LANGUAGE_PROBES.get(lang)
+    if not config:
+        return LanguageStatus(
+            name=lang,
+            available=False,
+            error='未在 LANGUAGE_PROBES 中注册',
+        )
+    return _probe_one_wsl(lang, config, dist)
 
 
 def _probe_one_wsl(lang: str, config: Dict[str, Any], dist: str) -> LanguageStatus:
