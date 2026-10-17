@@ -917,9 +917,8 @@ def probe_wsl(
     _dist_info = _WSL_DISTRO_INFO_CACHE.get(dist)
     if _dist_info is None:
         try:
-            check = subprocess.run(
+            check = _run_cmd_timeout(
                 ['wsl', '-d', dist, '--', 'echo', 'wsl-ready'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=10,
             )
             stdout_text = check.stdout.decode('utf-8', errors='ignore')
@@ -928,9 +927,8 @@ def probe_wsl(
                 raise RuntimeError(f'WSL 发行版 {dist} 不可用: {stderr_text}')
             # 获取 WSL 的发行版信息
             try:
-                info = subprocess.run(
+                info = _run_cmd_timeout(
                     ['wsl', '-d', dist, '--', 'cat', '/etc/os-release'],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     timeout=5,
                 )
                 os_info = info.stdout.decode('utf-8', errors='ignore').strip().split('\n')[0] if info.returncode == 0 else 'WSL Linux'
@@ -938,9 +936,8 @@ def probe_wsl(
                 os_info = 'WSL Linux'
             _arch = platform.machine()
             try:
-                arch_info = subprocess.run(
+                arch_info = _run_cmd_timeout(
                     ['wsl', '-d', dist, '--', 'uname', '-m'],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     timeout=5,
                 )
                 _arch = arch_info.stdout.decode('utf-8', errors='ignore').strip() or platform.machine()
@@ -1048,15 +1045,13 @@ def _probe_one_wsl(lang: str, config: Dict[str, Any], dist: str) -> LanguageStat
                 if use_shell and not shell_env:
                     continue
                 if use_shell:
-                    check = subprocess.run(
+                    check = _run_cmd_timeout(
                         ['wsl', '-d', dist, '--', 'bash', '-c', f'{shell_env}; which {cmd}'],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                         timeout=5,
                     )
                 else:
-                    check = subprocess.run(
+                    check = _run_cmd_timeout(
                         ['wsl', '-d', dist, '--', 'which', cmd],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                         timeout=5,
                     )
                 stdout_text = check.stdout.decode('utf-8', errors='ignore').strip()
@@ -1071,16 +1066,14 @@ def _probe_one_wsl(lang: str, config: Dict[str, Any], dist: str) -> LanguageStat
                 try:
                     version_args = config.get('version_args', ['--version'])
                     if shell_env:
-                        result = subprocess.run(
+                        result = _run_cmd_timeout(
                             ['wsl', '-d', dist, '--', 'bash', '-c',
                              f'{shell_env}; {" ".join([cmd] + version_args)}'],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             timeout=5,
                         )
                     else:
-                        result = subprocess.run(
+                        result = _run_cmd_timeout(
                             ['wsl', '-d', dist, '--', cmd] + version_args,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             timeout=5,
                         )
                     # WSL 输出可能是 GBK 编码，统一容错处理
@@ -1553,9 +1546,8 @@ def list_wsl_distributions() -> List[str]:
         return []
 
     try:
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             ['wsl', '--list', '--quiet'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             timeout=10,
         )
         # WSL 输出是 UTF-16 LE 编码
