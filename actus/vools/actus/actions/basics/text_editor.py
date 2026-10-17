@@ -2,6 +2,11 @@
 Text Editor Action - 文本编辑器
 """
 
+
+__all__ = [
+    "TextEditorAction",
+]
+
 from typing import Dict, Any
 from ...model import Action
 from ...executor import execute
