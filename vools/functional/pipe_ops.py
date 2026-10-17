@@ -361,7 +361,9 @@ class Ops:
 
     # Mathematical operations
     prod = static_pipe1(lambda it: reduce(lambda x, y: x * y, it, 1))
-    mean = static_pipe1(lambda it: sum(it) / sum(1 for _ in it))
+    # mean: 先材料化带理器再算，否则生成器被 sum 消耗后
+    # len 得 0 -> 0/0 ZeroDivisionError；空迭代器 0/0 同样爆。
+    mean = static_pipe1(lambda it: (lambda xs: sum(xs) / len(xs) if xs else 0)(list(it)))
     min = static_pipe1(min)
     max = static_pipe1(max)
 

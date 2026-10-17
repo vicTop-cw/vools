@@ -135,3 +135,23 @@ class TestPipeOps:
         numbers = VList([1, 2, 3, 4, 5])
         result = numbers | O("x => list(x)")
         assert result == [1, 2, 3, 4, 5]
+class TestPipeOpsMeanZeroDiv:
+    """回归：Ops.mean 对生成器/空迭代器会 ZeroDivisionError。
+
+    旧实现 sum(it) / sum(1 for _ in it)：生成器被 sum(it) 消耗后
+    第二遍得 0，0/0 除零；空迭代器直接 0/0。
+    """
+
+    def test_mean_list(self):
+        assert [1, 2, 3] | Ops.mean == 2.0
+
+    def test_mean_generator_no_crash(self):
+        # 回归：生成器被 sum 消耗后 len 得 0 -> 0/0
+        assert (x for x in [1, 2, 3]) | Ops.mean == 2.0
+
+    def test_mean_empty_no_crash(self):
+        # 回归：空迭代器 sum=0 len=0 -> 0/0
+        assert [] | Ops.mean == 0
+
+    def test_mean_tuple(self):
+        assert (4, 5, 6) | Ops.mean == 5.0
