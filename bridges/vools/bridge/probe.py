@@ -43,7 +43,11 @@ WSL_PROBE_BUDGET_SECONDS = 90
 # 单语言探测含 PATH 查询 + 版本命令 + WSL 回退（后者最贵），同一进程内
 # 结果稳定；而 discover_all / configure_from_discovery / manager.get_status
 # 等入口会反复触发全量探测，不缓存时 bridges 集成测试累计数百秒。
-_LOCAL_PROBE_CACHE: Dict[Tuple[str, str], Any] = {}
+_LOCAL_PROBE_CACHE: Dict[Tuple[str, str, str], Any] = {}
+# WSL 发行版基本信息缓存（os-release / arch）。`probe_wsl` 每次调用都要
+# 起 3 次 wsl 子进程（echo wsl-ready / cat /etc/os-release / uname -m），
+# 单次 ~0.5s 起，`probe_with_extra_paths` 反复 WSL 回退时累计 10s+。
+_WSL_DISTRO_INFO_CACHE: Dict[str, Dict[str, str]] = {}
 
 # `probe_environment` 整体结果的进程级缓存：key=(languages, extra_env_sig) -> ProbeReport。
 # 单语言探测含 PATH 查询 + 版本命令 + WSL 回退（后者最贵），`probe_with_extra_paths`
@@ -66,6 +70,7 @@ def reset_probe_cache() -> None:
     _LOCAL_PROBE_CACHE.clear()
     _REPORT_CACHE.clear()
     _WSL_PROBE_CACHE.clear()
+    _WSL_DISTRO_INFO_CACHE.clear()
 
 # ============================================================================
 # 语言探测配置
@@ -740,11 +745,12 @@ def _which_in_env(cmd: str, env: Dict[str, str]) -> Optional[str]:
 
 def _probe_one_parallel(lang: str, host: str,
                         env: Optional[Dict[str, str]],
-                        cacheable: bool) -> LanguageStatus:
+                        env_sig: str = 'None') -> LanguageStatus:
     """线程安全的单语言探测（供 ThreadPoolExecutor 调用）。
 
     与 `probe_environment` 内联逻辑等价：处理未知语言、进程级缓存读写、
-    实际探测。Python dict 的 get/set 在 GIL 下线程安全，无锁即可。
+    实际探测。缓存键含 env 签名，不同 `extra_env`（如 PATH）互不污染。
+    Python dict 的 get/set 在 GIL 下线程安全，无锁即可。
     """
     config = LANGUAGE_PROBES.get(lang)
     if not config:
@@ -754,14 +760,12 @@ def _probe_one_parallel(lang: str, host: str,
             error='未在 LANGUAGE_PROBES 中注册',
             install_hint='请在 vools.bridge.probe.LANGUAGE_PROBES 中添加该语言',
         )
-    key = (lang, host)
-    if cacheable:
-        cached = _LOCAL_PROBE_CACHE.get(key)
-        if cached is not None:
-            return cached
+    key = (lang, host, env_sig)
+    cached = _LOCAL_PROBE_CACHE.get(key)
+    if cached is not None:
+        return cached
     st = _probe_one(lang, config, env=env)
-    if cacheable:
-        _LOCAL_PROBE_CACHE[key] = st
+    _LOCAL_PROBE_CACHE[key] = st
     return st
 
 
@@ -823,17 +827,19 @@ def probe_environment(
         host=host,
     )
 
-    # extra_env 为空时探测结果可安全缓存（等价于本机环境）
-    _cacheable = not extra_env
+    # 所有探测结果都可缓存：用 env 签名区分不同环境（extra_env 为空 → 'None'，
+    # 传了 PATH 等 → 按 key=value 排序拼接）。旧实现只在 extra_env 为空时缓存，
+    # `probe_with_extra_paths` 每次全量重探 31 门语言（累计 28s+）。
     # 并行探测所有语言：_probe_one 主要开销在 subprocess（WSL 探测 /
     # 版本检测），子进程执行期间释放 GIL，线程并行可把 31 门语言
     # 从 ~12s 串行降到「最慢单语言 + 调度开销」。Python dict 的
     # get/set 在 GIL 下线程安全，缓存读写无需加锁。
+    _cache_sig_all = _cache_sig if _cache_sig is not None else 'None'
     _parallel_workers = min(8, max(1, len(languages)))
     with concurrent.futures.ThreadPoolExecutor(
             max_workers=_parallel_workers) as _ex:
         _futures = {
-            _ex.submit(_probe_one_parallel, lang, host, env, _cacheable): lang
+            _ex.submit(_probe_one_parallel, lang, host, env, _cache_sig_all): lang
             for lang in languages
         }
         for _fut in concurrent.futures.as_completed(_futures):
@@ -891,32 +897,6 @@ def probe_wsl(
             report.languages[lang] = st
         return report
 
-    # 探测 WSL 发行版
-    try:
-        check = subprocess.run(
-            ['wsl', '-d', dist, '--', 'echo', 'wsl-ready'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=10,
-        )
-        stdout_text = check.stdout.decode('utf-8', errors='ignore')
-        if check.returncode != 0 or 'wsl-ready' not in stdout_text:
-            stderr_text = check.stderr.decode('utf-8', errors='ignore')
-            raise RuntimeError(f'WSL 发行版 {dist} 不可用: {stderr_text}')
-    except Exception as e:
-        report = ProbeReport(
-            platform='WSL (error)',
-            arch=platform.machine(),
-            python_version=sys.version.split()[0],
-            host=f'wsl:{dist}',
-        )
-        st = LanguageStatus(
-            name='<wsl>',
-            available=False,
-            error=str(e),
-        )
-        report.languages['<wsl>'] = st
-        return report
-
     # 在 WSL 中探测每个语言
     if languages is None:
         languages = list(LANGUAGE_PROBES.keys())
@@ -925,27 +905,59 @@ def probe_wsl(
     # 避免上百次 wsl 子进程把调用方拖死。
     _wsl_budget_deadline = time.time() + WSL_PROBE_BUDGET_SECONDS
 
-    # 获取 WSL 的发行版信息
-    try:
-        info = subprocess.run(
-            ['wsl', '-d', dist, '--', 'cat', '/etc/os-release'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=5,
-        )
-        os_info = info.stdout.decode('utf-8', errors='ignore').strip().split('\n')[0] if info.returncode == 0 else 'WSL Linux'
-    except Exception:
-        os_info = 'WSL Linux'
-
-    arch = platform.machine()
-    try:
-        arch_info = subprocess.run(
-            ['wsl', '-d', dist, '--', 'uname', '-m'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=5,
-        )
-        arch = arch_info.stdout.decode('utf-8', errors='ignore').strip() or platform.machine()
-    except Exception:
-        arch = platform.machine()
+    # 探测 WSL 发行版：基本信息（os-release / arch）进程级缓存，避免每次
+    # 调用都起 3 次 wsl 子进程。`probe_with_extra_paths` 反复 WSL 回退时
+    # 能省下 ~10s。
+    _dist_info = _WSL_DISTRO_INFO_CACHE.get(dist)
+    if _dist_info is None:
+        try:
+            check = subprocess.run(
+                ['wsl', '-d', dist, '--', 'echo', 'wsl-ready'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=10,
+            )
+            stdout_text = check.stdout.decode('utf-8', errors='ignore')
+            if check.returncode != 0 or 'wsl-ready' not in stdout_text:
+                stderr_text = check.stderr.decode('utf-8', errors='ignore')
+                raise RuntimeError(f'WSL 发行版 {dist} 不可用: {stderr_text}')
+            # 获取 WSL 的发行版信息
+            try:
+                info = subprocess.run(
+                    ['wsl', '-d', dist, '--', 'cat', '/etc/os-release'],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    timeout=5,
+                )
+                os_info = info.stdout.decode('utf-8', errors='ignore').strip().split('\n')[0] if info.returncode == 0 else 'WSL Linux'
+            except Exception:
+                os_info = 'WSL Linux'
+            _arch = platform.machine()
+            try:
+                arch_info = subprocess.run(
+                    ['wsl', '-d', dist, '--', 'uname', '-m'],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    timeout=5,
+                )
+                _arch = arch_info.stdout.decode('utf-8', errors='ignore').strip() or platform.machine()
+            except Exception:
+                _arch = platform.machine()
+            _dist_info = {'os': os_info, 'arch': _arch}
+            _WSL_DISTRO_INFO_CACHE[dist] = _dist_info
+        except Exception as e:
+            report = ProbeReport(
+                platform='WSL (error)',
+                arch=platform.machine(),
+                python_version=sys.version.split()[0],
+                host=f'wsl:{dist}',
+            )
+            st = LanguageStatus(
+                name='<wsl>',
+                available=False,
+                error=str(e),
+            )
+            report.languages['<wsl>'] = st
+            return report
+    os_info = _dist_info['os']
+    arch = _dist_info['arch']
 
     report = ProbeReport(
         platform=os_info,
