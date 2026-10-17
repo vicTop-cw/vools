@@ -180,15 +180,15 @@ def timeout(func: Callable, seconds: float) -> Callable:
         带超时限制的函数
         
     Note:
-        仅支持类 Unix 系统，使用 signal 实现
+        类 Unix 系统使用 signal.SIGALRM 实现；
+        Windows 平台（无 SIGALRM）降级为 ThreadPoolExecutor 实现。
     """
     import signal
-    
+
     def _timeout_handler(signum, frame):
         raise TimeoutError(f"Function timed out after {seconds} seconds")
-    
-    @wraps(func)
-    def _timeout(*args, **kwargs):
+
+    def _run_with_signal(*args, **kwargs):
         old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
         signal.alarm(int(seconds))
         try:
@@ -196,7 +196,20 @@ def timeout(func: Callable, seconds: float) -> Callable:
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, old_handler)
-    
+
+    @wraps(func)
+    def _timeout(*args, **kwargs):
+        if not hasattr(signal, "SIGALRM"):
+            # Windows: 无 SIGALRM，使用线程池实现
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeout
+            with ThreadPoolExecutor(max_workers=1) as _ex:
+                future = _ex.submit(func, *args, **kwargs)
+                try:
+                    return future.result(timeout=seconds)
+                except _FutureTimeout:
+                    raise TimeoutError(f"Function timed out after {seconds} seconds")
+        return _run_with_signal(*args, **kwargs)
+
     return _timeout
 
 
