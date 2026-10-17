@@ -5,6 +5,23 @@ vools.bridge.vbscript.compiler - VBScript 语言桥接编译器实现
 解释执行和调用逻辑。
 """
 
+
+__all__ = [
+    "vbscript_compiler_available",
+    "get_vbs_type",
+    "infer_vbs_argtypes",
+    "VBScriptFuture",
+    "VBScriptBridge",
+    "compile_and_run",
+    "result",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "run_project",
+]
+
 import os
 import sys
 import tempfile
@@ -875,3 +892,4 @@ def compile_and_run(code: str, func_name: str = 'main',
 
 vbscript = _vbscript_bridge.decorator
 vbs = vbscript
+

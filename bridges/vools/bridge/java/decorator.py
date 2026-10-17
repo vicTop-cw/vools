@@ -6,6 +6,21 @@ vools.bridge.java.decorator - Java 桥接装饰器
 支持同步和异步两种模式。
 """
 
+
+__all__ = [
+    "java_gateway",
+    "java_async",
+    "java_static_bridge",
+    "JavaModule",
+    "bridge_java_class",
+    "AsyncJavaModule",
+    "decorator",
+    "decorator",
+    "wrapper",
+    "JavaModuleWrapper",
+    "AsyncJavaModuleWrapper",
+]
+
 import functools
 import inspect
 import logging
@@ -545,3 +560,4 @@ class AsyncJavaModule:
         AsyncJavaModuleWrapper.__module__ = original_cls.__module__
 
         return AsyncJavaModuleWrapper
+

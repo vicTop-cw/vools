@@ -4,6 +4,30 @@ Window 模块 - 窗口操作
 封装 API.Window COM 对象，提供窗口查找、信息获取、位置大小控制等功能。
 """
 
+
+__all__ = [
+    "WindowModule",
+    "FindWindow",
+    "FindWindowEx",
+    "GetWindowText",
+    "SetWindowText",
+    "GetWindowRect",
+    "GetClientRect",
+    "MoveWindow",
+    "ShowWindow",
+    "CloseWindow",
+    "EnableWindow",
+    "IsWindowExists",
+    "GetClassName",
+    "GetParent",
+    "SetParent",
+    "GetForegroundWindow",
+    "SetForegroundWindow",
+    "GetDesktopWindow",
+    "GetWindowProcessId",
+    "BringWindowToTop",
+]
+
 from typing import Optional, Tuple
 
 from ._base import APIBridgeError, _BaseModule
@@ -237,3 +261,4 @@ class WindowModule(_BaseModule):
 
 
 Window = WindowModule()
+

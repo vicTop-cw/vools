@@ -5,6 +5,27 @@ vools.bridge.freebasic.sqlite3_shim - SQLite3 FreeBASIC 桥接 Python shim
 如果 DLL 不可用，回退到 Python 标准库 sqlite3 实现。
 """
 
+
+__all__ = [
+    "sqlite3_version",
+    "is_sqlite3_available",
+    "Cursor",
+    "Connection",
+    "connect",
+    "execute",
+    "fetchone",
+    "fetchall",
+    "fetchmany",
+    "close",
+    "description",
+    "rowcount",
+    "execute",
+    "commit",
+    "rollback",
+    "close",
+    "cursor",
+]
+
 import ctypes
 import sqlite3 as _py_sqlite3
 
@@ -185,3 +206,4 @@ def connect(database):
     """
     conn = _py_sqlite3.connect(database)
     return Connection(conn)
+

@@ -4,6 +4,12 @@ vools.bridge.nim._loader - Nim 库加载器
 处理 Nim 共享库的加载和函数签名设置。
 """
 
+
+__all__ = [
+    "get_nim_lib",
+    "is_nim_available",
+]
+
 import ctypes
 from ..core.loader import load_library, is_available
 
@@ -167,3 +173,4 @@ def get_nim_lib(name):
 def is_nim_available():
     """检查 Nim 是否可用"""
     return get_nim_lib('vools_crypto') is not None
+

@@ -5,6 +5,24 @@ vools.bridge.scala.types - Python ↔ Scala/JVM 类型映射系统
 简化 Py4J 跨语言函数调用时的类型声明工作。
 """
 
+
+__all__ = [
+    "ScalaTypeMapper",
+    "get_jvm_type",
+    "get_py_type",
+    "convert_to_jvm",
+    "convert_to_py",
+    "infer_jvm_types",
+    "get_jvm_type_name",
+    "get_py_type",
+    "get_jvm_class",
+    "get_converter",
+    "convert_to_jvm",
+    "convert_to_py",
+    "infer_jvm_types",
+    "describe_type",
+]
+
 from typing import Type, Any, Dict, List, Optional, Callable
 import ctypes
 
@@ -443,3 +461,4 @@ def convert_to_py(value: Any, jvm_type_name: str = None) -> Any:
 def infer_jvm_types(args: List[Any]) -> List[str]:
     """根据参数值推断 JVM 类型名列表"""
     return ScalaTypeMapper.infer_jvm_types(args)
+

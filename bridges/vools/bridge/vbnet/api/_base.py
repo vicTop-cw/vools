@@ -4,6 +4,16 @@ vools.bridge.vbnet.api._base - API.tlb 桥接核心模块
 提供 COM 对象缓存、异常类和可用性检测功能。
 """
 
+
+__all__ = [
+    "APIBridgeError",
+    "is_api_available",
+    "get",
+    "has",
+    "clear",
+    "supported_progids",
+]
+
 import platform
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -346,3 +356,4 @@ class _BaseModule:
                 return (width, height)
             except Exception:
                 return (1920, 1080)
+

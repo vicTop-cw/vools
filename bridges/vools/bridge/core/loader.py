@@ -6,6 +6,23 @@ vools.bridge.core.loader - 统一共享库加载器
 注意：编译器和运行时环境配置已移至 bridge.manager 模块。
 """
 
+
+__all__ = [
+    "ensure_runtimes_setup",
+    "SharedLibrary",
+    "load_from_path",
+    "LibraryLoader",
+    "get_loader",
+    "load_library",
+    "is_available",
+    "load_nim_lib",
+    "is_nim_available",
+    "get_function",
+    "call",
+    "load",
+    "is_available",
+]
+
 import os
 import sys
 import ctypes
@@ -283,3 +300,4 @@ def load_nim_lib(name, setup_func=None):
 def is_nim_available():
     """检查 Nim 是否可用（向后兼容）"""
     return is_available('nim')
+

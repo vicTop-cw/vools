@@ -4,6 +4,20 @@ vools.bridge.rust.templates - Rust 代码模板生成器
 生成符合 C ABI 的 Rust 函数代码，用于动态编译为 DLL。
 """
 
+
+__all__ = [
+    "RustCodeGenerator",
+    "generate_function_signature",
+    "generate_lib_code",
+    "generate_cargo_toml",
+    "generate_from_python_func",
+    "generate_function_signature",
+    "generate_lib_code",
+    "generate_cargo_toml",
+    "extract_imports",
+    "generate_from_python_func",
+]
+
 import inspect
 from typing import List, Dict, Any, Optional
 from .types import RustTypeMapper, get_rust_type

@@ -5,6 +5,21 @@ vools.bridge.zig.compiler - Zig 语言桥接编译器实现
 支持异步模式和回退机制。
 """
 
+
+__all__ = [
+    "zig_compiler_available",
+    "compile_and_run",
+    "ZigFuture",
+    "ZigBridge",
+    "result",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "set_zig_executable",
+]
+
 import os
 import sys
 import platform
@@ -445,3 +460,4 @@ _zig_bridge = ZigBridge()
 # 装饰器别名
 zig = _zig_bridge.decorator
 zigc = zig
+

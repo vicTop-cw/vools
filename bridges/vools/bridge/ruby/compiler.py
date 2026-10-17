@@ -5,6 +5,21 @@ vools.bridge.ruby.compiler - Ruby 语言桥接编译器实现
 编译（解释执行）和调用逻辑。
 """
 
+
+__all__ = [
+    "ruby_compiler_available",
+    "get_ruby_type",
+    "infer_ruby_argtypes",
+    "RubyBridge",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "run_project",
+    "PY_TO_RUBY_TYPE",
+]
+
 import os
 import sys
 import tempfile
@@ -681,3 +696,4 @@ end
 
 # 全局 RubyBridge 实例
 _ruby_bridge = RubyBridge()
+

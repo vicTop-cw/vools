@@ -5,6 +5,13 @@ vools.bridge.md deps — TOML 依赖解析与检查
 优先使用 tomli (3.11+ tomllib)，降级到内置解析器。
 """
 
+
+__all__ = [
+    "parse_toml",
+    "DepsReport",
+    "check_deps",
+]
+
 import os
 import re
 from typing import Dict, List, Any, Optional
@@ -189,3 +196,4 @@ def _check_compiler_available(compiler: str) -> bool:
         return manager.is_available(compiler)
     except Exception:
         return False
+

@@ -5,6 +5,24 @@ vools.bridge.perl.compiler - Perl 语言桥接编译器实现
 编译（解释执行）和调用逻辑。
 """
 
+
+__all__ = [
+    "perl_compiler_available",
+    "get_perl_type",
+    "infer_perl_argtypes",
+    "PerlFuture",
+    "PerlBridge",
+    "compile_and_run",
+    "result",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "run_project",
+    "PY_TO_PERL_TYPE",
+]
+
 import os
 import sys
 import tempfile

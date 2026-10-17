@@ -4,6 +4,19 @@ Process 模块 - 进程管理
 封装 API.Process COM 对象，提供进程启动、查询、终止等功能。
 """
 
+
+__all__ = [
+    "ProcessModule",
+    "Start",
+    "Shell",
+    "GetProcesses",
+    "GetProcessesByName",
+    "Kill",
+    "WaitForExit",
+    "HasExited",
+    "GetProcessId",
+]
+
 from typing import Optional
 
 from ._base import APIBridgeError, _BaseModule
@@ -115,3 +128,4 @@ class ProcessModule(_BaseModule):
 
 
 Process = ProcessModule()
+

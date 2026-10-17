@@ -5,6 +5,24 @@ vools.bridge.powershell.compiler - PowerShell 语言桥接编译器实现
 解释执行和调用逻辑。
 """
 
+
+__all__ = [
+    "powershell_compiler_available",
+    "get_ps_type",
+    "infer_ps_argtypes",
+    "PowerShellFuture",
+    "PowerShellBridge",
+    "compile_and_run",
+    "result",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "run_project",
+    "PY_TO_PS_TYPE",
+]
+
 import os
 import sys
 import tempfile
@@ -860,3 +878,4 @@ def compile_and_run(code: str, func_name: str = 'main',
 # 装饰器别名
 powershell = _powershell_bridge.decorator
 ps = powershell
+

@@ -6,6 +6,21 @@ vools.bridge.scala.decorator - Scala 桥接装饰器
 支持同步和异步两种模式。
 """
 
+
+__all__ = [
+    "scala_gateway",
+    "scala_static_bridge",
+    "ScalaModule",
+    "bridge_scala_class",
+    "scala_async",
+    "AsyncScalaModule",
+    "decorator",
+    "decorator",
+    "wrapper",
+    "ScalaModuleWrapper",
+    "AsyncScalaModuleWrapper",
+]
+
 import functools
 import inspect
 import logging
@@ -614,3 +629,4 @@ class AsyncScalaModule:
         AsyncScalaModuleWrapper.__module__ = original_cls.__module__
 
         return AsyncScalaModuleWrapper
+

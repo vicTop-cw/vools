@@ -5,6 +5,22 @@ vools.bridge.shell.compiler - Shell/Bash 语言桥接编译器实现
 解释执行和调用逻辑。
 """
 
+
+__all__ = [
+    "shell_compiler_available",
+    "bash_compiler_available",
+    "infer_shell_argtypes",
+    "ShellFuture",
+    "ShellBridge",
+    "compile_and_run",
+    "result",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+]
+
 import os
 import sys
 import tempfile
@@ -617,3 +633,4 @@ def compile_and_run(code: str, func_name: str = 'main',
 shell = _shell_bridge.decorator
 sh = shell
 bash = shell
+

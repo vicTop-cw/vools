@@ -7,6 +7,24 @@ vools.bridge.java.compiler - Java 编译支持
     jar_path = compile_java('./src/main.java', output_dir='./target')
 """
 
+
+__all__ = [
+    "is_javac_available",
+    "is_java_available",
+    "get_java_version",
+    "compile_java",
+    "create_jar",
+    "check_java_environment",
+    "JavaBridge",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "set_package",
+    "PY_TO_JAVA_TYPE",
+]
+
 import os
 import sys
 import json
@@ -609,3 +627,4 @@ class JavaBridge(LangBridge):
 
 # 全局 JavaBridge 实例
 _java_bridge = JavaBridge()
+

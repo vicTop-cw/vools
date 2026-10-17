@@ -4,6 +4,17 @@ vools.bridge.vbnet.templates - VB.NET 代码模板生成器
 自动生成 VB.NET 控制台应用程序代码，通过反射调用函数并输出结果。
 """
 
+
+__all__ = [
+    "generate_vb_method",
+    "generate_vb_class",
+    "generate_vbproj",
+    "VBPROJ_TEMPLATE",
+    "VB_CLASS_TEMPLATE",
+    "VB_METHOD_TEMPLATE",
+    "VB_SUB_TEMPLATE",
+]
+
 VBPROJ_TEMPLATE = '''
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>

@@ -5,6 +5,14 @@ vools.bridge.md manifest — YAML 清单读写
 支持原子写入（临时文件 + rename）。
 """
 
+
+__all__ = [
+    "minimal_yaml_parse",
+    "minimal_yaml_dump",
+    "write_manifest",
+    "read_manifest",
+]
+
 import os
 import tempfile
 from typing import Any, Dict, List, Optional, Tuple
@@ -265,3 +273,4 @@ def read_manifest(build_dir: str) -> Optional[Dict[str, Any]]:
         text = f.read()
 
     return minimal_yaml_parse(text)
+

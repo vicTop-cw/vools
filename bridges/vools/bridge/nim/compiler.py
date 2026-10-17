@@ -9,6 +9,22 @@ vools.bridge.nim.compiler - Nim 异步动态编译装饰器
     result = my_func(5)  # 编译 Nim 代码并执行
 """
 
+
+__all__ = [
+    "nim_compiler_available",
+    "NimFuture",
+    "compile_and_run",
+    "NimBridge",
+    "result",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "PY_TO_NIM_TYPE",
+    "NIM_TO_CTYPES",
+]
+
 import os
 import sys
 import tempfile
@@ -565,4 +581,5 @@ _nim_bridge = NimBridge()
 
 # 装饰器：直接使用基类的 decorator 方法
 nim = _nim_bridge.decorator
+
 

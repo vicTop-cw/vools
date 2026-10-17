@@ -5,6 +5,18 @@ vools.bridge.r.templates - R 代码模板生成器
 以及从 Python 函数签名自动生成 R 函数的能力。
 """
 
+
+__all__ = [
+    "RCodeGenerator",
+    "generate_function_signature",
+    "generate_script_code",
+    "generate_from_python_func",
+    "generate_function_signature",
+    "generate_script_code",
+    "extract_preamble",
+    "generate_from_python_func",
+]
+
 import inspect
 from typing import List, Dict, Any, Optional
 
@@ -209,3 +221,4 @@ def generate_from_python_func(func_name: str, sig: inspect.Signature,
     return RCodeGenerator.generate_from_python_func(
         func_name, sig, return_annotation, code_body, auto_signature
     )
+

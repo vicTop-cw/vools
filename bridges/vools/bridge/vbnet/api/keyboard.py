@@ -4,6 +4,23 @@ Keyboard 模块 - 键盘操作
 封装 API.Keyboard COM 对象，提供键盘按键模拟、状态查询等功能。
 """
 
+
+__all__ = [
+    "KeyboardModule",
+    "SendKeys",
+    "KeyDown",
+    "KeyUp",
+    "KeyDownUp",
+    "GetKeyPressed",
+    "GetKeyOpened",
+    "AltKeyPressed",
+    "CtrlKeyPressed",
+    "ShiftKeyPressed",
+    "CapsLockOpened",
+    "NumLockOpened",
+    "ScrollLockOpened",
+]
+
 from ._base import APIBridgeError, _BaseModule
 
 
@@ -119,3 +136,4 @@ class KeyboardModule(_BaseModule):
 
 
 Keyboard = KeyboardModule()
+

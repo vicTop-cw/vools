@@ -9,6 +9,32 @@ vools.bridge.haskell.compiler - Haskell 语言桥接编译器实现
 - 结果通过 print / show 输出，Python 端解析 stdout
 """
 
+
+__all__ = [
+    "haskell_compiler_available",
+    "get_haskell_type",
+    "infer_haskell_argtypes",
+    "is_array_type",
+    "get_ctype_for",
+    "HaskellFuture",
+    "compile_and_run",
+    "is_haskell_available",
+    "HaskellBridge",
+    "result",
+    "done",
+    "add_done_callback",
+    "cancel",
+    "compiler_available",
+    "generate_code",
+    "get_cache_key",
+    "get_lib_filename",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "PY_TO_HASKELL_TYPE",
+    "HASKELL_TO_CTYPES",
+]
+
 import os
 import sys
 import re
@@ -784,3 +810,4 @@ class HaskellBridge(LangBridge):
 # 全局实例
 _haskell_bridge = HaskellBridge()
 haskell = _haskell_bridge.decorator
+

@@ -33,6 +33,21 @@ vools.bridge.r.compiler - R 动态执行装饰器
     use_wsl: 是否使用 WSL（Windows 默认 True，Linux 默认 False）
 """
 
+
+__all__ = [
+    "r_compiler_available",
+    "compile_and_run",
+    "r_module",
+    "RBridge",
+    "decorator",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "run_project",
+]
+
 import os
 import sys
 import tempfile
@@ -770,3 +785,4 @@ _r_bridge = RBridge()
 
 # 统一装饰器接口（使用 LangBridge 标准装饰器）
 r = _r_bridge.decorator
+

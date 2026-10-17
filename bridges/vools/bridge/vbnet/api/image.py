@@ -4,6 +4,21 @@ Image 模块 - 图像处理与截图
 封装 API.Image COM 对象，提供屏幕截图、图像操作、像素颜色等功能。
 """
 
+
+__all__ = [
+    "ImageModule",
+    "ScreenCapture",
+    "CaptureFullScreen",
+    "OpenImage",
+    "SaveImage",
+    "GetPixelColor",
+    "SetPixelColor",
+    "ChangeSize",
+    "CropImage",
+    "RotateFlip",
+    "CreateNewBitmap",
+]
+
 from typing import Any, Optional
 
 from ._base import APIBridgeError, _BaseModule
@@ -144,3 +159,4 @@ class ImageModule(_BaseModule):
 
 
 Image = ImageModule()
+

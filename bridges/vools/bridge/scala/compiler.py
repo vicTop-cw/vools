@@ -16,6 +16,23 @@ vools.bridge.scala.compiler - Scala 源码编译支持
     run_scala_app('./src/main.scala', port=25333)
 """
 
+
+__all__ = [
+    "is_scala_compiler_available",
+    "is_java_available",
+    "get_scala_version",
+    "compile_scala",
+    "create_py4j_jar",
+    "run_scala_app",
+    "check_scala_environment",
+    "ScalaBridge",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+]
+
 import os
 import subprocess
 import tempfile
@@ -718,3 +735,4 @@ class ScalaBridge(LangBridge):
 # 全局 ScalaBridge 实例
 _scala_bridge = ScalaBridge()
 scala_bridge = _scala_bridge
+
