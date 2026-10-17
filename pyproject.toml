@@ -58,17 +58,17 @@ rx = ["vools-rx==0.7.6"]
 # 和 vools[all] 一起装不出来。这一项改成指向真正携带该模块的包。
 # 0.7.9：extras 是**精确 pin**，钉旧版会把"装得上但用不了"的组合发出去 ——
 # vools-actus 0.7.9 的 validate 要 `is_routable`，而 0.7.8 的 bridges 没有这个符号。
-bridges = ["vools-bridges==0.7.9"]
-bridge-md = ["vools-bridges==0.7.9"]
+bridges = ["vools-bridges==0.8.0"]
+bridge-md = ["vools-bridges==0.8.0"]
 # actus 从未发布过 0.7.0（打包元数据坏在 [tool.setuptools.dynamic]，wheel 永远停在 0.7.0
 # 且没人传过），这里的 ==0.7.0 是悬空 pin。随 0.7.8 一起修正。
-actus = ["vools-actus==0.7.9"]
+actus = ["vools-actus==0.8.0"]
 dll32 = ["vools-dll32==0.7.6"]
 xl = ["vools-xl==0.7.6"]
 all = [
     "vools-rx==0.7.6",
-    "vools-bridges==0.7.9",
-    "vools-actus==0.7.9",
+    "vools-bridges==0.8.0",
+    "vools-actus==0.8.0",
     "vools-dll32==0.7.6",
     "vools-xl==0.7.6",
     "vools-pyk==0.1.1",
