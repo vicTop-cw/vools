@@ -42,7 +42,7 @@ def fuse_classes(
     if not classes:
         raise ValueError("At least one class must be provided")
     
-    if len(classes) == 1:
+    if len(classes) == 1 and not (name or method_overrides or method_wrappers or auto_wrap_return):
         return _apply_rself_if_available(classes[0])
     
     # 生成类名
@@ -218,25 +218,27 @@ def _wrap_methods_for_return_type(cls: Type, fused_classes: Tuple[Type, ...]) ->
     # 包装每个方法
     for method_name in methods_to_wrap:
         original_method = getattr(cls, method_name)
-        
-        @functools.wraps(original_method)
-        def wrapped_method(self, *args, **kwargs):
-            result = original_method(self, *args, **kwargs)
-            
-            # 检查返回值是否需要转换
-            for parent_cls in fused_classes:
-                if isinstance(result, parent_cls) and type(result) is not type(self):
-                    # 需要转换：创建新的融合类实例
-                    try:
-                        return type(self)(result)
-                    except Exception:
-                        # 如果转换失败，返回原结果
-                        return result
-            
-            return result
-        
-        # 替换原方法
-        setattr(cls, method_name, wrapped_method)
+
+        # 用默认参数捕获当前 original_method，避免闭包捕获循环变量
+        def _make_wrapper(orig_method):
+            @functools.wraps(orig_method)
+            def wrapped_method(self, *args, **kwargs):
+                result = orig_method(self, *args, **kwargs)
+
+                # 检查返回值是否需要转换
+                for parent_cls in fused_classes:
+                    if isinstance(result, parent_cls) and type(result) is not type(self):
+                        # 需要转换：创建新的融合类实例
+                        try:
+                            return type(self)(result)
+                        except Exception:
+                            # 如果转换失败，返回原结果
+                            return result
+
+                return result
+            return wrapped_method
+
+        setattr(cls, method_name, _make_wrapper(original_method))
     
     return cls
 
