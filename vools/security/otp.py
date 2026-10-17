@@ -22,6 +22,13 @@ import secrets
 import struct
 import time
 
+__all__ = [
+    "generate_dynamic_code",
+    "verify_dynamic_code",
+    "derive_master_key",
+    "generate_seed_key",
+]
+
 
 def generate_dynamic_code(seed_key: bytes, time_step: int = 60, digits: int = 6) -> str:
     """生成当前时间窗口的动态码。
