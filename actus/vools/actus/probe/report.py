@@ -5,6 +5,16 @@
 并提供人类可读摘要。__init__.py 的 probe() 负责采集，本模块负责组装/呈现。
 """
 
+
+__all__ = [
+    "ProbeReport",
+    "format_summary",
+    "to_dict",
+    "add_item",
+    "add_items",
+    "build_summary",
+]
+
 __all__ = ['ProbeReport', 'format_summary']
 
 import time
@@ -160,3 +170,4 @@ def format_summary(report: ProbeReport) -> str:
 
     lines.append("=" * 60)
     return "\n".join(lines)
+

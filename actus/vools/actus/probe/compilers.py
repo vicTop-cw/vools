@@ -3,6 +3,12 @@
 复用 vools.sys.compile_cmd 和 vools.task.core.cli_exec。
 """
 
+
+__all__ = [
+    "CompilersProber",
+    "probe",
+]
+
 import shutil
 import subprocess
 import sys

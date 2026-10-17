@@ -1,5 +1,12 @@
 """probe/cache.py — 探测结果缓存。"""
 
+
+__all__ = [
+    "load_cache",
+    "save_cache",
+    "invalidate_cache",
+]
+
 import json
 import os
 import time

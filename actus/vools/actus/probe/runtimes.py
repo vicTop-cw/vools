@@ -3,6 +3,12 @@
 复用 vools.actus.runtimes.RuntimeRegistry，不重复实现。
 """
 
+
+__all__ = [
+    "RuntimesProber",
+    "probe",
+]
+
 from .base import Prober, ProbeItem
 
 
