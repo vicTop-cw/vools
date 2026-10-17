@@ -233,3 +233,20 @@ class TestCrossReferences:
         assert 'ref1' in table
         assert '✅' in table
         assert '❌' in table
+class TestBenchmarkZeroIterations:
+    """回归：benchmark_parse/benchmark_generate 传 iterations=0 时
+    sum(times)/len(times) 除零崩溃（ZeroDivisionError）。"""
+
+    def test_parse_zero_iterations(self):
+        with pytest.raises(ValueError):
+            benchmark_parse('# Hello', iterations=0)
+
+    def test_generate_zero_iterations(self):
+        doc = benchmark_parse('# Hello', iterations=1)
+        with pytest.raises(ValueError):
+            benchmark_generate(doc, iterations=0)
+
+    def test_parse_normal(self):
+        r = benchmark_parse('# Hello', iterations=2)
+        assert r['iterations'] == 2
+        assert r['avg_ms'] >= 0
