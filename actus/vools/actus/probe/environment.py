@@ -7,7 +7,6 @@
 __all__ = [
     "get_environment_info",
     "EnvironmentProber",
-    "probe",
 ]
 
 import os

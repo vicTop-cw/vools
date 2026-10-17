@@ -6,7 +6,6 @@
 
 __all__ = [
     "PythonPackagesProber",
-    "probe",
 ]
 
 import sys

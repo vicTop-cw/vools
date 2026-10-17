@@ -4,7 +4,6 @@
 __all__ = [
     "get_platform_info",
     "PlatformProber",
-    "probe",
 ]
 
 import os

@@ -6,7 +6,6 @@
 
 __all__ = [
     "SystemToolsProber",
-    "probe",
 ]
 
 import os

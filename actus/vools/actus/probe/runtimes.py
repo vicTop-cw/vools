@@ -6,7 +6,6 @@
 
 __all__ = [
     "RuntimesProber",
-    "probe",
 ]
 
 from .base import Prober, ProbeItem

@@ -6,7 +6,6 @@
 
 __all__ = [
     "ActionsProber",
-    "probe",
 ]
 
 import os
@@ -82,3 +81,4 @@ class ActionsProber(Prober):
         ))
 
         return results
+
