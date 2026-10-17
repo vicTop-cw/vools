@@ -48,7 +48,9 @@ class FunctionalHandler(CallableHandler):
             state['kwargs'] = getattr(obj, 'kwargs', {})
             state['ix'] = getattr(obj, 'ix', 1)
         elif obj_type == 'Box':
-            state['value'] = getattr(obj, '_value', getattr(obj, 'value', None))
+            state['value'] = getattr(obj, '__wrapped__',
+                                     getattr(obj, '_value',
+                                             getattr(obj, 'value', None)))
 
         return state
 
