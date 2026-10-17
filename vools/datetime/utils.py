@@ -42,6 +42,9 @@ def vDate(dt=None, fmt=None, diffDays: Union[float, int] = 0):
     """
     if isinstance(diffDays, str) or isinstance(fmt, (float, int)):
         diffDays, fmt = fmt, diffDays
+        # fmt 被换成了 diffDays 的默认值 0（int），不合法 → 回退为 None
+        if not isinstance(fmt, (str, type(None))):
+            fmt = None
 
     def _parse_date(date_str, fmt):
         dt = datetime.strptime(date_str, fmt)
