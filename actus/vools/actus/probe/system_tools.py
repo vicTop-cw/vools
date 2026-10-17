@@ -3,6 +3,12 @@
 通过 shutil.which + subprocess 探测已知工具表中的每个工具。
 """
 
+
+__all__ = [
+    "SystemToolsProber",
+    "probe",
+]
+
 import os
 import platform
 import shutil

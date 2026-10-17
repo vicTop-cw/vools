@@ -3,6 +3,12 @@
 探测关键 Python 包是否已安装及其版本。
 """
 
+
+__all__ = [
+    "PythonPackagesProber",
+    "probe",
+]
+
 import sys
 from .base import Prober, ProbeItem
 

@@ -1,5 +1,12 @@
 """probe/platform.py — 平台信息采集。"""
 
+
+__all__ = [
+    "get_platform_info",
+    "PlatformProber",
+    "probe",
+]
+
 import os
 import platform
 import sys

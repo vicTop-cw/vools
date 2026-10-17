@@ -3,6 +3,12 @@
 扫描动作目录，提取依赖信息。
 """
 
+
+__all__ = [
+    "ActionsProber",
+    "probe",
+]
+
 import os
 import sys
 from .base import Prober, ProbeItem

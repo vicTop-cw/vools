@@ -1,5 +1,12 @@
 """probe/resources.py — 系统资源探测（psutil 可选）。"""
 
+
+__all__ = [
+    "get_resources_info",
+    "ResourcesProber",
+    "probe",
+]
+
 import platform
 import sys
 

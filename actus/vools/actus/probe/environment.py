@@ -3,6 +3,13 @@
 安全原则：只记录 key 名存在与否，不记录敏感值。
 """
 
+
+__all__ = [
+    "get_environment_info",
+    "EnvironmentProber",
+    "probe",
+]
+
 import os
 import re
 import sys

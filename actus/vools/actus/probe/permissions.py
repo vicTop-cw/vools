@@ -1,5 +1,12 @@
 """probe/permissions.py — 权限与身份探测。"""
 
+
+__all__ = [
+    "get_permissions_info",
+    "PermissionsProber",
+    "probe",
+]
+
 import os
 import sys
 

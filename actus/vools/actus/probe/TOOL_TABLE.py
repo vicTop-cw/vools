@@ -8,6 +8,11 @@
 - timeout: 版本探测超时秒数
 """
 
+
+__all__ = [
+    "TOOL_TABLE",
+]
+
 TOOL_TABLE = [
     # ── 编译器 ──
     ("gcc", ["cc"], ["--version"], {}, 5),
