@@ -5,6 +5,15 @@ vools.bridge.nim.serialize_shim - Nim serialize bridge shim
 当 Nim 库不可用时，回退到纯 Python 实现。
 """
 
+
+__all__ = [
+    "pickle_encode",
+    "pickle_decode",
+    "msgpack_encode",
+    "msgpack_decode",
+    "is_available",
+]
+
 import os
 import sys
 import ctypes
@@ -149,3 +158,4 @@ def msgpack_decode(data: bytes) -> bytes:
 def is_available():
     """检查 Nim serialize 桥接是否可用"""
     return _lib is not None
+

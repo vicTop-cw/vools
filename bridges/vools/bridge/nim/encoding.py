@@ -2,6 +2,12 @@
 vools.bridge.nim.encoding - Nim 编码函数桥接
 """
 
+
+__all__ = [
+    "base64_encode",
+    "base64_decode",
+]
+
 import base64
 import zlib
 
@@ -84,3 +90,4 @@ def _nim_zlib_decompress(data):
 # 公开 API
 zlib_compress = _nim_zlib_compress if _nim_lib else _py_zlib_compress
 zlib_decompress = _nim_zlib_decompress if _nim_lib else _py_zlib_decompress
+

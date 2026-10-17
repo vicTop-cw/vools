@@ -1,4 +1,10 @@
 """vools.bridge.shell.types - Python ↔ Shell 类型映射"""
+
+__all__ = [
+    "get_shell_type",
+    "get_shell_ctype",
+]
+
 import ctypes
 
 PY_TO_SHELL_TYPE = {
@@ -24,3 +30,4 @@ def get_shell_type(py_type):
 
 def get_shell_ctype(shell_type):
     return SHELL_TO_CTYPES.get(shell_type, ctypes.c_void_p)
+

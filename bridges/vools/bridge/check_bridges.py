@@ -4,6 +4,12 @@ vools.bridge.check_bridges - 桥接库安装验证脚本
 检查所有桥接库是否正确安装并可用。
 """
 
+
+__all__ = [
+    "check_bridges",
+    "check_nim_bridges",
+]
+
 from .core.loader import get_loader, is_available
 
 
@@ -72,3 +78,4 @@ if __name__ == "__main__":
         print(f"  [{status}] nim/{module}")
 
     print("\n=== Report Complete ===")
+

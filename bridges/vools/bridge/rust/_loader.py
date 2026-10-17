@@ -4,6 +4,13 @@ vools.bridge.rust._loader - Rust DLL 加载器
 复用 bridge.core.loader 的 ctypes 基础设施。
 """
 
+
+__all__ = [
+    "load_rust_dll",
+    "call_rust_function",
+    "is_rust_dll_available",
+]
+
 import os
 import ctypes
 from typing import Optional

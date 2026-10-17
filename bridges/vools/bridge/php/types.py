@@ -1,4 +1,10 @@
 """vools.bridge.php.types - Python ↔ PHP 类型映射"""
+
+__all__ = [
+    "get_php_type",
+    "get_php_ctype",
+]
+
 import ctypes
 
 PY_TO_PHP_TYPE = {

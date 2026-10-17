@@ -5,6 +5,15 @@ vools.bridge.nim.json_shim - Nim JSON bridge shim
 当 Nim 库不可用时，回退到纯 Python 实现。
 """
 
+
+__all__ = [
+    "json_encode",
+    "json_decode",
+    "json_encode_bytes",
+    "json_decode_bytes",
+    "is_available",
+]
+
 import os
 import sys
 import ctypes

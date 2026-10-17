@@ -10,6 +10,14 @@ vools.bridge.mojo.templates - Mojo 代码模板生成
 运行环境：Mojo 1.0b1+（WSL Linux / 本地安装）。
 """
 
+
+__all__ = [
+    "generate_function_signature",
+    "generate_mojo_wrapper",
+    "preprocess_mojo_body",
+    "split_preprocessor_and_body",
+]
+
 import re
 from typing import List, Tuple, Optional
 
@@ -148,3 +156,4 @@ def split_preprocessor_and_body(body: str) -> Tuple[List[str], List[str]]:
         else:
             function_body_lines.append(line)
     return preprocessor_lines, function_body_lines
+

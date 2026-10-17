@@ -2,6 +2,12 @@
 vools.bridge.md directives — #! 指令定义/解析/校验
 """
 
+
+__all__ = [
+    "parse_block_directives",
+    "validate_directives",
+]
+
 import re
 from typing import Dict, List, Set
 
@@ -157,3 +163,4 @@ def validate_directives(directives: Dict[str, str], language: str) -> List[str]:
             errors.append(f"{language} 块是富内容展示块，不能带 run= 执行指令")
 
     return errors
+

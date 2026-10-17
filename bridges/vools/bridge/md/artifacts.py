@@ -2,6 +2,15 @@
 vools.bridge.md artifacts — 产物目录/hash/增量/清理
 """
 
+
+__all__ = [
+    "ensure_build_dir",
+    "compute_artifact_hash",
+    "is_artifact_stale",
+    "register_artifact",
+    "clean_build",
+]
+
 import hashlib
 import os
 import shutil
@@ -167,3 +176,4 @@ def clean_build(
     if os.path.exists(tmp_dir):
         for fname in os.listdir(tmp_dir):
             os.unlink(os.path.join(tmp_dir, fname))
+

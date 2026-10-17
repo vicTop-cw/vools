@@ -5,6 +5,15 @@ vools.bridge.nim.compress_shim - 压缩/解压 Nim 桥接 Python shim
 如果 Nim 库不可用，回退到纯 Python 实现。
 """
 
+
+__all__ = [
+    "gzip_compress",
+    "gzip_decompress",
+    "zlib_compress",
+    "zlib_decompress",
+    "is_nim_compress_available",
+]
+
 import sys
 import ctypes
 from pathlib import Path
@@ -136,3 +145,4 @@ def zlib_decompress(data: bytes) -> bytes:
 def is_nim_compress_available() -> bool:
     """检查 Nim compress 库是否可用"""
     return _lib is not None
+

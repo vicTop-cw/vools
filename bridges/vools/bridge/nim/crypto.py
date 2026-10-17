@@ -2,6 +2,10 @@
 vools.bridge.nim.crypto - Nim 加密函数桥接
 """
 
+
+__all__ = [
+]
+
 import hashlib
 import hmac as _py_hmac
 
@@ -92,3 +96,4 @@ sha1 = _nim_sha1 if _nim_lib else _py_sha1
 sha256 = _nim_sha256 if _nim_lib else _py_sha256
 hmac_sha256 = _nim_hmac_sha256 if _nim_lib else _py_hmac_sha256
 hmac_md5 = _nim_hmac_md5 if _nim_lib else _py_hmac_md5
+

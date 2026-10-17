@@ -1,4 +1,10 @@
 """vools.bridge.lua.types - Python ↔ Lua 类型映射"""
+
+__all__ = [
+    "get_lua_type",
+    "get_lua_ctype",
+]
+
 import ctypes
 
 PY_TO_LUA_TYPE = {
@@ -46,3 +52,4 @@ def get_lua_ctype(lua_type):
     if lua_type in LUA_TO_CTYPES:
         return LUA_TO_CTYPES[lua_type]
     return ctypes.c_char_p
+

@@ -6,6 +6,13 @@ vools.bridge.r.loader - R 环境加载器
 使用 manager 统一管理编译器配置。
 """
 
+
+__all__ = [
+    "is_r_available",
+    "get_r_version",
+    "is_jsonlite_available",
+]
+
 import platform
 import subprocess
 
@@ -73,3 +80,4 @@ def is_jsonlite_available():
     """
     use_wsl = _IS_WINDOWS
     return _check_jsonlite_available(use_wsl)
+
