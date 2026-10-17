@@ -13,6 +13,11 @@ from typing_extensions import Annotated
 
 from vools import memorize
 
+
+def _now_sec() -> float:
+    """高精度计时起点。Windows 上 time.time 分辨率仅 ~1ms，快函数会得到 0。"""
+    return time.perf_counter()
+
 memoize_app = typer.Typer(help="Memoize 记忆化命令")
 
 
@@ -106,10 +111,16 @@ def benchmark(
         memorized_func(*parsed_args)
     
     # 基准测试
-    start = time.time()
+    start = _now_sec()
     for _ in range(iterations):
         memorized_func(*parsed_args)
-    elapsed = time.time() - start
+    elapsed = _now_sec() - start
+
+    # 防御：极快函数下 elapsed 可能为 0（Windows perf_counter 分辨率 ~100ns，
+    # 单次 <100ns 的纯增量函数会被量到 0），除零直接崩溃。
+    if elapsed <= 0:
+        elapsed = 1e-9  # 1 纳秒兜底，避免 ZeroDivisionError
+
     
     typer.echo(f"函数: {func_expr}")
     typer.echo(f"参数: {parsed_args}")
