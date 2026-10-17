@@ -558,11 +558,7 @@ def _fill_version(status: 'LanguageStatus', lang: str, path: str,
 
     try:
         version_args = config.get('version_args', ['--version'])
-        result = subprocess.run(
-            [path] + version_args,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=5, env=env,
-        )
+        result = _run_cmd_timeout([path] + version_args, timeout=5, env=env)
         raw_output = (result.stdout or b'') + (result.stderr or b'')
         output = ''
         for enc in ('utf-8', 'gbk', 'cp936', 'latin-1'):
@@ -584,6 +580,57 @@ def _fill_version(status: 'LanguageStatus', lang: str, path: str,
                 status.version = first_line[:80]
     except Exception:
         status.version = 'unknown'
+
+
+def _run_cmd_timeout(cmd: List[str], timeout: float = 5,
+                     env: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
+    """执行子进程并保证超时后杀掉整棵进程树。
+
+    `subprocess.run(timeout=N)` 在 Windows 上只杀直接子进程：如果命令是
+    `.BAT`/`.CMD`（如 elixir.BAT / scala.BAT），批处理会再 spawn 一个
+    慢启动的孙进程（BEAM / JVM），超时后孙进程继续跑，调用方却被阻塞
+    到孙进程退出为止——`_fill_version` 里 `elixir --version` 实测卡 16s
+    远超 timeout=5。这里改用 `Popen` + `communicate(timeout=N)`，
+    超时后 kill 进程组（Unix setsid / Windows CREATE_NEW_PROCESS_GROUP）
+    并 `taskkill /F /T` 兜底，保证按时返回。
+    """
+    kwargs: Dict[str, Any] = {}
+    if _IS_WINDOWS:
+        kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+    else:
+        kwargs['preexec_fn'] = os.setsid
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=env, **kwargs,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=2)
+        except Exception:
+            stdout, stderr = b'', b''
+        return subprocess.CompletedProcess(cmd, -9, stdout, stderr)
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """杀掉 proc 及其整棵子进程树。"""
+    try:
+        if _IS_WINDOWS:
+            subprocess.run(
+                ['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        else:
+            os.killpg(os.getpgid(proc.pid), 9)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 def _probe_one(lang: str, config: Dict[str, Any], env: Optional[Dict[str, str]] = None) -> LanguageStatus:
@@ -632,11 +679,9 @@ def _probe_one(lang: str, config: Dict[str, Any], env: Optional[Dict[str, str]] 
             # 获取版本
             try:
                 version_args = config.get('version_args', ['--version'])
-                result = subprocess.run(
+                result = _run_cmd_timeout(
                     [path] + version_args,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    timeout=5,
-                    env=env,
+                    timeout=5, env=env,
                 )
                 # 尝试多种编码解码输出
                 raw_output = (result.stdout or b'') + (result.stderr or b'')
