@@ -1,64 +1,64 @@
 # -*- coding: utf-8 -*-
-"""测试 vools.core.datetime_compat — datetime_fromisoformat 等。"""
+"""测试 vools.core.datetime_compat（3.13 走标准库分支）。"""
 
-import datetime
-import sys
 import pytest
+from datetime import datetime, date, time
+from vools.core.datetime_compat import (
+    datetime_fromisoformat, date_fromisoformat, time_fromisoformat,
+    _HAS_FROMISOFORMAT
+)
 
-__all__ = ["TestModernBranch", "TestImport"]
+__all__ = ["TestDatetime", "TestDate", "TestTime", "TestFlag", "TestImport"]
 
 
-class TestModernBranch:
-    """Python 3.7+ 分支。"""
+class TestDatetime:
+    """datetime_fromisoformat 测试。"""
 
-    def test_datetime_full(self):
-        from vools.core.datetime_compat import datetime_fromisoformat
-        d = datetime_fromisoformat("2024-01-15T10:30:00")
-        assert d == datetime.datetime(2024, 1, 15, 10, 30, 0)
+    def test_basic(self):
+        assert datetime_fromisoformat("2024-01-02T13:45:30") == datetime(2024, 1, 2, 13, 45, 30)
 
-    def test_datetime_with_micro(self):
-        from vools.core.datetime_compat import datetime_fromisoformat
-        d = datetime_fromisoformat("2024-01-15T10:30:00.123456")
-        assert d.microsecond == 123456
+    def test_space(self):
+        assert datetime_fromisoformat("2024-01-02 13:45:30") == datetime(2024, 1, 2, 13, 45, 30)
 
-    def test_datetime_date_only(self):
-        from vools.core.datetime_compat import datetime_fromisoformat
-        d = datetime_fromisoformat("2024-01-15")
-        assert d == datetime.datetime(2024, 1, 15)
+    def test_fractional(self):
+        assert datetime_fromisoformat("2024-01-02T13:45:30.123456") == datetime(2024, 1, 2, 13, 45, 30, 123456)
 
-    def test_datetime_invalid(self):
-        from vools.core.datetime_compat import datetime_fromisoformat
-        with pytest.raises(ValueError):
-            datetime_fromisoformat("bogus")
+    def test_datetime_input(self):
+        # 3.7+ 标准库分支不接受 datetime 对象
+        dt = datetime(2024, 1, 2)
+        with pytest.raises(TypeError):
+            datetime_fromisoformat(dt)
 
-    def test_date_basic(self):
-        from vools.core.datetime_compat import date_fromisoformat
-        d = date_fromisoformat("2024-01-15")
-        assert d == datetime.date(2024, 1, 15)
 
-    def test_date_invalid(self):
-        from vools.core.datetime_compat import date_fromisoformat
-        with pytest.raises(ValueError):
-            date_fromisoformat("bogus")
+class TestDate:
+    """date_fromisoformat 测试。"""
 
-    def test_time_basic(self):
-        from vools.core.datetime_compat import time_fromisoformat
-        t = time_fromisoformat("10:30:00")
-        assert t == datetime.time(10, 30, 0)
+    def test_basic(self):
+        assert date_fromisoformat("2024-01-02") == date(2024, 1, 2)
 
-    def test_time_with_micro(self):
-        from vools.core.datetime_compat import time_fromisoformat
-        t = time_fromisoformat("10:30:00.5")
-        assert t.microsecond == 500000
+    def test_date_input(self):
+        d = date(2024, 1, 2)
+        with pytest.raises(TypeError):
+            date_fromisoformat(d)
 
-    def test_time_invalid(self):
-        from vools.core.datetime_compat import time_fromisoformat
-        with pytest.raises(ValueError):
-            time_fromisoformat("bogus")
 
-    def test_has_flag_true(self):
-        import vools.core.datetime_compat as mod
-        assert mod._HAS_FROMISOFORMAT is True
+class TestTime:
+    """time_fromisoformat 测试。"""
+
+    def test_basic(self):
+        assert time_fromisoformat("13:45:30") == time(13, 45, 30)
+
+    def test_time_input(self):
+        t = time(13, 45)
+        with pytest.raises(TypeError):
+            time_fromisoformat(t)
+
+
+class TestFlag:
+    """版本标志测试。"""
+
+    def test_flag(self):
+        assert _HAS_FROMISOFORMAT is True
 
 
 class TestImport:
