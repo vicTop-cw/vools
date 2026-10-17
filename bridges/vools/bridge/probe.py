@@ -20,12 +20,13 @@ vools.bridge.probe - 跨语言编译环境探测工具
 import os
 import sys
 import time
+import copy
 import platform
 import subprocess
 import shutil
 import json
 from typing import Dict, List, Optional, Tuple, Any
-from .core.compat.dataclass_compat import dataclass, field, asdict, replace
+from .core.compat.dataclass_compat import dataclass, field, asdict
 
 _IS_WINDOWS = platform.system() == 'Windows'
 _IS_LINUX = platform.system() == 'Linux'
@@ -47,7 +48,7 @@ _LOCAL_PROBE_CACHE: Dict[Tuple[str, str], Any] = {}
 # `wsl -d <dist> -- which <cmd>` 冷启动后单次 1-5s，`probe_all_wsl` 全量
 # 27 门语言 × 多命令可拖到 90s 预算上限（WSL_PROBE_BUDGET_SECONDS）。
 # WSL 发行版装了命令不会消失，同一进程内缓存稳定。
-# 注意：LanguageStatus 是可变 dataclass，缓存前用 dataclasses.replace 拷贝，
+# 注意：LanguageStatus 是可变 dataclass，缓存前用 copy.deepcopy 拷贝，
 # 避免调用方修改缓存的报告时污染缓存。
 _WSL_PROBE_CACHE: Dict[Tuple[str, str], Any] = {}
 
@@ -891,7 +892,7 @@ def _probe_one_wsl(lang: str, config: Dict[str, Any], dist: str) -> LanguageStat
     _key = (lang, dist)
     _cached = _WSL_PROBE_CACHE.get(_key)
     if _cached is not None:
-        return replace(_cached)
+        return copy.deepcopy(_cached)
     status = LanguageStatus(
         name=lang,
         category=config.get('category', ''),
@@ -974,7 +975,7 @@ def _probe_one_wsl(lang: str, config: Dict[str, Any], dist: str) -> LanguageStat
         # WSL 中使用 Linux 的安装建议
         status.install_hint = hints.get('Linux', hints.get('Windows', '请参考官方文档'))
 
-    _WSL_PROBE_CACHE[_key] = replace(status)
+    _WSL_PROBE_CACHE[_key] = copy.deepcopy(status)
     return status
 
 
