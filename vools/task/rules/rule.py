@@ -167,8 +167,9 @@ class RuleSet:
             result = rule.evaluate(context)
             results.append((rule.name, result))
             if result.is_failure:
+                err = result.unwrap_or_else(lambda e: e)
                 return Result.failure(
-                    Exception(f"Rule '{rule.name}' failed: {result.unwrap_or(None)}")
+                    Exception(f"Rule '{rule.name}' failed: {err}")
                 )
         return Result.success(results)
 
