@@ -35,9 +35,9 @@ def parse_lambda_or_func(expr: str) -> Callable:
 def timing_decorator(func: Callable) -> Callable:
     """计时装饰器"""
     def wrapper(*args, **kwargs):
-        start = time.time()
+        start = _now_sec()
         result = func(*args, **kwargs)
-        elapsed = time.time() - start
+        elapsed = _now_sec() - start
         return result, elapsed
     return wrapper
 
@@ -67,6 +67,8 @@ def call(
     typer.echo(f"参数: {parsed_args}")
     typer.echo(f"重复次数: {repeat}")
     typer.echo("-" * 40)
+    if repeat <= 0:
+        raise typer.BadParameter("重复次数必须为正数", param_hint="--repeat")
     
     total_time = 0
     results = []
