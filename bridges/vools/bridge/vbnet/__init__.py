@@ -55,19 +55,34 @@ vbnet_bridge = _vbnet_bridge
 
 _api_loaded = False
 _api_error = None
+_api_loading = False
 
 
 def _load_api():
-    """延迟加载 api 子模块"""
-    global _api_loaded, _api_error
-    if not _api_loaded:
-        try:
-            from . import api
-            globals()['api'] = api
-            _api_loaded = True
-        except Exception as e:
-            _api_error = e
-            _api_loaded = False
+    """延迟加载 api 子模块
+
+    不能用 `from . import api`（2026-10-17 寻虫 BUG-77 同族）：本模块有模块级
+    __getattr__，`from . import api` 会走 _handle_fromlist 对父包 hasattr，
+    而 hasattr 又触发 __getattr__ → 再调 _load_api，一次属性访问自递归几十层
+    （实测 entries=50）。importlib.import_module 不查父包属性，天然无此环；
+    _api_loading 再兜一层防重入。
+    """
+    global _api_loaded, _api_error, _api_loading
+    if _api_loaded:
+        return True
+    if _api_loading:
+        return False                       # 重入直接判失败，绝不递归
+    _api_loading = True
+    try:
+        import importlib
+        mod = importlib.import_module('.api', __name__)
+        globals()['api'] = mod
+        _api_loaded = True
+    except Exception as e:
+        _api_error = e
+        _api_loaded = False
+    finally:
+        _api_loading = False
     return _api_loaded
 
 
@@ -89,6 +104,20 @@ def __dir__():
     if _api_loaded or _load_api():
         names.add('api')
     return sorted(names)
+
+
+# Python 3.6 兼容：模块级 __getattr__ 是 PEP 562（3.7+ 才生效），3.6 下是死函数。
+# 实测 py3.6：`from vools.bridge.vbnet import api` 能成（importlib 的 from-import
+# 会退回直接导入子模块），但 `vools.bridge.vbnet.api` 属性访问拿到 MISSING ——
+# 同一个包两种写法两种结果（2026-10-17 寻虫 BUG-78 同族；vools-bridges
+# requires-python = ">=3.6"，属承诺范围内必须可用）。按同仓 vools/__init__.py、
+# vools/datetime、vools/decorators、vools/sql、vools/pyk 的 <3.7 分支做法主动绑上；
+# 绑不上（缺 pywin32 等真实依赖）时保持缺席，与 3.7+ 下 __getattr__ 抛
+# AttributeError 的行为一致。
+import sys as _sys
+
+if _sys.version_info < (3, 7) and 'api' not in globals():
+    _load_api()
 
 
 __all__ = [
