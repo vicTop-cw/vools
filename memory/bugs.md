@@ -696,3 +696,62 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 ### FIXED(2026-10-16T20:40:00Z / BUG-76)
 - evidence: 真源修复 bridges/vools/bridge/rust/safe_eval_shim.py：_write_float 改 struct.pack('<d', value)（+ import struct），注释写明 Rust 侧契约出处。
   判据：① RED —— 修复前 _compile_node('1.5') 双版本抛 AttributeError；修复后返回 9 字节，且 code[1:] == struct.pack('<d',1.5) 逐字节自证（本轮探针实测 payload_matches_struct=True）；② bridges/tests/test_rust_shim_encoding.py 双版本 4 格 exit=0（含 int 的 <q、str 的 <I+utf8 对照，证明只改了 float 一处分派）；③ 该锁不需 .dll（纯 Python 编码层），故在干净环境也真跑真断言、不会退化 skip。
+
+## BUG-77 [2026-10-16T21:00:00Z] [high] FIXED
+- summary: vools.sql 与 vools.bridge.vbnet 的惰性 __getattr__ 与 `from . import X` 互递归 —— 一次属性访问自递归几十层，`from vools.sql import *` 实测卡死 >120s
+- detail: 模块级 __getattr__ 存在时，函数体里的 `from . import mysql` 会走 importlib._bootstrap 的 _handle_fromlist，它对父包做 hasattr(pkg, 'mysql')；hasattr 常规查找失败就又调进本模块 __getattr__ → 再调 _load_mysql → 再 from . import mysql。实测计数：一次 getattr('sqlite') 让 _load_sqlite 自进入 50~105 次（探针 cap 20 时 21 次即触发），最后只是靠 `except Exception` 吞掉 RecursionError 才"看起来能用"。vools.sql 因此 `from vools.sql import *` 在 py3.11 上 >120s 不返回（faulthandler 栈里反复出现 __init__.py:192 __getattr__ → :116 _load_mysql → _handle_fromlist）。vools.bridge.vbnet 的 api 同形状（entries=50）。
+  普查口径：发布树里【有模块级 __getattr__ 且体内用 `from . import`】的只有 vools/sql/__init__.py（6 处 loader）与 bridges/vools/bridge/vbnet/__init__.py（1 处）；vools/__init__.py、vools/decorators、vools/datetime、vools/bridge、vools/pyk、actus 都用 importlib.import_module 或不查父包属性的写法，天然无此环（逐个 grep 计数核实）。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（__all__ 运行时核验的欠账：vools.sql 超时追出来的）
+
+
+### FIXED(2026-10-16T21:30:00Z / BUG-77)
+- evidence: 真源修复：
+  ① vools/sql/__init__.py：六个 _load_* 收敛成一个 _load_dialect(name)，用 importlib.import_module('.'+name, __name__)（不查父包属性，天然无环）；三态用两个集合分开 —— 成功→globals()[name] 有值、已知失败→_DIALECT_FAILED、在试→_LOADING（重入直接判失败）。
+  ② bridges/vools/bridge/vbnet/__init__.py：_load_api 同改 importlib + _api_loading 防重入哨兵。
+  回归锁 tests/sql/test_lazy_dialect_attrs.py（6 格）+ bridges/tests/test_vbnet_lazy_attr.py：断言"解析方言名 __getattr__ 只进 1 次"（3.6 分支断言 0 次，见 BUG-78）与"star import 秒级完成"。
+  判据（py3.6+py3.11）：① RED —— stash 掉 sql 修复后锁报 `解析 sqlite 自递归 21 次（应为 1）`；修复后 entries=1，`from vools.sql import *` 由 >120s 降到 0.28s（36 名字）；vbnet api 由 entries=50 降到 1（3.11）/0（3.6）；② 两把锁双版本 exit=0 SKIP=0；③ 根 tests 全量 py3.11 exit=0 FAIL=0 SKIP=0。
+  过程诚实记录：修 _load_dialect 的第一版用单面布尔 flag 记"已试过"，失败时也置 True —— 结果成功加载过的方言再解析被误判不可用，把真实存在的 vools.sql.sqlite 报成 AttributeError。是双版本真跑把它抓出来的，随后改成正反两集合的三态。
+
+## BUG-78 [2026-10-16T21:00:00Z] [medium] FIXED
+- summary: 声明 requires-python>=3.6 的包里，只靠模块级 __getattr__ 暴露的 __all__ 名字在 py3.6 全拿不到（PEP 562 是 3.7+ 特性）
+- detail: vools.sql（>=3.6）py3.6 实测：postgres/sqlite/spark/get_config_file_path/clear_instance_cache 五个 __all__ 名全缺，`from vools.sql import *` 抛 AttributeError —— 而这五个子模块在 3.6 下【都能直接 import】，缺的只是属性解析层。vools.pyk（>=3.6）同理：11 个懒加载名里只有 tools 幸免（被别处先绑过）。vools.bridge.vbnet（>=3.6）更阴险：`from ... import api` 能成（importlib 的 from-import 会退回子模块导入）而属性访问 `vbnet.api` 是 MISSING —— 同一个包两种写法两种结果。
+  对照：vools/__init__.py、vools/datetime、vools/decorators、vools/bridge 都带 `if sys.version_info < (3, 7)` 主动绑定分支，py3.6 star import 正常 —— 这是本仓既定约定（vools/__init__.py:707 注释明写"模块级 __getattr__ 和 __dir__ 是 3.7+ 才有的，在 3.6 中需要主动导入所有延迟加载的名称"），不是新立的规矩。
+  actus 声明 >=3.7，其同类缺口【不在契约内】，未记为缺陷（与 BUG-65 的口径一致）。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（双版本门；py3.6 侧属性解析普查）
+
+
+### FIXED(2026-10-16T21:30:00Z / BUG-78)
+- evidence: 真源修复【两处】，按同仓既有写法补 <3.7 主动绑定：vools/sql/__init__.py（六个方言名 + get_config_file_path/clear_instance_cache 两个 manager 函数名）、bridges/vools/bridge/vbnet/__init__.py（api）。绑不上的（真缺依赖）保持缺席，与 3.7+ 下 __getattr__ 抛 AttributeError 行为一致。
+  第三处 pyk/vools/pyk/__init__.py【补过之后又回退】，改为记为已知缺口 BUG-80（实测代价不可接受，见该条）；永久闸里以带理由的显式豁免登记，不许无声通过。
+  永久闸 tests/core/test_pep562_py36_convention.py（4 格，静态、判据【数据驱动】自各树 pyproject 的 requires-python，不写死包名清单）：
+    ① "有模块级 __getattr__ + __all__ 且所在包契约含 3.6"的模块必须带 <3.7 兜底分支；
+    ② 反向保底一格锁住"actus 这类 >=3.7 树必须被正确豁免"（防一刀切误报）；
+    ③ 自校验格对 7 种等价写法【逐个】断言放行，并断言 `>= (3, 7)` 能力判断【不算】兜底分支（防守卫漏判/误放行）；
+    ④ 豁免表保鲜格：条目若已补上兜底或形态消失就必须删掉，防"顺手加条豁免永久安静"。
+  判据：① RED —— stash 掉 sql 修复后守卫点名 `[core] vools/sql/__init__.py (requires-python >=3.6)`；给豁免表塞一条 bogus 条目后第④格点名 "vools/datetime 已带兜底，豁免条目该删"；② 修复后守卫双版本 4 passed、tests/sql 6 格双版本 exit=0、bridges/tests/test_vbnet_lazy_attr.py 双版本 exit=0；③ py3.6 实测 vools.sql star 核验 OK（37 名字）、vbnet 属性访问与 from-import 给出同一模块对象；④ vbnet 兜底成本实测 0.0s（api 本已在 sys.modules）。
+  过程诚实记录（重要）：本条最初写的是"三处全修 + 成本实测 import vools.task 前后都 0.63s 没吃掉惰性收益"——【那句成本结论是错的】：`import vools.task` 单进程探针确实不拉 sql/pyk，但根 conftest 会把 pyk/ 挂进 sys.path，`import vools` 的既有 <3.7 分支连带 import vools.pyk，于是 pyk 兜底被触发，py3.6 `import vools` 由 0.54s 涨到 1.28s（core 一项 1.17s + numpy/pandas）。ABAB 交错各 4 次（不带 tests/sql 以排除串扰）证明 tests/task::test_concurrent_submissions 【补后 4/4 失败、不补 4/4 通过】。第一版 ABAB 得出"决定性归因"是【假证据】——它是固定顺序（PRE 总在先），机器负载随会话上升造成错觉，反向顺序重跑才把结论推翻。故回退 pyk 兜底，缺口转记 BUG-80。
+
+## BUG-80 [2026-10-16T22:00:00Z] [medium] OPEN
+- summary: pyk/vools/pyk/__init__.py 的 11 个懒加载名在 py3.6 上属性访问/star import 拿不到（PEP 562 是 3.7+），已知缺口，因引入回归而【本轮刻意不补】
+- detail: 现象：py3.6 下 `vools.pyk.core`、`from vools.pyk import *` 均失败（__all__ 11 个名字里只有被别处先绑过的 tools 幸免），而 11 个子模块本身在 py3.6 都能直接 import —— 缺的只是属性解析层；`from vools.pyk import core` 这类 from-import 实测可用（importlib 退回子模块导入）。vools-pyk 声明 requires-python=">=3.6"，属承诺范围内的缺口。
+  为什么不补（实测数据，不是推测）：补一段 <3.7 主动绑定后
+    ① py3.6 `import vools` 0.54s -> 1.28s：根 conftest 把 pyk/ 挂上 sys.path、vools/__init__ 的既有 3.6 分支会连带 import vools.pyk，主动绑定于是被触发，vools.pyk.core 单项 1.17s 并把 numpy + pandas 拉进进程（逐子模块计时实测：只有 core 有成本，其余 10 个 0.00s，因为它们共用同一批重依赖）；
+    ② tests/task/test_task_complete.py::TestEdgeCases::test_concurrent_submissions（自带 20s 预算、1dc1c1e 因偶发抖动从 5s 放宽到 20s 的时序敏感用例）在 ABAB 交错各 4 次对照下【补后 4/4 失败、不补 4/4 通过】。
+  代价与收益不划算：用"补一个只影响 3.6 属性访问形态的缺口"去换一个稳定复现的套件回归 = 净亏。真要修，前置条件是解决"`import vools` 在 py3.6 会连带拉起 vools.pyk"（属跨模块设计变更：要么把 pyk 从 vools/__init__ 的 3.6 预导入清单里摘掉，要么给 pyk 的重依赖做真正的按需分层），不在寻虫轮授权范围内。
+  现状登记方式：tests/core/test_pep562_py36_convention.py 的 KNOWN_EXEMPTIONS 表带量化理由，且第④格会在"缺口已被解决"时反向报警，不会烂成无声豁免。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（BUG-78 修复过程中用双版本实测拦下的过度修复）
+
+
+## BUG-79 [2026-10-16T21:00:00Z] [medium] FIXED
+- summary: vools.sql 的 __all__ 挂着本分发不存在的 mysql/oracle/mssql，且 'manager' 被重复列两次
+- detail: vools/sql/ 实际只有 core/postgres/spark/sqlite 四个子目录 + manager.py（ls 实测），__all__ 却声明 'mysql'/'oracle'/'mssql' 三个空头名 —— 空头名让 `from vools.sql import *` 逐名 getattr 失败（BUG-70 同族），叠上 BUG-77 的自递归后表现为整条卡死。docstring 也一并虚报这三个方言"存在"。另 'manager' 在 __all__ 里出现两次（manager 函数区 + 子模块区），且两处语义不同：函数区那个是 `from .manager import manager` 绑进来的 DialectManager【实例】（实测 py3.6 下 vools.sql.manager 属性解析得到的就是该实例，不是模块）。
+- reported_by: polish-lead
+- ref_call: 组合模式寻虫轮（导出面运行时核验，续 BUG-70~73）
+
+
+### FIXED(2026-10-16T21:30:00Z / BUG-79)
+- evidence: 真源修复 vools/sql/__init__.py：__all__ 摘掉 mysql/oracle/mssql 三个空头名并注释点名"要加方言请连子模块实现一起加"；docstring 子模块清单改为实测存在的四个 + manager.py；去掉重复的 'manager'（保留函数区那条，子模块仍可用完整路径 importlib 取）。_load_mysql/_load_oracle/_load_mssql 保留（供将来补实现时复用），注释写明本分发目前没有这些子模块。
+  判据：① RED —— 修复前锁报 `mysql 子模块在本分发不存在，却仍挂在 __all__ 上` 与 `__all__ 重复名: ['manager']`；② 修复后 tests/sql 6 格双版本 exit=0（含通用格 __all__ 每名字必须 hasattr 得到）；③ 属性访问三个存在的方言全部可得，不存在的 mysql 如实抛 AttributeError。

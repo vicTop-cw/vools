@@ -352,6 +352,7 @@ class BridgeManager:
         返回：
             LanguageConfig 实例，不存在返回 None
         """
+        _ensure_builtin_languages()
         return self._configs.get(name.lower())
 
     def unregister(self, name: str) -> bool:
@@ -402,6 +403,14 @@ class BridgeManager:
         返回：
             LanguageStatus 实例
         """
+        # 惰性初始化内置语言（首次查询时才做；manager 原本在 import 期
+        # 就调用 _register_builtin_languages()，实测 import 期 22-37s
+        # 全部来自这里，已改为按需触发）
+        try:
+            _ensure_builtin_languages()
+        except Exception:
+            pass
+
         # 惰性初始化运行时环境（首次查询时才做；loader 原本在 import 期
         # 就调用 setup_all_runtimes，让 import vools.bridge 在 py3.6 上耗时
         # 46-67s，已改为按需触发）
@@ -511,6 +520,7 @@ class BridgeManager:
         返回：
             语言名称列表
         """
+        _ensure_builtin_languages()
         return list(self._configs.keys())
 
     def list_available(self) -> List[str]:
@@ -520,6 +530,7 @@ class BridgeManager:
         返回：
             可用的语言名称列表
         """
+        _ensure_builtin_languages()
         return [name for name, cfg in self._configs.items() if self.is_available(name)]
 
     # ------------------------------------------------------------------------
@@ -1244,14 +1255,17 @@ def _register_builtin_languages():
     # 自研/实验语言：工具链位置统一由 vools.bridge.configs 解析
     # （用户 JSON / VOOLS_PROJECTS_ROOT / 环境变量可覆盖，不硬编码用户机器路径）
     def _bridge_toolchain_dirs(lang_name):
-        """按 configs 解析工具链所在目录，供 compiler_paths 使用。"""
-        try:
-            from .configs import resolve_compiler
-            resolved = resolve_compiler(lang_name)
-            if resolved:
-                return [os.path.dirname(resolved)]
-        except Exception:
-            pass
+        """按 configs 解析工具链所在目录，供 compiler_paths 使用。
+
+        轮次55 修复：注册期只留空占位，真正解析推迟到 _check_status 的
+        resolve_compiler 兜底（本文件 _check_status L448-456 已有该回退）。
+        原先在注册期就调 resolve_compiler → core.wsl.check_wsl_command →
+        _probe_wsl（per_try_timeout=10, attempts=4, backoff=1.0），WSL 冷启动时
+        单次探测可拖 10s timeout + 6s sleep；本函数对 tnr/lz/zi/pentad 共 4 门
+        语言各调一次，累计 20-37s，直接让 import vools.bridge 卡住，
+        拖慢所有下游 CLI（Actus actus run 全量测试 subprocess 30s 超时）。
+        延迟到查询期后，同一进程内 _WSL_COMMAND_CACHE 只探测一次即可复用。
+        """
         return []
 
     # Tnr
@@ -1396,8 +1410,27 @@ def _register_builtin_languages():
     ))
 
 
-# 注册内置语言
-_register_builtin_languages()
+# 内置语言注册改为惰性触发（轮次55）：原 L1400 在 import 期直接调用
+# _register_builtin_languages()，而该函数会为 27 门语言逐个 stat 编译器路径
+# （实测 nt._path_exists 5690 次 ≈ 1.65s）+ 2 次 WMI 查询（0.615s）+ 4 次
+# CreateProcess（0.126s）+ 若干文件读取（6.4s），单次 import 累计 22-37s。
+# 该成本被所有 "import vools.bridge" 的调用方（包括 Actus CLI 每次 subprocess）
+# 承担，导致 actus run/info/list/scan/validate 全部被拖慢 20-40s，
+# 全量测试 6 条因 subprocess 30s timeout 假红。
+#
+# 修法：删除模块级 eager call，改为首次真正查询语言时惰性注册
+# （见 _ensure_builtin_languages 与 BridgeManager 各入口的调用）。
+_builtin_languages_lock = threading.Lock()
+
+
+def _ensure_builtin_languages() -> None:
+    """确保内置语言已注册（惰性）。幂等；线程安全；不阻塞 import。"""
+    if _initialized:
+        return
+    with _builtin_languages_lock:
+        if _initialized:
+            return
+        _register_builtin_languages()
 
 
 # ============================================================================

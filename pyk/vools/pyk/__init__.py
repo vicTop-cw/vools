@@ -130,3 +130,24 @@ def __getattr__(name: str):
 
 def __dir__() -> list:
     return sorted(set(globals().keys()) | set(__all__))
+
+
+# Python 3.6 的【已知缺口】（2026-10-17 寻虫 BUG-78）—— 实测后【刻意不补】，理由：
+# 模块级 __getattr__ 属 PEP 562（3.7+ 才生效），3.6 下是死函数，所以 __all__ 里
+# 这 11 个懒加载名在 py3.6 上【属性访问】与 `from vools.pyk import *` 拿不到
+# （`from vools.pyk import core` 这种 from-import 仍可用：importlib 会退回直接
+# 导入子模块，实测 py3.6 通过）。
+#
+# 为什么不照 vools/datetime、vools/sql 的做法补一段 <3.7 主动绑定 —— 代价实测不可接受：
+#   ① 补上后 `import vools`（py3.6）由 0.54s 涨到 1.28s：vools/__init__.py 的既有
+#      <3.7 分支会连带 import 本包，本包的主动绑定于是被触发，vools.pyk.core 一项
+#      就要 1.17s 并把 numpy + pandas 拉进进程（单文件逐个计时实测）。
+#   ② 更硬的证据：ABAB 交错对照（各 4 次，且刻意不带 tests/sql 以排除串扰）——
+#      tests/task/test_task_complete.py::test_concurrent_submissions 在【补上后
+#      4/4 失败、不补 4/4 通过】。该用例自带 20s 预算、本就是记录在案的时序敏感
+#      用例（1dc1c1e 因偶发抖动把超时从 5s 放宽到 20s）。用"补一个 3.6 属性访问
+#      缺口"去换一个稳定复现的套件回归，是净亏。
+# 因此这里维持懒加载语义（与 py3.7+ 一致、不拖重依赖），把缺口如实登记进
+# tests/core/test_pep562_py36_convention.py 的显式豁免表与本仓账本，
+# 而不是用一个引入回归的"修复"掩盖它。真要补，得先解决 import vools 不连带
+# 拉起 pyk 这个问题（属跨模块设计变更，不在寻虫轮授权范围）。
