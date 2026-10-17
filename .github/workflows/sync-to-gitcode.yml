@@ -1,0 +1,42 @@
+name: Sync to GitCode
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-to-gitcode:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.GITCODE_SSH_PRIVATE_KEY }}
+
+      - name: Sync GitHub to GitCode (add-only, GitHub as source)
+        run: |
+          set -e
+          git clone --no-single-branch "https://github.com/${{ github.repository }}.git" /tmp/repo
+          cd /tmp/repo
+          git remote add gc "git@gitcode.com:VictorTop/vools.git"
+          git fetch gc
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          # 1) 用 GitCode 版 .github/workflows 完全替换本地（保留 GitCode 侧 workflow，避免创建新 workflow 被拒绝）
+          git rm -r --cached .github/workflows >/dev/null 2>&1 || true
+          rm -rf .github/workflows
+          git checkout "gc/master" -- .github/workflows >/dev/null 2>&1 || true
+          git add .github/workflows
+          git commit -m "chore: preserve GitCode workflow files (add-only sync)" >/dev/null 2>&1 || true
+          # 2) 推送所有 GitHub 分支：GitHub 为源，覆盖 GitCode 同名分支；GitCode 独有分支保留
+          for b in $(git for-each-ref --format='%(refname:short)' refs/heads); do
+            git push --force gc "$b:$b" 2>&1 || echo "push failed on $b"
+          done
+          # 3) 标签只增不删（GitCode 已存在的同名标签会拒绝，保留 GitCode 版）
+          git push gc --tags 2>&1 || true
