@@ -3,6 +3,13 @@
 
 集中管理所有 DLL 函数的签名定义。
 """
+
+__all__ = [
+    "get_signature",
+    "list_dlls",
+    "list_functions",
+]
+
 from typing import Dict, Optional, List
 
 # 从各个 DLL 签名模块导入
@@ -48,3 +55,4 @@ def list_functions(dll_name: str) -> List[str]:
     """
     dll_sigs = SIGNATURES.get(dll_name, {})
     return list(dll_sigs.keys())
+

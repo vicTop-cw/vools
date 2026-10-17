@@ -8,6 +8,15 @@ VB6MQTT.dll 包装模块
   连接状态无法保持，建议用于单次发布等无状态场景。
 - 未来可通过常驻进程模式支持完整的 MQTT 功能。
 """
+
+__all__ = [
+    "MQTT",
+    "open",
+    "close",
+    "get_new_msg",
+    "pub_message",
+]
+
 from .dll import dll32
 
 
@@ -81,3 +90,4 @@ class MQTT:
 
 # 全局实例
 mqtt = MQTT()
+

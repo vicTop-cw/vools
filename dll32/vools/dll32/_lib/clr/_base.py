@@ -3,6 +3,14 @@ CLR (.NET) 包装基类
 
 提供基于 pythonnet 的 .NET 互操作封装。
 """
+
+__all__ = [
+    "CLRAssembly",
+    "DotNetObject",
+    "load_assembly",
+    "get_type",
+]
+
 import os
 import sys
 from typing import Optional, Any, Dict
@@ -87,3 +95,4 @@ class DotNetObject:
     def __repr__(self) -> str:
         """返回 .NET 对象的表示"""
         return f"<DotNetObject: {repr(self._obj)}>"
+

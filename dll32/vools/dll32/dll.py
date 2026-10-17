@@ -3,6 +3,13 @@
 
 用于调用 32 位 DLL 函数，通过嵌入式 32 位 Python 进程执行。
 """
+
+__all__ = [
+    "dll32",
+    "decorator",
+    "wrapper",
+]
+
 import os
 import ctypes
 from typing import Optional, Callable, Any
