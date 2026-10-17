@@ -1,0 +1,112 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-10-17T15:07:50+08:00",
+  "actions": {
+    "actus.test.foo": {
+      "id": "actus.test.foo",
+      "name": "Foo",
+      "version": "1.0.0",
+      "trust": "trusted",
+      "entry": "main",
+      "platform": null,
+      "description": "测试动作",
+      "usage": "调用示例: actus_test_foo({\"param\": \"value\"});\n返回: {\"status\": \"ok\"}",
+      "author": "ai-scaffold",
+      "permissions": [
+        "files:read"
+      ],
+      "args": {
+        "type": "object",
+        "properties": {
+          "param": {
+            "type": "string",
+            "description": "参数说明"
+          }
+        },
+        "required": [
+          "param"
+        ]
+      },
+      "deprecated": false,
+      "max_instances": 0,
+      "tags": [],
+      "deps": [],
+      "path": "E:/IDEProjects/AI/vools/actus/actions/foo.actus.md",
+      "sha256": "77bf4539c289b2862e0f61de5e252d3f274f08edbb7ff844fc6623414ee38b97",
+      "cached_artifacts": [],
+      "status": "valid"
+    },
+    "actus.generated.zh": {
+      "id": "actus.generated.zh",
+      "name": "Zh",
+      "version": "1.0.0",
+      "trust": "trusted",
+      "entry": "main",
+      "platform": null,
+      "description": "监控日志文件变化",
+      "usage": "调用示例: actus_generated_zh({\"param\": \"value\"});\n返回: {\"status\": \"ok\"}",
+      "author": "ai-scaffold",
+      "permissions": [
+        "files:read"
+      ],
+      "args": {
+        "type": "object",
+        "properties": {
+          "watch_path": {
+            "type": "string",
+            "description": "要监控的文件夹路径"
+          },
+          "on_change_action": {
+            "type": "string",
+            "description": "变化时触发的动作 id"
+          }
+        },
+        "required": [
+          "watch_path"
+        ]
+      },
+      "deprecated": false,
+      "max_instances": 0,
+      "tags": [],
+      "deps": [],
+      "path": "E:/IDEProjects/AI/vools/actus/actions/zh.actus.md",
+      "sha256": "b95e8b6bcd177c9fb1306b64c897c152c5bd5da665eacee64ed5eb83de574402",
+      "cached_artifacts": [],
+      "status": "valid"
+    },
+    "actus.generated.zhzh": {
+      "id": "actus.generated.zhzh",
+      "name": "Zhzh",
+      "version": "1.0.0",
+      "trust": "audit",
+      "entry": "main",
+      "platform": null,
+      "description": "测试动作：处理文本数据",
+      "usage": "调用示例: actus_generated_zhzh({\"param\": \"value\"});\n返回: {\"status\": \"ok\"}",
+      "author": "ai-scaffold",
+      "permissions": [
+        "files:read"
+      ],
+      "args": {
+        "type": "object",
+        "properties": {
+          "param": {
+            "type": "string",
+            "description": "参数说明"
+          }
+        },
+        "required": [
+          "param"
+        ]
+      },
+      "deprecated": false,
+      "max_instances": 0,
+      "tags": [],
+      "deps": [],
+      "path": "E:/IDEProjects/AI/vools/actus/actions/zhzh.actus.md",
+      "sha256": "d89ce71f8f653bf52b3764f16489c2b506b49b7d7ca39a24faabe6c1057c9f8d",
+      "cached_artifacts": [],
+      "status": "valid"
+    }
+  }
+}

@@ -8,6 +8,7 @@
     python -m actus preview <id> [json参数]     # 干跑：展示将执行的块
     python -m actus run <id> [json参数] [--confirm] [--yes]
     python -m actus status [exec_id]           # 查询执行状态
+    python -m actus probe [--force-refresh] [--json] [--max-age N] [--verbose]  # 环境探测（ProbeReport）
     python -m actus mcp [--transport stdio|sse] [--port 8765]  # 启动聚合 MCP server
     python -m actus config <client>            # 生成 MCP 接入配置（claude/cursor/cline/vscode）
     python -m actus scaffold <description>     # AI：根据描述生成动作骨架
@@ -112,6 +113,17 @@ def _build_parser():
                        help='传输协议（默认 stdio）')
     p_mcp.add_argument('--port', type=int, default=8765,
                        help='SSE 传输监听端口（默认 8765，仅 sse 有效）')
+
+    # probe 子命令 — 环境探测器（analysis/PROBE_PLAN.md §9 Phase 3）
+    p_probe = sub.add_parser('probe', help='环境探测器：一键探测本机能力，输出 ProbeReport')
+    p_probe.add_argument('--force-refresh', '--force', action='store_true',
+                         dest='force_refresh', help='强制刷新（忽略缓存）')
+    p_probe.add_argument('--max-age', type=int, default=3600,
+                         help='缓存有效期秒数（默认 3600）')
+    p_probe.add_argument('--json', action='store_true', dest='as_json',
+                         help='输出 JSON（机器消费）')
+    p_probe.add_argument('--verbose', action='store_true',
+                         help='打印每个探测器的详细进度')
 
     # dialog 子命令 — 快速调用 C# 弹窗
     p_dialog = sub.add_parser('dialog', help='弹出 C# 交互弹窗（alert/input/single/multi/form/wait）')
@@ -804,6 +816,10 @@ def _dispatch(args) -> int:
     # Health 命令
     if args.command == 'health':
         return _cmd_health(args)
+
+    # Probe 命令（环境探测器，PROBE_PLAN.md §9 Phase 3）
+    if args.command == 'probe':
+        return _cmd_probe(args)
 
     return 2
 
@@ -2313,6 +2329,23 @@ def _cmd_export(args) -> int:
     else:
         print('📭 暂无执行历史')
         return 0
+
+
+def _cmd_probe(args) -> int:
+    """probe 子命令：一键探测本机环境，输出 ProbeReport（PROBE_PLAN.md §9 Phase 3）。
+
+    人类可读模式走 format_summary；--json 输出完整结构化报告（机器消费）。
+    缓存控制：--force-refresh 强制全量重探测；--max-age 自定义缓存有效期。
+    """
+    from vools.actus.probe import probe, format_summary
+
+    report = probe(force_refresh=args.force_refresh,
+                   max_age=args.max_age, verbose=args.verbose)
+    if args.as_json:
+        _out(report.to_dict())
+    else:
+        print(format_summary(report))
+    return 0
 
 
 def _cmd_health(args) -> int:
