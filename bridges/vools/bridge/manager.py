@@ -211,15 +211,16 @@ def _run_version_check(config: LanguageConfig) -> tuple:
     cmd = config.version_check.copy()
     cmd[0] = check_cmd_path  # 替换为实际路径
 
+    # 用 probe._run_cmd_timeout：`subprocess.run(timeout=N)` 在 Windows 上
+    # 只杀直接子进程，`.BAT`/`.CMD` 会再 spawn 慢启动的孙进程，超时后孙进程
+    # 继续跑、调用方被阻塞到孙进程退出。这里保证 kill 整棵进程树并按时返回。
+    from .probe import _run_cmd_timeout
     try:
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=10
-        )
+        result = _run_cmd_timeout(cmd, timeout=10)
+        _out = (result.stdout or b'').decode('utf-8', errors='replace')
+        _err = (result.stderr or b'').decode('utf-8', errors='replace')
         if result.returncode == 0:
-            output = result.stdout.strip() or result.stderr.strip()
+            output = _out.strip() or _err.strip()
             version = None
             if config.version_pattern:
                 import re
@@ -227,7 +228,7 @@ def _run_version_check(config: LanguageConfig) -> tuple:
                 if match:
                     version = match.group(1)
             return True, output, version or ''
-        return False, result.stderr, None
+        return False, _err, None
     except Exception as e:
         return False, str(e), None
 
