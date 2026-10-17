@@ -7,9 +7,8 @@ vools.bridge.probe - 跨语言编译环境探测工具
 主要功能：
 1. probe_environment() - 检测本机环境
 2. probe_wsl() - 检测 WSL Linux 子系统
-3. probe_remote(host) - 检测远程主机（基于 SSH）
-4. print_report() - 友好的报告输出
-5. get_available_languages() - 仅返回可用的语言列表
+3. print_report() - 友好的报告输出
+4. get_available_languages() - 仅返回可用的语言列表
 
 支持的语言（按桥接子包顺序）：
   c / cpp / rust / go / nim / cangjie / csharp / java / scala / 

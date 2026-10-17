@@ -672,8 +672,8 @@ BUILTIN_BLOCK_LANGUAGES: Tuple[str, ...] = (
     "python", "shell", "bash", "sh",
     "bat", "batch", "cmd", "powershell", "pwsh",
     "webview2", "webview", "htmlview",
-    # 富内容展示块：html（计划 §4.2，P1；默认 L1 静态，L4 源码展示降级）
-    "html",
+    # 富内容展示块：html/svg/rich（计划 §4.2，P1；默认 L1 静态，L4 源码展示降级）
+    "html", "svg", "rich",
 ) + SIGMA_LANGUAGE_TAGS
 
 

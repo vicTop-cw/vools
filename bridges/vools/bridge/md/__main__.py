@@ -55,8 +55,11 @@ def main():
     # rich: 富内容展示预览（计划 §4.2，P1）
     rich_parser = subparsers.add_parser("rich", help="渲染富内容展示块（html/svg/rich）为预览 HTML")
     rich_parser.add_argument("md_path", help=".md 文件路径")
-    rich_parser.add_argument("--out", help="预览 HTML 输出路径（默认 build_dir/artifacts/rich/rich-preview.html）")
-    rich_parser.add_argument("--no-open", action="store_true", help="渲染后不自动打开浏览器")
+    rich_parser.add_argument("--output", "--out", dest="out", help="预览 HTML 输出路径（默认 build_dir/artifacts/rich/rich-preview.html）")
+    rich_parser.add_argument("--open", dest="open_", action="store_true", default=True, help="渲染后自动打开浏览器（默认）")
+    rich_parser.add_argument("--no-open", dest="open_", action="store_false", help="渲染后不自动打开浏览器")
+    rich_parser.add_argument("--serve", nargs="?", const="8765", metavar="PORT", help="启动本地 HTTP 预览服务（默认端口 8765）")
+    rich_parser.add_argument("--hot-reload", dest="hot_reload", choices=("l1", "l2"), default="l1", help="热更新档位（默认 l1 全文替换）")
 
     args = parser.parse_args()
 
@@ -183,11 +186,11 @@ def _cmd_clean(args):
 
 
 def _cmd_rich(args):
-    """渲染 md 中的富内容展示块（html/svg/rich）为预览 HTML（计划 §4.2，P1）。"""
-    from .parser import parse_md
-    from .runner import _execute_rich_block
+    """渲染 md 富内容预览（scan_rich + render，支持 --output/--open/--serve，计划 P2~P6）。"""
     from .artifacts import ensure_build_dir
-    from .rich.sanitize import build_csp_meta
+    from .parser import parse_md
+    from .rich import RichConfig, scan_rich, render
+    from .rich.hotreload import parse_hot_reload_mode
 
     parsed = parse_md(args.md_path)
     build_dir = parsed.file_directives.build_dir
@@ -196,47 +199,79 @@ def _cmd_rich(args):
         build_dir = os.path.join(md_dir, build_dir)
     ensure_build_dir(build_dir)
 
-    rich_blocks = [b for b in parsed.blocks if b.language in ("html", "svg", "rich")]
-    if not rich_blocks:
-        print(f"[rich] 未找到 html/svg/rich 展示块: {args.md_path}")
-        sys.exit(1)
+    # 文件级 #!rich 指令 + CLI 覆盖（命令行参数优先，计划 §5.3）
+    config = RichConfig()
+    config.hot_reload = parse_hot_reload_mode(args.hot_reload)
+    if getattr(args, "serve", None):
+        # serve 模式下默认允许远程链接 opt-in（预览服务仍受 CSP 约束）
+        config.allow_remote = True
 
-    context = {"build_dir": build_dir}
-    card_parts = []
-    for block in rich_blocks:
-        stdout, stderr, exit_code = _execute_rich_block(block, context, {})
-        if exit_code != 0:
-            print(f"[rich] block {block.index} 渲染失败: {stderr}")
-            sys.exit(1)
-        print(stdout)
-        card_path = os.path.join(build_dir, "artifacts", "rich", f"block_{block.index}.html")
-        if os.path.exists(card_path):
-            with open(card_path, "r", encoding="utf-8") as f:
-                card_parts.append(_extract_body(f.read()))
-
-    # 预览页：L1 基线 CSP + 各卡片 body 拼接（决策 3）
-    preview_html = (
-        "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n"
-        + build_csp_meta(level=1, allow_remote_images=False)
-        + "\n</head>\n<body>\n"
-        + "\n".join(card_parts)
-        + "\n</body>\n</html>"
+    doc = scan_rich(args.md_path, build_dir=build_dir, config=config)
+    result = render(
+        doc,
+        interactive=True,
+        hot_reload=config.hot_reload,
     )
+
+    if not doc.body_html and not doc.inline_svgs and not doc.inline_htmls:
+        print(f"[rich] 未找到 html/svg/rich 展示块与富内容正文: {args.md_path}")
+        sys.exit(1)
 
     if args.out:
         out_path = os.path.abspath(args.out)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
     else:
         out_path = os.path.join(build_dir, "artifacts", "rich", "rich-preview.html")
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
-        f.write(preview_html)
+        f.write(result.html)
 
     print(f"[rich] 预览: {out_path}")
-    if not args.no_open:
+    print(f"[rich] 富内容: 内联 SVG {len(doc.inline_svgs)} / 内嵌 HTML {len(doc.inline_htmls)} / 文件链接 {len(doc.file_links)} / 产物 {len(doc.artifacts)}")
+
+    if args.open_ and not args.serve:
         import webbrowser
 
         webbrowser.open(f"file:///{out_path.replace(os.sep, '/')}")
-    print(f"[rich] 完成: {len(card_parts)} 个卡片")
+
+    if args.serve:
+        _serve_rich(build_dir, args.serve, out_path)
+
+
+def _serve_rich(build_dir: str, port_str: str, preview_path: str) -> None:
+    """启动本地 HTTP 预览服务（线程化，Ctrl+C 退出）。"""
+    import http.server
+    import threading
+
+    try:
+        port = int(port_str)
+    except ValueError:
+        port = 8765
+
+    preview_name = os.path.basename(preview_path)
+    build_dir_abs = os.path.abspath(build_dir)
+
+    class RichHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *hargs, **hkwargs):
+            super().__init__(*hargs, directory=build_dir_abs, **hkwargs)
+
+        def do_GET(self):
+            if self.path in ("/", "/index.html"):
+                self.path = "/" + preview_name
+            return super().do_GET()
+
+        def log_message(self, fmt, *hargs):
+            pass
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), RichHandler)
+    print(f"[rich] serve: http://127.0.0.1:{port}/{preview_name}")
+    print("[rich] 按 Ctrl+C 退出服务")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
 
 
 def _extract_body(doc: str) -> str:
