@@ -208,8 +208,9 @@ class RuleEngine:
                 if name == rule_obj.name:
                     ordered.append((name, result))
                     if result.is_failure:
+                        err = result.unwrap_or_else(lambda e: e)
                         return Result.failure(
-                            Exception(f"Rule '{name}' failed: {result.unwrap_or(None)}")
+                            Exception(f"Rule '{name}' failed: {err}")
                         )
                     break
 
@@ -229,9 +230,14 @@ class RuleEngine:
             Result: 同 evaluate()
         """
         import asyncio
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
 
         sorted_rules = sorted(self._rules, key=lambda r: -r.priority)
+        if not sorted_rules:
+            return Result.success([])
         results: List = []
 
         with self._create_executor() as executor:
@@ -259,8 +265,9 @@ class RuleEngine:
                 if name == rule_obj.name:
                     ordered.append((name, result))
                     if result.is_failure:
+                        err = result.unwrap_or_else(lambda e: e)
                         return Result.failure(
-                            Exception(f"Rule '{name}' failed: {result.unwrap_or(None)}")
+                            Exception(f"Rule '{name}' failed: {err}")
                         )
                     break
 
