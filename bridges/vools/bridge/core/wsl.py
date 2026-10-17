@@ -21,6 +21,12 @@ _IS_WINDOWS = platform.system() == 'Windows'
 # 缓存后同一进程内只探测一次 WSL 可用性，命令查询按命令名缓存。
 _WSL_AVAILABLE_CACHE: Optional[bool] = None
 _WSL_COMMAND_CACHE: dict = {}
+# 负结果的时间戳（负缓存 TTL 用）：只记录 False，60s 后过期重新探测。
+# 正结果（True）恒不过期 —— WSL 装了命令就不会消失。
+_WSL_COMMAND_CACHE_TS: dict = {}
+# 负缓存 TTL（秒）：一轮扫描内重复付账被消除；WSL VM 重启装命令后
+# 60s 内能被自动恢复探测。
+_WSL_NEG_TTL: float = 60.0
 
 
 def _probe_wsl(cmd, per_try_timeout: float, attempts: int = 4, backoff: float = 1.0):
@@ -86,14 +92,37 @@ def is_wsl_available() -> bool:
 
 
 def check_wsl_command(cmd: str) -> bool:
-    """检查 WSL 中是否存在指定命令（结果按命令名缓存，且只缓存 True，理由同上）。"""
-    if _WSL_COMMAND_CACHE.get(cmd):
-        return True
+    """检查 WSL 中是否存在指定命令（结果按命令名缓存）。
+
+    True 恒缓存（WSL 装了命令就不会消失）。False 带 TTL 缓存（60s），
+    避免同一次扫描里 27 门语言 × 多命令重复付 WSL 冷启动费（实测每命令
+    ~5-12s，全量扫描可超 pytest 预算）。60s 后过期自动重探 —— WSL VM
+    重启装上命令后能自动恢复，不会永久锁死。
+
+    **attempts=1, per_try_timeout=3**：`wsl which <cmd>` 走 WSL 内核的 PATH
+    查询，非零/超时基本是 "命令不在 distro 里"（stderr 形如
+    `which: no <cmd> in ...`），不是 WSL VM 重启那类瞬时非零（那只影响
+    `wsl --version` / 冷启动首调）。
+    """
+    now = time.monotonic()
+    if cmd in _WSL_COMMAND_CACHE:
+        val = _WSL_COMMAND_CACHE[cmd]
+        if val:
+            return True
+        ts = _WSL_COMMAND_CACHE_TS.get(cmd, 0)
+        if (now - ts) < _WSL_NEG_TTL:
+            return False
+        # 负缓存过期，重新探测
+        _WSL_COMMAND_CACHE.pop(cmd, None)
+        _WSL_COMMAND_CACHE_TS.pop(cmd, None)
     if not is_wsl_available():
         return False
-    ok, _definitive = _probe_wsl(['wsl', 'which', cmd], per_try_timeout=10)
+    ok, _definitive = _probe_wsl(['wsl', 'which', cmd], per_try_timeout=3, attempts=1)
     if ok:
         _WSL_COMMAND_CACHE[cmd] = True
+    else:
+        _WSL_COMMAND_CACHE[cmd] = False
+        _WSL_COMMAND_CACHE_TS[cmd] = now
     return ok
 
 
@@ -144,6 +173,7 @@ def reset_cache() -> None:
     global _WSL_AVAILABLE_CACHE
     _WSL_AVAILABLE_CACHE = None
     _WSL_COMMAND_CACHE.clear()
+    _WSL_COMMAND_CACHE_TS.clear()
 
 
 def windows_to_wsl_path(windows_path: str) -> str:
