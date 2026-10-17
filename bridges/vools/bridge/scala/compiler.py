@@ -26,11 +26,6 @@ __all__ = [
     "run_scala_app",
     "check_scala_environment",
     "ScalaBridge",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
 ]
 
 import os

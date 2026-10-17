@@ -17,8 +17,6 @@ __all__ = [
     "generate_cj_exe_code",
     "generate_cj_exe_with_args_code",
     "CangjieCodeGenerator",
-    "generate_function",
-    "generate_module",
 ]
 
 from .types import get_cj_type

@@ -17,13 +17,6 @@ __all__ = [
     "get_java_gateway",
     "is_java_available",
     "check_java_runtime",
-    "start",
-    "connect",
-    "stop",
-    "get_object",
-    "call_method",
-    "new_instance",
-    "is_connected",
 ]
 
 import os

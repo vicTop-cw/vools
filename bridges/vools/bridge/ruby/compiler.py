@@ -11,12 +11,6 @@ __all__ = [
     "get_ruby_type",
     "infer_ruby_argtypes",
     "RubyBridge",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
-    "run_project",
     "PY_TO_RUBY_TYPE",
 ]
 

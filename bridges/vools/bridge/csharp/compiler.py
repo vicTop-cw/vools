@@ -17,14 +17,6 @@ __all__ = [
     "compile_and_run",
     "CSharpBridge",
     "CsharpFuture",
-    "compiler_available",
-    "check_cache",
-    "generate_code",
-    "compile_code",
-    "save_to_cache",
-    "compile_project",
-    "call_func",
-    "result",
 ]
 
 import os

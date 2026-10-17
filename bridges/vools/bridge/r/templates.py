@@ -13,7 +13,6 @@ __all__ = [
     "generate_from_python_func",
     "generate_function_signature",
     "generate_script_code",
-    "extract_preamble",
     "generate_from_python_func",
 ]
 

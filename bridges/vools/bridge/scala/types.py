@@ -13,14 +13,10 @@ __all__ = [
     "convert_to_jvm",
     "convert_to_py",
     "infer_jvm_types",
-    "get_jvm_type_name",
     "get_py_type",
-    "get_jvm_class",
-    "get_converter",
     "convert_to_jvm",
     "convert_to_py",
     "infer_jvm_types",
-    "describe_type",
 ]
 
 from typing import Type, Any, Dict, List, Optional, Callable

@@ -14,11 +14,6 @@ __all__ = [
     "bridge_scala_class",
     "scala_async",
     "AsyncScalaModule",
-    "decorator",
-    "decorator",
-    "wrapper",
-    "ScalaModuleWrapper",
-    "AsyncScalaModuleWrapper",
 ]
 
 import functools

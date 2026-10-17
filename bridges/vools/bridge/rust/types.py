@@ -14,7 +14,6 @@ __all__ = [
     "infer_ctypes_types",
     "infer_ret_type",
     "convert_args",
-    "register_type",
     "get_rust_type",
     "get_ctypes_type",
     "infer_rust_types",

@@ -4,13 +4,6 @@ __all__ = [
     "FbcBridge",
     "FbcFuture",
     "compile_and_run",
-    "supports_nested_functions",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
-    "result",
     "PY_TO_FB",
 ]
 

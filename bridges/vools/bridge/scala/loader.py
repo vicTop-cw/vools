@@ -16,13 +16,6 @@ __all__ = [
     "get_scala_gateway",
     "is_scala_available",
     "check_scala_runtime",
-    "start",
-    "connect",
-    "stop",
-    "get_object",
-    "call_method",
-    "new_instance",
-    "is_connected",
 ]
 
 import os

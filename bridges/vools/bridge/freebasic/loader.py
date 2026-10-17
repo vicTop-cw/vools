@@ -12,9 +12,6 @@ __all__ = [
     "list_fb_libs",
     "get_fbc_lib",
     "is_fbc_available",
-    "load",
-    "is_available",
-    "list_libs",
 ]
 
 import os

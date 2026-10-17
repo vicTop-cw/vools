@@ -14,11 +14,6 @@ __all__ = [
     "JavaModule",
     "bridge_java_class",
     "AsyncJavaModule",
-    "decorator",
-    "decorator",
-    "wrapper",
-    "JavaModuleWrapper",
-    "AsyncJavaModuleWrapper",
 ]
 
 import functools

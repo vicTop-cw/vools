@@ -7,18 +7,6 @@ Keyboard 模块 - 键盘操作
 
 __all__ = [
     "KeyboardModule",
-    "SendKeys",
-    "KeyDown",
-    "KeyUp",
-    "KeyDownUp",
-    "GetKeyPressed",
-    "GetKeyOpened",
-    "AltKeyPressed",
-    "CtrlKeyPressed",
-    "ShiftKeyPressed",
-    "CapsLockOpened",
-    "NumLockOpened",
-    "ScrollLockOpened",
 ]
 
 from ._base import APIBridgeError, _BaseModule

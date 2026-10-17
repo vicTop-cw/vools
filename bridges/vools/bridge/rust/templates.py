@@ -14,7 +14,6 @@ __all__ = [
     "generate_function_signature",
     "generate_lib_code",
     "generate_cargo_toml",
-    "extract_imports",
     "generate_from_python_func",
 ]
 

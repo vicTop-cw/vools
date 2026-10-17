@@ -12,18 +12,6 @@ __all__ = [
     "Cursor",
     "Connection",
     "connect",
-    "execute",
-    "fetchone",
-    "fetchall",
-    "fetchmany",
-    "close",
-    "description",
-    "rowcount",
-    "execute",
-    "commit",
-    "rollback",
-    "close",
-    "cursor",
 ]
 
 import ctypes

@@ -17,14 +17,6 @@ __all__ = [
     "vbnet_compiler_available",
     "compile_and_run",
     "VBNetBridge",
-    "result",
-    "compiler_available",
-    "save_to_cache",
-    "check_cache",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
 ]
 
 import os

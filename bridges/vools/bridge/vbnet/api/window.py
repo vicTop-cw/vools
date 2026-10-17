@@ -7,25 +7,6 @@ Window 模块 - 窗口操作
 
 __all__ = [
     "WindowModule",
-    "FindWindow",
-    "FindWindowEx",
-    "GetWindowText",
-    "SetWindowText",
-    "GetWindowRect",
-    "GetClientRect",
-    "MoveWindow",
-    "ShowWindow",
-    "CloseWindow",
-    "EnableWindow",
-    "IsWindowExists",
-    "GetClassName",
-    "GetParent",
-    "SetParent",
-    "GetForegroundWindow",
-    "SetForegroundWindow",
-    "GetDesktopWindow",
-    "GetWindowProcessId",
-    "BringWindowToTop",
 ]
 
 from typing import Optional, Tuple

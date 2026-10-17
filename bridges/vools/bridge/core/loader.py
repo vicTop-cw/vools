@@ -17,9 +17,6 @@ __all__ = [
     "is_available",
     "load_nim_lib",
     "is_nim_available",
-    "get_function",
-    "call",
-    "load",
     "is_available",
 ]
 

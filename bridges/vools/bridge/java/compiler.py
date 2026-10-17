@@ -16,12 +16,6 @@ __all__ = [
     "create_jar",
     "check_java_environment",
     "JavaBridge",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
-    "set_package",
     "PY_TO_JAVA_TYPE",
 ]
 

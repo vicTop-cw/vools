@@ -8,10 +8,6 @@ vools.bridge.vbnet.api._base - API.tlb 桥接核心模块
 __all__ = [
     "APIBridgeError",
     "is_api_available",
-    "get",
-    "has",
-    "clear",
-    "supported_progids",
 ]
 
 import platform

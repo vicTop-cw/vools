@@ -11,13 +11,6 @@ __all__ = [
     "compile_and_run",
     "ZigFuture",
     "ZigBridge",
-    "result",
-    "compiler_available",
-    "generate_code",
-    "compile_code",
-    "compile_project",
-    "call_func",
-    "set_zig_executable",
 ]
 
 import os
