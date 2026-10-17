@@ -4,7 +4,6 @@
 __all__ = [
     "get_permissions_info",
     "PermissionsProber",
-    "probe",
 ]
 
 import os

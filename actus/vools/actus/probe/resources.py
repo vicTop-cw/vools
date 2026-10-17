@@ -4,7 +4,6 @@
 __all__ = [
     "get_resources_info",
     "ResourcesProber",
-    "probe",
 ]
 
 import platform

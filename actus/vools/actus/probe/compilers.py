@@ -6,7 +6,6 @@
 
 __all__ = [
     "CompilersProber",
-    "probe",
 ]
 
 import shutil
