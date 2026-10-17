@@ -18,6 +18,44 @@ class IntentRouter:
         self._actions: List[dict] = []
         self._workflows: List[dict] = []
         self._keyword_map: Dict[str, str] = {}
+        # probe 集成（PROBE_PLAN.md §9 Phase 3）：ready 动作过滤
+        self._ready_ids: Optional[set] = None
+
+    def set_ready_ids(self, ready_ids):
+        """设置可推荐（ready）的动作 id 集合。
+
+        来自 probe 报告（actions 探测）：只有探测为可用的动作才进入推荐面。
+        传 None 或空集合表示不启用 ready 过滤（向后兼容）。
+        """
+        if ready_ids is None:
+            self._ready_ids = None
+        else:
+            self._ready_ids = set(ready_ids)
+        return self
+
+    def set_probe_report(self, report):
+        """从 ProbeReport 提取 ready 动作集合（PROBE_PLAN.md §9 Phase 3 集成）。
+
+        probe 报告 actions 类别的 extra['actions'] 列出了探测到的动作 id，
+        只有这些动作视为 ready，route() 推荐时仅推荐它们。
+        """
+        ready = []
+        for item in getattr(report, "items", []):
+            if item.category == "actions" and item.available:
+                for act in ((item.extra or {}).get("actions", []) or []):
+                    if isinstance(act, dict):
+                        ready.append(act.get("id"))
+                    else:
+                        ready.append(act)
+        ready = [x for x in ready if x]
+        self._ready_ids = set(ready) if ready else None
+        return self
+
+    def _is_ready(self, action_id: str) -> bool:
+        """判断动作是否 ready（未启用过滤时恒为 True）。"""
+        if self._ready_ids is None:
+            return True
+        return action_id in self._ready_ids
 
     def register_action(self, action_id: str, description: str, usage: str = "", tags: List[str] = None):
         """注册动作的语义描述。"""
@@ -59,6 +97,8 @@ class IntentRouter:
         # 1. 精确关键词匹配
         for keyword, action_id in self._keyword_map.items():
             if keyword.lower() in query_lower:
+                if not self._is_ready(action_id):
+                    continue
                 return {
                     "match": "keyword",
                     "action_id": action_id,
@@ -72,6 +112,8 @@ class IntentRouter:
         best_reason = ""
 
         for action in self._actions:
+            if not self._is_ready(action["id"]):
+                continue
             score = 0
             for tag in action.get("tags", []):
                 tag_lower = tag.lower()
@@ -104,8 +146,10 @@ class IntentRouter:
         return {"match": "none", "action_id": None, "confidence": 0, "reason": "无匹配"}
 
     def list_actions(self) -> List[dict]:
-        """列出所有已注册的动作。"""
-        return self._actions.copy()
+        """列出所有已注册的动作（未启用 ready 过滤时全量；启用时仅 ready 动作）。"""
+        if self._ready_ids is None:
+            return self._actions.copy()
+        return [a for a in self._actions if a["id"] in self._ready_ids]
 
     def list_workflows(self) -> List[dict]:
         """列出所有已注册的工作流。"""

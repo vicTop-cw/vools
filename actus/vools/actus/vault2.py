@@ -484,6 +484,10 @@ class Vault2:
                 (new_pin_hash.hex(), new_salt.hex(), new_rk_hash, identity_id),
             )
 
+            # BUG-42: 清理该身份的历史 used_codes——recover 是凭据整体重置，
+            # 旧 PIN 时代的动态码已失效；不清则 auth 防重放会误判合法重新认证为 replay。
+            conn.execute("DELETE FROM used_codes WHERE identity_id=?", (identity_id,))
+
         self._audit("recover", identity_id, success=True, reason="pin_reset")
         return {
             "status": "ok",

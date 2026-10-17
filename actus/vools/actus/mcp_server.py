@@ -358,6 +358,16 @@ class MCPServer:
             {'name': 'actus_runtimes',
              'description': '列出所有可用的多语言运行时（python/shell/node/go/rust/ruby/php）',
              'inputSchema': {'type': 'object', 'properties': {}}},
+            {'name': 'actus_probe',
+             'description': '环境探测器：一键探测本机能力（平台/权限/资源/运行时/编译器/系统工具/Python 包/动作依赖），返回 ProbeReport；缺省读缓存，可用 --force 强制刷新',
+             'inputSchema': {'type': 'object', 'properties': {
+                 'force': {'type': 'boolean',
+                           'description': '强制刷新，忽略缓存（默认 false）'},
+                 'max_age': {'type': 'integer',
+                             'description': '缓存有效期秒数（默认 3600）'},
+                 'category': {'type': 'string',
+                              'description': '只探测指定类别（platform/permissions/environment/resources/system_tools/runtimes/compilers/python_pkgs/actions，可选）'},
+             }}},
             {'name': 'actus_triggers_list',
              'description': '列出所有已注册的触发器（cron/watch/webhook/hotkey）',
              'inputSchema': {'type': 'object',
@@ -1066,6 +1076,14 @@ class MCPServer:
                 desc = a.meta.get('description', '')
                 usage = a.meta.get('usage', '')
                 router.register_action(aid, desc, usage, tags)
+
+            # probe 集成（PROBE_PLAN.md §9 Phase 3）：只推荐 ready 的动作
+            try:
+                from vools.actus.probe import probe
+                report = probe(force_refresh=False)
+                router.set_probe_report(report)
+            except Exception:
+                pass  # 探测失败时不启用 ready 过滤，保持向后兼容
             
             result = router.route(description)
             
@@ -1242,6 +1260,23 @@ class MCPServer:
                 return text_result({'status': 'ok', 'available': langs})
             except Exception as e:
                 return text_result({'status': 'failed', 'error': {'code': 'runtime_error', 'message': str(e)}}, True)
+
+        if name == 'actus_probe':
+            from vools.actus.probe import probe
+            force = bool(args.get('force', False))
+            max_age = int(args.get('max_age', 3600))
+            category = args.get('category') or None
+            try:
+                report = probe(force_refresh=force, max_age=max_age)
+                if category:
+                    items = [i.to_dict() for i in report.items if i.category == category]
+                    data = {'status': 'ok', 'category': category,
+                            'total': len(items), 'items': items}
+                else:
+                    data = {'status': 'ok', 'report': report.to_dict()}
+                return text_result(data)
+            except Exception as e:
+                return text_result({'status': 'failed', 'error': {'code': 'probe_error', 'message': str(e)}}, True)
 
         if name == 'actus_deps':
             return _handle_deps_check(args)

@@ -97,14 +97,23 @@ class DependencyResolver:
     @staticmethod
     def _find_actions_root() -> str:
         """自动定位 actions 根目录。"""
+        # 优先使用 ACTUS_REPO_ROOT 环境变量（CLI/test 均设置）
+        env_root = os.environ.get("ACTUS_REPO_ROOT")
+        if env_root:
+            actions = os.path.join(env_root, "actions")
+            if os.path.isdir(actions):
+                return actions
+        # 回退到当前工作目录
+        cwd_actions = os.path.join(os.getcwd(), "actions")
+        if os.path.isdir(cwd_actions):
+            return cwd_actions
+        # 最后尝试从文件位置推导
         current = os.path.dirname(os.path.abspath(__file__))
-        # 从 engine/actuscore/ 回到项目根
         project_root = os.path.dirname(os.path.dirname(current))
         actions = os.path.join(project_root, "actions")
         if os.path.isdir(actions):
             return actions
-        # 回退到当前工作目录
-        return os.path.join(os.getcwd(), "actions")
+        return cwd_actions
 
     def parse_deps(self, raw_deps: list) -> List[Dependency]:
         """解析原始 deps 列表。"""

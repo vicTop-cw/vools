@@ -11,6 +11,7 @@ __all__ = [
 import os
 import sys
 from .base import Prober, ProbeItem
+from ..indexer import _repo_root
 
 # 动作依赖映射：动作使用的工具/库 → 依赖类型
 ACTION_DEPENDENCY_MAP = {
@@ -36,9 +37,8 @@ ACTION_DEPENDENCY_MAP = {
 def _scan_actions_dir(actions_dir: str = None) -> dict:
     """扫描动作目录，提取依赖信息。"""
     if actions_dir is None:
-        # 尝试默认位置
-        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        actions_dir = os.path.join(repo_root, "actions")
+        # 与 indexer 对齐：ACTUS_REPO_ROOT 优先，否则按包位置推断仓库根
+        actions_dir = os.path.join(_repo_root(), "actions")
 
     if not os.path.isdir(actions_dir):
         return {"actions_dir": actions_dir, "exists": False, "actions": []}
@@ -47,8 +47,17 @@ def _scan_actions_dir(actions_dir: str = None) -> dict:
     for dirpath, _dirnames, filenames in os.walk(actions_dir):
         for fn in sorted(filenames):
             if fn.endswith(".actus.md"):
-                rel = os.path.relpath(os.path.join(dirpath, fn), actions_dir).replace(os.sep, "/")
-                actions.append({"id": rel, "path": os.path.join(dirpath, fn)})
+                full = os.path.join(dirpath, fn)
+                rel = os.path.relpath(full, actions_dir).replace(os.sep, "/")
+                # 解析动作真实 id（与 indexer 的 aid 一致），失败则退化为相对路径
+                aid = rel
+                try:
+                    from ..model import parse_cfg_from_file
+                    act = parse_cfg_from_file(full)
+                    aid = (act.meta or {}).get("id") or rel
+                except Exception:
+                    pass
+                actions.append({"id": aid, "path": full})
 
     return {"actions_dir": actions_dir, "exists": True, "actions": actions}
 
