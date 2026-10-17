@@ -12,6 +12,24 @@ set_transport(...) 注入更底层的实现。
 - 本模块让 list 直接以 POINTER(c_longlong) 形式传入，跳过 CSV 中转
 """
 
+
+__all__ = [
+    "Transport",
+    "CtypesTransport",
+    "ZincTransport",
+    "get_transport",
+    "set_transport",
+    "prepare_arg",
+    "prepare_ret",
+    "decode_result",
+    "prepare_arg",
+    "prepare_ret",
+    "decode_result",
+    "prepare_arg",
+    "prepare_ret",
+    "decode_result",
+]
+
 from typing import Any, Tuple
 
 import ctypes
@@ -214,3 +232,4 @@ def set_transport(transport: Transport) -> None:
     """
     global _default_transport
     _default_transport = transport
+

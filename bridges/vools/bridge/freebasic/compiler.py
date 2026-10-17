@@ -1,3 +1,19 @@
+
+__all__ = [
+    "fbc_compiler_available",
+    "FbcBridge",
+    "FbcFuture",
+    "compile_and_run",
+    "supports_nested_functions",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "result",
+    "PY_TO_FB",
+]
+
 '''
 vools.bridge.freebasic.compiler - FreeBASIC 动态编译装饰器
 
@@ -729,3 +745,4 @@ async def compile_and_run_async(fbc_code: str, func_name: str = 'main',
         return _call_fbc_func(dll_path, func_name, args, ret_type, lib_paths=lib_paths)
 
     return await loop.run_in_executor(_executor, _run)
+

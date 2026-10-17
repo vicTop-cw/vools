@@ -5,6 +5,27 @@ vools.bridge.php.compiler - PHP 语言桥接编译器实现
 解释执行和调用逻辑。
 """
 
+
+__all__ = [
+    "php_compiler_available",
+    "get_php_version",
+    "get_php_type",
+    "infer_php_argtypes",
+    "serialize_args",
+    "deserialize_result",
+    "PHPFuture",
+    "compile_and_run",
+    "PHPBridge",
+    "result",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "run_project",
+    "PY_TO_PHP_TYPE",
+]
+
 import os
 import sys
 import json

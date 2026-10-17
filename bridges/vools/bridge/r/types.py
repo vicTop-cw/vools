@@ -5,6 +5,21 @@ vools.bridge.r.types - Python ↔ R 类型映射系统
 基于 JSON 作为中间序列化格式，简化跨语言函数调用时的类型声明工作。
 """
 
+
+__all__ = [
+    "RTypeMapper",
+    "get_r_type",
+    "infer_r_types",
+    "serialize_args",
+    "deserialize_result",
+    "register_type",
+    "get_r_type",
+    "infer_r_types",
+    "serialize_args",
+    "deserialize_result",
+    "PY_TO_R_TYPE",
+]
+
 import json
 from typing import Any, List, Tuple
 
@@ -227,3 +242,4 @@ def serialize_args(args, r_types=None):
 def deserialize_result(result_json, ret_type=None):
     """将 R 返回的 JSON 反序列化为 Python 对象"""
     return RTypeMapper.deserialize_result(result_json, ret_type)
+

@@ -8,6 +8,16 @@ vools.bridge.freebasic.types - Python ↔ FreeBASIC 类型映射
 - str / bytes 走 ZString Ptr（utf-8 c_char_p），不通过 BSTR。
 """
 
+
+__all__ = [
+    "get_fb_type",
+    "infer_fb_argtypes",
+    "is_array_type",
+    "get_ctype_for",
+    "PY_TO_FB_TYPE",
+    "FB_TO_CTYPES",
+]
+
 import ctypes
 
 
@@ -183,3 +193,4 @@ def get_ctype_for(fb_type):
         ctypes 类型，'Void' 返回 None
     """
     return FB_TO_CTYPES.get(fb_type, ctypes.c_long)
+

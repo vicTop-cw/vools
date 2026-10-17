@@ -6,6 +6,25 @@ vools.bridge.rust.compiler - Rust 编译器封装
 使用 manager 统一管理编译器配置。
 """
 
+
+__all__ = [
+    "RustCompiler",
+    "get_compiler",
+    "compile_rust_code",
+    "is_rust_available",
+    "RustBridge",
+    "compile",
+    "is_available",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "rustc_available",
+    "cargo_available",
+    "call_func",
+    "set_dependencies",
+]
+
 import os
 import subprocess
 import hashlib
@@ -661,3 +680,4 @@ pub extern "C" fn {spec.name}({params_str}) -> {ret_type} {{
 
 # 全局 RustBridge 实例
 _rust_bridge = RustBridge()
+

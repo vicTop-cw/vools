@@ -4,6 +4,17 @@ Network 模块 - 网络功能
 封装 API.Network COM 对象，提供网络检测、下载、URL 编解码、获取网页源码等功能。
 """
 
+
+__all__ = [
+    "NetworkModule",
+    "NetworkIsAvailable",
+    "DownloadFile",
+    "UrlEncode",
+    "UrlDecode",
+    "GetWebSourceCode",
+    "GetIPAddresses",
+]
+
 from ._base import APIBridgeError, _BaseModule
 
 
@@ -78,3 +89,4 @@ class NetworkModule(_BaseModule):
 
 
 Network = NetworkModule()
+

@@ -4,6 +4,23 @@ FileSystem 模块 - 文件系统操作
 封装 API.FileSystem COM 对象，提供文件和目录的创建、删除、读写等功能。
 """
 
+
+__all__ = [
+    "FileSystemModule",
+    "CreateDirectory",
+    "DeleteDirectory",
+    "DeleteFile",
+    "ReadAllText",
+    "WriteAllText",
+    "CombinePath",
+    "DirectoryExists",
+    "FileExists",
+    "GetParentPath",
+    "CopyFile",
+    "MoveFile",
+    "RenameFile",
+]
+
 from typing import Optional
 
 from ._base import APIBridgeError, _BaseModule
@@ -162,3 +179,4 @@ class FileSystemModule(_BaseModule):
 
 
 FileSystem = FileSystemModule()
+

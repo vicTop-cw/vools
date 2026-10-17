@@ -10,6 +10,11 @@ vools.bridge.md CLI 入口
     python -m vools.bridge.md rich script.md [--out FILE] [--no-open]
 """
 
+
+__all__ = [
+    "main",
+]
+
 import argparse
 import os
 import sys
@@ -245,3 +250,4 @@ def _extract_body(doc: str) -> str:
 
 if __name__ == "__main__":
     main()
+

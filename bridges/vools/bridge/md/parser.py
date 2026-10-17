@@ -9,6 +9,14 @@ vools.bridge.md parser — Markdown 即代码解析器
 复用 vools.md 的解析器提取代码块，再叠加 #! 指令解析。
 """
 
+
+__all__ = [
+    "FileDirectives",
+    "CodeBlock",
+    "ParsedMD",
+    "parse_md",
+]
+
 import hashlib
 import re
 from typing import List, Dict, Optional, Tuple
@@ -330,3 +338,4 @@ def parse_md(md_path: str) -> ParsedMD:
         md_hash=md_hash,
         block_hashes=block_hashes,
     )
+

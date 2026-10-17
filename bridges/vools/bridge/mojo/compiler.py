@@ -52,6 +52,26 @@ vools.bridge.mojo.compiler - Mojo 动态编译装饰器
 - 运行环境：WSL Linux + Mojo 1.0b1（Modular）
 """
 
+
+__all__ = [
+    "mojo_compiler_available",
+    "MojoFuture",
+    "compile_and_run",
+    "is_mojo_available",
+    "MojoBridge",
+    "result",
+    "done",
+    "cancelled",
+    "add_done_callback",
+    "cancel",
+    "get_lib_filename",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+]
+
 import os
 import sys
 import uuid
@@ -955,3 +975,4 @@ _mojo_bridge = MojoBridge()
 
 # 统一装饰器接口（使用 LangBridge 标准装饰器）
 mojo = _mojo_bridge.decorator
+

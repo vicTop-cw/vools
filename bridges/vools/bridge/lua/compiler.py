@@ -5,6 +5,23 @@ vools.bridge.lua.compiler - Lua 语言桥接编译器实现
 解释执行和调用逻辑。
 """
 
+
+__all__ = [
+    "lua_compiler_available",
+    "get_lua_type",
+    "infer_lua_argtypes",
+    "LuaFuture",
+    "LuaBridge",
+    "compile_and_run",
+    "result",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "run_project",
+]
+
 import os
 import sys
 import tempfile
@@ -843,3 +860,4 @@ def compile_and_run(
 
     output = _execute_lua_code(lua_source, func_name, actual_cache_dir)
     return _parse_lua_output(output, ret_type)
+

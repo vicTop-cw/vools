@@ -8,6 +8,32 @@ vools.bridge.elixir.compiler - Elixir 语言桥接编译器实现
 - 使用临时模块和输出解析返回结果
 """
 
+
+__all__ = [
+    "elixir_compiler_available",
+    "get_elixir_type",
+    "infer_elixir_argtypes",
+    "is_array_type",
+    "get_ctype_for",
+    "ElixirFuture",
+    "compile_and_run",
+    "is_elixir_available",
+    "ElixirBridge",
+    "result",
+    "done",
+    "add_done_callback",
+    "cancel",
+    "compiler_available",
+    "generate_code",
+    "get_cache_key",
+    "get_lib_filename",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "PY_TO_ELIXIR_TYPE",
+    "ELIXIR_TO_CTYPES",
+]
+
 import os
 import sys
 import re
@@ -677,3 +703,4 @@ class ElixirBridge(LangBridge):
 # 全局实例
 _elixir_bridge = ElixirBridge()
 elixir = _elixir_bridge.decorator
+

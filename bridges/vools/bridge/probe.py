@@ -25,7 +25,7 @@ import subprocess
 import shutil
 import json
 from typing import Dict, List, Optional, Tuple, Any
-from .core.compat.dataclass_compat import dataclass, field, asdict
+from .core.compat.dataclass_compat import dataclass, field, asdict, replace
 
 _IS_WINDOWS = platform.system() == 'Windows'
 _IS_LINUX = platform.system() == 'Linux'
@@ -42,6 +42,14 @@ WSL_PROBE_BUDGET_SECONDS = 90
 # 结果稳定；而 discover_all / configure_from_discovery / manager.get_status
 # 等入口会反复触发全量探测，不缓存时 bridges 集成测试累计数百秒。
 _LOCAL_PROBE_CACHE: Dict[Tuple[str, str], Any] = {}
+
+# WSL 单语言探测结果的进程级缓存：key=(lang, dist) -> LanguageStatus。
+# `wsl -d <dist> -- which <cmd>` 冷启动后单次 1-5s，`probe_all_wsl` 全量
+# 27 门语言 × 多命令可拖到 90s 预算上限（WSL_PROBE_BUDGET_SECONDS）。
+# WSL 发行版装了命令不会消失，同一进程内缓存稳定。
+# 注意：LanguageStatus 是可变 dataclass，缓存前用 dataclasses.replace 拷贝，
+# 避免调用方修改缓存的报告时污染缓存。
+_WSL_PROBE_CACHE: Dict[Tuple[str, str], Any] = {}
 
 
 def reset_probe_cache() -> None:
@@ -878,6 +886,12 @@ def probe_wsl(
 
 def _probe_one_wsl(lang: str, config: Dict[str, Any], dist: str) -> LanguageStatus:
     """在 WSL 中探测单个语言"""
+    # 进程级缓存：同一 (lang, dist) 重复探测是浪费（每次 wsl 子进程
+    # 1-5s），`discover_all` / `probe_all_wsl` 反复全量扫描时会累计数百秒。
+    _key = (lang, dist)
+    _cached = _WSL_PROBE_CACHE.get(_key)
+    if _cached is not None:
+        return replace(_cached)
     status = LanguageStatus(
         name=lang,
         category=config.get('category', ''),
@@ -960,6 +974,7 @@ def _probe_one_wsl(lang: str, config: Dict[str, Any], dist: str) -> LanguageStat
         # WSL 中使用 Linux 的安装建议
         status.install_hint = hints.get('Linux', hints.get('Windows', '请参考官方文档'))
 
+    _WSL_PROBE_CACHE[_key] = replace(status)
     return status
 
 

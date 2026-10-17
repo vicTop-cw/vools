@@ -5,6 +5,29 @@ vools.bridge.typescript.compiler - TypeScript/JavaScript 语言桥接编译器�
 代码生成、编译（TS -> JS）和调用逻辑（通过 Node.js 子进程）。
 """
 
+
+__all__ = [
+    "get_ts_type",
+    "is_node_available",
+    "is_typescript_available",
+    "ts_compiler_available",
+    "get_node_version",
+    "get_tsc_version",
+    "TSFuture",
+    "compile_and_run",
+    "TypeScriptBridge",
+    "result",
+    "default_cache_dir",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "call_func",
+    "compile_project",
+    "PY_TO_TS_TYPE",
+    "TS_TO_PY_TYPE",
+    "TS_FUNCTION_TEMPLATE",
+]
+
 import os
 import sys
 import json
@@ -574,3 +597,4 @@ ts = _ts_bridge.decorator
 
 # typescript 是 ts 的别名
 typescript = ts
+

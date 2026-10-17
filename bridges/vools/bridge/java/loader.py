@@ -9,6 +9,23 @@ vools.bridge.java.loader - Py4J JVM Gateway 加载器
 使用 manager 统一管理编译器配置。
 """
 
+
+__all__ = [
+    "is_java_available",
+    "get_java_version",
+    "JavaGateway",
+    "get_java_gateway",
+    "is_java_available",
+    "check_java_runtime",
+    "start",
+    "connect",
+    "stop",
+    "get_object",
+    "call_method",
+    "new_instance",
+    "is_connected",
+]
+
 import os
 import asyncio
 import subprocess
@@ -557,3 +574,4 @@ def check_java_runtime() -> dict:
             pass
 
     return result
+

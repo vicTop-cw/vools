@@ -9,6 +9,22 @@ vools.bridge.scala.loader - Py4J JVM Gateway 加载器
 使用 manager 统一管理编译器配置。
 """
 
+
+__all__ = [
+    "is_scala_available",
+    "ScalaGateway",
+    "get_scala_gateway",
+    "is_scala_available",
+    "check_scala_runtime",
+    "start",
+    "connect",
+    "stop",
+    "get_object",
+    "call_method",
+    "new_instance",
+    "is_connected",
+]
+
 import os
 import asyncio
 import subprocess
@@ -561,3 +577,4 @@ def check_scala_runtime() -> dict:
             pass
 
     return result
+

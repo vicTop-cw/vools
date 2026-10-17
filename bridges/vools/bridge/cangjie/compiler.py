@@ -36,6 +36,20 @@ vools.bridge.cangjie.compiler - 仓颉动态编译装饰器
 - 通过 ctypes 直接调用 C ABI 兼容的仓颉函数
 """
 
+
+__all__ = [
+    "CjFuture",
+    "cjc_compiler_available",
+    "compile_and_run",
+    "CjBridge",
+    "result",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+]
+
 import os
 import sys
 import tempfile
@@ -676,3 +690,4 @@ _cj_bridge = CjBridge()
 
 # 装饰器：直接使用基类的 decorator 方法
 cangjie = _cj_bridge.decorator
+

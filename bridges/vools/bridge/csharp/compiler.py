@@ -11,6 +11,22 @@ vools.bridge.csharp.compiler - C# 动态编译器
 使用 manager 统一管理编译器配置。
 """
 
+
+__all__ = [
+    "csharp_compiler_available",
+    "compile_and_run",
+    "CSharpBridge",
+    "CsharpFuture",
+    "compiler_available",
+    "check_cache",
+    "generate_code",
+    "compile_code",
+    "save_to_cache",
+    "compile_project",
+    "call_func",
+    "result",
+]
+
 import os
 import subprocess
 import hashlib

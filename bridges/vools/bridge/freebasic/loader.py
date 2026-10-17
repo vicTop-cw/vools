@@ -5,6 +5,18 @@ vools.bridge.freebasic.loader - 预编译 FreeBASIC 库加载器
 支持加载第三方 DLL 库（database/graphics/multimedia/gui 等类别）。
 """
 
+
+__all__ = [
+    "FbLibraryLoader",
+    "get_fb_lib",
+    "list_fb_libs",
+    "get_fbc_lib",
+    "is_fbc_available",
+    "load",
+    "is_available",
+    "list_libs",
+]
+
 import os
 import json
 import ctypes
@@ -374,3 +386,4 @@ def is_fbc_available():
     调用方应回退到 Python 实现。
     """
     return get_fbc_lib('vools_fbc_demo') is not None
+

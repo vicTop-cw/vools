@@ -11,6 +11,18 @@ vools.bridge.csharp.templates - C# 代码模板生成器
 - 字符串参数通过 byte* 传递，内部使用 Marshal 进行转换
 """
 
+
+__all__ = [
+    "generate_cs_method",
+    "generate_cs_class",
+    "generate_csproj",
+    "generate_cs_program",
+    "CSPROJ_TEMPLATE",
+    "CS_CLASS_TEMPLATE",
+    "CS_METHOD_WRAPPER_TEMPLATE",
+    "CS_PROGRAM_TEMPLATE",
+]
+
 import platform
 
 # 检测运行时标识符 (RID)，NativeAOT 编译需要

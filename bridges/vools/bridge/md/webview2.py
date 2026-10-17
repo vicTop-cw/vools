@@ -40,6 +40,49 @@ vools.bridge.md webview2 — WebView2 (Chromium) 渲染引擎 v2.0
 ```
 """
 
+
+__all__ = [
+    "WebView2Mode",
+    "WebView2EventType",
+    "WebView2Theme",
+    "WebView2Config",
+    "WebView2Event",
+    "WebView2Result",
+    "WebView2Message",
+    "WebView2Manager",
+    "render_webview2",
+    "generate_html_file",
+    "get_webview2_mode",
+    "send_to_webview",
+    "execute_script_in_webview",
+    "close_webview_window",
+    "get_active_webview_windows",
+    "execute_webview2_block",
+    "generate_html",
+    "run_webview2",
+    "send_message",
+    "execute_script",
+    "close_window",
+    "get_window",
+    "mode",
+    "active_windows",
+    "on_web_message_received",
+    "NATIVE",
+    "PYWEBVIEW",
+    "FALLBACK",
+    "READY",
+    "MESSAGE",
+    "EVENT",
+    "ERROR",
+    "WINDOW_CLOSE",
+    "WINDOW_RESIZE",
+    "CUSTOM",
+    "LIGHT",
+    "DARK",
+    "BLUE",
+    "MINIMAL",
+]
+
 import os
 import sys
 import json
@@ -1096,3 +1139,4 @@ def execute_webview2_block(block_content: str, directives: Dict, context: Dict, 
         output["error"] = result.error
 
     return json.dumps(output, ensure_ascii=False, indent=2), "", 0
+

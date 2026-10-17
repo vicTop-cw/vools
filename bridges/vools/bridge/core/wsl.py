@@ -4,6 +4,19 @@ vools.bridge.core.wsl - WSL 辅助工具
 为 Windows 上的桥接模块提供统一的 WSL 检测、路径转换和命令执行接口。
 """
 
+
+__all__ = [
+    "is_wsl_available",
+    "check_wsl_command",
+    "WSLGate",
+    "probe_wsl_cmd",
+    "reset_cache",
+    "windows_to_wsl_path",
+    "wsl_run",
+    "resolve_command",
+    "command_resolves",
+]
+
 import os
 import shutil
 import time
@@ -253,3 +266,4 @@ def command_resolves(local_name: str) -> bool:
     if _IS_WINDOWS and check_wsl_command(local_name):
         return True
     return False
+

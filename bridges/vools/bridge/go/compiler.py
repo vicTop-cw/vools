@@ -9,6 +9,30 @@ vools.bridge.go.compiler - Go 语言桥接编译器实现
 - 通过 pygo 风格的 cgo + ctypes 模式：编译为 c-shared，ctypes 加载
 """
 
+
+__all__ = [
+    "go_compiler_available",
+    "get_go_type",
+    "infer_go_argtypes",
+    "is_array_type",
+    "get_ctype_for",
+    "GoFuture",
+    "compile_and_run",
+    "is_go_available",
+    "GoBridge",
+    "result",
+    "done",
+    "add_done_callback",
+    "cancel",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "PY_TO_GO_TYPE",
+    "GO_TO_CTYPES",
+]
+
 import os
 import sys
 import tempfile
@@ -938,3 +962,4 @@ func {spec.name}({params_str}){ret_signature} {{{indented_body}}}'''
 _go_bridge = GoBridge()
 
 go = _go_bridge.decorator
+

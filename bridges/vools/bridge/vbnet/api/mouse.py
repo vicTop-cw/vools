@@ -4,6 +4,23 @@ Mouse 模块 - 鼠标操作
 封装 API.Mouse COM 对象，提供鼠标移动、点击、滚轮等功能。
 """
 
+
+__all__ = [
+    "MouseModule",
+    "MouseMove",
+    "LeftDown",
+    "LeftUp",
+    "LeftClick",
+    "RightDown",
+    "RightUp",
+    "RightClick",
+    "MiddleDown",
+    "MiddleUp",
+    "MiddleClick",
+    "DoubleClick",
+    "MouseWheel",
+]
+
 from ._base import APIBridgeError, _BaseModule
 
 
@@ -74,3 +91,4 @@ class MouseModule(_BaseModule):
 
 
 Mouse = MouseModule()
+

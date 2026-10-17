@@ -9,6 +9,24 @@ Dart 编译：
 - 通过 subprocess 执行，JSON 序列化传递参数
 """
 
+
+__all__ = [
+    "dart_compiler_available",
+    "get_dart_version",
+    "DartFuture",
+    "compile_and_run",
+    "DartBridge",
+    "result",
+    "done",
+    "add_done_callback",
+    "cancel",
+    "compiler_available",
+    "generate_code",
+    "compile_code",
+    "compile_project",
+    "call_func",
+]
+
 import os
 import sys
 import json
@@ -774,3 +792,4 @@ dart = _dart_bridge.decorator
 
 # 别名
 dartexe = dart
+

@@ -7,6 +7,20 @@ vools.bridge.scala.utils - Scala 桥接辅助工具
 - Gateway 端口管理
 """
 
+
+__all__ = [
+    "find_available_port",
+    "is_port_in_use",
+    "get_default_jar_path",
+    "check_jar_class",
+    "list_jar_classes",
+    "generate_scala_object",
+    "generate_py4j_app",
+    "scala_type_to_python",
+    "validate_scala_identifier",
+    "parse_fully_qualified_name",
+]
+
 import os
 import socket
 import logging
@@ -352,3 +366,4 @@ def parse_fully_qualified_name(fqn: str) -> tuple:
     if len(parts) == 2:
         return parts[0], parts[1]
     return '', fqn
+

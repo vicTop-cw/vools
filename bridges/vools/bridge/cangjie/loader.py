@@ -9,6 +9,17 @@ vools.bridge.cangjie.loader - 仓颉 DLL 加载器
 - 参数转换(str → bytes 等)
 """
 
+
+__all__ = [
+    "load_cj_dll",
+    "get_cj_lib",
+    "is_cj_available",
+    "setup_cj_func",
+    "convert_args",
+    "call_cj_func",
+    "convert_result",
+]
+
 import os
 import ctypes
 import platform

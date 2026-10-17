@@ -4,6 +4,27 @@ vools.bridge.md errors — 自定义异常类
 提供清晰的错误类型，便于调试和错误处理。
 """
 
+
+__all__ = [
+    "MDBridgeError",
+    "MDParseError",
+    "MDDirectiveError",
+    "MDConfigError",
+    "MDDepsError",
+    "MDManifestError",
+    "MDExecutionError",
+    "MDImportError",
+    "MDArtifactError",
+    "MDLibraryError",
+    "MDSandboxError",
+    "MDRichError",
+    "MDRichPathError",
+    "MDRichAccessDeniedError",
+    "MDRichSanitizeError",
+    "MDRichProtocolError",
+    "MDRichRenderError",
+]
+
 from typing import Optional
 
 
@@ -137,3 +158,4 @@ class MDRichRenderError(MDRichError):
     """富内容渲染错误（卡片生成失败等）"""
 
     pass
+

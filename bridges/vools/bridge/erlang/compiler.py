@@ -9,6 +9,32 @@ vools.bridge.erlang.compiler - Erlang 语言桥接编译器实现
 - 对于需要共享库的场景，生成 ERL_NIF C 代码并编译为 .dll/.so
 """
 
+
+__all__ = [
+    "erlang_compiler_available",
+    "get_erlang_type",
+    "infer_erlang_argtypes",
+    "is_array_type",
+    "get_ctype_for",
+    "ErlangFuture",
+    "compile_and_run",
+    "is_erlang_available",
+    "ErlangBridge",
+    "result",
+    "done",
+    "add_done_callback",
+    "cancel",
+    "compiler_available",
+    "generate_code",
+    "get_cache_key",
+    "get_lib_filename",
+    "compile_code",
+    "compile_project",
+    "call_func",
+    "PY_TO_ERLANG_TYPE",
+    "ERLANG_TO_CTYPES",
+]
+
 import os
 import sys
 import re
@@ -719,3 +745,4 @@ class ErlangBridge(LangBridge):
 # 全局实例
 _erlang_bridge = ErlangBridge()
 erlang = _erlang_bridge.decorator
+
