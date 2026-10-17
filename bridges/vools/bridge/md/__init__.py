@@ -37,22 +37,6 @@ from .runner import (
     build_library_manifest,
     load_library_manifest,
 )
-from .webview2 import (
-    render_webview2,
-    generate_html_file,
-    send_to_webview,
-    execute_script_in_webview,
-    close_webview_window,
-    get_active_webview_windows,
-    get_webview2_mode,
-    WebView2Config,
-    WebView2Event,
-    WebView2Result,
-    WebView2Manager,
-    WebView2Mode,
-    WebView2Theme,
-    WebView2EventType,
-)
 from .errors import (
     MDBridgeError,
     MDParseError,
@@ -69,6 +53,43 @@ from .errors import (
 from .logger import get_logger, set_level, add_file_handler, remove_file_handler
 
 __version__ = "0.5.0"
+
+# ── webview2 惰性导出（PEP 562）────────────────────────────
+# webview2 模块导入 pythonnet/pywebview，开销 ~900ms；解析/执行/校验
+# 场景用不到 GUI 渲染。把重导出改为 __getattr__ 延迟加载，使
+# `import vools.bridge.md` / `from vools.bridge.md import parse_md` 等
+# 冷启动省掉这 ~0.9s。对外 API 不变：`from vools.bridge.md import
+# render_webview2` / `from vools.bridge.md import WebView2Manager` 仍可用。
+_WEBVIEW2_EXPORTS = (
+    "render_webview2",
+    "generate_html_file",
+    "send_to_webview",
+    "execute_script_in_webview",
+    "close_webview_window",
+    "get_active_webview_windows",
+    "get_webview2_mode",
+    "WebView2Config",
+    "WebView2Event",
+    "WebView2Result",
+    "WebView2Manager",
+    "WebView2Mode",
+    "WebView2Theme",
+    "WebView2EventType",
+)
+
+
+def __getattr__(name: str):
+    """PEP 562：首次访问 webview2 导出时惰性导入对应子模块。"""
+    if name in _WEBVIEW2_EXPORTS:
+        import importlib
+        mod = importlib.import_module(f"{__name__}.webview2")
+        return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    """在既有模块属性基础上追加惰性 webview2 导出名（保持 dir() 完整）。"""
+    return sorted(set(globals().keys()) | set(_WEBVIEW2_EXPORTS))
 
 __all__ = [
     # parser
