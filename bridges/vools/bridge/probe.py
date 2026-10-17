@@ -44,6 +44,13 @@ WSL_PROBE_BUDGET_SECONDS = 90
 # 等入口会反复触发全量探测，不缓存时 bridges 集成测试累计数百秒。
 _LOCAL_PROBE_CACHE: Dict[Tuple[str, str], Any] = {}
 
+# `probe_environment` 整体结果的进程级缓存：key=(languages, extra_env_sig) -> ProbeReport。
+# 单语言探测含 PATH 查询 + 版本命令 + WSL 回退（后者最贵），`probe_with_extra_paths`
+# 传入 extra_env 时逐语言缓存（_LOCAL_PROBE_CACHE）不生效，`discover_all` / 
+# `configure_from_discovery` 反复全量扫描时累计数百秒。这里按 extra_env 签名
+# 缓存整体报告，同一 (languages, PATH 快照) 重复调用命中。
+_REPORT_CACHE: Dict[Tuple[Any, str], Any] = {}
+
 # WSL 单语言探测结果的进程级缓存：key=(lang, dist) -> LanguageStatus。
 # `wsl -d <dist> -- which <cmd>` 冷启动后单次 1-5s，`probe_all_wsl` 全量
 # 27 门语言 × 多命令可拖到 90s 预算上限（WSL_PROBE_BUDGET_SECONDS）。
@@ -56,6 +63,8 @@ _WSL_PROBE_CACHE: Dict[Tuple[str, str], Any] = {}
 def reset_probe_cache() -> None:
     """清空本机探测缓存（测试或环境变化后调用）。"""
     _LOCAL_PROBE_CACHE.clear()
+    _REPORT_CACHE.clear()
+    _WSL_PROBE_CACHE.clear()
 
 # ============================================================================
 # 语言探测配置
@@ -699,6 +708,20 @@ def probe_environment(
     Returns:
         ProbeReport: 完整的探测报告
     """
+    # 整体报告缓存：同一 (languages, extra_env 签名) 重复探测直接返回。
+    # `probe_with_extra_paths` 传入 extra_env 时逐语言缓存不生效，重复调用
+    # `discover_all` / `configure_from_discovery` 会全量重探（累计数百秒）。
+    # 只对「本机环境」（host='local'）启用，远程/WSL 探测不受影响。
+    _cache_sig = None
+    if not extra_env and host == 'local':
+        _cache_sig = 'None'
+    elif extra_env and host == 'local':
+        _cache_sig = ';'.join(f'{k}={v}' for k, v in sorted(extra_env.items()))
+    _report_key = (tuple(languages) if languages else None, _cache_sig)
+    _cached_report = _REPORT_CACHE.get(_report_key) if _cache_sig is not None else None
+    if _cached_report is not None:
+        return copy.deepcopy(_cached_report)
+
     # 准备环境变量
     env = os.environ.copy()
     if extra_env:
@@ -752,6 +775,9 @@ def probe_environment(
                 if _cacheable:
                     _LOCAL_PROBE_CACHE[key] = st
         report.languages[lang] = st
+
+    if _cache_sig is not None:
+        _REPORT_CACHE[_report_key] = copy.deepcopy(report)
 
     return report
 
