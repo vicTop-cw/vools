@@ -52,6 +52,14 @@ class TestCall:
         assert result.exit_code == 0
         assert "结果" in result.output
 
+    def test_repeat_zero_no_crash(self):
+        # 回归：--repeat 0 时 total_time/repeat 会除零崩溃
+        result = runner.invoke(memoize_app, [
+            "call", "lambda x: x * 2", "3", "--repeat", "0"
+        ])
+        assert result.exit_code != 0  # typer.BadParameter -> exit code 2
+        assert "正数" in result.output
+
     def test_show_cache(self):
         result = runner.invoke(memoize_app, [
             "call", "lambda x: x * 2", "3", "--repeat", "2", "--show-cache"
