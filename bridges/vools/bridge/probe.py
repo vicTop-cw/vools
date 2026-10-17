@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import copy
+import threading
 import concurrent.futures
 import platform
 import subprocess
@@ -44,6 +45,8 @@ WSL_PROBE_BUDGET_SECONDS = 90
 # 结果稳定；而 discover_all / configure_from_discovery / manager.get_status
 # 等入口会反复触发全量探测，不缓存时 bridges 集成测试累计数百秒。
 _LOCAL_PROBE_CACHE: Dict[Tuple[str, str, str], Any] = {}
+# `_which_in_env` 临时改写 os.environ['PATH']，并行探测下必须串行化。
+_WHICH_IN_ENV_LOCK = threading.Lock()
 # WSL 发行版基本信息缓存（os-release / arch）。`probe_wsl` 每次调用都要
 # 起 3 次 wsl 子进程（echo wsl-ready / cat /etc/os-release / uname -m），
 # 单次 ~0.5s 起，`probe_with_extra_paths` 反复 WSL 回退时累计 10s+。
@@ -732,15 +735,18 @@ def _which_in_env(cmd: str, env: Dict[str, str]) -> Optional[str]:
     """在指定环境变量中查找命令（跨平台）"""
     import shutil as _shutil
 
-    # 临时修改环境变量，使用 shutil.which 查找
-    old_path = os.environ.get('PATH', '')
-    try:
-        path_env = env.get('PATH', '')
-        if path_env:
-            os.environ['PATH'] = path_env
-        return _shutil.which(cmd)
-    finally:
-        os.environ['PATH'] = old_path
+    # 临时修改环境变量，使用 shutil.which 查找。并行探测下多个线程会
+    # 同时进这里，不加锁会互相覆盖 os.environ['PATH']，导致查错目录
+    # 甚至查挂（PATH 指向不存在的盘符）。用全局锁串行化这个段。
+    with _WHICH_IN_ENV_LOCK:
+        old_path = os.environ.get('PATH', '')
+        try:
+            path_env = env.get('PATH', '')
+            if path_env:
+                os.environ['PATH'] = path_env
+            return _shutil.which(cmd)
+        finally:
+            os.environ['PATH'] = old_path
 
 
 def _probe_one_parallel(lang: str, host: str,
