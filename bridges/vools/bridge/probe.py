@@ -769,9 +769,12 @@ def _probe_one_parallel(lang: str, host: str,
     key = (lang, host, env_sig)
     cached = _LOCAL_PROBE_CACHE.get(key)
     if cached is not None:
-        return cached
+        # 返回副本：LanguageStatus 是可变 dataclass，调用方（如
+        # probe_with_extra_paths 的 WSL 回退）会原地改 available/path，
+        # 直接返回缓存对象会污染缓存、下轮探测拿到脏结果。
+        return copy.deepcopy(cached)
     st = _probe_one(lang, config, env=env)
-    _LOCAL_PROBE_CACHE[key] = st
+    _LOCAL_PROBE_CACHE[key] = copy.deepcopy(st)
     return st
 
 
