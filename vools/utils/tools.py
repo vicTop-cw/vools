@@ -12,7 +12,7 @@ import itertools
 from functools import wraps, update_wrapper
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date as _date
 import string
 import pkgutil
 import random
@@ -325,15 +325,18 @@ def offset_date(run_date, offset_days, std=False):
     """计算偏移后的日期
 
     Args:
-        run_date: 基准日期
+        run_date: 基准日期（支持 "YYYYMMDD" / "YYYY-MM-DD" 字符串或 datetime.date）
         offset_days: 偏移天数
         std: 是否返回标准格式（YYYY-MM-DD）
 
     Returns:
         偏移后的日期字符串
     """
-    date_format = "%Y-%m-%d" if '-' in run_date else "%Y%m%d"
-    date_obj = datetime.strptime(run_date, date_format)
+    if isinstance(run_date, (_date, datetime)):
+        date_obj = run_date if isinstance(run_date, _date) else run_date.date()
+    else:
+        date_format = "%Y-%m-%d" if '-' in run_date else "%Y%m%d"
+        date_obj = datetime.strptime(run_date, date_format)
     new_date_obj = date_obj + timedelta(days=offset_days)
     date_format = "%Y-%m-%d" if std else "%Y%m%d"
     return new_date_obj.strftime(date_format)

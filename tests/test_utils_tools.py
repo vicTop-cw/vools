@@ -186,9 +186,15 @@ class TestDateUtils:
 
     def test_offset_date_with_str(self):
         from vools.utils.tools import offset_date
-        # 现有实现期望字符串
-        r = offset_date("20240101", 1)
-        assert r == "20240102"
+        assert offset_date("20240101", 1) == "20240102"
+        assert offset_date("2024-01-01", 1, std=True) == "2024-01-02"
+        assert offset_date("20240101", -1) == "20231231"
+
+    def test_offset_date_with_date(self):
+        from vools.utils.tools import offset_date
+        import datetime
+        assert offset_date(datetime.date(2024, 1, 1), 1) == "20240102"
+        assert offset_date(datetime.datetime(2024, 1, 1), 1, std=True) == "2024-01-02"
 
     def test_get_date_seq(self):
         from vools.utils.tools import get_date_seq
