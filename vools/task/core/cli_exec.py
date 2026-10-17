@@ -141,8 +141,8 @@ def cli_execute(payload: Dict[str, Any], timeout_sec: Optional[float] = None,
         结构化结果 dict。
     """
     cli = (payload or {}).get("cli") or {}
-    task_type = payload.get("task_type") or payload.get("taskType") or ""
-    value = payload.get("value")
+    task_type = (payload or {}).get("task_type") or (payload or {}).get("taskType") or ""
+    value = (payload or {}).get("value")
 
     lang = cli.get("lang") or ""
     cmd_str = cli.get("cmd")
@@ -160,6 +160,7 @@ def cli_execute(payload: Dict[str, Any], timeout_sec: Optional[float] = None,
     task_type_norm = detect_language(task_type)
 
     t0 = time.time()
+    tmp_path = None
     try:
         # ---- 语言推断 ----
         lang_norm = detect_language(lang)
@@ -186,7 +187,6 @@ def cli_execute(payload: Dict[str, Any], timeout_sec: Optional[float] = None,
                     % sorted(LANGUAGE_DEFAULT_CMD.keys()), t0, task_type_norm)
 
         # ---- 脚本文件 ----
-        tmp_path = None
         if script:
             ext = LANGUAGE_EXTENSIONS.get(lang_norm or task_type_norm or "", ".py")
             fd, tmp_path = tempfile.mkstemp(suffix=ext)
@@ -217,8 +217,10 @@ def cli_execute(payload: Dict[str, Any], timeout_sec: Optional[float] = None,
             stdin_bytes = str(stdin_data).encode("utf-8")
 
         # ---- 执行 ----
+        # shell=True 时必须传字符串，否则 Windows 会把列表首元素当可执行文件
+        run_cmd: Any = full_cmd[0] if shell else full_cmd
         proc = subprocess.run(
-            full_cmd,
+            run_cmd,
             input=stdin_bytes,
             stdout=subprocess.PIPE if cap else None,
             stderr=subprocess.PIPE if cap else None,
