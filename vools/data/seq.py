@@ -1098,16 +1098,12 @@ class Seq(SeqBase):
             新的 Seq 实例
         """
         def gen():
-            q = deque(maxlen=n)
-            d = q.append
-            for i in self._evaluate():
-                d(i)
-                if len(q) == n:
-                    yield tuple(q)
-            else:
-                for i in range(n - 1):
-                    d(fillvalue)
-                    yield tuple(q)
+            # BUG-175: 原 `deque(maxlen=n)` 是滑动窗口，每 append 一个元素就 yield，
+            # 且 maxlen 丢弃队头，结果出现重叠窗口。tee 语义是按 n 元组分块，
+            # 与 grouper 一致：同一迭代器引用 n 次用 zip_longest 分块。
+            args = [iter(self._evaluate())] * n
+            for chunk in zip_longest(*args, fillvalue=fillvalue):
+                yield chunk
         return self.__class__(gen())
     
     def skip(self, n: int) -> 'Seq':
