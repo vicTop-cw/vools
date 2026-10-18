@@ -395,6 +395,11 @@ def _retry_decorator(
                     should_retry = retry_by_exception != retry_by_result
                 
                 if not should_retry:
+                    # BUG-92: 异常被吞掉。logic='and' 时 retry_by_exception=True
+                    # 但 retry_by_result=False → should_retry=False → 直接返回
+                    # result（此时是 None），异常静默消失。
+                    if retry_by_exception:
+                        raise last_exception
                     return result
                 
                 if attempt == tries:
