@@ -666,7 +666,11 @@ def regexp_like(pattern, source_string, flags=0, complete_matching=True):
     """
     matchs = regexp_findall(pattern=pattern, source_string=source_string, flags=flags)
     if complete_matching:
-        return len(matchs) == 1 and str(matchs[0]) == source_string
+        # BUG-159: 原用 len(matchs)==1 and str(matchs[0])==source_string 判断，
+        # 对能空匹配/多匹配的模式误判（`.*` 对 'abc' 返回 [''] → False、
+        # `a*` 对 'aaa' 返回 ['aaa',''] → False）。改用 fullmatch 判断全文匹配。
+        regex = re.compile(pattern, flags=flags)
+        return regex.fullmatch(source_string) is not None
     else:
         return len(matchs) > 0
 
