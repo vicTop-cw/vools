@@ -1,6 +1,6 @@
 import re
 from typing import Dict, Any, Optional, List, Callable
-__all__ = ["arrow_func",'g','_eval_expr_with_semicolon']
+__all__ = ["arrow_func", "safe_arrow_func", "g", "_eval_expr_with_semicolon"]
 # Arrow 表达式模式
 arrow_pattern = r'^\s*([^;]*?)\s*=>\s*(.+)$'
 
@@ -527,3 +527,61 @@ def g(expr: str, env: Dict = None) -> Any:
     # 根据模式调用gene_lambda_func
     mode = "single" if l1 > 0 else "indexed"
     return gene_lambda_func(expr, mode, env)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 安全箭头函数（沙箱化）
+# ═══════════════════════════════════════════════════════════════
+
+def safe_arrow_func(expr: str, env: Optional[Dict[str, Any]] = None) -> Callable:
+    """
+    安全版的 arrow_func：使用 safe_lambda 沙箱编译表达式。
+
+    与 arrow_func 的区别：
+    - arrow_func: 完整 Python 能力（可调用 __import__/eval/open 等）——
+      **请勿用于不可信输入**（BUG-90）。
+    - safe_arrow_func: 白名单沙箱，仅允许算术/比较/逻辑/内置安全函数，
+      禁止 __import__、eval、exec、open、__builtins__ 等危险调用。
+
+    Args:
+        expr: arrow 表达式，格式为 "参数 => 函数体" 或 "x => x * 2"
+        env: 忽略（safe_lambda 内部使用受限环境）
+
+    Returns:
+        安全可调用的函数对象
+
+    Raises:
+        SafeEvalError: 表达式不合法或含危险调用
+
+    Example:
+        >>> f = safe_arrow_func("x => x * 2")
+        >>> f(21)
+        42
+        >>> safe_arrow_func("x => __import__('os').system('rm -rf /')")
+        SafeEvalError: 不安全的表达式
+    """
+    from ..security.safe_eval import safe_lambda, SafeEvalError
+
+    # 解析 arrow 表达式
+    parsed = parse_arrow_expr(expr)
+    params, body_str = parsed
+
+    # 提取参数名列表（parse_arrow_expr 返回 [(kind, name), ...]）
+    param_names = []
+    for kind, pname in params:
+        pname = pname.strip()
+        if pname:
+            param_names.append(pname)
+
+    # 提取函数体（三元转换）
+    body = body_str
+    if '\n' in body:
+        body = body.replace('\n', ';')
+    if "?" in body:
+        bodies = body.split(';')
+        for i in range(len(bodies)):
+            if "?" in bodies[i]:
+                bodies[i] = convert_ternary(bodies[i])
+        body = ';'.join(bodies)
+
+    return safe_lambda(tuple(param_names), body)

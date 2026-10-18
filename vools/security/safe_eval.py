@@ -24,6 +24,48 @@ from typing import Any, Dict, Optional, Tuple
 from ..core.ast_compat import is_literal, literal_value
 
 
+class _Placeholder:
+    """
+    AST 验证用占位符：支持所有比较/算术运算符，用于在编译期验证表达式结构，
+    不执行真实运算。修复 BUG-91：字符串占位符导致排序比较（x > 3 等）编译失败。
+    """
+
+    def __gt__(self, other): return True
+    def __lt__(self, other): return True
+    def __ge__(self, other): return True
+    def __le__(self, other): return True
+    def __eq__(self, other): return True
+    def __ne__(self, other): return True
+    def __add__(self, other): return _Placeholder()
+    def __radd__(self, other): return _Placeholder()
+    def __sub__(self, other): return _Placeholder()
+    def __rsub__(self, other): return _Placeholder()
+    def __mul__(self, other): return _Placeholder()
+    def __rmul__(self, other): return _Placeholder()
+    def __truediv__(self, other): return _Placeholder()
+    def __rtruediv__(self, other): return _Placeholder()
+    def __floordiv__(self, other): return _Placeholder()
+    def __rfloordiv__(self, other): return _Placeholder()
+    def __mod__(self, other): return _Placeholder()
+    def __rmod__(self, other): return _Placeholder()
+    def __pow__(self, other): return _Placeholder()
+    def __rpow__(self, other): return _Placeholder()
+    def __and__(self, other): return _Placeholder()
+    def __rand__(self, other): return _Placeholder()
+    def __or__(self, other): return _Placeholder()
+    def __ror__(self, other): return _Placeholder()
+    def __xor__(self, other): return _Placeholder()
+    def __rxor__(self, other): return _Placeholder()
+    def __lshift__(self, other): return _Placeholder()
+    def __rshift__(self, other): return _Placeholder()
+    def __neg__(self): return _Placeholder()
+    def __pos__(self): return _Placeholder()
+    def __invert__(self): return _Placeholder()
+    def __not__(self): return _Placeholder()
+    def __bool__(self): return True
+    def __str__(self): return "_placeholder_"
+
+
 ALLOWED_OPERATORS = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
@@ -391,7 +433,7 @@ def safe_lambda(var_names: Tuple[str, ...], expr: str) -> callable:
 
         tree = ast.parse(full_expr, mode='eval')
 
-        allowed_vars = {name: f'_v_{i}' for i, name in enumerate(var_names)}
+        allowed_vars = {name: _Placeholder() for i, name in enumerate(var_names)}
         evaluator = SafeExpressionEvaluator(allowed_vars)
 
         lambda_node = tree.body
