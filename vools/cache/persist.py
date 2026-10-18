@@ -293,14 +293,20 @@ def persist(func: Optional[Callable] = None,
                     f"  def fetch_data(): return datetime.now()  # datetime 不可直接序列化\n"
                 )
 
-            with FileLock(cache_path):
-                cache_data = {
-                    'result': result,
-                    'start_time': start_time,
-                    'end_time': end_time,
-                }
-                with open(cache_path, "w", encoding="utf-8") as f_cache:
-                    json.dump(cache_data, f_cache, ensure_ascii=False, indent=2)
+            # BUG-144: 原 with FileLock(cache_path) 忽略 acquire 返回值，
+            # 锁被占用（非阻塞失败）时仍写缓存，可能并发写坏。
+            _lock = FileLock(cache_path)
+            if _lock.acquire():
+                try:
+                    cache_data = {
+                        'result': result,
+                        'start_time': start_time,
+                        'end_time': end_time,
+                    }
+                    with open(cache_path, "w", encoding="utf-8") as f_cache:
+                        json.dump(cache_data, f_cache, ensure_ascii=False, indent=2)
+                finally:
+                    _lock.release()
 
             return result
 
