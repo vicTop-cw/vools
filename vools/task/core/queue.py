@@ -146,21 +146,29 @@ class TaskQueue:
         """序列化函数"""
         # 获取原始函数（处理装饰器包装的情况）
         func_to_serialize = getattr(func, '__wrapped__', func)
-        
+        func_name = getattr(func_to_serialize, '__name__', '')
+
+        # BUG-150: lambda/局部函数既不能路径格式（getattr "<lambda>" 失败）也不能
+        # pickle（attribute lookup 失败）。注册到 _func_registry，生成 __registry__ 标记。
+        if func_name == '<lambda>':
+            key = id(func_to_serialize)
+            self._func_registry[key] = func_to_serialize
+            return f"__registry__:{key}"
+
         # 优先使用函数路径方式，这样可以正确处理装饰器
         try:
-            return f"{func_to_serialize.__module__}:{func_to_serialize.__name__}"
-        except Exception as e:
+            return f"{func_to_serialize.__module__}:{func_name}"
+        except Exception:
             pass
-        
+
         # 如果函数在 __main__ 模块中，尝试使用 pickle
-        if func_to_serialize.__module__ == '__main__':
+        if getattr(func_to_serialize, '__module__', '') == '__main__':
             try:
                 pickle_data = pickle.dumps(func_to_serialize)
                 return base64.b64encode(pickle_data).decode('utf-8')
             except Exception as e:
                 raise ValueError(f"Cannot pickle function in __main__: {e}")
-        
+
         try:
             pickle_data = pickle.dumps(func_to_serialize)
             return base64.b64encode(pickle_data).decode('utf-8')
@@ -169,6 +177,16 @@ class TaskQueue:
 
     def _deserialize_func(self, func_data: str) -> Callable:
         """反序列化函数"""
+        if func_data.startswith('__registry__:'):
+            # BUG-150: 从进程内函数注册表取回 lambda/局部函数
+            key = int(func_data.split(':', 1)[1])
+            try:
+                return self._func_registry[key]
+            except KeyError:
+                raise ValueError(
+                    f"Registry function {key} not found; "
+                    f"lambda/local function is not persistent across processes"
+                )
         if ':' in func_data and not func_data.startswith('g'):
             # 函数路径格式
             module_path, func_name = func_data.split(':', 1)
