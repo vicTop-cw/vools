@@ -1504,14 +1504,11 @@ class Table(Seq):
                 
                 data2 = []
                 for row in other._data:
-                    new_row = [None] * len(self._columns) + row[:]
-                    # 重新按 new_columns 排列
+                    # BUG-134: other 行只含 other 的列值，对齐必须用 other._columns 的索引。
+                    # 原实现优先用 self._columns.index(col) 取 other 行，列序不同时数据错位。
                     aligned_row = []
                     for col in new_columns:
-                        if col in self._columns:
-                            idx = self._columns.index(col)
-                            aligned_row.append(row[idx] if idx < len(row) else None)
-                        elif col in other._columns:
+                        if col in other._columns:
                             idx = other._columns.index(col)
                             aligned_row.append(row[idx] if idx < len(row) else None)
                         else:
