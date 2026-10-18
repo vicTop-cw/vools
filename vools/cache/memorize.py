@@ -5,14 +5,17 @@
 """
 
 import time
-import hashlib
-import pickle
 from functools import wraps
 from typing import Callable, Any, Optional, Dict
 from collections import OrderedDict
 import threading
 
 __all__ = ['memorize', 'TimedCache', '_CACHE']
+
+
+# BUG-103: 哨兵对象用于区分"缓存未命中"和"缓存值为 None"。
+# 旧实现 get() 返回 None 表示未命中，无法缓存返回 None 的函数结果。
+_MISS = object()
 
 
 class TimedCache:
@@ -37,8 +40,15 @@ class TimedCache:
         """检查缓存是否过期"""
         return time.time() - entry['time'] > duration
     
-    def get(self, key: str, duration: float) -> Optional[Any]:
-        """获取缓存值"""
+    def get(self, key: str, duration: float) -> Any:
+        """获取缓存值
+
+        BUG-103: 使用 _MISS 哨兵区分"缓存未命中"和"缓存值为 None"。
+        旧实现返回 None 表示未命中，导致返回 None 的函数结果无法被缓存。
+
+        Returns:
+            缓存结果；未命中时返回 _MISS 哨兵
+        """
         with self._lock:
             if key in self._cache:
                 entry = self._cache[key]
@@ -46,7 +56,7 @@ class TimedCache:
                     self._cache.move_to_end(key)
                     return entry['result']
                 del self._cache[key]
-        return None
+        return _MISS
     
     def set(self, key: str, result: Any):
         """设置缓存值"""
@@ -93,10 +103,20 @@ class TimedCache:
 _CACHE = TimedCache(max_size=1000)
 
 
-def _compute_key(func: Callable, args: tuple, kwargs: dict) -> str:
-    """计算缓存键"""
-    key = pickle.dumps((func.__name__, args, kwargs))
-    return hashlib.sha256(key).hexdigest()
+def _compute_key(func: Callable, args: tuple, kwargs: dict) -> Any:
+    """计算缓存键
+
+    BUG-103: 旧实现用 `pickle.dumps((func.__name__, args, kwargs))`，
+    当参数含 lambda/file/socket 等不可 pickle 对象时装饰后的函数直接崩溃。
+    改为：优先用 (func.__name__, args, tuple(sorted(kwargs.items()))) 作为键，
+    不可哈希时回退到 repr 字符串（牺牲部分性能换取可用性）。
+    """
+    try:
+        key = (func.__name__, args, tuple(sorted(kwargs.items())))
+        hash(key)  # 验证可哈希（快速失败，避免后续 dict 插入时报错）
+        return key
+    except TypeError:
+        return (func.__name__, repr(args), repr(kwargs))
 
 
 def memorize(func: Optional[Callable] = None, *, duration: float = 3) -> Callable:
@@ -152,7 +172,7 @@ def memorize(func: Optional[Callable] = None, *, duration: float = 3) -> Callabl
             key = _compute_key(f, args, kwargs)
             
             cached_result = _CACHE.get(key, duration)
-            if cached_result is not None:
+            if cached_result is not _MISS:
                 return cached_result
             
             result = f(*args, **kwargs)
