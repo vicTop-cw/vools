@@ -413,7 +413,14 @@ class VDate(datetime):
         if dt is None:
             dt = datetime.now()
         if isinstance(dt, (int, float)):
-            result = super().fromtimestamp(dt)
+            # BUG-180: 原 `super().fromtimestamp(dt)` 在 @rself 装饰下会被
+            # datetime.fromtimestamp 内部的 cls(...) 9 参构造拉回 VDate.__new__，
+            # 而 __new__(cls, dt=None, fmt=None) 只收 3 参 → TypeError 100% 崩。
+            # 改用显式 datetime.fromtimestamp + super().__new__，与下方 datetime 分支同构。
+            _ts = datetime.fromtimestamp(dt)
+            result = super().__new__(cls, _ts.year, _ts.month, _ts.day,
+                                     _ts.hour, _ts.minute, _ts.second,
+                                     _ts.microsecond)
         elif isinstance(dt, str):
             if len(dt) == 8 and dt.isdigit():
                 result = super().__new__(cls, int(dt[:4]), int(dt[4:6]), int(dt[6:]))
