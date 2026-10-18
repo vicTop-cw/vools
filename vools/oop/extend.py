@@ -7,6 +7,37 @@ from ..functional.arrow_func import g,_eval_expr_with_semicolon,arrow_func
 __all__ = ['clone','g','arrow_func']
 
 
+_TYPE_NAME_WHITELIST = {
+    'str': str,
+    'int': int,
+    'float': float,
+    'bool': bool,
+    'list': list,
+    'dict': dict,
+    'tuple': tuple,
+    'set': set,
+    'frozenset': frozenset,
+    'bytes': bytes,
+    'bytearray': bytearray,
+    'complex': complex,
+    'object': object,
+    'type': type,
+}
+
+
+def _lookup_type_name(name: str):
+    """BUG-95: 仅通过白名单查找类型名，禁止 eval 任意表达式。
+
+    Args:
+        name: 类型名字符串，如 'str'、'int'、'list'
+
+    Returns:
+        对应的类型对象；不在白名单时返回 None
+"""
+    clean = name.strip()
+    return _TYPE_NAME_WHITELIST.get(clean)
+
+
 
 
 def clone(cls=None, *args, **kwargs):
@@ -149,7 +180,7 @@ def _process_args(args: Tuple[str], new_cls: type, env: Dict, deco: Callable = p
             if ':' in attr_name:
                 attr_name, tp = attr_name.split(':', 1)
                 try:
-                    tp = eval(tp.strip())
+                    tp = _lookup_type_name(tp)
                     tp = tp if isinstance(tp, type) else None
                 except Exception as e:
                     print(f"Warning: Failed to evaluate type for attribute '{attr_name}': {tp} ,error: {e}")
