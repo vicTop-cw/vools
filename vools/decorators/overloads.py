@@ -5,9 +5,10 @@
 请改用 ``from vools.decorators import overload`` 和新 API。
 
 原来的 ``@overloads`` 用法请替换为:
-    >>> from vools.decorators import overload
-    >>> @overload(mode=Strict | Ambiguous)
-    ... def fn(...): ...
+    from vools.decorators import overload
+
+    @overload(mode=Strict | Ambiguous)
+    def fn(*args, **kwargs): ...
 """
 
 import warnings
