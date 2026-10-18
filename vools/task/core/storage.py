@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any, Set
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
-from .models import Task, TaskStatus
+from .models import Task, TaskStatus, _dump_json
 
 
 class TaskStorage:
@@ -110,8 +110,8 @@ class TaskStorage:
             """, (
                 task.task_name,
                 task.task_func,
-                json.dumps(task.args),
-                json.dumps(task.kwargs),
+                _dump_json(task.args),
+                _dump_json(task.kwargs),
                 task.status.value,
                 task.priority,
                 task.max_retries,
@@ -195,7 +195,7 @@ class TaskStorage:
                 updates["completed_at"] = now
                 updates["lease_timeout"] = None
                 if result is not None:
-                    updates["result"] = json.dumps(result)
+                    updates["result"] = _dump_json(result)
             elif status == TaskStatus.FAILED:
                 updates["completed_at"] = now
                 updates["lease_timeout"] = None
@@ -314,4 +314,16 @@ class TaskStorage:
             "worker_id", "lease_timeout"
         ]
         data = dict(zip(columns, row))
-        return Task.from_dict(data)
+        task = Task.from_dict(data)
+        # BUG-151: dependencies 存于 task_dependencies 表，读回任务时补查
+        task.dependencies = self._get_dependencies(task.id)
+        return task
+
+    def _get_dependencies(self, task_id: int) -> Set[int]:
+        """读取任务的上游依赖 id 集合"""
+        with self._transaction() as conn:
+            cursor = conn.execute(
+                "SELECT depends_on_id FROM task_dependencies WHERE task_id = ?",
+                (task_id,),
+            )
+            return {r[0] for r in cursor.fetchall()}
