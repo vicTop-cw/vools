@@ -124,9 +124,15 @@ class RuleEngine:
         max_workers: 最大并发数
 
     Example:
+        >>> from vools.task.rules import rule
+        >>> @rule(name="perm_check", priority=10)
+        ... def my_rule(ctx: dict):
+        ...     return ctx.get("user") == "admin"
         >>> engine = RuleEngine(mode="thread", max_workers=4)
         >>> engine.add_rule(my_rule)
         >>> result = engine.evaluate({"user": "admin", "action": "delete"})
+        >>> result.is_success
+        True
     """
 
     def __init__(

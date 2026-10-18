@@ -184,6 +184,7 @@ def overcurry(func: Optional[Callable] = None,
         ...     return a + b + c
         ...
         >>> add(1)(2)  # 3
+        3
         >>> add(1)(2)(3)  # 6
     """
     # 处理装饰器参数
