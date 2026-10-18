@@ -1302,8 +1302,18 @@ class VList(Seq, metaclass=ListLikeMeta):
 
         Returns:
             vicQuery 实例
+
+        Raises:
+            RuntimeError: BUG-132 - legacy ``vools.pyk.text.vicQuery`` 未随迁移落地，
+                当前 vools 包不含 pyk 子包，此方法不可用。
         """
-        from ..pyk.text import vicQuery
+        try:
+            from ..pyk.text import vicQuery
+        except ImportError as e:
+            raise RuntimeError(
+                "VList.build 需要 legacy vools.pyk.text.vicQuery，但 vools/pyk 子包不存在（未随迁移落地）。"
+                "若需此能力请迁移 legacy vools.pyk 或改用 VList.join/str.format。"
+            ) from e
         return vicQuery(text, *self.collect(), *args, **kwargs)
 
     def sample(self, k: Optional[int] = None) -> 'VList':
@@ -1409,6 +1419,10 @@ class VList(Seq, metaclass=ListLikeMeta):
 
         Returns:
             pyspark.sql.DataFrame；空列表返回 None
+
+        Raises:
+            RuntimeError: BUG-132 - legacy ``vools.pyk.df.vDF`` 未随迁移落地，
+                当前 vools 包不含 pyk 子包，此方法不可用。
         """
         if self.size == 0:
             return None
@@ -1416,7 +1430,13 @@ class VList(Seq, metaclass=ListLikeMeta):
         lst = self
         if isinstance(temp, str) or not isinstance(temp, Iterable):
             lst = [(i,) for i in lst]
-        from ..pyk.df import vDF
+        try:
+            from ..pyk.df import vDF
+        except ImportError as e:
+            raise RuntimeError(
+                "VList.toDF 需要 legacy vools.pyk.df.vDF，但 vools/pyk 子包不存在（未随迁移落地）。"
+                "若需此能力请迁移 legacy vools.pyk 或直接用 pyspark.spark.createDataFrame。"
+            ) from e
         return vDF(list(lst), cols=cols, pos_name=pos_name, source_type=source_type)
 
     # ─── 序列化支持 ───
