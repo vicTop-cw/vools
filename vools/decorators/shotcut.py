@@ -156,17 +156,33 @@ def debounce(wait: float):
 
 
 def singleton(cls):
-    """单例模式装饰器"""
+    """单例模式装饰器
+
+    BUG-148: 早期实现把 ``cls`` 替换为 ``get_instance`` 函数，导致 ``Foo``
+    不再是类型——``isinstance(x, Foo)`` 抛 TypeError，``issubclass`` /
+    ``__bases__`` / 类型注解全部失效。改为改写 ``__new__`` / ``__init__``，
+    保留原类型；按类缓存实例（子类各自独立单例），只在首次创建时执行
+    ``__init__``，后续调用返回同一实例并跳过重复初始化。
+    """
     instances = {}
     lock = threading.Lock()
+    original_new = cls.__new__
+    original_init = cls.__init__
 
-    @functools.wraps(cls)
-    def get_instance(*args, **kwargs):
+    def _new_singleton(cls_, *args, **kwargs):
         with lock:
-            if cls not in instances:
-                instances[cls] = cls(*args, **kwargs)
-        return instances[cls]
-    return get_instance
+            if cls_ not in instances:
+                if original_new is object.__new__:
+                    instance = object.__new__(cls_)
+                else:
+                    instance = original_new(cls_, *args, **kwargs)
+                original_init(instance, *args, **kwargs)
+                instances[cls_] = instance
+            return instances[cls_]
+
+    cls.__new__ = staticmethod(_new_singleton)
+    cls.__init__ = lambda self, *args, **kwargs: None
+    return cls
 
 
 def deprecated(reason: str = None):
