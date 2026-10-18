@@ -1337,15 +1337,23 @@ class Seq(SeqBase):
     def register(self,func):
         """ register a function to Seq instance """
         if not callable(func):
+            # BUG-176: 原 `func.__name__ or str(func)` 在 func 无 __name__（int/str 等）时
+            # 直接 AttributeError，`or` 短路救不回。改用 getattr 兜底。
+            name = getattr(func, '__name__', None) or str(func)
             @property
             def _prop(self):
                 return func
-            setattr(self,func.__name__ or str(func) ,_prop)
+            setattr(self, name, _prop)
             return _prop
         @wraps(func)
-        def _inner(self,*args,**kwargs):
-            return func(self,*args,**kwargs)
-        setattr(self,func.__name__,_inner)
+        # BUG-176: 原 `_inner(self, *args, **kwargs)` 声明了 self，但 setattr 到实例属性后
+        # s.hello 是普通函数（实例属性不触发 descriptor 绑定），调用 s.hello() 时 self
+        # 不被传入，_inner 收到 0 个实参却要求 1 个 → TypeError。
+        # 实例属性函数用闭包持有 self，签名不再声明 self。
+        def _inner(*args, **kwargs):
+            return func(self, *args, **kwargs)
+        setattr(self, func.__name__, _inner)
+        return _inner
 
     # ---- serialization support ----
 
