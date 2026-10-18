@@ -35,8 +35,8 @@ def compose(*funcs: Callable) -> Callable:
     
     示例:
         >>> f = compose(lambda x: x + 1, lambda x: x * 2)
-        >>> f(3)
-        7  # (3 * 2) + 1
+        >>> f(3)  # (3 * 2) + 1
+        7
     """
     def _compose(x):
         result = x
@@ -52,8 +52,8 @@ def pipe(*funcs: Callable) -> Callable:
     
     示例:
         >>> f = pipe(lambda x: x * 2, lambda x: x + 1)
-        >>> f(3)
-        7  # (3 * 2) + 1
+        >>> f(3)  # (3 * 2) + 1
+        7
     """
     def _pipe(x):
         result = x

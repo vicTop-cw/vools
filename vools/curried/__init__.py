@@ -14,9 +14,13 @@ vools.curried - 完整的 Curried 函数库
 - predicate: 谓词和比较 (is_none, is_eq, etc.)
 
 示例:
-    >>> from vools.curried import map, filter, reduce, add
-    >>> filter(add(1), range(10))  # 柯里化使用
-    [1, 3, 5, 7, 9]
+    >>> from vools.curried import map, filter, reduce, add, is_gt
+    >>> # filter 需要谓词（返回 bool），用 curried 谓词 is_gt
+    >>> list(filter(is_gt(1), range(10)))  # 过滤 1 < x
+    [0]
+    >>> # add 是算术函数，柯里化后作为 map 的变换更合适
+    >>> list(map(add(1), range(5)))  # 每个元素 + 1
+    [1, 2, 3, 4, 5]
 """
 
 from typing import TypeVar, Callable, Iterable, List, Optional, Any, Union

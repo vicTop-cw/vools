@@ -108,11 +108,14 @@ def _compute_key(func: Callable, args: tuple, kwargs: dict) -> Any:
 
     BUG-103: 旧实现用 `pickle.dumps((func.__name__, args, kwargs))`，
     当参数含 lambda/file/socket 等不可 pickle 对象时装饰后的函数直接崩溃。
-    改为：优先用 (func.__name__, args, tuple(sorted(kwargs.items()))) 作为键，
+    BUG-110: 旧 key 用 `func.__name__` 作一部分，同名函数跨作用域缓存冲突
+    （如两个模块都定义 `get_ab`，key 相同导致命中错误结果）。
+    改为：优先用 (func, args, tuple(sorted(kwargs.items()))) 作为键，
+    函数对象本身可哈希且身份唯一，彻底避免同名冲突；
     不可哈希时回退到 repr 字符串（牺牲部分性能换取可用性）。
     """
     try:
-        key = (func.__name__, args, tuple(sorted(kwargs.items())))
+        key = (func, args, tuple(sorted(kwargs.items())))
         hash(key)  # 验证可哈希（快速失败，避免后续 dict 插入时报错）
         return key
     except TypeError:

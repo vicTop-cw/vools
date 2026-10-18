@@ -274,7 +274,7 @@ class DateProcessor:
         # 排序
         sorted_dates = sorted(dates)
         # 用单引号包裹，中文逗号分隔
-        return ",".join([f"'{self._date_to_str(d, fmt_type)}'" for d in sorted_dates])
+        return "，".join([f"'{self._date_to_str(d, fmt_type)}'" for d in sorted_dates])
     
     def _get_week_list(self, weeks_count: int, target_weekday: int, direction: str, fmt_type: str = "compact") -> str:
         """
@@ -308,7 +308,7 @@ class DateProcessor:
         # 排序
         sorted_dates = sorted(dates)
         # 用单引号包裹，中文逗号分隔
-        return ",".join([f"'{self._date_to_str(d, fmt_type)}'" for d in sorted_dates])
+        return "，".join([f"'{self._date_to_str(d, fmt_type)}'" for d in sorted_dates])
     
     def _get_month_list(self, months_count: int, target_day: int, direction: str, fmt_type: str = "compact") -> str:
         """
@@ -342,7 +342,7 @@ class DateProcessor:
         # 排序
         sorted_dates = sorted(dates)
         # 用单引号包裹，中文逗号分隔
-        return ",".join([f"'{self._date_to_str(d, fmt_type)}'" for d in sorted_dates])
+        return "，".join([f"'{self._date_to_str(d, fmt_type)}'" for d in sorted_dates])
     
     # @lru_cache
     def get_single_date(self, expr: str) -> str:
@@ -553,10 +553,10 @@ class EnhancedDateFormatter:
     - 智能错误处理，计算失败时保留原始占位符
     
     使用示例：
-    >>> formatter = EnhancedDateFormatter("商品：{goods}, 数量：{len(goods)}, 日期：{run_date_std}")
-    >>> formatter.set(goods=["苹果", "香蕉", "橙子"])
+    >>> formatter = EnhancedDateFormatter("商品：{goods}, 数量：{len(goods)}, 日期：{run_date_std}", default_run_date="2026-02-26")
+    >>> _ = formatter.set(goods=["苹果", "香蕉", "橙子"])
     >>> print(formatter.format())
-    商品：['苹果', '香蕉', '橙子'], 数量：3, 日期：2026-02-26
+    商品：[苹果, 香蕉, 橙子], 数量：3, 日期：2026-02-26
     """
     
     def __init__(self, template: str, default_run_date: Optional[str] = None,**context):

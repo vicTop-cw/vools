@@ -75,8 +75,8 @@ def compose(*funcs: Callable) -> Callable:
         
     Example:
         >>> f = compose(lambda x: x + 1, lambda x: x * 2)
-        >>> f(3)
-        7  # (3 * 2) + 1
+        >>> f(3)  # 先乘 2 再 +1
+        7
     """
     if not funcs:
         return identity
@@ -100,8 +100,8 @@ def pipe(*funcs: Callable) -> Callable:
         
     Example:
         >>> f = pipe(lambda x: x * 2, lambda x: x + 1)
-        >>> f(3)
-        7  # (3 * 2) + 1
+        >>> f(3)  # 先乘 2 再 +1
+        7
     """
     if not funcs:
         return identity
@@ -157,7 +157,16 @@ def retry(func: Callable[[], T], times: int = 3, delay: float = 1.0,
         最后一次重试的异常
         
     Example:
-        >>> result = retry(lambda: fetch_data(), times=3, delay=1.0)
+        >>> _attempts = [0]
+        >>> def fetch_data():
+        ...     _attempts[0] += 1
+        ...     if _attempts[0] < 3:
+        ...         raise ValueError("network error")
+        ...     return "ok"
+        >>> retry(fetch_data, times=3, delay=0)  # 前两次失败，第三次成功
+        'ok'
+        >>> _attempts[0]
+        3
     """
     last_exception = None
     for attempt in range(times):
@@ -242,7 +251,7 @@ def catch(func: Callable[[], T], default: T = None,
         函数执行结果或默认值
         
     Example:
-        >>> result = catch(lambda: int("not a number"), default=0)
+        >>> catch(lambda: int("not a number"), default=0)
         0
     """
     try:
