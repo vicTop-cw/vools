@@ -501,7 +501,7 @@ def _process_copy_list_from(copy_list_from_configs: Dict[str, Any], new_cls: typ
                                     if (x.startswith('=>') or x.startswith('self') or x.startswith('cls') 
                                         or x.startswith('lambda ') or x.startswith('def ') or x.startswith('class ')
                                         or x.startswith('super') or re.match(r'(?<!\w)_(?!\w)',x)
-                                        or x.match(r'(?<!\w)_(0*[1-9]\d*)(?!\w)',x)
+                                        or re.match(r'(?<!\w)_(0*[1-9]\d*)(?!\w)',x)
                                         ):
                                         return g(x, local_env)
                                     else:
