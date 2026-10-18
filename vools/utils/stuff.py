@@ -160,7 +160,15 @@ class IndexedDict:
         return iter(self._data.values())
 
     def __next__(self):
-        return next(iter(self._data.values()))
+        # BUG-143: 原 next(iter(...)) 每次新建迭代器，恒返回第一个元素。
+        # 改为维护实例级迭代器，真正推进；耗尽后重置以支持反复遍历。
+        if not hasattr(self, '_iter'):
+            self._iter = iter(self._data.values())
+        try:
+            return next(self._iter)
+        except StopIteration:
+            self._iter = iter(self._data.values())
+            raise
 
     def __repr__(self):
         return f"IndexedDict({self._data})"
