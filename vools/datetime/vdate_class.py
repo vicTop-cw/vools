@@ -137,20 +137,23 @@ class VDate(datetime):
             格式化后的日期字符串
         """
         y, m = self.year, self.month
-        num = num - 1 if last_day else num
+        # BUG-181: last_day=True 时把目标月索引后移一个月，dt-1 才会落在目标月末；
+        # 原 `num - 1` 使 dt-1 落在目标月的前一月月末（月份偏移整体错位）。
+        num = num + 1 if last_day else num
 
+        # BUG-181: 原实现 `num>0 → m-=1` / `num<0 → m+=1`，与文档"1=下月，-1=上月"恰好颠倒。
         while num > 0:
-            m -= 1
-            if m == 0:
-                m = 12
-                y -= 1
-            num -= 1
-
-        while num < 0:
             m += 1
             if m == 13:
                 m = 1
                 y += 1
+            num -= 1
+
+        while num < 0:
+            m -= 1
+            if m == 0:
+                m = 12
+                y -= 1
             num += 1
 
         m = m if m > 9 else f'0{m}'
