@@ -125,6 +125,10 @@ def _is_property_tuple(func) -> bool:
 
 def _is_descriptor(func) -> bool:
     """检查是否为描述符（实现了 __get__/__set__/__delete__ 的对象或类）"""
+    # BUG-153: 普通函数 / lambda / 内置函数也实现 __get__（描述符协议），
+    # 会被误判为描述符。先显式排除函数类对象。
+    if inspect.isfunction(func) or inspect.ismethod(func) or inspect.isbuiltin(func):
+        return False
     # 描述符实例：有 __get__ 方法
     if hasattr(func, '__get__'):
         return True
@@ -156,6 +160,10 @@ def _resolve_descriptor(func, name: str):
 def _infer_name(func: Callable, fallback: str) -> str:
     """从可调用对象推断一个合理的成员名。"""
     name = getattr(func, '__name__', '') or ''
+    # BUG-153: 描述符实例（如 Typed('age', int)）无 __name__ 但有 name 属性，
+    # 应优先用其 name（这正是用户为描述符取的属性名）。
+    if not name:
+        name = getattr(func, 'name', '') or ''
     if name == '<lambda>':
         # 尝试从源码反推（仅用于命名，失败则回退）
         try:
