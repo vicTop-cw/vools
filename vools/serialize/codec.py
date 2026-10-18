@@ -277,24 +277,80 @@ def _reconstruct_object(type_name: str, state: Dict[str, Any]) -> Any:
     return obj
 
 
+# BUG-98: 反序列化可导入任意模块并 getattr。即使当前不直接呼叫，
+# 仍应限制允许导入的模块，防止信息泄露/导入副作用/未来 gadget 链。
+# 白名单：vools 前缀 + 常用 stdlib 模块；前缀匹配避免逐条维护。
+_ALLOWED_IMPORT_PREFIXES = (
+    'vools.',
+    'vools',
+)
+_ALLOWED_IMPORT_MODULES = frozenset({
+    'datetime', 'decimal', 'fractions', 'pathlib', 'enum',
+    'collections', 'collections.abc', 'typing',
+    'vools',
+})
+
+
+def _is_allowed_module(module_path: str) -> bool:
+    """判断模块路径是否在允许导入的白名单内（BUG-98）。"""
+    if module_path in _ALLOWED_IMPORT_MODULES:
+        return True
+# BUG-98: 反序列化可导入任意模块并 getattr。即使当前不直接呼叫，
+# 仍应限制允许导入的模块，防止信息泄露/导入副作用/未来 gadget 链。
+# 白名单：vools 前缀 + 常用 stdlib 模块；前缀匹配避免逐条维护。
+_ALLOWED_IMPORT_PREFIXES = (
+    'vools.',
+    'vools',
+)
+_ALLOWED_IMPORT_MODULES = frozenset({
+    'datetime', 'decimal', 'fractions', 'pathlib', 'enum',
+    'collections', 'collections.abc', 'typing',
+    'vools',
+})
+
+
+def _is_allowed_module(module_path: str) -> bool:
+    """判断模块路径是否在允许导入的白名单内（BUG-98）。"""
+    if module_path in _ALLOWED_IMPORT_MODULES:
+        return True
+    for prefix in _ALLOWED_IMPORT_PREFIXES:
+        if module_path.startswith(prefix):
+            return True
+    return False
+
+
 def _import_class(type_name: str):
     """
-    根据类型全限定名导入类。
+    根据类型全限定名导入类（受限白名单，BUG-98）。
     例如 'vools.data.seq._NONE' → import vools.data.seq; return _NONE
+
+    Args:
+        type_name: 类的全限定名，如 'datetime.datetime'
+
+    Returns:
+        类对象；无法导入或不在白名单时返回 None。
     """
     try:
-        # 处理嵌套类（qualname 用 . 分隔）
-        # 例如 'vools.decorators.curry_core.Curried'
         parts = type_name.rsplit('.', 1)
         if len(parts) != 2:
             return None
 
         module_path, cls_name = parts
+
+        # BUG-98: 白名单校验，禁止任意模块导入
+        if not _is_allowed_module(module_path):
+            return None
+
         mod = importlib.import_module(module_path)
-        return getattr(mod, cls_name, None)
+        cls = getattr(mod, cls_name, None)
+
+        # BUG-98: 必须是类，禁止导入函数/模块作为"类"使用
+        if not isinstance(cls, type):
+            return None
+
+        return cls
     except (ImportError, AttributeError):
         return None
-
 
 def _new_builtin_subclass(cls, base_value: Any, state: Dict[str, Any]) -> Any:
     """
