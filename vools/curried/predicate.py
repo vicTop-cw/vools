@@ -373,12 +373,12 @@ def attrgetter(name: str) -> Callable:
     return lambda obj: getattr(obj, name)
 
 
-def itemgetter(key: Any) -> Callable:
+def itemgetter(*keys: Any) -> Callable:
     """
     返回获取指定项的可调用对象
 
     Args:
-        key: 键（支持多个键）
+        *keys: 键（支持多个键）
 
     Returns:
         获取项的可调用对象
@@ -391,10 +391,16 @@ def itemgetter(key: Any) -> Callable:
         >>> itemgetter(0, -1)(data)
         ('a', 'd')
     """
+    if len(keys) == 1:
+        key = keys[0]
+        @curry
+        def getter(obj):
+            return obj[key]
+        return getter
     @curry
-    def getter(obj):
-        return obj[key]
-    return getter
+    def multi_getter(obj):
+        return tuple(obj[k] for k in keys)
+    return multi_getter
 
 
 __all__ = [
