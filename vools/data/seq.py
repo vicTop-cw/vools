@@ -508,7 +508,11 @@ class Seq(SeqBase):
             key = _identify
         def gen():
             for k, g in groupby(sorted(self._evaluate(), key=key), key=key):
-                yield k, list(map(itemgetter(1), g))
+                # BUG-173: 原 `map(itemgetter(1), g)` 误把分组组员当作 (key,item) 对，
+                # 对元素本身取 itemgetter(1)：非下标元素（int 等）抛 TypeError，
+                # tuple 元素则 key 错、分组被拆碎。itertools.groupby 的 g 就是原始元素，
+                # 直接 list(g) 即为组员列表。
+                yield k, list(g)
         return self.__class__(gen())
     
     def grouper(self, n: int, fillvalue: Any = None) -> 'Seq':
