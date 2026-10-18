@@ -76,7 +76,9 @@ def lazy(obj: Any, caller_locals: Optional[Dict] = None,
         # 获取调用者作用域
         if caller_globals is None or caller_locals is None:
             try:
-                frame = inspect.currentframe().f_back.f_back
+                # BUG-164: lazy 的直接调用者才是表达式应解析的作用域，故取 f_back
+                # （此前误取 f_back.f_back，跳了一层导致调用者局部变量捕获失败）
+                frame = inspect.currentframe().f_back
                 caller_globals = frame.f_globals if frame else globals()
                 caller_locals = frame.f_locals if frame else locals()
             except (AttributeError, TypeError):
