@@ -710,6 +710,10 @@ def set_in(keys: List[Any], value: Any, d: Dict) -> Dict:
     for i, key in enumerate(keys[:-1]):
         if key not in current or not isinstance(current[key], dict):
             current[key] = {}
+        else:
+            # BUG-136: 浅拷贝会污染原字典（嵌套 dict 共享引用）。
+            # 不可变更新语义要求路径上每个 dict 都复制。
+            current[key] = dict(current[key])
         current = current[key]
     current[keys[-1]] = value
     return result
@@ -737,6 +741,9 @@ def update_in(keys: List[Any], fn: Callable[[Any], Any], d: Dict) -> Dict:
     for i, key in enumerate(keys[:-1]):
         if key not in current or not isinstance(current[key], dict):
             current[key] = {}
+        else:
+            # BUG-136: 同上，路径节点必须复制，避免污染原字典。
+            current[key] = dict(current[key])
         current = current[key]
     if keys[-1] in current:
         current[keys[-1]] = fn(current[keys[-1]])
