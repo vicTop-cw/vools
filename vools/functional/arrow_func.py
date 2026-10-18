@@ -67,6 +67,18 @@ def convert_ternary(expression):
     return expression
 
 
+# BUG-128: 纯赋值语句（name = expr）不能当 return 表达式（生成 `return x = 1` 会 SyntaxError）。
+    # 排除 == / != / >= / <= 等比较（`=` 后紧跟 `=` 由 (?!=) 挡住）、+= 等增强赋值（`=` 前有运算符不匹配）、
+    # := walrus（`:` 非 `\s`）。返回左侧变量名，非纯赋值返回 None。
+_ASSIGN_RE = re.compile(r'^\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+)$')
+
+
+def _assign_lhs(stmt: str) -> Optional[str]:
+    """若 stmt 是纯赋值语句 'name = expr'，返回左侧变量名；否则返回 None。"""
+    m = _ASSIGN_RE.match(stmt)
+    return m.group(1) if m else None
+
+
 def create_arrow_function(params: List[tuple], body: str, env: Dict[str, Any],body_sep :str = ';') -> Callable:
     """创建 arrow 函数"""
     
@@ -100,7 +112,13 @@ def create_arrow_function(params: List[tuple], body: str, env: Dict[str, Any],bo
                 code_lines.append(f"    {stmt}")
             
             if last_stmt:
-                code_lines.append(f"    return {last_stmt}")
+                lhs = _assign_lhs(last_stmt)
+                if lhs:
+                    # BUG-128: 最后一条是赋值语句（name = expr）→ 先赋值再 return 变量名
+                    code_lines.append(f"    {last_stmt}")
+                    code_lines.append(f"    return {lhs}")
+                else:
+                    code_lines.append(f"    return {last_stmt}")
             else:
                 code_lines.append("    pass")
             
@@ -108,8 +126,12 @@ def create_arrow_function(params: List[tuple], body: str, env: Dict[str, Any],bo
         else:
             func_body = "    pass"
     else:
-        # 单表达式函数体
-        func_body = f"    return {body}"
+        # 单表达式函数体；BUG-128: 若是纯赋值（=> x = 1），改为赋值后 return 变量名
+        lhs = _assign_lhs(body)
+        if lhs:
+            func_body = f"    {body}\n    return {lhs}"
+        else:
+            func_body = f"    return {body}"
     
     # 构建完整的函数定义
     param_parts = []
