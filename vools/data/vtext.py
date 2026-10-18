@@ -796,11 +796,13 @@ class VText(str):
         返回 VText 字符串（不带 .text 属性，直接 str() 即可）。
 
         支持的占位符（正则匹配）：
-          - {run_date}           → run_date (默认 yyyy-MM-dd)
-          - {run_date-N}         → run_date 减 N 天
-          - {run_date+N}         → run_date 加 N 天
+          - {run_date}           → run_date (默认 YYYYMMDD，legacy vicSql 语义)
+          - {run_date-N}         → run_date 减 N 天 (同样默认 YYYYMMDD)
+          - {run_date+N}         → run_date 加 N 天 (同样默认 YYYYMMDD)
           - {run_date_std}       → run_date 标准化（yyyy-MM-dd）
           - {run_date_std±N}     → 同上加减
+
+        BUG-130: 旧 docstring 声称 {run_date} 默认 yyyy-MM-dd，与实现 (`std=False` → YYYYMMDD) 不符。
         """
         if "{run_date" not in self:
             return self.__class__(self)
