@@ -11,7 +11,8 @@ from vools.api.memoize_cmd import (
 runner = CliRunner()
 
 __all__ = ["TestParseLambda", "TestTimingDecorator", "TestCall",
-           "TestBenchmark", "TestBenchmarkZeroElapsed", "TestApp", "TestImport"]
+           "TestBenchmark", "TestBenchmarkZeroElapsed",
+           "TestBenchmarkZeroIterations", "TestApp", "TestImport"]
 
 
 class TestParseLambda:
@@ -95,6 +96,17 @@ class TestBenchmarkZeroElapsed:
         ])
         assert result.exit_code == 0
         assert "每秒操作数" in result.output
+
+
+class TestBenchmarkZeroIterations:
+    """回归：benchmark --iterations 0 时 elapsed/iterations 除零崩溃。"""
+
+    def test_iterations_zero_no_crash(self):
+        result = runner.invoke(memoize_app, [
+            "benchmark", "lambda x: x + 1", "1", "--iterations", "0"
+        ])
+        assert result.exit_code != 0
+        assert "正数" in result.output
 
 
 class TestApp:

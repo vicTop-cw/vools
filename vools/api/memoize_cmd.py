@@ -95,6 +95,9 @@ def benchmark(
     iterations: int = typer.Option(100, "--iterations", "-n", help="基准测试迭代次数"),
 ):
     """基准测试记忆化函数"""
+    if iterations <= 0:
+        raise typer.BadParameter("迭代次数必须为正数", param_hint="--iterations")
+
     func = parse_lambda_or_func(func_expr)
     
     # 解析参数
