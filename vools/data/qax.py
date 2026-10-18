@@ -529,38 +529,52 @@ class Qax(Table):
         if isinstance(group_cols, str):
             group_cols = [group_cols]
 
-        groups = self.group_by(group_cols[0])
-
-        result_data = []
         result_columns = list(group_cols)
+
+        # BUG-177: 原 `groups = self.group_by(group_cols[0])` 只取第一列分组，
+        # 多列时静默丢弃其余分组维度，且 result_columns 声明了多列但数据行只有单键，
+        # 列数与数据不对齐。多列按 (g1,g2,...) 组合键分组，单列仍走 group_by 路径。
+        if len(group_cols) == 1:
+            col_idx_list = [self._get_col_index(group_cols[0])]
+        else:
+            col_idx_list = [self._get_col_index(c) for c in group_cols]
 
         if agg_spec:
             for col in agg_spec:
                 result_columns.append(col)
 
-            for key, group_table in groups.items():
-                row = [key]
-                for col, func in agg_spec.items():
-                    if callable(func):
-                        values = group_table.column(col)
-                        row.append(func(values))
-                    elif func == 'sum':
-                        row.append(group_table.sum(col))
-                    elif func in ('avg', 'mean'):
-                        row.append(group_table.avg(col))
-                    elif func == 'count':
-                        values = group_table.column(col)
-                        row.append(len([v for v in values if v is not None]))
-                    elif func == 'min':
-                        row.append(group_table.min(col))
-                    elif func == 'max':
-                        row.append(group_table.max(col))
-                    else:
-                        row.append(None)
+        buckets: Dict[Any, List[List[Any]]] = {}
+        for row in self._data:
+            key = tuple(row[i] for i in col_idx_list)
+            buckets.setdefault(key, []).append(row[:])
+
+        result_data = []
+        for key, rows in buckets.items():
+            # BUG-177: 多列分组键 (g1,g2,...) 应展开为独立单元格（QAX 行列对齐），
+            # 而非把整组键塞成单个单元格值。
+            row = list(key) if len(key) > 1 else [key[0]]
+            if not agg_spec:
                 result_data.append(row)
-        else:
-            for key, group_table in groups.items():
-                result_data.append([key])
+                continue
+            group_table = Qax(rows, columns=list(self._columns), name=self._name)
+            for col, func in agg_spec.items():
+                if callable(func):
+                    values = group_table.column(col)
+                    row.append(func(values))
+                elif func == 'sum':
+                    row.append(group_table.sum(col))
+                elif func in ('avg', 'mean'):
+                    row.append(group_table.avg(col))
+                elif func == 'count':
+                    values = group_table.column(col)
+                    row.append(len([v for v in values if v is not None]))
+                elif func == 'min':
+                    row.append(group_table.min(col))
+                elif func == 'max':
+                    row.append(group_table.max(col))
+                else:
+                    row.append(None)
+            result_data.append(row)
 
         return Qax(result_data, columns=result_columns, name=self._name)
 
