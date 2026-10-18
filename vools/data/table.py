@@ -1470,7 +1470,11 @@ class Table(Seq):
                     else:
                         result_data.append(s_vals + [v for c, v in zip(other_cols, o_vals)])
             elif join_type in ('left', 'outer'):
-                result_data.append(s_vals + [None] * (len(other_cols) - (1 if on_col in other_cols else 0)))
+                # BUG-171: 原实现按 `len(other_cols) - (1 if on_col in other_cols else 0)`
+                # 填充 None。但 result_columns（非 inner）与匹配分支（L1471）都保留全部
+                # other_cols（含 on_col），未匹配行因此比表头少一列，导致行长度不一致。
+                # 改为与匹配分支一致的列数：未匹配时 other 侧全部为 None。
+                result_data.append(s_vals + [None] * len(other_cols))
             
             if first and key in other_index:
                 break
