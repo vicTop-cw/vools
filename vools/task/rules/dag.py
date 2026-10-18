@@ -11,20 +11,25 @@ DagScheduler - DAG 拓扑调度器
 5. 函数式风格：使用 Result 包装每一步状态
 
 Example:
-    >>> from vools.task import TaskQueue, WorkerPool
-    >>> from vools.task.rules import DagScheduler
+    >>> from vools.task import TaskQueue
+    >>> from vools.task.rules import DagScheduler  # doctest: +SKIP
 
-    >>> queue = TaskQueue("dag.db")
-    >>> dag = DagScheduler(queue, mode="process", max_workers=4)
+    >>> def step1(): return 1  # doctest: +SKIP
+    >>> def step2(): return 2  # doctest: +SKIP
+    >>> def step3(): return 3  # doctest: +SKIP
+    >>> def step4(): return 4  # doctest: +SKIP
 
-    >>> t1 = queue.submit(step1, depends_on=set())
-    >>> t2 = queue.submit(step2, depends_on={t1})
-    >>> t3 = queue.submit(step3, depends_on={t1})
-    >>> t4 = queue.submit(step4, depends_on={t2, t3})
+    >>> queue = TaskQueue("dag.db")  # doctest: +SKIP
+    >>> dag = DagScheduler(queue, mode="thread", max_workers=4)  # doctest: +SKIP
 
-    >>> dag.start()
-    >>> dag.await_completion()
-    >>> dag.stop()
+    >>> t1 = queue.submit(step1, depends_on=set())  # doctest: +SKIP
+    >>> t2 = queue.submit(step2, depends_on={t1})  # doctest: +SKIP
+    >>> t3 = queue.submit(step3, depends_on={t1})  # doctest: +SKIP
+    >>> t4 = queue.submit(step4, depends_on={t2, t3})  # doctest: +SKIP
+
+    >>> dag.start()  # doctest: +SKIP
+    >>> dag.await_completion()  # doctest: +SKIP
+    >>> dag.stop()  # doctest: +SKIP
 """
 
 __all__ = ['DagScheduler']

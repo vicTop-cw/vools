@@ -558,7 +558,9 @@ def safe_arrow_func(expr: str, env: Optional[Dict[str, Any]] = None) -> Callable
         >>> f(21)
         42
         >>> safe_arrow_func("x => __import__('os').system('rm -rf /')")
-        SafeEvalError: 不安全的表达式
+        Traceback (most recent call last):
+            ...
+        vools.security.safe_eval.SafeEvalError: 表达式包含不安全内容
     """
     from ..security.safe_eval import safe_lambda, SafeEvalError
 

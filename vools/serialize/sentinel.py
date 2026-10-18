@@ -12,6 +12,7 @@ class NoneSentinel:
 
     示例:
         >>> from vools.serialize.sentinel import NONE, NoneSentinel
+        >>> from vools.serialize import Serializer
         >>> s = Serializer(backend='json')
         >>> data = s.dumps(NONE)
         >>> restored = s.loads(data)

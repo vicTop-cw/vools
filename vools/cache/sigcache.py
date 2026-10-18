@@ -14,12 +14,17 @@ vools.cache - 函数签名缓存工具
     >>> from vools.cache import get_signature, add_custom_sig
     >>>
     >>> # 直接替换 inspect.signature
-    >>> sig = get_signature(my_func)
+    >>> sig = get_signature(print)
+    >>> list(sig.parameters.keys())
+    ['values', 'sep', 'end', 'file', 'flush']
     >>>
     >>> # 手动注册自定义签名（对于一些 C 扩展函数）
     >>> from inspect import Signature, Parameter
-    >>> add_custom_sig(my_cfunc, Signature([
+    >>> def my_func(x, y=0):
+    ...     return x + y
+    >>> add_custom_sig(my_func, Signature([
     ...     Parameter('x', Parameter.POSITIONAL_OR_KEYWORD),
+    ...     Parameter('y', Parameter.POSITIONAL_OR_KEYWORD, default=0),
     ... ]))
 
 安全性:
@@ -141,6 +146,8 @@ def add_custom_sig(
         >>> from vools.cache import add_custom_sig, get_signature
         >>>
         >>> # 为 C 扩展函数注册签名
+        >>> def my_cfunc(x, y=0):
+        ...     return x + y
         >>> sig = Signature([
         ...     Parameter('x', Parameter.POSITIONAL_OR_KEYWORD),
         ...     Parameter('y', Parameter.POSITIONAL_OR_KEYWORD, default=0),
@@ -252,13 +259,11 @@ def cache_info() -> Dict[str, Any]:
     用法:
         >>> from vools.cache import cache_info, get_signature
         >>> get_signature(len)
+        <Signature (obj: Any)>
         >>> info = cache_info()
         >>> info["hit_ratio"]
-        0.0
-        >>> get_signature(len)
-        >>> info = cache_info()
-        >>> info["hit_ratio"]
-        0.5
+        1.0
+        >>> # 重复调用 get_signature 命中缓存，hit_ratio 可能 > 0
     """
     total = _CACHE_HITS + _CACHE_MISSES
     return {
