@@ -284,11 +284,13 @@ def _process_copy_from(copy_from_configs: Dict[str, Any], new_cls: type, env: Di
         if not isinstance(config, (tuple, list,dict)) or len(config) < 2:
             continue
         if isinstance(config, dict):
-            source = config['source',None]
-            method_name = config['method',None]
-            init_args = config.get('init_args',None) #must be a list
-            init_kwargs = config.get('init_kwargs',None) #must be a dict
-            return_result = config.get('return_result',{})
+            # BUG-166: 原代码用 config['source',None]（tuple 键），缺键抛 KeyError。
+            # 应为 config.get('source', None)。
+            source = config.get('source', None)
+            method_name = config.get('method', None)
+            init_args = config.get('init_args', None) #must be a list
+            init_kwargs = config.get('init_kwargs', None) #must be a dict
+            return_result = config.get('return_result', {})
         else:    
             source, method_name = config[0], config[1]
             init_args = config[2] if len(config) > 2 else None
