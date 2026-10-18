@@ -306,6 +306,21 @@ def _transform_signature(args_node):
 
     # kw_defaults follow kwonly order. Moved-from-args parameters have no
     # default because that would have been a Python syntax error.
+    # BUG-147: 从 args 移入 kwonly 的参数（如 `def f(_, b=2)` 的 b）会丢失默认值。
+    # 需回查原 args 的位置并把 defaults 里对应的默认值搬过来。
+    moved_indices = {}
+    if double_in_kwonly:
+        moved_args = []
+    elif underscore_pos is not None and double_pos is not None:
+        moved_args = args[underscore_pos + 1:double_pos]
+    elif underscore_pos is not None:
+        moved_args = args[underscore_pos + 1:]
+    else:
+        moved_args = []
+    for idx, orig_arg in enumerate(args):
+        if orig_arg in moved_args:
+            moved_indices[orig_arg.arg] = idx
+
     new_kw_defaults = []
     for arg in new_kwonly:
         found = False
@@ -314,6 +329,12 @@ def _transform_signature(args_node):
                 new_kw_defaults.append(args_node.kw_defaults[i])
                 found = True
                 break
+        if not found and arg.arg in moved_indices:
+            idx = moved_indices[arg.arg]
+            offset = idx - default_start
+            if offset >= 0 and offset < len(args_node.defaults):
+                new_kw_defaults.append(args_node.defaults[offset])
+                found = True
         if not found:
             new_kw_defaults.append(None)
 
