@@ -71,7 +71,19 @@ DANGEROUS_PATTERNS = [
     'socket.', 'shutil.', 'glob.', 'tempfile.',
     'pickle.', 'json.', 'yaml.', 'marshal.',
     'ctypes.', 'win32api.', 'win32con.',
+    # BUG-101: Python 对象模型逃逸属性（().__class__.__base__ 等）
+    '__class__', '__base__', '__bases__', '__subclasses__', '__mro__',
+    '__dict__', '__init__', '__getattribute__', '__getattr__', '__setattr__',
+    '__delattr__', '__get__', '__set__', '__delete__',
 ]
+
+# BUG-101: 禁止访问的对象模型属性名（ast.Attribute 白名单校验）
+DANGEROUS_ATTRS = frozenset({
+    '__class__', '__base__', '__bases__', '__subclasses__', '__mro__',
+    '__dict__', '__init__', '__getattribute__', '__getattr__', '__setattr__',
+    '__delattr__', '__get__', '__set__', '__delete__',
+    '__call__', '__func__', '__self__',
+})
 
 
 class ExpressionSecurityError(Exception):
@@ -117,6 +129,31 @@ def _validate_identifier(name: str) -> bool:
         if not char.isalnum() and char != '_':
             return False
     return True
+
+
+def _validate_comprehension(
+    node: ast.AST, allowed_names: Optional[set] = None
+) -> None:
+    """校验列表/集合/字典推导式。
+
+    推导式中的 target 变量仅在其范围内有效（scope-local），
+    不污染外层 allowed_names（避免 target 名在外层被误允许）。
+    """
+    allowed_names = allowed_names or set()
+    comp_allowed = set(allowed_names)
+
+    for gen in node.generators:
+        # 迭代器（iter）在 comp_allowed 作用域内求值
+        _validate_ast_node(gen.iter, comp_allowed)
+        # 推导式 target 允许作为局部变量使用
+        for target_node in ast.walk(gen.target):
+            if isinstance(target_node, ast.Name):
+                comp_allowed.add(target_node.id)
+        # ifs 条件
+        for if_node in gen.ifs:
+            _validate_ast_node(if_node, comp_allowed)
+
+    _validate_ast_node(node.elt, comp_allowed)
 
 
 def _validate_ast_node(node: ast.AST, allowed_names: Optional[set] = None) -> None:
@@ -203,6 +240,11 @@ def _validate_ast_node(node: ast.AST, allowed_names: Optional[set] = None) -> No
         return
     
     elif isinstance(node, ast.Attribute):
+        # BUG-101: 校验属性名，禁止对象模型逃逸（__class__/__base__ 等）
+        if node.attr in DANGEROUS_ATTRS:
+            raise ExpressionSecurityError(
+                f"不允许访问属性: {node.attr}（BUG-101 对象模型逃逸防护）"
+            )
         _validate_ast_node(node.value, allowed_names)
         return
     
@@ -212,6 +254,16 @@ def _validate_ast_node(node: ast.AST, allowed_names: Optional[set] = None) -> No
         _validate_ast_node(node.orelse, allowed_names)
         return
     
+    elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        _validate_comprehension(node, allowed_names)
+        return
+
+    elif isinstance(node, ast.DictComp):
+        _validate_comprehension(node, allowed_names)
+        # DictComp 还有 value 字段
+        _validate_ast_node(node.value, allowed_names)
+        return
+
     else:
         raise ExpressionSecurityError(f"不支持的表达式类型: {type(node).__name__}")
 

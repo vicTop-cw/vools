@@ -4,6 +4,12 @@ import calendar
 from typing import Optional, List, Tuple, Union, Dict, Any, Set
 from functools import lru_cache
 
+# BUG-101: 使用安全求值替代裸 eval
+from ..security.expression_handler import safe_eval_expression
+
+# BUG-101: 使用安全求值替代裸 eval
+from ..security.expression_handler import safe_eval_expression
+
 __all__ = ['DateProcessor','EnhancedDateFormatter']
 
 class DateProcessor:
@@ -693,9 +699,8 @@ class EnhancedDateFormatter:
         
         # 尝试作为Python表达式计算
         try:
-            # 直接使用实例的context作为命名空间
-            code = compile(expr_part, '<string>', 'eval')
-            result = eval(code, {'__builtins__': self.context})
+            # BUG-101: 改用安全求值，拒绝对象模型逃逸
+            result = safe_eval_expression(expr_part, vars=self.context)
             return result
             
         except Exception:
@@ -752,9 +757,8 @@ class EnhancedDateFormatter:
                     if date_result is not None:
                         result = date_result
                     else:
-                        # 尝试作为Python表达式计算，直接使用实例的context作为命名空间
-                        code = compile(part, '<string>', 'eval')
-                        result = eval(code, {'__builtins__': self.context})
+                        # BUG-101: 改用安全求值
+                        result = safe_eval_expression(part, vars=self.context)
             
             return result if result is not None else ""
             
@@ -799,9 +803,8 @@ class EnhancedDateFormatter:
         
         # 尝试解析列表或字典或函数调用
         try:
-            # 直接使用实例的context作为命名空间
-            code = compile(value_str, '<string>', 'eval')
-            return eval(code, {'__builtins__': self.context})
+            # BUG-101: 改用安全求值
+            return safe_eval_expression(value_str, vars=self.context)
         except Exception:
             pass
         
