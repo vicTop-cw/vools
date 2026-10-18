@@ -227,7 +227,7 @@ def rself(cls: Type) -> Type:
         if original_new is not None:
             # 调用原始 __new__，保留所有参数
             instance = original_new(cls, *args, **kwargs)
-        elif parent_cls is not None and isinstance(parent_cls, _IMMUTABLE_TYPES):
+        elif parent_cls is not None and parent_cls in _IMMUTABLE_TYPES:
             # 对于不可变类型的子类，使用父类的 __new__
             instance = parent_cls.__new__(cls, parent_value)
         else:
@@ -240,20 +240,34 @@ def rself(cls: Type) -> Type:
         return instance
 
     def _wrap_init(self, *args, **kwargs):
-        """包装后的 __init__，保存初始化参数"""
+        """包装后的 __init__，保存初始化参数
+
+        BUG-119: 不可变类型（如 str 子类）的 value 已由 __new__ 消费，
+        __init__ 若继续把 value 传给父类 __init__ 会抛
+        ``TypeError: 'value' is an invalid keyword argument for str()``。
+        这里剥离第一个位置参数 / kwargs['value'] 后再调用父类 __init__。
+        """
         # 将初始化参数存储为实例属性
         # 注意：对于不可变类型，__new__ 已经处理了 kwargs
         if not hasattr(self, '_rself_kwargs'):
             self._rself_kwargs = kwargs.copy() if kwargs else {}
 
+        # 剥离已由 __new__ 消费的 value（仅不可变类型的父类需要）
+        if parent_cls is not None and parent_cls in _IMMUTABLE_TYPES:
+            init_args = args[1:] if args else ()
+            init_kwargs = {k: v for k, v in kwargs.items() if k != 'value'}
+        else:
+            init_args = args
+            init_kwargs = kwargs
+
         # 调用原始 __init__
         if original_init is not None:
-            original_init(self, *args, **kwargs)
+            original_init(self, *init_args, **init_kwargs)
 
     # 如果类有自定义 __new__，替换为包装版本
     if original_new is not None and original_new is not _wrap_new:
         cls.__new__ = staticmethod(lambda cls, *args, **kwargs: _wrap_new(cls, *args, **kwargs))
-    elif original_new is None and parent_cls is not None and isinstance(parent_cls, _IMMUTABLE_TYPES):
+    elif original_new is None and parent_cls is not None and parent_cls in _IMMUTABLE_TYPES:
         # 仅对不可变类型的子类添加 __new__ 包装
         cls.__new__ = staticmethod(lambda cls, *args, **kwargs: _wrap_new(cls, *args, **kwargs))
 
@@ -261,6 +275,10 @@ def rself(cls: Type) -> Type:
     if original_init is not None and '__init__' not in cls.__dict__:
         cls.__init__ = _wrap_init
     elif original_init is not None and original_init is not _wrap_init:
+        cls.__init__ = _wrap_init
+    elif original_init is None and parent_cls is not None and parent_cls in _IMMUTABLE_TYPES:
+        # BUG-119: 不可变类型子类通常不覆盖 __init__，但不包装 __init__ 会让
+        # 继承的 str.__init__ 收到已传给 __new__ 的 value → TypeError
         cls.__init__ = _wrap_init
 
     # 注入新方法
