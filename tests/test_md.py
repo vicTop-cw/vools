@@ -147,6 +147,27 @@ def test_metadata_nested_datetime_normalized():
     assert r == {"a": "2024-01-01", "b": ["2024-01-01T12:00:00"]}
 
 
+
+def test_metadata_empty_frontmatter_returns_dict():
+    """BUG-87: 空/仅注释 front matter 应返回空 dict，而非 None。"""
+    meta = extract_metadata("---\n---\n# Body")
+    assert meta == {}
+    assert isinstance(meta, dict)
+
+
+def test_metadata_null_value_preserved():
+    """BUG-87: YAML null 值应保留为 None，而非转成空字符串。"""
+    meta = extract_metadata("---\nkey: null\n---\n# Body")
+    assert meta["key"] is None
+
+
+def test_parse_yaml_empty_returns_dict():
+    """BUG-87: parse_yaml 空/注释-only 输入返回 {}。"""
+    from vools.md.config_parser import parse_yaml
+    assert parse_yaml("") == {}
+    assert parse_yaml("# comment only") == {}
+
+
 def test_metadata_empty():
     meta = extract_metadata("# No front matter")
     assert meta == {}
