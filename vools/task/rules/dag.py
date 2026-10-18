@@ -86,6 +86,8 @@ class DagScheduler:
         self._completed: Set[int] = set()
         self._failed: Set[int] = set()
         self._skipped: Set[int] = set()
+        # BUG-120: future → task_id 映射，异步收集已完成任务
+        self._futures: Dict[Any, int] = {}
 
     @property
     def status(self) -> Dict[str, Any]:
@@ -199,9 +201,12 @@ class DagScheduler:
         self._collect_finished()
 
         # 检查是否有新就绪的任务
-        ready_tasks = self._storage.get_ready_tasks(
-            set(self._pending - self._completed - self._failed - self._skipped)
+        # BUG-120: 已 dispatch 但未完成的任务仍在 _pending，需排除避免重复分派
+        dispatched_ids = set(self._futures.values())
+        candidates = set(
+            self._pending - self._completed - self._failed - self._skipped - dispatched_ids
         )
+        ready_tasks = self._storage.get_ready_tasks(candidates)
 
         for task in ready_tasks:
             self._dispatch_task(task)
@@ -228,16 +233,8 @@ class DagScheduler:
             task.id, TaskStatus.RUNNING,
             worker_id=f"scheduler_{self._mode}"
         )
-
-        # 同步等待 future 完成
-        try:
-            result = future.result(timeout=3600)
-            self._on_task_complete(task.id, result)
-        except Exception as e:
-            self._on_task_complete(
-                task.id,
-                Result.failure(e)
-            )
+        # BUG-120: 不再同步 future.result()，改由 _collect_finished 异步收集
+        self._futures[future] = task.id
 
     def _on_task_complete(self, task_id: int, result: Result) -> None:
         """
@@ -290,8 +287,18 @@ class DagScheduler:
                 self._skip_downstream(dep_id)
 
     def _collect_finished(self) -> None:
-        """（兼容 Future 追踪的预留方法）"""
-        pass
+        """收集已完成的 future 并调用完成回调
+
+        BUG-120: 原实现为空 pass，future 结果靠同步等待；现改为异步收集。
+        """
+        done_futures = [f for f in list(self._futures.keys()) if f.done()]
+        for future in done_futures:
+            task_id = self._futures.pop(future)
+            try:
+                result = future.result()
+            except Exception as e:
+                result = Result.failure(e)
+            self._on_task_complete(task_id, result)
 
     # ================================================================
     # 上下文管理器

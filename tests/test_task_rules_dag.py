@@ -157,6 +157,8 @@ class TestDagSchedulerDispatch:
         s._dispatch_task(task)
         # 成功 → 状态更新 SUCCESS
         storage.update_task_status.assert_called()
+        # BUG-120: dispatch 异步，需 collect 后才完成
+        s._collect_finished()
         # 应该已从 pending 移除
         assert task.id in s._completed
 
@@ -170,6 +172,8 @@ class TestDagSchedulerDispatch:
         s._executor.submit.return_value = future
 
         s._dispatch_task(task)
+        # BUG-120: dispatch 异步，需 collect 后才失败
+        s._collect_finished()
         assert task.id in s._failed
 
     def test_tick_ready(self):
@@ -184,6 +188,8 @@ class TestDagSchedulerDispatch:
         s._executor.submit.return_value = future
 
         s._tick()
+        # BUG-120: _tick 内 dispatch 后 future 未 done，需再次 collect
+        s._collect_finished()
         assert 1 in s._completed
 
     def test_tick_no_ready(self):
