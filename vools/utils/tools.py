@@ -192,7 +192,7 @@ def shift(iters, num: int = 1, fill_value=None, cycle=False):
 
     if cycle:
         dq = deque(lst)
-        dq.rotate(-num)
+        dq.rotate(num)
         return list(dq)
     else:
         actual_shift = num % n if num > 0 else -(-num % n)
