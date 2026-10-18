@@ -409,13 +409,15 @@ def _process_copy_list_from(copy_list_from_configs: Dict[str, Any], new_cls: typ
         if isinstance(config, dict):
             source = config['source']
             method_names = config["methods"]
-            if not isinstance(method_names, (list, tuple)) and method_names is not None:
-                if isinstance(method_names, str):
-                    if "," in method_names:
-                        method_names = [m.strip() for m in method_names.split(",")]
-                    else:
-                        method_names = [method_names.strip()]
+            if not isinstance(method_names, (list, tuple, str)) and method_names is not None:
                 raise ValueError(f"Invalid method_names for {copy_key}: {method_names}")
+            # BUG-167: 原实现把 raise 与字符串解析放在同一 if 内，
+            # 字符串 method_names 解析成 list 后仍必抛 ValueError。
+            if isinstance(method_names, str):
+                if "," in method_names:
+                    method_names = [m.strip() for m in method_names.split(",")]
+                else:
+                    method_names = [method_names.strip()]
             dir_filter = config.get('dir_filter',lambda x:True)
             init_args = config.get('init_args',None) #must be a list
             init_kwargs = config.get('init_kwargs',None) #must be a dict
