@@ -231,7 +231,14 @@ def vools_object_hook(d: Dict[str, Any]) -> Any:
 
 def _resolve_singleton(ref: str) -> Any:
     """
-    解析单例引用，格式为 'module.path:attr_name' 或 'module.path.attr_name'。
+    解析单例引用（受限白名单，BUG-99），格式为 'module.path:attr_name'
+    或 'module.path.attr_name'。
+
+    Args:
+        ref: 单例引用，如 'vools.serialize.sentinel:NONE'
+
+    Returns:
+        单例对象；不在白名单内或导入失败时抛 ValueError。
     """
     if ':' in ref:
         module_path, attr_name = ref.rsplit(':', 1)
@@ -243,12 +250,15 @@ def _resolve_singleton(ref: str) -> Any:
         else:
             raise ValueError(f"Invalid singleton reference: {ref}")
 
+    # BUG-99: 白名单校验，禁止从 os/subprocess/builtins 等危险模块取全局
+    if not _is_allowed_module(module_path):
+        raise ValueError(f"Cannot resolve singleton '{ref}': module not allowed")
+
     try:
         mod = importlib.import_module(module_path)
         return getattr(mod, attr_name)
     except (ImportError, AttributeError) as e:
         raise ValueError(f"Cannot resolve singleton '{ref}': {e}")
-
 
 def _reconstruct_object(type_name: str, state: Dict[str, Any]) -> Any:
     """
