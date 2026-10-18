@@ -897,10 +897,25 @@ class Seq(SeqBase):
             self
         """
         funcs = list(funcs)
-        while funcs:
-            k = funcs.pop(0)
+        if len(funcs) == 0:
+            return self
+        if len(funcs) == 1:
+            k = funcs[0]
             f = lambda x: NONE if x is NONE else (k(*x) if _yib(x) else k(x))
             self._add_op(f)
+            return self
+        # BUG-174: 原 `while funcs: k = funcs.pop(0)` 有两个缺陷：
+        # 1) lambda 闭包捕获循环变量 k 本身（非值），所有 f 最终引用同一个（最后一个）func；
+        # 2) _add_op 把多个 f 串成管道，第二个 func 收到的是第一个 func 的 star 展开结果，
+        #    对非可迭代输入走 k(x) 分支而 TypeError。
+        # 多函数 starmap 应对每个 func 独立并行作用于原始元素（各自 star 展开），
+        # 结果合成 list —— 与 _mapmap 多函数分支一致。
+        funcs = tuple(funcs)
+        def _inner(x):
+            if x is NONE:
+                return NONE
+            return [(k(*x) if _yib(x) else k(x)) for k in funcs]
+        self._add_op(_inner)
         return self
     
     def _mapmap(self, *funcs: Callable[[Any], Any]) -> 'Seq':
