@@ -718,7 +718,7 @@ def to_holder(func: Callable, arity: int=1, ix: int=0):
         if arity < rq:
             raise ValueError(f"Expected arity >= {rq}, got {arity}")
     else:
-        if max_rq is not float('inf'):
+        if max_rq != float('inf'):
             raise ValueError(f"Expected arity >= {rq}, got {max_rq}, artity is -1 support only *args and **kwargs")
     params_str = ','.join(f"z{i+1}" for i in range(arity)) if arity > 0 else ''
     key = _random_name(6) + _random_name(8)
