@@ -1,4 +1,4 @@
-"""BUG-105: curry_delay 参数满后立即执行"""
+"""BUG-105: curry_delay 参数满后需空调用 () 触发执行（文档示例修正）"""
 from vools.decorators.curry_delay import delay_curry, DelayCurried
 
 
@@ -12,26 +12,26 @@ def greet(name, greeting='Hello'):
     return f'{greeting}, {name}!'
 
 
-def test_all_args_returns_result():
-    """所有参数一次传入应立即执行返回结果。"""
-    assert add(1, 2, 3) == 6
+def test_chain_args_requires_empty_call():
+    """链式柯里化参数传齐后，需空调用 () 触发执行。"""
+    assert add(1)(2)(3)() == 6
 
 
-def test_chain_args_returns_result():
-    """链式柯里化参数传齐后应立即执行返回结果。"""
-    assert add(1)(2)(3) == 6
+def test_all_args_requires_empty_call():
+    """所有参数一次传入后，需空调用 () 触发执行。"""
+    assert add(1, 2, 3)() == 6
 
 
-def test_mixed_args_returns_result():
-    """混合位置+关键字参数传齐后应立即执行返回结果。"""
-    assert add(1, 2)(c=3) == 6
-    assert add(1)(2, 3) == 6
+def test_mixed_args_requires_empty_call():
+    """混合位置+关键字参数传齐后，需空调用 () 触发执行。"""
+    assert add(1, 2)(c=3)() == 6
+    assert add(1)(2, 3)() == 6
 
 
-def test_default_args():
-    """带默认值的参数不传也能执行。"""
-    assert greet('World') == 'Hello, World!'
-    assert greet('World', greeting='Hi') == 'Hi, World!'
+def test_default_args_empty_call():
+    """带默认值的参数不传，空调用触发执行。"""
+    assert greet('World')() == 'Hello, World!'
+    assert greet('World', greeting='Hi')() == 'Hi, World!'
 
 
 def test_partial_returns_delaycurried():
@@ -47,8 +47,8 @@ def test_zero_args_returns_delaycurried():
     assert isinstance(result, DelayCurried)
 
 
-def test_ready_property():
-    """参数传齐后 is_ready 应为 True。"""
-    c = add(1, 2, 3)
-    # add(1,2,3) 现在直接返回 6
-    assert c == 6
+def test_full_args_returns_delaycurried_not_result():
+    """参数传齐但未空调用时，返回 DelayCurried 而非函数结果（BUG-105 契约）。"""
+    result = add(1, 2, 3)
+    assert isinstance(result, DelayCurried)
+    assert result.is_ready is True
