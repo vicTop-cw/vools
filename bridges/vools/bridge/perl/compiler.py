@@ -32,6 +32,7 @@ from typing import Any, Optional
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
 from ..core.wsl import resolve_command, windows_to_wsl_path
+from ..probe import _run_cmd_timeout
 
 
 # ----------------------------------------------------------------------------
@@ -51,16 +52,27 @@ _PERL_CMD, _PATH_CONVERTER, _USE_WSL = resolve_command(_PERL_COMPILER)
 def perl_compiler_available() -> bool:
     """检查 Perl 解释器是否可用（执行 `perl -v`）"""
     try:
-        result = subprocess.run(
-            _PERL_CMD + ['-v'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors='replace', timeout=5,
-        )
+        result = _run_cmd_timeout(_PERL_CMD + ['-v'], timeout=5)
         return result.returncode == 0
     except (FileNotFoundError, OSError):
         return False
     except Exception:
         return False
+
+
+def _perl_squote(s: str) -> str:
+    """把 s 变成 Perl 单引号字面量（`'...'`）。
+
+    Perl 单引号串里只有 `\\` 与 `'` 是转义，其余全为字面量。因此把 s
+    里的 `\\` 先转成 `\\\\`、`'` 转成 `\\'` 再整体包单引号，即可把任意
+    输入（含 `'`、`$(...)`、`` ` ``、`;`、`|`、`&`、换行）当作纯数据塞进
+    Perl 源码，不会提前终结字符串或被当作代码执行。
+
+    注意入参是 **JSON 文本**（json.dumps 的产物）：JSON 自身的 `\\` 转义
+    会随这一层 Perl 转义一起保存下来，JSON::PP decode_json 时再解回原文，
+    双层转义正好往返。
+    """
+    return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 # ----------------------------------------------------------------------------
@@ -198,6 +210,10 @@ def _generate_perl_source(
     """
     params_str = ', '.join(arg_names) if arg_names else ''
 
+    # args_json 是运行时数据，必须经 _perl_squote 转成 Perl 单引号字面量再嵌入源码，
+    # 否则值里的 `'` 会提前终结字符串、造成 Perl 代码注入。
+    safe_json = _perl_squote(args_json) if args_json is not None else "''"
+
     if auto_signature:
         type_hint = ''
         if arg_perl_types:
@@ -217,7 +233,7 @@ use warnings;
 use JSON::PP;
 
 # 解析参数
-my $args_json = '{args_json}';
+my $args_json = {safe_json};
 my $args = decode_json($args_json);
 
 # 主函数定义
@@ -251,7 +267,7 @@ if (not defined $result) {{
 use warnings;
 use JSON::PP;
 
-my $args_json = '{args_json}';
+my $args_json = {safe_json};
 my $args = decode_json($args_json);
 
 {body}
@@ -289,34 +305,30 @@ def _execute_perl_code(code: str, func_name: str, cache_dir: str = None,
     converted_src_path = _PATH_CONVERTER(src_path)
 
     if not force and os.path.exists(src_path):
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             _PERL_CMD + [converted_src_path],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors='replace',
             timeout=60,
         )
         if result.returncode == 0:
-            return result.stdout.strip()
+            return result.stdout.decode('utf-8', errors='replace').strip()
 
     with open(src_path, 'w', encoding='utf-8') as f:
         f.write(code)
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         _PERL_CMD + [converted_src_path],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, errors='replace',
         timeout=60,
     )
 
     if result.returncode != 0:
         raise RuntimeError(
             f'Perl 执行失败:\n'
-            f'stderr:\n{result.stderr}\n'
-            f'stdout:\n{result.stdout}\n'
+            f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+            f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
             f'代码:\n{code}'
         )
 
-    return result.stdout.strip()
+    return result.stdout.decode('utf-8', errors='replace').strip()
 
 
 def _parse_perl_output(output: str, ret_type: str):
@@ -485,13 +497,14 @@ class PerlBridge(LangBridge):
                 user_code = f.read()
 
             args_json = json.dumps(list(args))
+            safe_json = _perl_squote(args_json)
             perl_ret_type = get_perl_type(ret_type) if ret_type else 'str'
 
             wrapper_code = f'''use strict;
 use warnings;
 use JSON::PP;
 
-my $args_json = '{args_json}';
+my $args_json = {safe_json};
 my $args = decode_json($args_json);
 
 {user_code}
@@ -515,11 +528,16 @@ if (not defined $result) {{
 
             cmd = _PERL_CMD + [_PATH_CONVERTER(wrapper_file)]
 
-            result = subprocess.run(cmd, capture_output=True, text=True,
-                                    errors='replace', timeout=30)
+            result = _run_cmd_timeout(cmd, timeout=30)
             if result.returncode != 0:
-                raise RuntimeError("Execution failed: " + result.stderr)
-            return _parse_perl_output(result.stdout.strip(), perl_ret_type)
+                raise RuntimeError(
+                    "Execution failed: "
+                    + result.stderr.decode('utf-8', errors='replace')
+                )
+            return _parse_perl_output(
+                result.stdout.decode('utf-8', errors='replace').strip(),
+                perl_ret_type,
+            )
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -755,13 +773,15 @@ if (not defined $result) {{
                     raise RuntimeError(f'No .pl files found in project directory: {project_dir}')
                 main_pl = pl_files[0]
 
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 _PERL_CMD + [_PATH_CONVERTER(main_pl)] + list(args),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, errors='replace',
                 timeout=60,
             )
-            return (result.returncode, result.stdout, result.stderr)
+            return (
+                result.returncode,
+                result.stdout.decode('utf-8', errors='replace'),
+                result.stderr.decode('utf-8', errors='replace'),
+            )
         else:
             artifact_path = self.compile_project(project_dir, entry, cache_dir)
             return self.call_func(artifact_path, entry, args)

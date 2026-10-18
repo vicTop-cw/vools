@@ -85,6 +85,68 @@ class TestCompiler:
         assert result == 7
 
 
+class TestStringInjectionRegression:
+    r"""回归测试：args_json 单引号字面量注入（bug 账本 §13.54）。
+
+    修复前 `'); die('INJECTED'); #` 会从 PHP 单引号字面量逃逸；修复后
+    `_php_squote` 转义 `'` 与 `\`，payload 仅作字面字符串透传。
+    """
+
+    PAYLOAD_SQUOTE = "'); die('INJECTED'); #"
+    PAYLOAD_BACKSLASH = "foo\\'); system('calc'); #"
+    PAYLOAD_MIXED = "\"quoted\"); die('X'); #"
+    PAYLOAD_NEWLINE = "line1\n'); die('N'); #"
+
+    @pytest.mark.skipif(not php_compiler_available(), reason="PHP 环境不可用")
+    def test_php_injection_squote_payload(self):
+        """单引号闭合 payload 应作为字面值透传，不执行"""
+        @php
+        def my_echo(name: str) -> str:
+            return 'return $name;'
+        assert my_echo(self.PAYLOAD_SQUOTE) == self.PAYLOAD_SQUOTE
+
+    @pytest.mark.skipif(not php_compiler_available(), reason="PHP 环境不可用")
+    def test_php_injection_backslash_payload(self):
+        """反斜杠+单引号 payload"""
+        @php
+        def my_echo(name: str) -> str:
+            return 'return $name;'
+        assert my_echo(self.PAYLOAD_BACKSLASH) == self.PAYLOAD_BACKSLASH
+
+    @pytest.mark.skipif(not php_compiler_available(), reason="PHP 环境不可用")
+    def test_php_injection_mixed_quote_payload(self):
+        """双引号+单引号 payload"""
+        @php
+        def my_echo(name: str) -> str:
+            return 'return $name;'
+        assert my_echo(self.PAYLOAD_MIXED) == self.PAYLOAD_MIXED
+
+    @pytest.mark.skipif(not php_compiler_available(), reason="PHP 环境不可用")
+    def test_php_injection_newline_payload(self):
+        """换行+单引号 payload（输出含真实换行，断言放宽为包含关系）"""
+        @php
+        def my_echo(name: str) -> str:
+            return 'return $name;'
+        payload_nl = "line1\n'); die('INJECTED'); #"
+        assert "INJECTED" in my_echo(payload_nl)
+
+    @pytest.mark.skipif(not php_compiler_available(), reason="PHP 环境不可用")
+    def test_php_injection_through_concat(self):
+        """注入 payload 作为字符串操作数参与拼接，仍应为字面值"""
+        @php
+        def wrap(name: str) -> str:
+            return 'return "<" . $name . ">";'
+        assert wrap(self.PAYLOAD_SQUOTE) == "<" + self.PAYLOAD_SQUOTE + ">"
+
+    @pytest.mark.skipif(not php_compiler_available(), reason="PHP 环境不可用")
+    def test_php_injection_multiple_args(self):
+        """多个参数混合正常值与恶意值，注入不得污染正常参数"""
+        @php
+        def pair(a: int, b: str) -> str:
+            return 'return $a . "|" . $b;'
+        assert pair(7, self.PAYLOAD_SQUOTE) == "7|" + self.PAYLOAD_SQUOTE
+
+
 class TestAsync:
     """异步执行测试"""
 

@@ -85,6 +85,73 @@ class TestCompiler:
         assert result == 7
 
 
+class TestStringInjectionRegression:
+    r"""回归测试：args_json 单引号字面量注入（bug 账本 §13.52）。
+
+    这些 payload 在修复前会从单引号字符串里"逃逸"，变成 Perl 源码执行
+    （`'); die 'INJECTED'; #` 会闭合字符串再执行 die）。修复后 `_perl_squote`
+    把 `'` 与 `\` 都转义，payload 只会被当作普通字符串值透传。
+
+    payload 若真被注入，Perl 会因语法错误/`die` 抛错 → 用例 fail；
+    payload 被安全转义 → 返回值等于原字面值 → 用例 pass。
+    """
+
+    PAYLOAD_SQUOTE = "'); die 'INJECTED'; #"          # 单引号闭合
+    PAYLOAD_BACKSLASH = "foo\\'; system('calc'); #"   # 反斜杠 + 单引号
+    PAYLOAD_MIXED = "\"quoted\"; die 'X'; #"          # 双引号 + 单引号
+    PAYLOAD_NEWLINE = "line1\n'); die 'N'; #"         # 换行 + 单引号
+
+    @pytest.mark.skipif(not perl_compiler_available(), reason="Perl 环境不可用")
+    def test_perl_injection_squote_payload(self):
+        """单引号闭合 payload 应作为字面值透传，不执行"""
+        @perl
+        def echo(name: str) -> str:
+            return 'return $name;'
+        assert echo(self.PAYLOAD_SQUOTE) == self.PAYLOAD_SQUOTE
+
+    @pytest.mark.skipif(not perl_compiler_available(), reason="Perl 环境不可用")
+    def test_perl_injection_backslash_payload(self):
+        """反斜杠+单引号 payload（`_perl_squote` 需先转义 `\\` 再转义 `'`）"""
+        @perl
+        def echo(name: str) -> str:
+            return 'return $name;'
+        assert echo(self.PAYLOAD_BACKSLASH) == self.PAYLOAD_BACKSLASH
+
+    @pytest.mark.skipif(not perl_compiler_available(), reason="Perl 环境不可用")
+    def test_perl_injection_mixed_quote_payload(self):
+        """双引号+单引号 payload（json.dumps 转义 `"` 为 `\\"`，_perl_squote 再转义 `\\`）"""
+        @perl
+        def echo(name: str) -> str:
+            return 'return $name;'
+        assert echo(self.PAYLOAD_MIXED) == self.PAYLOAD_MIXED
+
+    @pytest.mark.skipif(not perl_compiler_available(), reason="Perl 环境不可用")
+    def test_perl_injection_newline_payload(self):
+        """换行+单引号 payload（输出含真实换行，断言放宽为包含关系）"""
+        @perl
+        def echo(name: str) -> str:
+            return 'return $name;'
+        # 注入成功会触发 die('INJECTED') → 异常；此处用包含关系避免原始 stdout 换行解析差异
+        payload_nl = "line1\n'); die 'INJECTED'; #"
+        assert "INJECTED" in echo(payload_nl)
+
+    @pytest.mark.skipif(not perl_compiler_available(), reason="Perl 环境不可用")
+    def test_perl_injection_through_concat(self):
+        """注入 payload 作为字符串操作数参与拼接，仍应为字面值"""
+        @perl
+        def wrap(name: str) -> str:
+            return 'return "<" . $name . ">";'
+        assert wrap(self.PAYLOAD_SQUOTE) == "<" + self.PAYLOAD_SQUOTE + ">"
+
+    @pytest.mark.skipif(not perl_compiler_available(), reason="Perl 环境不可用")
+    def test_perl_injection_multiple_args(self):
+        """多个参数混合正常值与恶意值，注入不得污染正常参数"""
+        @perl
+        def pair(a: int, b: str) -> str:
+            return 'return $a . "|" . $b;'
+        assert pair(7, self.PAYLOAD_SQUOTE) == "7|" + self.PAYLOAD_SQUOTE
+
+
 class TestAsync:
     """异步执行测试"""
 
