@@ -782,9 +782,18 @@ def regexp_split(pattern, source_string, flags=0, rep='★'):
                     sep = sep.union(temp)
             return _split(string=source_string, sep=list(sep), rep=rep)
         else:
-            return None
+            # BUG-129: 静默返回 None 掩盖配置错误，改为显式报错
+            raise ValueError(
+                f"regexp_split: pattern 必须为 str/list/tuple/set，"
+                f"当前类型 {type(pattern).__name__}"
+            )
     else:
-        return None
+        # BUG-129: rep 非单字符或 source 已含 rep 时静默返回 None，改为显式报错
+        raise ValueError(
+            f"regexp_split: rep 必须为单字符且 source 不包含 rep，"
+            f"当前 rep={rep!r}（长度 {len(rep)}），"
+            f"source 包含 rep 的次数={source_string.count(rep)}"
+        )
 
 
 def _split(string, sep, rep='★'):
