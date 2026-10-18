@@ -183,15 +183,20 @@ def box(func: Optional[Callable[..., R]] = None, *, signature_from: Optional[Cal
                     return obj.__wrapped__
                 else:
                     return obj
+            # BUG-140: 必须在解箱之前捕获 Box 实参，否则返回 None 时
+            # 无法找回原 Box（args 解箱后 isinstance(..., Box) 恒 False）。
+            box_args = [a for a in args if isinstance(a, Box)]
+            box_kwargs = [v for v in kwargs.values() if isinstance(v, Box)]
             args = list(map(_nobox, args))
             kwargs = {k: _nobox(v) for k, v in kwargs.items()}
             rs = wrapped(*args, **kwargs)
             if rs is None:
                 # 当被装饰的函数返回 None 时，返回包装它的 Box 实例以支持链式调用
-                # 注意：通过 __wrapped__ 找到创建它的 Box 实例
-                for frame_info in range(len(args)):
-                    if isinstance(args[frame_info], Box):
-                        return args[frame_info]
+                # 优先返回第一个 Box 实参
+                if box_args:
+                    return box_args[0]
+                if box_kwargs:
+                    return box_kwargs[0]
                 if hasattr(wrapper, '__wrapped__') and isinstance(wrapper.__wrapped__, Box):
                     return wrapper.__wrapped__
                 return None
