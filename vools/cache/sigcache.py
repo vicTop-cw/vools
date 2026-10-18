@@ -38,6 +38,7 @@ vools.cache - 函数签名缓存工具
 import builtins
 import inspect
 import logging
+import weakref
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Optional
 
@@ -49,11 +50,42 @@ _MAX_CACHE_SIZE = 4096
 _SIG_CACHE = OrderedDict()  # type: ignore
 """全局签名缓存 {id(func): Signature}，OrderedDict 实现 LRU。"""
 
+_SIG_REFS: Dict[int, "weakref.ReferenceType"] = {}
+"""BUG-113: 记录 id(func) -> func 弱引用，防止函数 GC 后 id 被新对象复用时误命中旧签名。"""
+
 _CACHE_HITS = 0
 _CACHE_MISSES = 0
 
 # inspect.signature() 会抛出这些异常的我们不自动缓存
 _SKIP_TYPES = (ValueError, TypeError)
+
+
+def _remember_ref(func: Any, key: int) -> None:
+    """记录 id(func) 的弱引用，用于校验 id 是否被复用。
+
+    BUG-113: 函数被 GC 后 CPython 会复用其 id，导致新对象误命中旧签名。
+    用弱引用不阻止 GC，仅用于校验。
+    """
+    try:
+        _SIG_REFS[key] = weakref.ref(func)
+    except TypeError:
+        # 不可弱引用的对象（部分 C 扩展）回退：不记录，信任 id 唯一
+        _SIG_REFS.pop(key, None)
+
+
+def _key_is_valid(key: int, func: Any) -> bool:
+    """校验 id(func) 对应的缓存条目是否仍指向同一对象。
+
+    Returns:
+        True 表示缓存可信；False 表示 id 已被复用，应清除缓存并重新计算。
+    """
+    ref = _SIG_REFS.get(key)
+    if ref is None:
+        return True
+    try:
+        return ref() is func
+    except Exception:
+        return True
 
 
 # ====================================================================
@@ -93,6 +125,10 @@ def get_signature(func: Callable[..., Any]) -> inspect.Signature:
     key = id(func)
     try:
         sig = _SIG_CACHE[key]
+        # BUG-113: id 可能被 GC 后的对象复用，校验弱引用
+        if not _key_is_valid(key, func):
+            del _SIG_CACHE[key]
+            raise KeyError(key)
         _SIG_CACHE.move_to_end(key)
         _CACHE_HITS += 1
         return sig
@@ -104,6 +140,7 @@ def get_signature(func: Callable[..., Any]) -> inspect.Signature:
     if func_name in _BUILTIN_SIGS:
         sig = _BUILTIN_SIGS[func_name]
         _set_cache(key, sig)
+        _remember_ref(func, key)
         _CACHE_MISSES += 1
         return sig
 
@@ -115,6 +152,7 @@ def get_signature(func: Callable[..., Any]) -> inspect.Signature:
         raise
 
     _set_cache(key, sig)
+    _remember_ref(func, key)
     _CACHE_MISSES += 1
     return sig
 
@@ -171,6 +209,7 @@ def add_custom_sig(
         return
 
     _set_cache(key, sig, overwrite=force)
+    _remember_ref(func, key)
 
 
 def cached_getsignature(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -222,6 +261,7 @@ def remove_signature(func: Callable[..., Any]) -> bool:
     key = id(func)
     if key in _SIG_CACHE:
         del _SIG_CACHE[key]
+        _SIG_REFS.pop(key, None)
         return True
     return False
 
@@ -240,6 +280,7 @@ def clear_cache() -> None:
     """
     global _CACHE_HITS, _CACHE_MISSES
     _SIG_CACHE.clear()
+    _SIG_REFS.clear()
     _CACHE_HITS = 0
     _CACHE_MISSES = 0
 
@@ -257,12 +298,15 @@ def cache_info() -> Dict[str, Any]:
         }
 
     用法:
-        >>> from vools.cache import cache_info, get_signature
+        >>> from vools.cache import cache_info, get_signature, clear_cache
+        >>> clear_cache()
         >>> get_signature(len)
         <Signature (obj: Any)>
+        >>> get_signature(len)  # 第二次命中缓存
+        <Signature (obj: Any)>
         >>> info = cache_info()
-        >>> info["hit_ratio"]
-        1.0
+        >>> info["hits"] >= 1  # 第二次 get_signature 命中缓存
+        True
         >>> # 重复调用 get_signature 命中缓存，hit_ratio 可能 > 0
     """
     total = _CACHE_HITS + _CACHE_MISSES

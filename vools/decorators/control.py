@@ -383,19 +383,19 @@ def _retry_decorator(
                 try:
                     result = func(*args, **kwargs)
                     last_result = result
-                    
-                    if check_func is not None:
-                        retry_by_result = not check_func(result)
-                    
                 except Exception as e:
                     if not isinstance(e, exceptions):
                         raise
-                    
+
                     last_exception = e
                     retry_by_exception = True
-                    
+
                     if check_func is not None:
                         retry_by_result = False
+                else:
+                    # BUG-114: check_func 的异常应传播，不能被误当成被装饰函数的异常触发重试
+                    if check_func is not None:
+                        retry_by_result = not check_func(result)
                 
                 # 判断是否重试
                 if logic == 'or':
