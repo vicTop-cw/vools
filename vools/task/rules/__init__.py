@@ -12,7 +12,7 @@
 2. JSON风格: RuleEngine.from_json("rules.json")
 
 示例:
-    >>> from vools import Result
+    >>> from vools.functional.result import Result
     >>> from vools.task.rules import rule, RuleEngine
 
     >>> @rule(name="check_stock", priority=5)
@@ -22,6 +22,8 @@
     >>> engine = RuleEngine(mode="thread", max_workers=4)
     >>> engine.add_rule(stock_rule)
     >>> result = engine.evaluate({"stock": 10})
+    >>> result.is_success
+    True
 """
 
 from .rule import Rule, RuleSet
