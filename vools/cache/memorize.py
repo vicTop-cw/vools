@@ -119,7 +119,9 @@ def _compute_key(func: Callable, args: tuple, kwargs: dict) -> Any:
         hash(key)  # 验证可哈希（快速失败，避免后续 dict 插入时报错）
         return key
     except TypeError:
-        return (func.__name__, repr(args), repr(kwargs))
+        # BUG-135: 回退分支原用 func.__name__，同名函数跨模块缓存键冲突
+        # （BUG-110 只修了主分支）。改用 __module__ + __qualname__ 唯一标识。
+        return (func.__module__, func.__qualname__, repr(args), repr(kwargs))
 
 
 def memorize(func: Optional[Callable] = None, *, duration: float = 3) -> Callable:
