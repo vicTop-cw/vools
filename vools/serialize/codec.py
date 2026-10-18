@@ -163,7 +163,15 @@ def vools_default(obj: Any) -> Any:
         except Exception:
             pass
 
-    # 4. 无法处理
+    # 4. bytes → base64（JSON 无法直接序列化二进制）
+    if isinstance(obj, bytes):
+        import base64
+        return {
+            '__vools_bytes__': True,
+            'data': base64.b64encode(obj).decode('ascii'),
+        }
+
+    # 5. 无法处理
     raise TypeError(f"Object of type {obj_type.__name__} is not serializable")
 
 
@@ -208,7 +216,15 @@ def vools_object_hook(d: Dict[str, Any]) -> Any:
             return deserializer(state)
         return d
 
-    # 4. 旧 __callable__ 格式（由 Serializer.loads 在顶层处理）
+    # 4. __vools_bytes__ 格式（base64 编码的 bytes）
+    if d.get('__vools_bytes__'):
+        import base64
+        try:
+            return base64.b64decode(d.get('data', ''))
+        except Exception:
+            return d
+
+    # 5. 旧 __callable__ 格式（由 Serializer.loads 在顶层处理）
     #    这里不做处理，原样返回
     return d
 
