@@ -400,6 +400,9 @@ class ConditionBuilder:
 
         if self.exec_result:
             return self._execute(target)
+        # BUG-156: 原实现直接返回恒空的 self._results（从未被写入）。
+        # 累积每次调用的结果，使 exec_result=False 变成"收集模式"。
+        self._results.append(self._execute(target))
         return self._results
 
     # ------------------------------------------------------------------
