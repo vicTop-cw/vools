@@ -9,7 +9,7 @@
 - 注册模式：export_mode 控制 register 的返回值（默认返回管理器支持链式）
 
 示例:
-    >>> @overload
+    >>> @overload(mode=Priority | AllowSyncName | Strict | Ambiguous)
     ... def add(a, b):
     ...     return a + b
     ...
@@ -19,6 +19,10 @@
     ...
     >>> add(1, 2)              # 3
     >>> add("a", "b")          # "ab"
+
+    注意: 默认模式 Priority|Strict|AllowSyncName 不含 Ambiguous，
+    主函数无类型注解时与有注解重载函数同时匹配会抛"模糊调用"。
+    如需按类型分派，请显式开启 Ambiguous 模式。
 """
 
 import inspect
@@ -105,11 +109,11 @@ def _validate_mode(mode: 'OverloadMode') -> None:
     """验证模式组合是否合法。
 
     规则:
-        - AllowSyncName 只能在 Priority 模式下使用
-        - Strict + Ambiguous 非 Priority 不禁止（但通常配合 Priority 使用更有意义）
+        - AllowSyncName 可用于任意模式（BUG-107b: 放宽限制，使
+          Strict|Ambiguous|AllowSyncName 等组合可用）
     """
-    if not (mode & OverloadMode.Priority) and (mode & OverloadMode.AllowSyncName):
-        raise ValueError("AllowSyncName 只能在 Priority 模式下使用")
+    # BUG-107b: AllowSyncName 现在与任意模式兼容，无需强制 Priority
+    return
 
 
 # =============================================================================
@@ -259,20 +263,17 @@ class OverloadManager:
                            priority: Optional[int] = None) -> None:
         """内部注册：检查 + 加入重载列表。"""
         # Priority + AllowSyncName 检查
-        if self.mode & OverloadMode.Priority:
-            if (func.__name__ != self.func_name
-                    and not (self.mode & OverloadMode.AllowSyncName)):
+        # BUG-107b: 非 Priority 模式也应允许 AllowSyncName 开启后注册不同名函数
+        if func.__name__ != self.func_name and not (self.mode & OverloadMode.AllowSyncName):
+            if self.mode & OverloadMode.Priority:
                 raise ValueError(
                     f"非同名函数 '{func.__name__}' 不能注册到 '{self.func_name}' "
                     f"（需要 AllowSyncName 模式）"
                 )
-        else:
-            # 非 Priority 模式必须同名
-            if func.__name__ != self.func_name:
-                raise ValueError(
-                    f"非同名函数 '{func.__name__}' 不能注册到 '{self.func_name}' "
-                    f"（非 Priority 模式必须同名）"
-                )
+            raise ValueError(
+                f"非同名函数 '{func.__name__}' 不能注册到 '{self.func_name}' "
+                f"（非 Priority 模式必须同名，或开启 AllowSyncName）"
+            )
 
         if priority is None:
             priority = 0
