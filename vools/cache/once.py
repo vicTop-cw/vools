@@ -14,6 +14,7 @@
 """
 
 import time
+import threading
 from functools import wraps
 from inspect import signature, isclass
 from typing import Any, Callable, Optional
@@ -25,7 +26,8 @@ class _OnceWrapper:
     """单次执行函数包装器"""
     
     __slots__ = ("func", "called", "result", "force", "called_args", 
-                 "called_kwargs", "last_called_time", "__signature__", "force_default")
+                 "called_kwargs", "last_called_time", "__signature__", "force_default",
+                 "_lock")
     
     def __init__(self, func: Callable):
         self.func = func
@@ -37,6 +39,8 @@ class _OnceWrapper:
         self.last_called_time = None
         self.__signature__ = signature(func)
         self.force_default = False  # 默认值
+        # BUG-104: 并发安全锁（RLock 允许 func 内部递归调用自身装饰的函数）
+        self._lock = threading.RLock()
     
     def __getstate__(self):
         """Return serialization state"""
@@ -48,21 +52,27 @@ class _OnceWrapper:
         from inspect import signature
         self.__signature__ = signature(self.func)
         self.force_default = getattr(self.func, '_force_default', False)
+        # BUG-104: 反序列化后重建锁（Lock 不可 pickle）
+        self._lock = threading.RLock()
 
     def __call__(self, *args, **kwargs) -> Any:
         # 使用 force_default 作为默认值，如果调用时提供了 force 参数则覆盖
         force = kwargs.pop("force", self.force_default)
-        if force:
-            self.force = True
-        if self.called and not self.force:
+        # BUG-104: 用锁保护 "检查已调用" 和 "写入 result" 两个动作的原子性。
+        # 旧实现在 self.called = True 之后到 self.result = func(...) 完成之间，
+        # 其他线程看到 called==True 直接返回 self.result（此时还是初始 None）。
+        with self._lock:
+            if force:
+                self.force = True
+            if self.called and not self.force:
+                return self.result
+            self.called_args = args
+            self.called_kwargs = kwargs
+            self.called = True
+            self.force = False
+            self.result = self.func(*args, **kwargs)
+            self.last_called_time = time.time()
             return self.result
-        self.called_args = args
-        self.called_kwargs = kwargs
-        self.called = True
-        self.force = False
-        self.result = self.func(*args, **kwargs)
-        self.last_called_time = time.time()
-        return self.result
 
 
 def once(obj: Optional[Any] = None, *, force_default: bool = False) -> Any:
