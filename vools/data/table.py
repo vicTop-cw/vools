@@ -1194,16 +1194,35 @@ class Table(Seq):
         支持: <, >, <=, >=, ==, !=, and, or, in
         """
         import re
+        import ast
+
+        # BUG-94: allowed AST node whitelist
+        _ALLOWED_NODES = (
+            ast.Expression, ast.BoolOp, ast.BinOp, ast.UnaryOp,
+            ast.Compare, ast.Load, ast.Constant,
+            ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+            ast.And, ast.Or, ast.Not,
+            ast.In, ast.NotIn, ast.Is, ast.IsNot,
+            ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod,
+            ast.Tuple, ast.List, ast.Set,
+            ast.USub, ast.UAdd,
+        )
 
         def safe_eval(row):
-            # 替换列名为行属性访问
+            # BUG-94: replace col names then AST-validate + restricted builtins
             safe = expr
             for col in self._columns:
-                # 单词边界匹配，避免部分匹配
+                # word-boundary match to avoid partial matches
                 safe = re.sub(r'\b' + re.escape(col) + r'\b',
-                             repr(row.get(col)), safe)
+                              repr(row.get(col)), safe)
             try:
-                return bool(eval(safe))
+                tree = ast.parse(safe, mode='eval')
+                for node in ast.walk(tree):
+                    if not isinstance(node, _ALLOWED_NODES):
+                        # dangerous node (function call / attribute access) -> reject
+                        return False
+                return bool(eval(compile(tree, '<where>', 'eval'),
+                                  {'__builtins__': {}}))
             except Exception:
                 return False
 
