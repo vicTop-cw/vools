@@ -7,6 +7,7 @@ Collection curried functions - 集合操作柯里化函数
 from typing import TypeVar, Callable, Iterable, List, Optional, Any, Tuple, Dict, Iterator, Union
 from itertools import chain, islice, groupby as itertools_groupby
 from collections import OrderedDict
+import inspect
 
 from ..decorators.curry_core import curry
 
@@ -646,7 +647,15 @@ def merge_with(fn: Callable) -> Callable:
         keys = set().union(*dicts)
         for key in keys:
             values = [d[key] for d in dicts if key in d]
-            result[key] = fn(*values) if len(values) > 1 else values[0]
+            if len(values) == 1:
+                result[key] = values[0]
+            else:
+                # fn 可能接受多个位置参数 (如 max(a,b,c)) 或单个 iterable (如 sum([...]))
+                # 先尝试展开传递，TypeError 时回退到列表传递
+                try:
+                    result[key] = fn(*values)
+                except TypeError:
+                    result[key] = fn(values)
         return result
     return _merge_with
 

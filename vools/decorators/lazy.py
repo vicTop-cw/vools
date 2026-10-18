@@ -52,10 +52,11 @@ def lazy(obj: Any, caller_locals: Optional[Dict] = None,
         >>> expr()
         256
         
-        >>> # 无参 lambda
-        >>> import random
-        >>> rand_num = lazy("-> random.randint(1, 100)")
-        >>> rand_num()  # 返回随机数
+        >>> # 无参 lambda（安全内置函数，不含 random 等不安全模块）
+        >>> import math
+        >>> rand_num = lazy("-> pow(2, 10)")
+        >>> rand_num()
+        1024
         
         >>> # 带参函数
         >>> adder = lazy("a, b -> a + b")

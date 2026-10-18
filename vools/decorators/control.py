@@ -219,6 +219,9 @@ def _repeat(
         ...     return f"Hello, {name}!"
         >>> for result in greet("Alice"):
         ...     print(result)
+        Hello, Alice!
+        Hello, Alice!
+        Hello, Alice!
     """
     def decorator(func: F) -> F:
         @wraps(func)
