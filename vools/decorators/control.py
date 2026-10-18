@@ -504,31 +504,32 @@ def _rerun_decorator(
                 
                 try:
                     result = func(*args, **kwargs)
-                    
-                    if until(result):
-                        return result
-                        
-                    elapsed = time.monotonic() - start_time
-                    if elapsed > time_out:
-                        raise TimeoutError(
-                            f"Function {func.__name__} timed out after {time_out}s"
-                        )
-                    
-                    execution_time = time.monotonic() - attempt_start
-                    wait_time = max(0, interval - execution_time)
-                    
-                    if wait_time > 0:
-                        time.sleep(wait_time)
-                        
                 except Exception as e:
                     elapsed = time.monotonic() - start_time
                     if elapsed > time_out:
                         raise TimeoutError(
                             f"Function {func.__name__} timed out after {time_out}s"
                         ) from e
-                    
+
                     time.sleep(interval)
-        
+                    continue
+
+                # BUG-165: until 谓词异常必须传播，不能当"未满足"重试（对齐 BUG-114）
+                stop = until(result)
+                if stop:
+                    return result
+
+                elapsed = time.monotonic() - start_time
+                if elapsed > time_out:
+                    raise TimeoutError(
+                        f"Function {func.__name__} timed out after {time_out}s"
+                    )
+
+                execution_time = time.monotonic() - attempt_start
+                wait_time = max(0, interval - execution_time)
+
+                if wait_time > 0:
+                    time.sleep(wait_time)
         return wrapper
     
     return decorator
