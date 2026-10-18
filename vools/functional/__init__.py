@@ -61,9 +61,10 @@ class Pipe:
     管道操作类，支持链式调用
     
     示例:
-        >>> result = range(10) | Pipe(lambda x: x * 2) | Pipe(list)
-        >>> print(result)
+        >>> result = range(10) >> Pipe(lambda x: x * 2)  # >> 逐元素应用
+        >>> list(result)
         [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
+        >>> # 注意: | 直接把整个 iterable 传给函数（不做 map）
     """
     
     def __init__(self, func: Callable, *args, **kwargs):

@@ -101,7 +101,8 @@ def once(obj: Optional[Any] = None, *, force_default: bool = False) -> Any:
         ...     print("Initializing...")
         ...     return 42
         
-        >>> initialize()  # 输出: Initializing...
+        >>> initialize()  # 首次调用会打印
+        Initializing...
         42
         >>> initialize()  # 不输出
         42

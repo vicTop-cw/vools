@@ -353,15 +353,15 @@ class Itor:
             >>> gen = itor()
             >>> next(gen)
             1
-            >>> gen.send(Node(99))
+            >>> _ = gen.send(Node(99))
             >>> next(gen)
             99
-            >>> gen.send(Node.from_iter([88, 89]))  # 插入链表
+            >>> _ = gen.send(Node.from_iter([88, 89]))  # 插入链表
             >>> next(gen), next(gen)
             (88, 89)
-            >>> gen.send([77, 78]).send(76)         # 非 Node 类型自动转换
-            >>> next(gen), next(gen), next(gen)
-            (77, 78, 76)
+            >>> _ = gen.send([77, 78]).send(76)         # 非 Node 类型自动转换
+            >>> next(gen), next(gen), next(gen)  # 后插队的 76 插到最前面
+            (76, 77, 78)
         """
         if jump is None and jump_when is None:
             raise ValueError("jump 和 jump_when 不能同时为 None")
@@ -438,7 +438,7 @@ class Itor:
             >>> gen = itor()
             >>> next(gen), next(gen)
             (1, 2)
-            >>> gen.restart()
+            >>> _ = gen.restart()
             >>> list(gen)
             [1, 2, 3]
         """
@@ -496,11 +496,11 @@ class Itor:
 
         Example:
             >>> itor = Itor([1, 2, 3, 4, 5])
-            >>> Itor.set_history_max(itor, 3)
+            >>> _ = Itor.set_history_max(itor, 3)
             >>> gen = itor()
             >>> list(gen)
             [1, 2, 3, 4, 5]
-            >>> gen.restart()
+            >>> _ = gen.restart()
             >>> list(gen)
             [3, 4, 5]
         """

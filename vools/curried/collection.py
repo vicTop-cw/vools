@@ -639,8 +639,8 @@ def merge_with(fn: Callable) -> Callable:
         接收字典列表并返回合并后字典的函数
 
     Example:
-        >>> merge_with(sum)({'a': 1, 'b': 2}, {'a': 3, 'b': 4}, {'a': 5})
-        {'a': 9, 'b': 6}
+        >>> sorted(merge_with(sum)({'a': 1, 'b': 2}, {'a': 3, 'b': 4}, {'a': 5}).items())
+        [('a', 9), ('b', 6)]
     """
     def _merge_with(*dicts: Dict) -> Dict:
         result = {}

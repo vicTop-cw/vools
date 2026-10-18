@@ -535,7 +535,7 @@ class Stuff:
             >>> @add.provide(name='b')
             ... def getB():
             ...     return 2
-            >>> add.provide(lambda: 3, name='c')
+            >>> _ = add.provide(lambda: 3, name='c')
             >>> add()
             6
         """
@@ -568,7 +568,7 @@ class Stuff:
             >>> @calc.provide_with(names=['a', 'b'])
             ... def get_ab():
             ...     return 2, 3
-            >>> calc.provide(lambda: 4, name='c')
+            >>> _ = calc.provide(lambda: 4, name='c')
             >>> calc()
             24
         """
@@ -598,7 +598,7 @@ class Stuff:
             >>> @add.provide_multi_params(count=2)
             ... def get_ab():
             ...     return 1, 2
-            >>> add.provide(lambda: 3, name='c')
+            >>> _ = add.provide(lambda: 3, name='c')
             >>> add()
             6
         """
@@ -621,7 +621,7 @@ class Stuff:
             >>> @stuff
             ... def process(data):
             ...     return sum(data)
-            >>> process.aggregate_providers(lambda: 1, lambda: 2, lambda: 3)
+            >>> _ = process.aggregate_providers(lambda: 1, lambda: 2, lambda: 3)
             >>> process()
             6
         """

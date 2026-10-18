@@ -158,9 +158,10 @@ def get_env(name: str) -> Optional[str]:
         环境变量值，如果不存在返回 None
 
     示例：
-        >>> get_env("PATH")  # Windows: 从注册表读取系统 PATH
-        >>> get_env("HOME")  # Linux: 从 /etc/environment 读取 HOME
-        >>> get_env("PATH")  # Linux: 使用 Shell 读取系统 PATH
+        >>> _ = get_env("PATH")  # Windows: 从注册表读取系统 PATH（返回值平台相关）
+        >>> _ = get_env("HOME")  # Linux: 从 /etc/environment 读取 HOME
+        >>> _ = get_env("PATH")  # Linux: 使用 Shell 读取系统 PATH
+        >>> get_env("NONEXISTENT_VAR_XYZ")  # 不存在返回 None
     """
     # 尝试平台特定的加速方法
     if _IS_WINDOWS:
@@ -188,7 +189,8 @@ def get_env_with_default(name: str, default: str) -> str:
         环境变量值，如果不存在返回 default
 
     示例：
-        >>> get_env_with_default("MY_VAR", "default_value")
+        >>> get_env_with_default("MY_VAR", "default_value")  # MY_VAR 未设置时返回默认值
+        'default_value'
     """
     result = get_env(name)
     return result if result is not None else default
