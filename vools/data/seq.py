@@ -1244,7 +1244,10 @@ class Seq(SeqBase):
                             p1, j = _after(j)
                             if p1: yield j
                     else:
-                        if p1: yield i
+                        # BUG-160: 非可迭代分支原引用未初始化的 p1。
+                        # 非可迭代元素也应走 _after 后置过滤。
+                        p2, i = _after(i)
+                        if p2: yield i
         return self.__class__(gen())
     
     def flatmap_ex(self, before_func: Optional[Callable[[T], Tuple[bool, T]]] = None, after_func: Optional[Callable[[T], Tuple[bool, T]]] = None) -> 'Seq':
@@ -1273,7 +1276,12 @@ class Seq(SeqBase):
                             p1, j = after_func(j)
                             if p1: yield j
                     else:
-                        if p1: yield i
+                        # BUG-160: 原 `if p1: yield i` 引用未初始化的 p1
+                        #（非可迭代分支从不给 p1 赋值，首元素非可迭代即 UnboundLocalError；
+                        # 前项可迭代时则继承前一轮遗留值，过滤错乱）。
+                        # 非可迭代元素也应走 after_func 后置过滤，语义与可迭代分支一致。
+                        p2, i = after_func(i)
+                        if p2: yield i
         return self.__class__(gen())
     
     @property
