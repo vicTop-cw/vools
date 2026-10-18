@@ -9,6 +9,7 @@ seq 子命令 - Seq 序列操作 CLI
 
 from typing import Optional, List, Callable
 import typer
+from ..security.expression_handler import safe_eval_expression
 from typing_extensions import Annotated
 
 from ..data import Seq
@@ -18,7 +19,7 @@ seq_app = typer.Typer(help="Seq 序列操作命令")
 
 def parse_lambda(expr: str) -> Callable:
     """解析 lambda 表达式字符串"""
-    return eval(expr, {"__builtins__": {}})
+    return safe_eval_expression(expr, vars={})
 
 
 @seq_app.command()

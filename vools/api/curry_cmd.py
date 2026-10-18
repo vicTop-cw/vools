@@ -8,6 +8,7 @@ curry 子命令 - 函数柯里化 CLI
 
 from typing import Optional, List, Callable
 import typer
+from ..security.expression_handler import safe_eval_expression
 from typing_extensions import Annotated
 
 from ..decorators import curry
@@ -18,7 +19,7 @@ curry_app = typer.Typer(help="Curry 柯里化命令")
 def parse_lambda_or_func(expr: str):
     """解析 lambda 表达式或函数名"""
     try:
-        return eval(expr, {"__builtins__": {}})
+        return safe_eval_expression(expr, vars={})
     except Exception:
         # 如果是函数名，尝试从全局查找
         import builtins
@@ -43,7 +44,7 @@ def call(
     parsed_args = []
     for arg in args:
         try:
-            parsed_args.append(eval(arg, {"__builtins__": {}}))
+            parsed_args.append(safe_eval_expression(arg, vars={}))
         except Exception:
             parsed_args.append(arg)
     
@@ -54,7 +55,7 @@ def call(
             if "=" in kw:
                 key, value = kw.split("=", 1)
                 try:
-                    parsed_kwargs[key] = eval(value, {"__builtins__": {}})
+                    parsed_kwargs[key] = safe_eval_expression(value, vars={})
                 except Exception:
                     parsed_kwargs[key] = value
     

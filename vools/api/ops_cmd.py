@@ -9,6 +9,7 @@ ops 子命令 - Ops 管道操作 CLI
 
 from typing import Optional, List, Callable
 import typer
+from ..security.expression_handler import safe_eval_expression
 from typing_extensions import Annotated
 
 from ..functional import Ops, O
@@ -18,7 +19,7 @@ ops_app = typer.Typer(help="Ops 管道操作命令")
 
 def parse_lambda(expr: str) -> Callable:
     """解析 lambda 表达式字符串"""
-    return eval(expr, {"__builtins__": {}})
+    return safe_eval_expression(expr, vars={})
 
 
 @ops_app.command()
