@@ -709,13 +709,18 @@ def regexp_instr(pattern, source_string, flags=0, occurrence=0):
         pattern: 正则表达式模式
         source_string: 源字符串
         flags: 正则表达式标志
-        occurrence: 匹配项的索引
+        occurrence: 匹配项的索引（支持负索引）
 
     Returns:
-        匹配的起始位置
+        匹配的起始位置，无匹配返回 -1
     """
-    temp = regexp_substr(pattern=pattern, source_string=source_string, flags=flags, occurrence=occurrence)
-    return source_string.find(temp) if temp is not None else -1
+    regex = re.compile(pattern, flags=flags)
+    matches = list(regex.finditer(source_string))
+    n = len(matches)
+    # BUG-142: 原用 source_string.find(temp) 恒返回第一个位置，occurrence 被忽略
+    if not (0 <= occurrence < n or -n <= occurrence < 0):
+        return -1
+    return matches[occurrence].start()
 
 
 # ============================================================================
