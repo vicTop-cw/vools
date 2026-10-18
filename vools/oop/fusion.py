@@ -51,7 +51,16 @@ def fuse_classes(
     
     # 确定基类：使用 object 作为基类（避免 MRO 冲突）
     # 所有父类的方法会被复制到新类中
-    base_class = object
+    # 确定基类：
+    #  - 普通类用 object 作为基类（避免 MRO 冲突），所有父类方法会被复制到新类中；
+    #  - 含不可变类型时必须以该不可变类型为基类，否则下方
+    #    `immutable_cls.__new__(cls, ...)` 会因 cls 不是该类型的子类而抛
+    #    TypeError（BUG-182，实测 int/str/bytes 全部崩）。
+    has_immutable = any(issubclass(cls, _IMMUTABLE_TYPES) for cls in classes)
+    if has_immutable:
+        base_class = next(cls for cls in classes if issubclass(cls, _IMMUTABLE_TYPES))
+    else:
+        base_class = object
     
     # 检查是否包含不可变类型
     has_immutable = any(issubclass(cls, _IMMUTABLE_TYPES) for cls in classes)
@@ -62,7 +71,7 @@ def fuse_classes(
     # 1. 添加 __new__（处理不可变类型）
     if has_immutable:
         # 找到第一个不可变类型作为主类型
-        immutable_cls = next(cls for cls in classes if issubclass(cls, _IMMUTABLE_TYPES))
+        immutable_cls = base_class
         
         def __new__(cls, *args, **kwargs):
             # 对于不可变类型，调用其 __new__
