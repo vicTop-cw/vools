@@ -43,12 +43,14 @@ __all__ = [
     'ends_with',
 ]
 
-_PATTERN_EMAIL = r'\w[-\w.+]*@([A-Za-z0-9][-A-Za-z0-9]*\.)+[A-Za-z]{2,14}'
+# BUG-161: 原这两个 pattern 无 $ 锚定，re.match 只匹配前缀，
+# is_email('a@b.com!')/is_url('http://example.com!') 误判 True。
+_PATTERN_EMAIL = r'\w[-\w.+]*@([A-Za-z0-9][-A-Za-z0-9]*\.)+[A-Za-z]{2,14}$'
 _PATTERN_MOBILE = r'^(((13[0-9]{1})|(15[0-9]{1})|(17[0-9]{1})|(18[0-9]{1}))+\d{8})$'
 _PATTERN_ID_CARD_15 = r'^[1-9]\d{7}((0\d)|(1[0-2]))(([0|1|2]\d)|3[0-1])\d{3}$'
 _PATTERN_ID_CARD_18 = r'^[1-9]\d{5}[1-9]\d{3}((0\d)|(1[0-2]))(([0|1|2]\d)|3[0-1])((\d{4})|\d{3}[A-Z])$'
 _PATTERN_PLATE_NUMBER = r'^[\u4e00-\u9fa5]{1}[A-Z]{1}[A-Z_0-9]{5}$'
-_PATTERN_URL = r'((http|https|ftp):(\/\/|\\\\)((\w)+[.]){1,}(net|com|cn|org|cc|tv|[0-9]{1,3})(((\/[\~]*|\\[\~]*)(\w)+)|[.](\w)+)*(((([?](\w)+){1}[=]*))*((\w)+){1}([\&](\w)+[\=](\w)+)*)*)'
+_PATTERN_URL = r'((http|https|ftp):(\/\/|\\\\)((\w)+[.]){1,}(net|com|cn|org|cc|tv|[0-9]{1,3})(((\/[\~]*|\\[\~]*)(\w)+)|[.](\w)+)*(((([?](\w)+){1}[=]*))*((\w)+){1}([\&](\w)+[\=](\w)+)*)*)$'
 _PATTERN_USERNAME = r'^\w+$'
 _PATTERN_PASSWORD = r'^(?=.*?[a-zA-Z])(?=.*?[0-9])[a-zA-Z0-9]{6,18}$'
 _PATTERN_CHINESE_NAME = r'^[\u4E00-\u9FA5\uf900-\ufa2d]{2,6}$'
