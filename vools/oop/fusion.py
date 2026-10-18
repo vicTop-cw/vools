@@ -303,12 +303,18 @@ class ClassFusion:
             '_classes': self._classes,
             '_method_overrides': self._method_overrides,
             '_method_wrappers': self._method_wrappers,
+            '_class_name': self._class_name,
+            '_auto_wrap_return': self._auto_wrap_return,
         }
 
     def __setstate__(self, state):
         """从序列化状态恢复"""
         for k in ('_classes', '_method_overrides', '_method_wrappers'):
             setattr(self, k, state[k])
+        # BUG-154: 旧 __getstate__ 未存这两项，反序列化后 fuse() 抛 AttributeError。
+        # 用 get 容错：老状态回退默认值。
+        self._class_name = state.get('_class_name', None)
+        self._auto_wrap_return = state.get('_auto_wrap_return', False)
         self._fused_class = None
 
     def add_class(self, cls: Type) -> 'ClassFusion':
