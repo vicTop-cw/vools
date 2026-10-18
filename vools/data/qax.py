@@ -593,6 +593,10 @@ class Qax(Table):
         if callable(func):
             values = self.column(col)
             return func(values)
+        # BUG-178: QAX 风格列号从 1 开始，col 可为 int。原 `func + '(' + col + ')'`
+        # 在 col 为 int 时 str+int 拼接 TypeError；先转列名。
+        if isinstance(col, int):
+            col = self._columns[col - 1]
         return self.compute(func + '(' + col + ')')
 
     # ==================== 连接合并 ====================
