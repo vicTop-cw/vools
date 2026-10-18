@@ -200,7 +200,9 @@ def timeout(func: Callable, seconds: float) -> Callable:
 
     def _run_with_signal(*args, **kwargs):
         old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(int(seconds))
+        # BUG-121: signal.alarm(0) 是"取消警报"而非"0 秒超时"；seconds<1 时 int 取整为 0
+        # 会把亚秒级超时静默变成无超时。signal.alarm 只接受整数秒，至少 1。
+        signal.alarm(max(1, int(seconds)))
         try:
             return func(*args, **kwargs)
         finally:
