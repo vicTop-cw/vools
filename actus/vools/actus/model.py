@@ -48,6 +48,54 @@ class Action:
         """最大并发实例数（0=无上限，默认 0）。"""
         return self.meta.get('max_instances', 0)
 
+    # —— docs/46 #5/#6/#7：context / mode / resources 契约便捷读取 ——
+    @property
+    def env_prefix(self) -> str:
+        """执行上下文环境变量前缀（docs/46 #5），默认 'ACTUS_'。"""
+        ctx = self.meta.get('context') or {}
+        return ctx.get('env_prefix') or 'ACTUS_'
+
+    @property
+    def reserved_env(self) -> list:
+        """保留环境变量白名单（docs/46 #5）。"""
+        ctx = self.meta.get('context') or {}
+        return ctx.get('reserved_env') or []
+
+    @property
+    def exec_mode(self) -> str:
+        """执行模式（docs/46 #6）：sync / async / stream，默认 sync。"""
+        return self.meta.get('mode') or 'sync'
+
+    @property
+    def timeout_ms(self) -> int:
+        """最大执行毫秒（docs/46 #7），0 = 不限。"""
+        r = self.meta.get('resources') or {}
+        return int(r.get('timeout_ms') or 0)
+
+    @property
+    def max_memory_mb(self) -> int:
+        """最大内存兆（docs/46 #7），0 = 不限。"""
+        r = self.meta.get('resources') or {}
+        return int(r.get('max_memory_mb') or 0)
+
+    @property
+    def max_processes(self) -> int:
+        """最大并发子进程数（docs/46 #7），0 = 不限。"""
+        r = self.meta.get('resources') or {}
+        return int(r.get('max_processes') or 0)
+
+    @property
+    def net_connect(self) -> list:
+        """允许的外连端点白名单（docs/46 #7）。"""
+        r = self.meta.get('resources') or {}
+        return r.get('net_connect') or []
+
+    @property
+    def net_listen(self) -> list:
+        """允许的监听端点白名单（docs/46 #7）。"""
+        r = self.meta.get('resources') or {}
+        return r.get('net_listen') or []
+
     @property
     def tags(self) -> list:
         """动作分类标签，用于 AI 搜索和过滤。"""
