@@ -113,7 +113,12 @@ class VText(str):
         abs_path = os.path.abspath(os.path.join(base_dir, file_path))
         normalized = os.path.normpath(abs_path)
 
-        if not normalized.startswith(base_dir):
+        try:
+            common = os.path.commonpath([normalized, base_dir])
+            if common != base_dir and common != normalized:
+                raise ValueError(f"不允许访问指定路径之外的文件: {file_path}")
+        except ValueError:
+            # 不同盘符（Windows）或 commonpath 解析失败
             raise ValueError(f"不允许访问指定路径之外的文件: {file_path}")
 
         return normalized
