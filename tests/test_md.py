@@ -130,6 +130,23 @@ def test_metadata():
     assert meta["date"] == "2024-01-01"
 
 
+
+def test_metadata_date_stays_string():
+    """BUG-86: PyYAML 会把 date: 2024-01-01 解析为 datetime.date，需还原为 ISO 字符串。"""
+    md = "---\ntitle: Test\ndate: 2024-01-01\n---\n# Body"
+    meta = extract_metadata(md)
+    assert isinstance(meta["date"], str)
+    assert meta["date"] == "2024-01-01"
+
+
+def test_metadata_nested_datetime_normalized():
+    """BUG-86: 嵌套列表/字典中的 datetime 也应递归转为字符串。"""
+    from vools.md.utils import _normalize_metadata
+    import datetime
+    r = _normalize_metadata({"a": datetime.date(2024, 1, 1), "b": [datetime.datetime(2024, 1, 1, 12, 0, 0)]})
+    assert r == {"a": "2024-01-01", "b": ["2024-01-01T12:00:00"]}
+
+
 def test_metadata_empty():
     meta = extract_metadata("# No front matter")
     assert meta == {}
