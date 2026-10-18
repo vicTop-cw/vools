@@ -307,7 +307,10 @@ def get_date_seq(nums=15, date_type='day', fmt='%m%d', run_ds=None, duo=True, re
                 result.append(f"{end_date.strftime(fmt)}")
         return result
 
-    end_of_month = run_date.replace(month=run_date.month + 1, day=1) - timedelta(days=1)
+    # BUG-123: 12 月时 month+1=13 超出 1..12；与 _generate_date_range 的 M 分支一致地回绕
+    _next_year = run_date.year + (1 if run_date.month == 12 else 0)
+    _next_month = (run_date.month % 12) + 1
+    end_of_month = run_date.replace(year=_next_year, month=_next_month, day=1) - timedelta(days=1)
     dss = [d.date() for d in _generate_date_range(end_of_month, nums, freq='M')]
 
     result = []
