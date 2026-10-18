@@ -218,7 +218,14 @@ def cli_execute(payload: Dict[str, Any], timeout_sec: Optional[float] = None,
 
         # ---- 执行 ----
         # shell=True 时必须传字符串，否则 Windows 会把列表首元素当可执行文件
-        run_cmd: Any = full_cmd[0] if shell else full_cmd
+        if shell:
+            # BUG-152: 之前只取 full_cmd[0]（即 cmd_str），cli.args 追加参数被丢弃。
+            # 这里把 args 拼接到 cmd_str 之后，保证 shell 模式下追加参数生效。
+            cmd_str_safe = str(full_cmd[0]) if full_cmd else ""
+            extra_args = [str(a) for a in full_cmd[1:]]
+            run_cmd = " ".join([cmd_str_safe] + extra_args) if extra_args else cmd_str_safe
+        else:
+            run_cmd = full_cmd
         proc = subprocess.run(
             run_cmd,
             input=stdin_bytes,
