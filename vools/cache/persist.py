@@ -60,50 +60,59 @@ def sanitize_file_key(file_key: str) -> str:
 
 class FileLock:
     """跨平台文件锁"""
-    
+
     def __init__(self, file_path: str):
         self.file_path = file_path
         self.lock_file_path = f"{file_path}.lock"
         self._lock_fd = None
-    
+        self._locked = False
+
     def acquire(self):
-        """获取锁"""
+        """获取锁
+
+        Returns:
+            bool: 锁是否成功获取。若返回 False 表示锁已被占用或平台不支持，
+                  调用方应自行决定是否继续（建议等待/重试）。
+        """
         self._lock_fd = open(self.lock_file_path, 'w')
         if HAS_FCNTL:
             try:
                 fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_EX)
-            except Exception:
-                pass
+                self._locked = True
+            except (OSError, IOError):
+                self._locked = False
         elif HAS_MSVC:
             try:
                 msvcrt.locking(self._lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-            except Exception:
-                pass
-    
+                self._locked = True
+            except (OSError, IOError):
+                self._locked = False
+        return self._locked
+
     def release(self) -> None:
         """释放锁"""
         if self._lock_fd:
-            if HAS_FCNTL:
-                try:
-                    fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_UN)
-                except Exception:
-                    pass
-            elif HAS_MSVC:
-                try:
-                    msvcrt.locking(self._lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
-                except Exception:
-                    pass
+            if self._locked:
+                if HAS_FCNTL:
+                    try:
+                        fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_UN)
+                    except Exception:
+                        pass
+                elif HAS_MSVC:
+                    try:
+                        msvcrt.locking(self._lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+                    except Exception:
+                        pass
             try:
                 self._lock_fd.close()
             except Exception:
                 pass
             self._lock_fd = None
-    
+            self._locked = False
+
     def __enter__(self):
         self.acquire()
         return self
-    
-
     def do(self, f=print, pre_f=None, sub_f=None):
         """Apply a function for side effects, return self.
 
