@@ -230,7 +230,9 @@ def persist(func: Optional[Callable] = None,
             call_target_folder = kwargs.pop('target_folder', default_target_folder)
 
             if call_file_key is None:
-                call_file_key = f.__name__
+                # BUG-112: 默认用 module + qualname 而非函数名，避免跨模块/跨类的同名函数缓存冲突
+                # qualname 可能含 <locals> 等 Windows 非法字符，统一走 sanitize_file_key 清理
+                call_file_key = sanitize_file_key(f"{f.__module__}.{f.__qualname__}")
             else:
                 call_file_key = sanitize_file_key(call_file_key)
 

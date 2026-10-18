@@ -8,6 +8,13 @@ F = TypeVar('F', bound=Callable[..., Any])
 _is_curried = lambda f : isinstance(f,(Selector,Overloads)) or is_curried(f)
 
 
+# BUG-115: _try_bound 只应把"参数绑定失败"的 TypeError 当作不匹配；
+# 函数内部主动抛的 TypeError 必须传播，否则真实异常被静默吞掉。
+_BIND_FAILURE_PATTERNS = (
+    "missing", "unexpected keyword", "takes", "positional argument",
+    "keyword argument", "argument", "required",
+)
+
 class Selector:
     """函数选择器，支持多个函数的链式调用和结果聚合。
     
@@ -104,11 +111,18 @@ class Selector:
             
         Returns:
             如果绑定成功返回结果，否则返回 None
+
+        Raises:
+            TypeError: 函数内部主动抛出的 TypeError 不被当作绑定失败，向上传播（BUG-115）
         """
         try:
             return curried_func(*args,**kwargs)
-        except TypeError:
-            return None
+        except TypeError as e:
+            # BUG-115: 区分"参数绑定失败"与"函数内部异常"
+            msg = str(e).lower()
+            if any(p in msg for p in _BIND_FAILURE_PATTERNS):
+                return None
+            raise
     
     def register(self, func: Optional[Callable[..., Any]] = None, returnCurried: bool = False) -> Union[Callable[[F], F], F]:
         """注册新函数到选择器。
