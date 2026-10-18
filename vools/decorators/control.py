@@ -265,6 +265,14 @@ def repeat(
     delay: float = 0
 ) -> Callable[[F], F]:
     """重复执行装饰器"""
+    if func is not None and not callable(func):
+        # BUG-93: @repeat(3) 误用——位置参数被当作 func，导致 decorator
+        # 试图 @wraps(3) 而非 wraps(被装饰函数)，静默产生损坏装饰。
+        # 应显式报错，引导用户使用 cnt= 关键字。
+        raise TypeError(
+            "repeat() first positional arg must be callable; "
+            "use @repeat(cnt=N) for repetition count"
+        )
     if func is None:
         return _repeat(cnt, delay)
     else:
