@@ -205,8 +205,14 @@ class SeqBase:
         if l == 1:
             if hasattr(origins[0],"collect"):
                 self._origin = iter(origins[0].collect())
+            elif not hasattr(origins[0], "__iter__"):
+                # BUG-172: 原 `iter(origins[0]) if origins[0] else iter([])` 用 truthiness 判断，
+                # 会把合法的 falsy 单值（0/False/None/数字等）误判为空序列。
+                # 不可迭代的单值应包成单元素；可迭代对象（str/bytes/list/tuple/dict/set）
+                # 仍保持原有的迭代展开语义（str 拆字符、空可迭代得空序列）。
+                self._origin = iter([origins[0]])
             else:
-                self._origin = iter(origins[0]) if origins[0] else iter([])
+                self._origin = iter(origins[0])
         elif l == 0:
             self._origin = iter([])
         else:
