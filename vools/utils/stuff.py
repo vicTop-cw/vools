@@ -675,9 +675,12 @@ class Stuff:
             hasattr(self.main_func, '__self__') and not isclass(self.main_func.__self__)
         )
         it = list(self.params)
-        if len(it) == 0:
+        # BUG-122: 全默认值函数未绑定任何 provider 时 bounds 为空，
+        # list(bounds.keys())[0] 会 IndexError；直接走默认值路径即可。
+        if len(it) == 0 or len(bounds) == 0:
             first_name = None
             first_bound = None
+            z = False
         else:
             first_name = it[0]
             first_bound = list(bounds.keys())[0]
