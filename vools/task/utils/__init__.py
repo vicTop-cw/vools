@@ -8,6 +8,7 @@ from typing import Any, Callable, Optional, TypeVar, Union, List, Dict
 from functools import wraps
 import asyncio
 import time
+import threading
 
 __all__ = [
     # 函数式工具
@@ -200,14 +201,29 @@ def timeout(func: Callable, seconds: float) -> Callable:
     @wraps(func)
     def _timeout(*args, **kwargs):
         if not hasattr(signal, "SIGALRM"):
-            # Windows: 无 SIGALRM，使用线程池实现
-            from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeout
-            with ThreadPoolExecutor(max_workers=1) as _ex:
-                future = _ex.submit(func, *args, **kwargs)
+            # Windows: 无 SIGALRM，使用守护线程实现。
+            # BUG-106: 不能用 `with ThreadPoolExecutor(...)` — 其 __exit__ 隐式
+            # shutdown(wait=True) 会阻塞等待后台线程完成，超时后调用方仍被冻结。
+            # ThreadPoolExecutor 的线程是非守护线程，Python 进程退出时仍等待。
+            # 手动创建 daemon=True 线程，超时后立即返回，后台副作用继续但不阻塞。
+            import queue as _queue_mod
+            result_q = _queue_mod.Queue(maxsize=1)
+
+            def _run_target():
                 try:
-                    return future.result(timeout=seconds)
-                except _FutureTimeout:
-                    raise TimeoutError(f"Function timed out after {seconds} seconds")
+                    result_q.put(('ok', func(*args, **kwargs)))
+                except BaseException as e:
+                    result_q.put(('err', e))
+
+            t = threading.Thread(target=_run_target, daemon=True)
+            t.start()
+            try:
+                status, payload = result_q.get(timeout=seconds)
+            except _queue_mod.Empty:
+                raise TimeoutError(f"Function timed out after {seconds} seconds")
+            if status == 'ok':
+                return payload
+            raise payload
         return _run_with_signal(*args, **kwargs)
 
     return _timeout
