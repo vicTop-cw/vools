@@ -1128,7 +1128,19 @@ class Table(Seq):
         seen = set()
         new_data = []
         for row in self._data:
-            row_tuple = tuple(row)
+            # BUG-133: 单元格可能含 list/dict/set 等 unhashable 值，
+            # 直接 tuple(row) 会抛 TypeError。对 unhashable 单元格用 repr 兜底，
+            # 保证任意内容都可去重。
+            parts = []
+            for v in row:
+                if isinstance(v, (list, dict, set, bytearray)):
+                    parts.append(('__repr__', repr(v)))
+                else:
+                    parts.append(v)
+            try:
+                row_tuple = tuple(parts)
+            except TypeError:
+                row_tuple = tuple(repr(v) for v in row)
             if row_tuple not in seen:
                 seen.add(row_tuple)
                 new_data.append(row[:])
