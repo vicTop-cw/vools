@@ -209,7 +209,11 @@ def _validate_ast_node(node: ast.AST, allowed_names: Optional[set] = None) -> No
         for arg in node.args.args:
             if not _validate_identifier(arg.arg):
                 raise ExpressionSecurityError(f"无效的参数名称: {arg.arg}")
-        _validate_ast_node(node.body, allowed_names)
+        # BUG-102: lambda 参数是 scope-local，收集后加入 allowed_names
+        lambda_names = set(allowed_names)
+        for arg in node.args.args:
+            lambda_names.add(arg.arg)
+        _validate_ast_node(node.body, lambda_names)
         return
     
     elif isinstance(node, ast.List):

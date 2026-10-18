@@ -9,6 +9,7 @@ memoize 子命令 - 函数记忆化 CLI
 from typing import Optional, List, Callable
 import time
 import typer
+from ..security.expression_handler import safe_eval_expression
 from typing_extensions import Annotated
 
 from vools import memorize
@@ -24,7 +25,7 @@ memoize_app = typer.Typer(help="Memoize 记忆化命令")
 def parse_lambda_or_func(expr: str) -> Callable:
     """解析 lambda 表达式或函数名"""
     try:
-        return eval(expr, {"__builtins__": {}})
+        return safe_eval_expression(expr, vars={})
     except Exception:
         import builtins
         if hasattr(builtins, expr):
@@ -56,7 +57,7 @@ def call(
     parsed_args = []
     for arg in args:
         try:
-            parsed_args.append(eval(arg, {"__builtins__": {}}))
+            parsed_args.append(safe_eval_expression(arg, vars={}))
         except Exception:
             parsed_args.append(arg)
     
@@ -104,7 +105,7 @@ def benchmark(
     parsed_args = []
     for arg in args:
         try:
-            parsed_args.append(eval(arg, {"__builtins__": {}}))
+            parsed_args.append(safe_eval_expression(arg, vars={}))
         except Exception:
             parsed_args.append(arg)
     
