@@ -146,11 +146,14 @@ def reduce(func: Callable[[B, A], B], iterable: Iterable[A], initializer: Option
         24
     """
     if initializer is None:
+        # BUG-137: 原用 except TypeError 兜底空迭代，会把 func 内部的
+        # TypeError 一并吞掉、静默返回 None。改为先看迭代器是否为空。
+        it = iter(iterable)
         try:
-            return functools_reduce(func, iterable)
-        except TypeError:
-            # 空迭代且无初始值时返回 None
+            first = next(it)
+        except StopIteration:
             return None
+        return functools_reduce(func, chain([first], it))
     return functools_reduce(func, iterable, initializer)
 
 
