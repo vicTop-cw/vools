@@ -41,6 +41,32 @@ def _pipe(*funcs):
     return _inn
 
 
+def _compile_if_expr(s: str) -> Any:
+    """BUG-157: 仅当字符串是表达式（arrow/lambda/下划线）时编译为函数，否则按字面量返回。
+
+    Args:
+        s: 字符串参数
+
+    Returns:
+        编译后的函数（若命中表达式模式），否则返回原字符串字面量
+    """
+    stripped = s.strip()
+    # 含箭头 => 或标准 lambda 前缀 -> 一定是表达式
+    if '=>' in stripped or stripped.startswith('lambda '):
+        try:
+            return g(s)
+        except Exception:
+            return s
+    # 含独立下划线占位符 -> 表达式
+    import re as _re
+    if _re.search(r'(?<!\w)_(?!\w)', stripped) or _re.search(r'(?<!\w)_(0*[1-9]\d*)(?!\w)', stripped):
+        try:
+            return g(s)
+        except Exception:
+            return s
+    return s
+
+
 def _not(pred):
     return lambda *a, **k: not pred(*a, **k)
 
@@ -147,7 +173,10 @@ class P:
         args = []
         for arg in a:
             if isinstance(arg, str):
-                args.append(g(arg))
+                # BUG-157: 原实现把所有 str 参数都当 lambda 表达式编译，
+                # 字符串字面量（如分隔符 "-"、替换串 "a"）会 SyntaxError。
+                # 仅命中 arrow / lambda / 下划线模式时才编译，其余按字面量保留。
+                args.append(_compile_if_expr(arg))
             else:
                 args.append(arg)
         args = self.args + tuple(args)
@@ -374,15 +403,10 @@ class Ops:
 
     @static_pipe1
     def join(it: Iterable[Any], sep: str) -> str:
-        @singledispatch
-        def _join(it: Iterable, sep):
-            return sep.join(str(x) for x in it)
-
-        @_join.register(str)
-        def _(sep: str, it):
-            return sep.join(str(x) for x in it)
-
-        return _join(it, sep)
+        # BUG-157: 原实现用 singledispatch，register(str) 分支参数名 (sep, it)
+        # 与 _join(it, sep) 调用顺序颠倒，str 首参会返回错误结果。统一为
+        # sep.join(...) 即可，对 str/list/tuple/generator 都成立。
+        return sep.join(str(x) for x in it)
     
     @static_pipe1
     def upper(s: str) -> str:
