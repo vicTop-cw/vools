@@ -723,10 +723,14 @@ def _add_string_method(method_name: str, config: str, new_cls: type, env: Dict):
                 'super': super(type(self), self),
             })
             
-            # 绑定参数
-            for i, param in enumerate(param_names):
-                if param != 'self' and i < len(args):
-                    local_env[param] = args[i]
+            # 绑定参数（BUG-169: self 占位不消耗 args 索引，用独立 arg_idx）
+            arg_idx = 0
+            for param in param_names:
+                if param == 'self':
+                    continue
+                if arg_idx < len(args):
+                    local_env[param] = args[arg_idx]
+                arg_idx += 1
             
             local_env.update(kwargs)
             
