@@ -1340,6 +1340,13 @@ def _compile(expr):
     counter = 0
     has_rest = False
 
+    # BUG-158: walk 原地把 _Auto 替换成 Placeholder，污染原表达式树；
+    # 同一 expr 二次 as_function() 时 arity 变 0。这里用序列化往返
+    # (_serialize -> _deserialize) 克隆整棵树，避免修改调用方传入的 expr。
+    # 注意不能用 copy.deepcopy：Expr.__getattr__ 会对任意名字（含 __deepcopy__）
+    # 返回 Attr 节点，导致 deepcopy 误判并递归构造 Call。
+    expr = _deserialize(_serialize(expr))
+
     def walk(node):
         nonlocal counter, has_rest
         if isinstance(node, _Auto):
