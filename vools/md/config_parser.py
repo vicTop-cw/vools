@@ -203,9 +203,12 @@ def _yaml_parse_with_pyyaml(text: str) -> Dict:
     """使用 PyYAML"""
     import yaml
     result = yaml.safe_load(text)
-    # 将 None 值转换为空字符串（与简单解析器保持一致）
-    if isinstance(result, dict):
-        result = {k: (v if v is not None else "") for k, v in result.items()}
+    if result is None:
+        # 空/注释-only 输入：PyYAML 返回 None，按契约返回空 dict
+        return {}
+    if not isinstance(result, dict):
+        # 标量顶层值（非 dict）也归入空 dict，保持 Dict 返回契约
+        return {}
     return result
 
 
@@ -376,6 +379,9 @@ def parse_yaml(text: str) -> Dict:
 
     回退链：PyYAML → 简化解析器
     """
+    if not text or not text.strip():
+        return {}
+
     # 优先尝试 PyYAML
     try:
         return _yaml_parse_with_pyyaml(text)
