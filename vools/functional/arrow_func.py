@@ -516,8 +516,19 @@ def g(expr: str, env: Dict = None) -> Any:
         return expr
     
     # 检查是否是标准lambda表达式
-    pattern3 = r"lambda\s+\w+\s*:\s*"
-    if re.match(pattern3, expr):
+    # BUG-155: 原 pattern3 = r"lambda\s+\w+\s*:\s*" 只识别单参 lambda，
+    # 多参 "lambda x, y: ..." 与带前导空格 " lambda x: ..." 都落到下划线模式，
+    # 生成 0 参 lambda 返回嵌套 lambda（f(3,4) 抛 TypeError）。
+    lambda_m = re.match(r"\s*lambda\s+(.+?):\s*", expr)
+    if lambda_m:
+        params_str = lambda_m.group(1).strip()
+        body_str = expr[lambda_m.end():].strip()
+        if params_str and body_str:
+            try:
+                return eval("lambda " + params_str + ": " + body_str, env)
+            except Exception:
+                pass
+        # 解析失败则回退到原 eval(expr)
         return eval(expr, env)
     
     # 检查是否包含 "=>" (lambda表达式格式)
