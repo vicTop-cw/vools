@@ -315,23 +315,30 @@ def rate_limit(max_calls: int, period: float, logic: str = 'or', logger: Optiona
     Args:
         max_calls: 最大调用次数
         period: 时间段（秒）
-        logic: 'or' 任意条件触发限制，'and' 所有条件同时触发限制
+        logic: 保留的兼容参数（仅存在单条件判断，本实现无多条件可组合）
         logger: 可选的日志记录器
 
     Returns:
         装饰器函数
+
+    Note:
+        BUG-162: 原实现把 ``calls`` 列表放在 decorator 闭包外层，同一
+        ``rate_limit(...)`` 装饰多个函数时配额共享——第一个函数耗尽配额后
+        第二个也被拒。现按 ``id(func)`` 分函数独立计数。
     """
-    calls = []
+    calls_by_func = {}
     lock = threading.Lock()
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> Any:
             now = time.time()
+            key = id(func)
 
             with lock:
-                nonlocal calls
+                calls = calls_by_func.setdefault(key, [])
                 calls = [t for t in calls if now - t < period]
+                calls_by_func[key] = calls
 
                 if len(calls) >= max_calls:
                     if logger:
@@ -418,9 +425,16 @@ class _ClassProperty:
         self.func = func
         functools.update_wrapper(self, func)
 
+    @property
+    def fget(self) -> Callable[..., T]:
+        """暴露底层函数（对齐 builtins.property.fget，BUG-163）"""
+        return self.func
+
     def __get__(self, instance: Any, owner: Optional[type] = None) -> T:
-        cls = owner if isinstance(owner, type) else type(instance)
-        return self.func(cls)
+        if instance is None:
+            # 类访问返回 descriptor 本身，可读 .fget/.func（对齐 builtins.property 类访问）
+            return self
+        return self.func(type(instance))
 
 
 def classproperty(func):
