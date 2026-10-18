@@ -29,6 +29,7 @@ from typing import Any
 from .._base import LangBridge, FunctionSpec, FunctionParser
 from ..core.types import LangType
 from ..core.wsl import resolve_command, windows_to_wsl_path
+from ..probe import _run_cmd_timeout
 
 # ----------------------------------------------------------------------------
 # Ruby 命令解析（支持本地或 WSL）
@@ -42,16 +43,26 @@ _RUBY_PATH = _RUBY_CMD[-1]
 def ruby_compiler_available() -> bool:
     """检查 Ruby 解释器是否可用（执行 `ruby --version`）"""
     try:
-        result = subprocess.run(
-            _RUBY_CMD + ['--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            errors='replace', timeout=5,
-        )
+        result = _run_cmd_timeout(_RUBY_CMD + ['--version'], timeout=5)
         return result.returncode == 0
     except (FileNotFoundError, OSError):
         return False
     except Exception:
         return False
+
+
+def _ruby_squote(s: str) -> str:
+    """把 s 变成 Ruby 单引号字符串字面量（`'...'`）。
+
+    Ruby 单引号串里只有 `\\` 与 `'` 是转义，`#{...}` 也不会插值。
+    因此把 s 里的 `\\` 先转成 `\\\\`、`'` 转成 `\\'` 再整体包单引号，
+    即可把任意输入（含 `'`、`"`、`#{...}`、`$(...)`、`` ` ``、换行）
+    当作纯数据塞进 Ruby 源码，不会提前终结字符串或被当作代码执行。
+
+    入参是 JSON 文本（json.dumps 的产物），其自身 `\\` 转义随这层 Ruby
+    转义一起保留，JSON.parse 时再解回原文，双层转义正好往返。
+    """
+    return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 # ----------------------------------------------------------------------------
@@ -186,6 +197,10 @@ def _generate_ruby_source(
     """
     params_str = ', '.join(arg_names) if arg_names else ''
 
+    # args_json 是运行时数据，必须经 _ruby_squote 转成 Ruby 单引号字面量再嵌入源码，
+    # 否则值里的 `'` 会提前终结字符串、造成 Ruby 代码注入。
+    safe_json = _ruby_squote(args_json) if args_json is not None else "''"
+
     indented_body = _preprocess_ruby_body(body, auto_signature)
     if indented_body:
         indented_body = '\n' + indented_body + '\n'
@@ -197,7 +212,7 @@ def _generate_ruby_source(
 require 'json'
 
 # 解析参数
-args_json = '{args_json}'
+args_json = {safe_json}
 args = JSON.parse(args_json)
 
 def {func_name}({params_str}){indented_body}end
@@ -222,7 +237,7 @@ end
         code = f'''# encoding: utf-8
 require 'json'
 
-args_json = '{args_json}'
+args_json = {safe_json}
 args = JSON.parse(args_json)
 
 {body}
@@ -258,34 +273,30 @@ def _execute_ruby_code(code: str, func_name: str, cache_dir: str = None,
     src_path = os.path.join(cache_dir, f'{base_name}.rb')
 
     if not force and os.path.exists(src_path):
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             _RUBY_CMD + [_PATH_CONVERTER(src_path)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors='replace',
             timeout=60,
         )
         if result.returncode == 0:
-            return result.stdout.strip()
+            return result.stdout.decode('utf-8', errors='replace').strip()
 
     with open(src_path, 'w', encoding='utf-8') as f:
         f.write(code)
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         _RUBY_CMD + [_PATH_CONVERTER(src_path)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, errors='replace',
         timeout=60,
     )
 
     if result.returncode != 0:
         raise RuntimeError(
             f'Ruby 执行失败:\n'
-            f'stderr:\n{result.stderr}\n'
-            f'stdout:\n{result.stdout}\n'
+            f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+            f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
             f'代码:\n{code}'
         )
 
-    return result.stdout.strip()
+    return result.stdout.decode('utf-8', errors='replace').strip()
 
 
 def _parse_ruby_output(output: str, ret_type: str):
@@ -402,12 +413,13 @@ class RubyBridge(LangBridge):
                 user_code = f.read()
             
             args_json = json.dumps(list(args))
+            safe_json = _ruby_squote(args_json)
             ruby_ret_type = get_ruby_type(ret_type) if ret_type else 'Integer'
             
             wrapper_code = f'''# encoding: utf-8
 require 'json'
 
-args_json = '{args_json}'
+args_json = {safe_json}
 args = JSON.parse(args_json)
 
 {user_code}
@@ -433,11 +445,11 @@ end
             
             cmd = _RUBY_CMD + [_PATH_CONVERTER(wrapper_file)]
             
-            result = subprocess.run(cmd, capture_output=True, text=True,
-                                    errors='replace', timeout=30)
+            result = _run_cmd_timeout(cmd, timeout=30)
             if result.returncode != 0:
-                raise RuntimeError("Execution failed: " + result.stderr)
-            return _parse_ruby_output(result.stdout.strip(), ruby_ret_type)
+                raise RuntimeError("Execution failed: " +
+                                   result.stderr.decode('utf-8', errors='replace'))
+            return _parse_ruby_output(result.stdout.decode('utf-8', errors='replace').strip(), ruby_ret_type)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -676,13 +688,13 @@ end
                     raise RuntimeError(f'No .rb files found in project directory: {project_dir}')
                 main_rb = rb_files[0]
 
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 _RUBY_CMD + [_PATH_CONVERTER(main_rb)] + list(args),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, errors='replace',
                 timeout=60,
             )
-            return (result.returncode, result.stdout, result.stderr)
+            return (result.returncode,
+                    result.stdout.decode('utf-8', errors='replace'),
+                    result.stderr.decode('utf-8', errors='replace'))
         else:
             artifact_path = self.compile_project(project_dir, entry, cache_dir)
             return self.call_func(artifact_path, entry, args)
