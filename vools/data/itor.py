@@ -42,19 +42,20 @@
 >>> import threading, time
 >>> itor = Itor(range(100))
 >>> results = []
->>> def consumer():
+>>> def consumer(itor=itor, results=results):   # BUG-124: 默认参数绑定，避免闭包查 doctest 临时命名空间
 ...     for v in itor:          # 直接迭代原实例，控制线程才能影响它
 ...         results.append(v)
 ...         time.sleep(0.02)
->>> def controller():
+>>> def controller(itor=itor):
 ...     time.sleep(0.05)
 ...     itor.set_pause()
 ...     itor.send(Node(99))   # 插队 99
 ...     itor.resume()
 ...     time.sleep(0.1)
 ...     itor.stop()
->>> threading.Thread(target=consumer).start()
->>> threading.Thread(target=controller).start()
+>>> _t1 = threading.Thread(target=consumer); _t1.start()
+>>> _t2 = threading.Thread(target=controller); _t2.start()
+>>> _t1.join(); _t2.join()   # BUG-124: join 等待线程结束，避免后台副作用泄漏
 
 限制
 ----
