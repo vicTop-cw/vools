@@ -36,6 +36,9 @@ from typing import Any, Callable, Optional, Tuple, TypeVar, Union
 T = TypeVar('T')
 R = TypeVar('R')
 
+_MISSING = object()
+"""sentinel：区分"未传 default"与"显式传 default=None"（BUG-116）"""
+
 
 def timeit(func: Callable[..., T] = None, *, logger: Optional[Any] = None) -> Callable[..., T]:
     """计时装饰器
@@ -69,12 +72,13 @@ def timeit(func: Callable[..., T] = None, *, logger: Optional[Any] = None) -> Ca
         return decorator(func)
 
 
-def safe(func: Callable[..., T] = None, *, default: Any = None, exceptions: Tuple[type, ...] = (Exception,)) -> Callable[..., T]:
+def safe(func: Callable[..., T] = None, *, default: Any = _MISSING, exceptions: Tuple[type, ...] = (Exception,)) -> Callable[..., T]:
     """安全执行装饰器
 
     Args:
         func: 被装饰的函数
-        default: 执行失败时返回的默认值
+        default: 执行失败时返回的默认值。显式传 ``default=None`` 时异常返回 None；
+            未传时返回 ``(None, exception)`` 元组（BUG-116）。
         exceptions: 要捕获的异常类型元组
 
     Returns:
@@ -86,9 +90,9 @@ def safe(func: Callable[..., T] = None, *, default: Any = None, exceptions: Tupl
             try:
                 return f(*args, **kwargs)
             except exceptions as e:
-                if default is not None:
-                    return default
-                return None, e
+                if default is _MISSING:
+                    return None, e
+                return default
         return wrapper
 
     if func is None:
@@ -387,12 +391,28 @@ def hybrid_method(func):
     return wrapper
 
 
+class _ClassProperty:
+    """classproperty 的 descriptor 实现。
+
+    BUG-117: Python 内置 ``property`` 在类访问时返回 property 对象本身（instance is None），
+    且实例访问时把实例传给 fget——两者都不符合 classproperty 语义。
+    自定义 descriptor 统一在类访问和实例访问时都传 owner（所属类）给 func。
+    """
+    def __init__(self, func: Callable[..., T]) -> None:
+        self.func = func
+        functools.update_wrapper(self, func)
+
+    def __get__(self, instance: Any, owner: Optional[type] = None) -> T:
+        cls = owner if isinstance(owner, type) else type(instance)
+        return self.func(cls)
+
+
 def classproperty(func):
-    """类属性装饰器"""
-    @functools.wraps(func)
-    def wrapper(cls):
-        return func(cls)
-    return property(wrapper)
+    """类属性装饰器
+
+    BUG-117: 类访问与实例访问都传 owner（所属类）给 func，而不是 property 对象或实例。
+    """
+    return _ClassProperty(func)
 
 
 def enumize(*values):
