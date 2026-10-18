@@ -402,8 +402,20 @@ class VText(str):
             if lowered == "eval":
                 return eval(text)
             if lowered == "spark.sql":
-                from .core import get_spark
-                return get_spark(app_name="VText").sql(text)
+                # BUG-170: 原 `from .core import get_spark` 指向不存在的 vools.data.core。
+                # spark 能力挂在 vools 顶层 my_spark()；环境未提供 SparkSession 时抛清晰 RuntimeError。
+                try:
+                    from .. import my_spark
+                    spk = my_spark()
+                except (ImportError, ModuleNotFoundError) as e:
+                    raise RuntimeError(
+                        f"spark.sql 需要 Spark 环境（vools.pyk 未提供），当前不可用: {e}"
+                    ) from e
+                if spk is None:
+                    raise RuntimeError(
+                        "spark.sql 需要 SparkSession，请先通过 vools.my_spark(spark_session) 注入"
+                    )
+                return spk.sql(text)
             from ..utils.tools import generate_lambda as _vf
             return _vf(func)(text)
         return None
@@ -807,8 +819,10 @@ class VText(str):
         if "{run_date" not in self:
             return self.__class__(self)
         if run_date is None:
-            from .core import get_run_ds
-            run_date = get_run_ds()
+            # BUG-170: 原 `from .core import get_run_ds` 指向不存在的 vools.data.core。
+            # 未传 run_date 时用当天 YYYYMMDD 兜底，行为与 legacy vicSql 一致。
+            import datetime as _dt_now
+            run_date = _dt_now.datetime.now().strftime("%Y%m%d")
         # run_date 可能是 VDate 或 str，统一成 yyyy-MM-dd
         rd = str(run_date)
         if len(rd) == 8:
