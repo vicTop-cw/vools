@@ -170,7 +170,7 @@ def is_password(value):
 
 
 def is_chinese_name(value):
-    """验证中文姓名格式（2-5个汉字）
+    """验证中文姓名格式（2-6个汉字）
 
     Args:
         value: 待验证的字符串
