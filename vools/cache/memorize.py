@@ -27,13 +27,15 @@ class TimedCache:
         self._lock = threading.Lock()
 
     def __getstate__(self):
-        d = {'max_size': self.max_size}
+        # BUG-146: 原读 self.max_size（无下划线），但 __init__ 只设 _max_size，pickle 抛 AttributeError
+        d = {'max_size': self._max_size}
         with self._lock:
             d['_cache'] = dict(getattr(self, '_cache', {}))
         return d
     def __setstate__(self, state):
-        self.max_size = state['max_size']
-        self._cache = state.get('_cache', {})
+        self._max_size = state['max_size']
+        # BUG-146: 恢复为 OrderedDict，否则后续 popitem(last=False) 与 move_to_end 会失败
+        self._cache = OrderedDict(state.get('_cache', {}))
         self._lock = threading.Lock()
     
     def _is_obsolete(self, entry: Dict[str, Any], duration: float) -> bool:
