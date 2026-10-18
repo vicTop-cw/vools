@@ -180,6 +180,9 @@ def _deserialize_enum(state: Dict[str, Any]) -> Any:
     module_path, cls_name = parts
     mod = __import__(module_path, fromlist=[cls_name])
     cls = getattr(mod, cls_name)
+    # BUG-96: 仅允许 enum.Enum 子类，禁止任意类或函数被呼叫
+    if not isinstance(cls, type) or not issubclass(cls, enum.Enum):
+        raise ValueError(f'Invalid enum type: {type_name}')
     return cls(state['value'])
 
 
