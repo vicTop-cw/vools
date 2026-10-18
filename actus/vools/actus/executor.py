@@ -25,7 +25,6 @@ from .validate import load_and_validate, validate_graph
 from .indexer import scan_actions
 from .trust import decide
 from . import records
-from .indexer import scan_actions
 from .omega import verify_output, compute_output_fingerprint, _find_omega_spec
 from .concurrency import get_manager
 from .dependency import get_resolver, DependencyResolver
@@ -258,6 +257,16 @@ def execute(action_id: str, params: dict = None,
     def finish(result: dict) -> dict:
         # 先补全 exec_id 再落盘，保证记录里的 result 自含标识
         result['exec_id'] = exec_id
+        # docs/46 #5/#6/#7：回执带 mode / env_prefix / resources 摘要
+        # （action 在异常路径可能未解析成功，用局部判断兜住）
+        try:
+            result['mode'] = action.exec_mode
+            result['env_prefix'] = action.env_prefix
+            if record.get('resources'):
+                result['resources'] = record['resources']
+        except (NameError, AttributeError):
+            result['mode'] = 'sync'
+            result['env_prefix'] = 'ACTUS_'
         # D3：懒加载策略缺失的依赖不阻断执行，以提示形式随结果返回
         if dep_check and dep_check.get('lazy'):
             result['deps_hints'] = dep_check['lazy']
@@ -356,6 +365,18 @@ def execute(action_id: str, params: dict = None,
             if action is None:
                 action = _get_validated(action_id)
 
+        # docs/46 #5/#6/#7：mode / context / resources 契约消费
+        record['mode'] = action.exec_mode
+        record['env_prefix'] = action.env_prefix
+        record['resources'] = {
+            'timeout_ms': action.timeout_ms,
+            'max_memory_mb': action.max_memory_mb,
+            'max_processes': action.max_processes,
+            'net_connect': action.net_connect,
+            'net_listen': action.net_listen,
+        } if (action.timeout_ms or action.max_memory_mb or action.max_processes
+              or action.net_connect or action.net_listen) else {}
+
         _validate_params(action, params)
 
         # 依赖图校验（含本动作的 deps）
@@ -397,7 +418,12 @@ def execute(action_id: str, params: dict = None,
 
         # ── 并发控制：获取执行槽位 ──
         mgr = get_manager()
+        # docs/46 #7：resources.max_processes 作为并发上限的补充声明（
+        # max_instances 优先；两者都设时取较小值）
         max_inst = action.max_instances
+        max_proc = action.max_processes
+        if max_inst > 0 and max_proc > 0:
+            max_inst = min(max_inst, max_proc)
         if max_inst > 0:
             # 注册动作并发配置
             mgr.register_action(action_id, max_inst)
@@ -685,6 +711,45 @@ def _env_restore(snap: dict) -> None:
             os.environ[key] = value
 
 
+def _run_md_with_timeout(action: 'Action', build_dir: str, force: bool) -> dict:
+    """run_md 包装：按 action.resources.timeout_ms 施加超时（docs/46 #7）。
+
+    未配置 timeout_ms（0）时直接调 run_md，零开销零行为变化。
+    配置了则在独立线程执行，超时返回 `{'status': 'timeout', 'blocks': [...]}` 形状
+    的伪 report，让调用方按现有 timeout 分支（_run_blocks L801/L815）统一收口。
+    """
+    from vools.bridge.md import run_md
+
+    timeout_ms = action.timeout_ms
+    if not timeout_ms or timeout_ms <= 0:
+        return run_md(
+            action.path,
+            only=[action.entry] if action.entry else None,
+            force=force or True,
+            build_dir=build_dir,
+        )
+
+    # 超时执行：run_md 本身不接收 timeout 参数，用线程池强制收口。
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(run_md, action.path,
+                          only=[action.entry] if action.entry else None,
+                          force=force or True, build_dir=build_dir)
+        try:
+            return fut.result(timeout=timeout_ms / 1000.0)
+        except FutureTimeout:
+            # 无法强杀子进程（Windows 无 POSIX 信号），只标记 timeout 让上层收口
+            return {
+                'status': 'timeout',
+                'blocks': [{
+                    'index': 0, 'language': 'python', 'tag': [action.entry],
+                    'status': 'timeout', 'duration_ms': timeout_ms,
+                    'exit_code': None,
+                    'stdout': '', 'stderr': f'execution exceeded {timeout_ms}ms (docs/46 #7 resources.timeout_ms)',
+                }],
+            }
+
+
 def _run_blocks(action: Action, params: dict, exec_id: str,
                 artifacts_dir: str, force: bool = False,
                 sandboxed: bool = False, meta_dir: str = None) -> dict:
@@ -707,17 +772,21 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
     env_before = _env_snapshot()
     try:
         _sanitize_path_env()
-        # 参数注入：写入临时环境文件，vools config env 携带 ACTUS_PARAMS
-        os.environ['ACTUS_PARAMS'] = json.dumps(params, ensure_ascii=False)
-        os.environ['ACTUS_EXEC_ID'] = exec_id
+        # docs/46 #5：context.env_prefix 允许动作自定义注入前缀（默认 ACTUS_）。
+        # 前缀只影响引擎注入的 ACTUS_PARAMS / ACTUS_EXEC_ID 等保留变量名；
+        # 动作自身若依赖默认前缀，不配置 context 字段即可，行为不变。
+        prefix = action.env_prefix
+        # 参数注入：写入临时环境文件，vools config env 携带 <prefix>PARAMS
+        os.environ[f'{prefix}PARAMS'] = json.dumps(params, ensure_ascii=False)
+        os.environ[f'{prefix}EXEC_ID'] = exec_id
         # 动作自身路径：docs/41 §A1 的内嵌 Sigma 规约块要读回**同一份文件**才能复跑
         # 规约门禁。没有它，动作只能把规约正文再抄一份进 python 块，抄的那份与
         # ```sigma 块会各自漂移，"校验过规约"就变成了"校验过副本"。
-        os.environ['ACTUS_ACTION_PATH'] = action.path
+        os.environ[f'{prefix}ACTION_PATH'] = action.path
         # 引擎定位环境：动作代码（如 loop_prompt 的会话留痕）经此解析引擎状态目录，
         # 测试经 meta_dir 覆盖即可整体隔离，不污染真实仓库。
-        os.environ['ACTUS_REPO_ROOT'] = _repo_root()
-        os.environ['ACTUS_META_DIR'] = meta_dir or os.path.join(_repo_root(), '_meta')
+        os.environ[f'{prefix}REPO_ROOT'] = _repo_root()
+        os.environ[f'{prefix}META_DIR'] = meta_dir or os.path.join(_repo_root(), '_meta')
 
         # secrets 自动注入（docs/10 §D2）：解析动作的 secrets 字段，注入环境变量
         secrets_config = action.meta.get('secrets') or []
@@ -768,11 +837,8 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
             build_dir = os.path.join(artifacts_dir, action.id,
                                      action.meta.get('version', '0.0.0'), exec_id)
 
-        report = run_md(
-            action.path,
-            only=[action.entry] if action.entry else None,
-            force=force or True,  # 动作语义：每次执行都是新 exec，不做块级缓存复用
-            build_dir=build_dir,
+        report = _run_md_with_timeout(
+            action, build_dir=build_dir, force=force,
         )
     finally:
         # 还原必须在放锁之前：并行节点各自的注入不能互相看见，也不能看见中间态。
