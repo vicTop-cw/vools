@@ -378,6 +378,11 @@ class DelayCurried:
         if not args_len and not kwargs_len and self._is_ready:
             return self._execute()
 
+        # BUG-105: 参数已满时立即执行（与文档示例 `add(1)(2)(3)  # 返回 6` 一致）。
+        # 旧实现只在"空调用"时才执行，导致所有参数传齐后仍返回 DelayCurried 对象。
+        if self._is_ready:
+            return self._execute()
+
         return self
     
     def _execute(self) -> Any:
