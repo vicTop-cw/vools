@@ -138,11 +138,15 @@ def get_signature(func: Callable[..., Any]) -> inspect.Signature:
     # 缓存未命中：先检查预定义的内置函数签名
     func_name = getattr(func, '__name__', None)
     if func_name in _BUILTIN_SIGS:
-        sig = _BUILTIN_SIGS[func_name]
-        _set_cache(key, sig)
-        _remember_ref(func, key)
-        _CACHE_MISSES += 1
-        return sig
+        builtin_obj = getattr(builtins, func_name, None)
+        # BUG-145: 仅当 func 就是该内置对象时才命中预定义签名，
+        # 避免同名用户函数（如 def print(x, y)）误拿内置 print 的签名。
+        if builtin_obj is func:
+            sig = _BUILTIN_SIGS[func_name]
+            _set_cache(key, sig)
+            _remember_ref(func, key)
+            _CACHE_MISSES += 1
+            return sig
 
     # 尝试 inspect
     try:
