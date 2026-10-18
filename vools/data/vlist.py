@@ -207,9 +207,14 @@ class VList(Seq, metaclass=ListLikeMeta):
         Returns:
             如果相等返回 True，否则返回 False
         """
-        if isinstance(other, VList):
+        if isinstance(other, VList) and hasattr(other, '_data'):
+            # BUG-127: 先判 VList 实例（_data 分支），VList 不继承 list，必须先命中这里。
             return self._data == other._data
-        elif isinstance(other, (list, tuple)):
+        if isinstance(other, list):
+            # ListLikeMeta.__instancecheck__ 使原生 list 也被 isinstance(x, VList) 判 True，
+            # 但 list 没有 _data，故只能走 list() 取值（BUG-127 主修复点）。
+            return self._data == list(other)
+        if isinstance(other, tuple):
             return self._data == list(other)
         return False
 
