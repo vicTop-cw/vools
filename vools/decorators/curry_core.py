@@ -240,9 +240,13 @@ class CurryDescriptor:
         pre_attrs = self.pre_attrs.copy()
         required_args = pre_attrs.get('required_args', [])
         params = pre_attrs.get('params', {})
-        if required_args and required_args[0] == 'self':
+        if required_args:
+            # bound_func 已通过 __get__ 绑定实例，无论首参名是什么
+            # （'self'/'this'/'cls'…）都已被消费，需从 required_args 与
+            # params 中剔除该首参，否则位置参数会按名字顺序错绑到实例参数。
+            first = required_args[0]
             pre_attrs['required_args'] = required_args[1:]
-            pre_attrs['params'] = {k: v for k, v in params.items() if k != 'self'}
+            pre_attrs['params'] = {k: v for k, v in params.items() if k != first}
         return Curried(bound_func, is_strict=self.is_strict, delaied=self.delaied, **pre_attrs)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
