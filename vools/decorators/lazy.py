@@ -94,8 +94,9 @@ def lazy(obj: Any, caller_locals: Optional[Dict] = None,
         if obj.startswith('def '):
             match = re.search(r'def\s+(\w+)\s*\(', obj)
             func_name = match.group(1) if match else '__anonymous__'
-            exec(obj, safe_globals, safe_locals)
-            func = safe_locals.get(func_name, safe_globals.get(func_name))
+            exec_locals = dict(safe_locals)  # BUG-118: 独立 dict，避免污染调用者作用域
+            exec(obj, safe_globals, exec_locals)
+            func = exec_locals.get(func_name, safe_globals.get(func_name))
             wrapper = lambda: func
             wrapper._is_lazy = True
             return wrapper
@@ -114,8 +115,9 @@ def lazy(obj: Any, caller_locals: Optional[Dict] = None,
             left, arrow, right = arrow_match.groups()
             params = [p.strip() for p in left.split(',') if p.strip()]
             func_str = f"def __anonymous({', '.join(params)}):\n    return {right.strip()}"
-            exec(func_str, safe_globals, safe_locals)
-            wrapper = safe_locals.get('__anonymous')
+            exec_locals = dict(safe_locals)  # BUG-118: 独立 dict，避免污染调用者作用域
+            exec(func_str, safe_globals, exec_locals)
+            wrapper = exec_locals.get('__anonymous')
             wrapper._is_lazy = True
             return wrapper
     
