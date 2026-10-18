@@ -372,6 +372,8 @@ def benchmark_generate(ast, iterations: int = 100) -> Dict:
 
 def benchmark_to_html(text: str, iterations: int = 100) -> Dict:
     """基准测试：HTML 转换性能。"""
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
     times = []
     for _ in range(iterations):
         start = time.perf_counter()
@@ -390,6 +392,8 @@ def benchmark_to_html(text: str, iterations: int = 100) -> Dict:
 
 def benchmark_full_pipeline(text: str, iterations: int = 50) -> Dict:
     """基准测试：完整流水线（解析 → 生成 → HTML）。"""
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
     times = []
     for _ in range(iterations):
         start = time.perf_counter()
@@ -423,7 +427,7 @@ def benchmark_report(text: str, iterations: int = 100) -> str:
     ast = parse(text)
     gen_r = benchmark_generate(ast, iterations)
     html_r = benchmark_to_html(text, iterations)
-    full_r = benchmark_full_pipeline(text, iterations // 2)
+    full_r = benchmark_full_pipeline(text, max(iterations // 2, 1))
 
     lines = [
         '# Markdown Performance Benchmark', '',
