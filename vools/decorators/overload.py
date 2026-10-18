@@ -9,6 +9,7 @@
 - 注册模式：export_mode 控制 register 的返回值（默认返回管理器支持链式）
 
 示例:
+    >>> from vools.decorators.overload import overload, Priority, AllowSyncName, Strict, Ambiguous
     >>> @overload(mode=Priority | AllowSyncName | Strict | Ambiguous)
     ... def add(a, b):
     ...     return a + b
@@ -18,7 +19,9 @@
     ...     return a + b
     ...
     >>> add(1, 2)              # 3
-    >>> add("a", "b")          # "ab"
+    3
+    >>> add("a", "b")          # "ab"（主函数兜底）
+    'ab'
 
     注意: 默认模式 Priority|Strict|AllowSyncName 不含 Ambiguous，
     主函数无类型注解时与有注解重载函数同时匹配会抛"模糊调用"。
@@ -533,7 +536,10 @@ def strict(func: Optional[Callable] = None, *, enabled: bool = True) -> Callable
         ...     return a + b
         >>> add(1, 2)
         3
-        >>> add(1, "2")       # TypeError
+        >>> add(1, "2")
+        Traceback (most recent call last):
+            ...
+        TypeError: 参数 'b' 应为 int, 实际 str
     """
     def _wrap(f: Callable) -> Callable:
         sig = get_signature(f)
