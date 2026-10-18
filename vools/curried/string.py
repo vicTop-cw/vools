@@ -327,7 +327,7 @@ def strip_suffix(suffix: str, s: str) -> str:
         >>> strip_suffix('.txt', 'script.py')
         'script.py'
     """
-    if s.endswith(suffix):
+    if suffix and s.endswith(suffix):
         return s[:-len(suffix)]
     return s
 
