@@ -74,7 +74,13 @@ def vools_preprocess(obj: Any) -> Any:
     # 3. 递归处理容器类型
     if isinstance(obj, dict):
         return {k: vools_preprocess(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list):
+        return type(obj)(vools_preprocess(item) for item in obj)
+    if isinstance(obj, tuple):
+        # BUG-131: namedtuple 的 __new__ 要求固定位置参数（P(1,2)），不接受生成器，
+        # 直接 type(obj)(generator) 会抛 TypeError。含 _fields 的特征识别后展开为位置参数。
+        if hasattr(obj_type, '_fields'):
+            return type(obj)(*(vools_preprocess(item) for item in obj))
         return type(obj)(vools_preprocess(item) for item in obj)
 
     return obj
