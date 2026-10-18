@@ -172,12 +172,35 @@ def _serialize_enum(obj: enum.Enum) -> Dict[str, Any]:
     }
 
 
+# BUG-96/BUG-100: 反序列化 enum 前必须校验模块路径，
+# 仅允许 enum 所在的标准模块，禁止导入 os/subprocess 等危险模块（导入即副作用）。
+_ALLOWED_ENUM_MODULES = frozenset({
+    'enum',
+})
+# 允许 vools/tests 前缀模块内的 enum 定义
+# (tests 前缀仅覆盖仓库内测试代码，属可信代码)
+_ALLOWED_ENUM_MODULE_PREFIXES = ('vools', 'tests')
+
+
+def _is_allowed_enum_module(module_path: str) -> bool:
+    """判断枚举模块路径是否在白名单内（BUG-100）。"""
+    if module_path in _ALLOWED_ENUM_MODULES:
+        return True
+    for prefix in _ALLOWED_ENUM_MODULE_PREFIXES:
+        if module_path.startswith(prefix):
+            return True
+    return False
+
+
 def _deserialize_enum(state: Dict[str, Any]) -> Any:
     type_name = state['type']
     parts = type_name.rsplit('.', 1)
     if len(parts) != 2:
         raise ValueError(f'Invalid enum type reference: {type_name}')
     module_path, cls_name = parts
+    # BUG-100: 导入前白名单校验，禁止任意模块导入（导入即副作用）
+    if not _is_allowed_enum_module(module_path):
+        raise ValueError(f'Invalid enum module: {module_path}')
     mod = __import__(module_path, fromlist=[cls_name])
     cls = getattr(mod, cls_name)
     # BUG-96: 仅允许 enum.Enum 子类，禁止任意类或函数被呼叫
