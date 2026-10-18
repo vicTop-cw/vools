@@ -58,27 +58,44 @@ from .rself import rself
 # bridge 装饰器
 from .bridge_decorator import bridge, BridgeRegistry
 
-# 柯里化函数
-from .curried import (
-    curried_map,
-    curried_filter,
-    curried_reduce,
-    compose,
-    pipe,
-    curried_pipe,
-    add,
-    mul,
-    sub,
-    div,
-    and_,
-    or_,
-    not_,
-    identity,
-    const,
-    flip,
-    apply,
-    curried_apply,
-)
+# 柯里化函数（延迟导入避免与 vools.curried 循环 import：
+# vools.curried -> vools.decorators.curry_core -> vools.decorators.curried -> vools.curried）
+# 直接 `import vools.curried.collection` 会触发 ImportError: cannot import name 'map'
+_CURRIED_EXPORTS = {
+    'curried_map', 'curried_filter', 'curried_reduce',
+    'compose', 'pipe', 'curried_pipe',
+    'add', 'mul', 'sub', 'div',
+    'and_', 'or_', 'not_',
+    'identity', 'const', 'flip', 'apply', 'curried_apply',
+}
+
+_curried_cache = None  # type: Optional[Dict[str, Any]]
+
+def _load_curried():
+    global _curried_cache
+    if _curried_cache is None:
+        from .curried import (
+            curried_map,
+            curried_filter,
+            curried_reduce,
+            compose,
+            pipe,
+            curried_pipe,
+            add,
+            mul,
+            sub,
+            div,
+            and_,
+            or_,
+            not_,
+            identity,
+            const,
+            flip,
+            apply,
+            curried_apply,
+        )
+        _curried_cache = locals()
+    return _curried_cache
 
 #灵活的占位符
 from .flex_pos import flex_pos
@@ -190,6 +207,8 @@ def __getattr__(name):
     if name == 'extend':
         from ..oop.method_extend import extend
         return extend
+    if name in _CURRIED_EXPORTS:
+        return _load_curried().get(name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
