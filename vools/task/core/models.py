@@ -14,6 +14,8 @@ LOCKED 是 Worker 竞争中间态（领取瞬间），心跳续期防重复领�
 
 __all__ = ['TaskStatus', 'Task', 'DagValidationError']
 
+import pickle
+import base64
 from enum import Enum
 from typing import Optional, Any, Dict, Set
 from datetime import datetime
@@ -21,6 +23,55 @@ import json
 
 from ...core.dataclass_compat import dataclass, field
 from ...core.datetime_compat import datetime_fromisoformat
+
+# BUG-149: Task 的 args/kwargs/result 可能含不可 JSON 序列化对象
+#（函数、自定义类实例等），无条件 json.dumps 会抛 TypeError，任务无法持久化。
+# 这里统一用 pickle+base64 标记恢复，实在不行回退 repr 保证不崩溃。
+_PICKLE_MARKER = "__vools_pickle__:"
+
+
+def _json_default(obj):
+    """json.dumps 的 default 回调：不可 JSON 序列化 → pickle 编码为标记字符串"""
+    try:
+        payload = pickle.dumps(obj)
+        return _PICKLE_MARKER + base64.b64encode(payload).decode("ascii")
+    except Exception:
+        try:
+            return repr(obj)
+        except Exception:
+            return "<unserializable>"
+
+
+def _restore_pickle(obj):
+    """递归恢复 __vools_pickle__ 标记字符串为原始对象"""
+    if isinstance(obj, str) and obj.startswith(_PICKLE_MARKER):
+        try:
+            return pickle.loads(
+                base64.b64decode(obj[len(_PICKLE_MARKER):].encode("ascii"))
+            )
+        except Exception:
+            return obj
+    if isinstance(obj, list):
+        return [_restore_pickle(x) for x in obj]
+    if isinstance(obj, tuple):
+        return tuple(_restore_pickle(x) for x in obj)
+    if isinstance(obj, dict):
+        return {k: _restore_pickle(v) for k, v in obj.items()}
+    return obj
+
+
+def _dump_json(value):
+    """JSON 序列化（带 pickle fallback），None 保留为 None"""
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False, default=_json_default)
+
+
+def _load_json(value):
+    """JSON 反序列化（带 pickle 恢复）"""
+    if not value:
+        return None
+    return _restore_pickle(json.loads(value))
 
 
 class DagValidationError(Exception):
@@ -84,18 +135,18 @@ class Task:
             "task_name": self.task_name,
             "task_func": self.task_func,
             "task_type": self.task_type,
-            "payload": json.dumps(self.payload, ensure_ascii=False) if self.payload is not None else None,
-            "args": json.dumps(self.args),
-            "kwargs": json.dumps(self.kwargs),
+            "payload": _dump_json(self.payload),
+            "args": _dump_json(self.args),
+            "kwargs": _dump_json(self.kwargs),
             "status": self.status.value if isinstance(self.status, TaskStatus) else self.status,
             "priority": self.priority,
             "retry_count": self.retry_count,
             "max_retries": self.max_retries,
             "error_message": self.error_message,
-            "result": json.dumps(self.result, ensure_ascii=False) if self.result is not None else None,
-            "back_info": json.dumps(self.back_info, ensure_ascii=False) if self.back_info is not None else None,
+            "result": _dump_json(self.result),
+            "back_info": _dump_json(self.back_info),
             "ts": self.ts.isoformat() if self.ts else None,
-            "dependencies": json.dumps(list(self.dependencies)),
+            "dependencies": _dump_json(list(self.dependencies)),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
@@ -113,18 +164,18 @@ class Task:
             task_name=data.get("task_name", ""),
             task_func=data.get("task_func", ""),
             task_type=data.get("task_type", "PYTHON"),
-            payload=json.loads(data["payload"]) if data.get("payload") else None,
-            args=json.loads(data.get("args", "[]")),
-            kwargs=json.loads(data.get("kwargs", "{}")),
+            payload=_load_json(data.get("payload")),
+            args=_load_json(data.get("args", "[]")),
+            kwargs=_load_json(data.get("kwargs", "{}")),
             status=TaskStatus(data.get("status", TaskStatus.PENDING.value)),
             priority=data.get("priority", 0),
             retry_count=data.get("retry_count", 0),
             max_retries=data.get("max_retries", 3),
             error_message=data.get("error_message"),
-            result=json.loads(data.get("result")) if data.get("result") else None,
-            back_info=json.loads(data.get("back_info")) if data.get("back_info") else None,
+            result=_load_json(data.get("result")),
+            back_info=_load_json(data.get("back_info")),
             ts=datetime_fromisoformat(data["ts"]) if data.get("ts") else None,
-            dependencies=set(json.loads(data.get("dependencies", "[]"))),
+            dependencies=set(_load_json(data.get("dependencies", "[]")) or []),
             created_at=datetime_fromisoformat(data["created_at"]) if data.get("created_at") else None,
             updated_at=datetime_fromisoformat(data["updated_at"]) if data.get("updated_at") else None,
             started_at=datetime_fromisoformat(data["started_at"]) if data.get("started_at") else None,
