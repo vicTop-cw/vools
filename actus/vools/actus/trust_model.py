@@ -8,7 +8,7 @@ import json
 import os
 import time
 import base64
-from typing import Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from .constants import SCOPE_LEVELS, SCOPE_PERMISSIONS, PERMISSIONS
 
@@ -19,7 +19,7 @@ class KeyManager:
     生成、加载、保存 Ed25519 签名密钥对。
     """
 
-    def __init__(self, keys_dir: str = None):
+    def __init__(self, keys_dir: str = None) -> None:
         """
         参数:
             keys_dir: 密钥存储目录（默认 ~/.actus/keys）。
@@ -31,6 +31,7 @@ class KeyManager:
 
     @property
     def keys_dir(self) -> str:
+        """密钥存储目录。"""
         return self._keys_dir
 
     def generate_keypair(self, name: str = "default") -> Tuple[str, str]:
@@ -86,7 +87,7 @@ class KeyManager:
 
         return priv_path, pub_path
 
-    def load_private_key(self, name: str = "default"):
+    def load_private_key(self, name: str = "default") -> Any:
         """加载私钥。"""
         priv_path = os.path.join(self._keys_dir, f"{name}.key")
         if not os.path.isfile(priv_path):
@@ -149,7 +150,11 @@ class KeyManager:
 class SignatureVerifier:
     """签名生成与验证。"""
 
-    def __init__(self, key_manager: KeyManager = None):
+    def __init__(self, key_manager: KeyManager = None) -> None:
+        """构造签名验证器。
+
+        key_manager: 密钥管理器（默认创建 KeyManager）。
+        """
         self._key_manager = key_manager or KeyManager()
 
     def sign_file(self, fpath: str, key_name: str = "default",
@@ -328,7 +333,7 @@ class ScopeEnforcer:
     根据安装的 scope 配置，限制动作的权限。
     """
 
-    def __init__(self, scope: str = "community"):
+    def __init__(self, scope: str = "community") -> None:
         """
         参数:
             scope: 权限范围（trusted/community/unverified/sandbox）。
@@ -338,10 +343,12 @@ class ScopeEnforcer:
 
     @property
     def scope(self) -> str:
+        """当前作用域等级（private/team/community/public）。"""
         return self._scope
 
     @property
     def allowed_permissions(self) -> List[str]:
+        """当前作用域允许的权限集合。"""
         return list(self._allowed)
 
     def check_permission(self, permission: str) -> bool:
@@ -379,7 +386,11 @@ class ApprovalManager:
     管理社区级别动作的审批记录，支持私有动作自动审批和团队动作审批。
     """
 
-    def __init__(self, approvals_dir: str = None):
+    def __init__(self, approvals_dir: str = None) -> None:
+        """构造审批管理器。
+
+        approvals_dir: 审批记录目录（默认 ~/.actus/approvals）。
+        """
         if approvals_dir is None:
             approvals_dir = os.path.join(os.path.expanduser("~"), ".actus", "approvals")
         self._approvals_dir = approvals_dir
@@ -467,7 +478,7 @@ class ApprovalManager:
                 records.append(record)
         return records
 
-    def _save(self, record: dict):
+    def _save(self, record: dict) -> None:
         """保存审批记录。"""
         action_id = record["action_id"]
         fpath = os.path.join(self._approvals_dir, f"{action_id}.json")
@@ -489,7 +500,11 @@ class TrustEvaluator:
     综合评估动作的信任级别，决定执行策略。
     """
 
-    def __init__(self, install_dir: str = None):
+    def __init__(self, install_dir: str = None) -> None:
+        """构造信任评估器。
+
+        install_dir: 动作安装目录（传给 ActionInstaller）。
+        """
         from .installer import ActionInstaller
         self._installer = ActionInstaller(install_dir=install_dir)
         self._approval = ApprovalManager()
@@ -535,7 +550,10 @@ class TrustEvaluator:
             result["trust_level"] = scope
             result["can_execute"] = False
             result["requires_confirmation"] = True
-            result["error"] = f"Action requires approval (scope: {scope}). Run: actus approve {action_id}"
+            result["error"] = (
+                f"Action requires approval (scope: {scope}). "
+                f"Run: actus approve {action_id}"
+            )
             return result
 
         # 检查权限

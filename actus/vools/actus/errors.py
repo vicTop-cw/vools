@@ -23,7 +23,13 @@ class ActionError(Exception):
     details: 附加结构化信息（字段错误、环路径等）
     """
 
-    def __init__(self, code: str, message: str, details=None):
+    def __init__(self, code: str, message: str, details=None) -> None:
+        """构造 ActionError。
+
+        code:    docs/08 §5 结构化错误码
+        message: 人类可读说明（中文）
+        details: 附加结构化信息（字段错误、环路径等）
+        """
         super().__init__(message)
         self.code = code
         self.message = message
