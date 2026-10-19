@@ -3,6 +3,7 @@
 
 import asyncio
 import os
+import shutil
 import sys
 import pytest
 
@@ -188,3 +189,56 @@ class TestImport:
     def test_all(self):
         from vools.sys.exe import __all__
         assert "exe" in __all__
+
+
+# BUG-184 回归：函数定义在模块级，避免 Python 类作用域对 `__version`
+# 这类双下划线参数名做私有名称改写（会变成 `_Cls__version`，导致
+# _build_command 误判为短选项 `-version`，git 收到非法参数而 rc=1）。
+def _git_run(__version=None):
+    pass
+
+
+def _unknown_run():
+    pass
+
+
+def _path_run(__version=None):
+    pass
+
+
+class TestPathCommandName:
+    """BUG-184 回归：@exe 应支持 PATH 中的命令名（如 git/python），
+    而非因 os.path.exists 恒 False 误判为不存在。"""
+
+    def _pick_path_command(self):
+        for name in ("git", "python", "where"):
+            if shutil.which(name):
+                return name
+        pytest.skip("PATH 中无可用探测命令")
+
+    def test_path_command_name_resolves(self):
+        name = self._pick_path_command()
+        run = exe(name)(_path_run)
+
+        assert not os.path.exists(name)
+        assert shutil.which(name) is not None
+
+        rc, _out, _err = run(__version=None)
+        assert isinstance(rc, int)
+
+    def test_path_command_name_long_option_success(self):
+        """git --version 类长选项应真正执行成功（exit 0）。"""
+        if not shutil.which("git"):
+            pytest.skip("git 不在 PATH")
+
+        run = exe("git")(_git_run)
+        rc, out, _err = run(__version=None)
+        assert rc == 0
+        assert "version" in out.lower()
+
+    def test_unknown_path_command_still_raises(self):
+        @exe("vools_definitely_not_a_cmd_xyz_123")
+        def run():
+            pass
+        with pytest.raises(FileNotFoundError):
+            run()

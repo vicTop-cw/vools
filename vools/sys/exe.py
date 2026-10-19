@@ -16,6 +16,7 @@ vools.sys.exe - 可执行文件装饰器模块
 import os
 import sys
 import ast
+import shutil
 import subprocess
 import functools
 import inspect
@@ -276,9 +277,15 @@ def _run_sync(
         Exception: 调用失败且无 fallback 时抛出。
     """
     if not os.path.exists(exe_path):
-        if fallback:
-            return fallback(*args, **kwargs)
-        raise FileNotFoundError(f"Executable not found: {exe_path}")
+        # BUG-184: PATH 命令名（如 git/python/echo）不是文件路径，os.path.exists 恒 False。
+        # 先用 shutil.which 在 PATH 中定位，定位不到才判失败。
+        resolved = shutil.which(exe_path)
+        if resolved is not None:
+            exe_path = resolved
+        else:
+            if fallback:
+                return fallback(*args, **kwargs)
+            raise FileNotFoundError(f"Executable not found: {exe_path}")
 
     try:
         cmd = _build_command(exe_path, func, args, kwargs)
