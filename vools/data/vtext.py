@@ -22,6 +22,20 @@ from .vlist import VList
 # vicText 加密模块默认密钥（仅兜底用；生产务必用环境变量 VQ_ENC_KEY 独立存放）
 _VQ_ENC_KEY_DEFAULT = b"sparksql_exe_2026_share_key_0123456789ab"
 
+# BUG-206: _run 的 exec/eval 必须使用受限命名空间，杜绝 __import__/open/
+# getattr/exec/eval/compile 等 builtins 造成的任意代码执行。
+# 只保留纯函数/容器/算术类 builtins；'1+1' 等算术表达式仅依赖内建运算符，不受影响。
+_RUN_SAFE_BUILTINS = {
+    'True': True, 'False': False, 'None': None,
+    'abs': abs, 'len': len, 'min': min, 'max': max, 'sum': sum, 'round': round,
+    'int': int, 'float': float, 'str': str, 'bool': bool,
+    'list': list, 'tuple': tuple, 'dict': dict, 'set': set, 'frozenset': frozenset,
+    'range': range, 'enumerate': enumerate, 'zip': zip,
+    'map': map, 'filter': filter, 'any': any, 'all': all,
+    'sorted': sorted, 'reversed': reversed, 'print': print,
+}
+_RUN_SAFE_NAMESPACE = {'__builtins__': _RUN_SAFE_BUILTINS}
+
 
 @rself
 class VText(str):
@@ -381,26 +395,35 @@ class VText(str):
 
     # ─── legacy vicText._run / run / result ───
 
-    def _run(self, func: Any = exec) -> Any:
+    def _run(self, func: Any = None) -> Any:
         """执行文本内容（legacy ``vicText._run``）。
 
         Args:
-            func: 可调用对象，或 "exec" / "eval" / "spark.sql" 字符串
+            func: 可调用对象，或 "exec" / "eval" / "spark.sql" 字符串；
+                默认 None（不执行）。原默认 exec 会无参触发任意代码执行（BUG-206）。
 
         Returns:
-            执行结果；空文本返回 None
+            执行结果；空文本返回 None；func 未指定时 raise ValueError
         """
         text = str(self)
         if text.strip() == "":
             return None
+        if func is None:
+            raise ValueError(
+                "func 未指定：请显式传入可调用对象或 'exec'/'eval'/'spark.sql'"
+                "（vools.data.vtext 不再允许无参 _run() 执行任意代码）"
+            )
         if callable(func):
+            # BUG-206: exec 必须用受限命名空间，杜绝 __import__/open 等任意代码执行
+            if func is exec:
+                return exec(text, _RUN_SAFE_NAMESPACE)
             return func(text)
         if isinstance(func, str):
             lowered = func.lower()
             if lowered == "exec":
-                return exec(text)
+                return exec(text, _RUN_SAFE_NAMESPACE)
             if lowered == "eval":
-                return eval(text)
+                return eval(text, _RUN_SAFE_NAMESPACE)
             if lowered == "spark.sql":
                 # BUG-170: 原 `from .core import get_spark` 指向不存在的 vools.data.core。
                 # spark 能力挂在 vools 顶层 my_spark()；环境未提供 SparkSession 时抛清晰 RuntimeError。
