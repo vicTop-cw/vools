@@ -347,24 +347,38 @@ def _import_class(type_name: str):
         类对象；无法导入或不在白名单时返回 None。
     """
     try:
-        parts = type_name.rsplit('.', 1)
-        if len(parts) != 2:
+        parts = type_name.split('.')
+        if len(parts) < 2:
             return None
 
-        module_path, cls_name = parts
+        # BUG-205: 模块路径与嵌套 __qualname__ 都含 '.'，不能靠 rsplit('.', 1)
+        # 一刀切。改为逐步从右向左缩短模块前缀，对每个候选做白名单校验并尝试
+        # 导入，命中后沿剩余 qualname 逐级 getattr；全部失败返回 None（保持原有
+        # 降级语义，不新增崩溃面）。
+        for split_at in range(len(parts) - 1, 0, -1):
+            module_path = '.'.join(parts[:split_at])
+            cls_name = '.'.join(parts[split_at:])
 
-        # BUG-98: 白名单校验，禁止任意模块导入
-        if not _is_allowed_module(module_path):
-            return None
+            # BUG-98: 白名单校验，禁止任意模块导入
+            if not _is_allowed_module(module_path):
+                continue
 
-        mod = importlib.import_module(module_path)
-        cls = getattr(mod, cls_name, None)
+            try:
+                mod = importlib.import_module(module_path)
+            except (ImportError, ModuleNotFoundError):
+                continue
 
-        # BUG-98: 必须是类，禁止导入函数/模块作为"类"使用
-        if not isinstance(cls, type):
-            return None
+            cls = mod
+            for attr in cls_name.split('.'):
+                cls = getattr(cls, attr, None)
+                if cls is None:
+                    break
 
-        return cls
+            # BUG-98: 必须是类，禁止导入函数/模块作为"类"使用
+            if isinstance(cls, type):
+                return cls
+
+        return None
     except (ImportError, AttributeError):
         return None
 
