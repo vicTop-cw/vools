@@ -92,11 +92,19 @@ def _memoize_impl(func: Callable, maxsize: int) -> Callable:
         if result is not sentinel:
             return result
         result = func(*args, **kwargs)
-        if len(cache) >= maxsize:
-            # 简单的 FIFO 策略
-            oldest = next(iter(cache))
-            del cache[oldest]
-        cache[key] = result
+        # BUG-215: 容量边界对齐 functools.lru_cache 语义——
+        # maxsize=None 无限缓存（跳过驱逐检查，原 len>=None 必 TypeError）；
+        # maxsize<=0 直通不写缓存（原实现 func 执行后对空缓存
+        # next(iter(cache)) 抛 StopIteration，副作用已发生、结果丢失）；
+        # maxsize>0 满员时 FIFO 驱逐——此时 cache 必非空，安全。
+        if maxsize is None:
+            cache[key] = result
+        elif maxsize > 0:
+            if len(cache) >= maxsize:
+                oldest = next(iter(cache))
+                del cache[oldest]
+            cache[key] = result
+        # maxsize <= 0：直通（不缓存），与 lru_cache(maxsize=0) 一致
         return result
 
     memoized.cache = cache
