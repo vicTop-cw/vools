@@ -431,15 +431,23 @@ def safe_lambda(var_names: Tuple[str, ...], expr: str) -> callable:
         args = ', '.join(var_names)
         full_expr = f"lambda {args}: {expr}"
 
+        # 语法预检：ast.parse 抛出的 SyntaxError 会被下方 except 捕获并转为
+        # SafeEvalError。
         tree = ast.parse(full_expr, mode='eval')
 
-        allowed_vars = {name: _Placeholder() for i, name in enumerate(var_names)}
-        evaluator = SafeExpressionEvaluator(allowed_vars)
-
+        # 静态检查（不实际求值）：拒绝表达式体内的嵌套 lambda 构造。允许任意
+        # lambda 构造会扩大攻击面，保持既有"危险表达式必须被拒"契约；仅拒绝
+        # 嵌套 lambda，不影响 BUG-202 对 Subscript/Attribute/IfExp 的放宽。
         lambda_node = tree.body
         if isinstance(lambda_node, ast.Lambda):
-            result = evaluator._eval_node(lambda_node.body)
+            for _node in ast.walk(lambda_node.body):
+                if isinstance(_node, ast.Lambda):
+                    raise SafeEvalError("不允许的嵌套 lambda 表达式")
 
+        # 安全边界由 _is_safe_expr 子串黑名单（含 __ / import / os. / subprocess /
+        # getattr 等）加空 __builtins__ 的 eval 提供。不再用 _Placeholder 求值 AST：
+        # 那会因不支持 Subscript / Attribute / IfExp / 内置函数调用而误拒合法表达式，
+        # 且其结果本就被丢弃从未使用（BUG-202）。
         safe_globals = {'__builtins__': {}}
 
         return eval(full_expr, safe_globals, {})
