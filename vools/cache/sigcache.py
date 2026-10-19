@@ -208,9 +208,16 @@ def add_custom_sig(
         )
 
     key = id(func)
-    if not force and key in _SIG_CACHE:
-        log.debug("add_custom_sig: %r 已有缓存，跳过（force=False）", func)
-        return
+    if key in _SIG_CACHE:
+        # BUG-211: 命中判断必须与 get_signature L129 同构地校验 _key_is_valid。
+        # id 可能已被 GC 后的新对象复用（缓存里是"死条目"）——此前直接跳过会
+        # 把新函数的注册静默吞掉。失效条目删除后照常写入。
+        if not _key_is_valid(key, func):
+            del _SIG_CACHE[key]
+            _SIG_REFS.pop(key, None)
+        elif not force:
+            log.debug("add_custom_sig: %r 已有缓存，跳过（force=False）", func)
+            return
 
     _set_cache(key, sig, overwrite=force)
     _remember_ref(func, key)
