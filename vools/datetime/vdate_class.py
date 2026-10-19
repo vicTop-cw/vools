@@ -198,8 +198,21 @@ class VDate(datetime):
         def _check(x):
             return re.match(r"^[1-2][0-9]{3}[0-1][0-9][0-3][0-9]$", x) or re.match(r"^[1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]$", x)
 
-        dates = filter(_check, {str(d) for d in dates})
-        dates = sorted(datetime.strptime(d, "%Y-%m-%d" if "-" in d else "%Y%m%d") for d in dates)
+        parsed = []
+        for s in {str(d) for d in dates}:
+            if not _check(s):
+                continue
+            try:
+                parsed.append(datetime.strptime(s, "%Y-%m-%d" if "-" in s else "%Y%m%d"))
+            except ValueError:
+                # BUG-189: _check 只校验格式不校验日期有效性（如 "2023-02-30"
+                # 过正则但 2 月无 30 日），逐个 try strptime 把无效日期跳过，
+                # 而非让单个坏日期毁掉整方法抛未捕获 ValueError。
+                continue
+        if not parsed:
+            # BUG-189: 全部被过滤/无效时返回空，而非对空列表取 dates[0] 抛 IndexError。
+            return []
+        dates = sorted(parsed)
         fmt = "%Y-%m-%d" if "-" in str(dates[0]) else "%Y%m%d"
 
         simplified = []
