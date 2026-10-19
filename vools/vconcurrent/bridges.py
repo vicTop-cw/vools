@@ -162,7 +162,9 @@ class ThreadProcessBridge:
             with self._thread_lock:
                 self._pipe_pair.a.send(obj)
             return True
-        except (EOFError, OSError, ValueError):
+        except (EOFError, OSError, ValueError, TypeError, AttributeError):
+            # BUG-191: 不可 pickle 对象（lambda→AttributeError、file handle→TypeError）
+            # 原未捕获崩溃，违背 docstring "发送失败返回 False" 契约。
             return False
 
     def recv_thread_side(self, timeout: Optional[float] = None) -> Optional[Any]:
@@ -182,7 +184,7 @@ class ThreadProcessBridge:
                     return None
             with self._thread_lock:
                 return self._pipe_pair.a.recv()
-        except (EOFError, OSError, ValueError):
+        except (EOFError, OSError, ValueError, TypeError, AttributeError):
             return None
 
     # -- 进程侧方法 ---------------------------------------------------------
@@ -205,7 +207,7 @@ class ThreadProcessBridge:
                     return False
             self._pipe_pair.b.send(obj)
             return True
-        except (EOFError, OSError, ValueError):
+        except (EOFError, OSError, ValueError, TypeError, AttributeError):
             return False
 
     def recv_process_side(self, timeout: Optional[float] = None) -> Optional[Any]:
@@ -224,7 +226,7 @@ class ThreadProcessBridge:
                 if not self._pipe_pair.b.poll(timeout):
                     return None
             return self._pipe_pair.b.recv()
-        except (EOFError, OSError, ValueError):
+        except (EOFError, OSError, ValueError, TypeError, AttributeError):
             return None
 
     # -- 生命周期 -----------------------------------------------------------
@@ -310,7 +312,9 @@ class ChannelBridge:
                     return False
             self._pipe_pair.a.send(obj)
             return True
-        except (EOFError, OSError, ValueError):
+        except (EOFError, OSError, ValueError, TypeError, AttributeError):
+            # BUG-191: 不可 pickle 对象（lambda→AttributeError、file handle→TypeError）
+            # 原未捕获崩溃，违背 docstring "发送失败返回 False" 契约。
             return False
 
     def recv(self, timeout: Optional[float] = None) -> Optional[Any]:
@@ -329,7 +333,7 @@ class ChannelBridge:
                 if not self._pipe_pair.a.poll(timeout):
                     return None
             return self._pipe_pair.a.recv()
-        except (EOFError, OSError, ValueError):
+        except (EOFError, OSError, ValueError, TypeError, AttributeError):
             return None
 
     # -- JSON 序列化 --------------------------------------------------------
@@ -384,7 +388,9 @@ class ChannelBridge:
         try:
             pickled = pickle.dumps(obj)
             return self.send(("__pickle__", pickled), timeout=timeout)
-        except (pickle.PickleError, TypeError):
+        except (pickle.PickleError, TypeError, AttributeError):
+            # BUG-191: pickle.dumps 对不可 pickle 的局部对象（lambda 等）抛
+            # AttributeError，原未捕获崩溃。
             return False
 
     def recv_pickle(self, timeout: Optional[float] = None) -> Optional[Any]:
@@ -402,7 +408,7 @@ class ChannelBridge:
         if isinstance(msg, tuple) and len(msg) == 2 and msg[0] == "__pickle__":
             try:
                 return pickle.loads(msg[1])
-            except (pickle.UnpicklingError, TypeError, ValueError):
+            except (pickle.UnpicklingError, TypeError, ValueError, AttributeError):
                 return None
         return msg
 
@@ -421,7 +427,7 @@ class ChannelBridge:
             return False
         try:
             return self._pipe_pair.a.poll(timeout)
-        except (EOFError, OSError, ValueError):
+        except (EOFError, OSError, ValueError, TypeError, AttributeError):
             return False
 
     @property
