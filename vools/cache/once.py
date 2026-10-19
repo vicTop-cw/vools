@@ -68,9 +68,14 @@ class _OnceWrapper:
                 return self.result
             self.called_args = args
             self.called_kwargs = kwargs
-            self.called = True
             self.force = False
-            self.result = self.func(*args, **kwargs)
+            # BUG-209: called/result 只能在 func 成功后盖章——原实现在调用前
+            # 就置 called=True，func 抛异常时 result 停留在初始 None，后续调用
+            # 全部静默返回 None 且永不重试（失败被永久缓存、错误被吞）。
+            # 现在失败异常原样传播，called 保持 False，下次调用自然重试。
+            result = self.func(*args, **kwargs)
+            self.result = result
+            self.called = True
             self.last_called_time = time.time()
             return self.result
 
