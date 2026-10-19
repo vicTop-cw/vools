@@ -271,9 +271,12 @@ def validate_directives(directives: Dict[str, str], language: str) -> List[str]:
                     f"{directive_key} 指令仅支持 {allowed_langs} 块（当前 {language}）"
                 )
 
-    # target 必须用于 database / protocol 块
+    # target 必须用于 database / protocol / build 块
     if "target" in directives and directives["target"].strip():
-        allowed = ("sql", "sqlite", "mysql", "postgresql", "pgsql", "http", "mcp")
+        allowed = (
+            "sql", "sqlite", "mysql", "postgresql", "pgsql", "http", "mcp",
+            "makefile", "make",
+        )
         if language not in allowed:
             errors.append(f"target 指令仅支持 {allowed} 块（当前 {language}）")
 

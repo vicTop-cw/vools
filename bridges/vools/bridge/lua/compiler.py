@@ -13,6 +13,7 @@ __all__ = [
     "LuaFuture",
     "LuaBridge",
     "compile_and_run",
+    "execute_code_lupa",
 ]
 
 import os
@@ -31,6 +32,7 @@ from typing import Any, Optional
 from .._base import LangBridge, FunctionSpec, FunctionParser
 from ..core.types import LangType
 from ..core.wsl import resolve_command, windows_to_wsl_path
+from ..probe import _run_cmd_timeout
 
 # ----------------------------------------------------------------------------
 # 平台判断
@@ -48,11 +50,7 @@ def _resolve_lua_command() -> tuple:
     for name in _LUA_COMPILER_CANDIDATES:
         cmd_prefix, path_converter, use_wsl = resolve_command(name)
         try:
-            result = subprocess.run(
-                cmd_prefix + ['-v'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, errors='replace', timeout=5,
-            )
+            result = _run_cmd_timeout(cmd_prefix + ['-v'], timeout=5)
             if result.returncode == 0:
                 return cmd_prefix, path_converter, use_wsl
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
@@ -72,11 +70,7 @@ _lua_exec_lock = threading.Lock()
 def lua_compiler_available() -> bool:
     """检查 Lua 解释器是否可用（执行 `lua -v`）"""
     try:
-        result = subprocess.run(
-            _LUA_CMD + ['-v'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors='replace', timeout=5,
-        )
+        result = _run_cmd_timeout(_LUA_CMD + ['-v'], timeout=5)
         return result.returncode == 0
     except (FileNotFoundError, OSError):
         return False
@@ -376,34 +370,30 @@ def _execute_lua_code(code: str, func_name: str, cache_dir: str = None,
 
     with _lua_exec_lock:
         if not force and os.path.exists(src_path):
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 _LUA_CMD + [_PATH_CONVERTER(src_path)],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, errors='replace',
                 timeout=60,
             )
             if result.returncode == 0:
-                return result.stdout.strip()
+                return result.stdout.decode('utf-8', errors='replace').strip()
 
         with open(src_path, 'w', encoding='utf-8') as f:
             f.write(code)
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             _LUA_CMD + [_PATH_CONVERTER(src_path)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors='replace',
             timeout=60,
         )
 
     if result.returncode != 0:
         raise RuntimeError(
             f'Lua 执行失败:\n'
-            f'stderr:\n{result.stderr}\n'
-            f'stdout:\n{result.stdout}\n'
+            f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+            f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
             f'代码:\n{code}'
         )
 
-    return result.stdout.strip()
+    return result.stdout.decode('utf-8', errors='replace').strip()
 
 
 def _parse_lua_output(output: str, ret_type: str):
@@ -792,13 +782,15 @@ class LuaBridge(LangBridge):
                     raise RuntimeError(f'No .lua files found in project directory: {project_dir}')
                 main_lua = lua_files[0]
 
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 _LUA_CMD + [_PATH_CONVERTER(main_lua)] + list(args),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, errors='replace',
                 timeout=60,
             )
-            return (result.returncode, result.stdout, result.stderr)
+            return (
+                result.returncode,
+                result.stdout.decode('utf-8', errors='replace'),
+                result.stderr.decode('utf-8', errors='replace'),
+            )
         else:
             artifact_path = self.compile_project(project_dir, entry, cache_dir)
             return self.call_func(artifact_path, entry, args)
@@ -853,4 +845,70 @@ def compile_and_run(
 
     output = _execute_lua_code(lua_source, func_name, actual_cache_dir)
     return _parse_lua_output(output, ret_type)
+
+
+# ----------------------------------------------------------------------------
+# lupa 回退（无外部 lua 解释器时的可选降级）
+# ----------------------------------------------------------------------------
+
+class _LuaIoProxy:
+    """把 Lua 端 io.write 重定向到 Python 字符串缓冲。"""
+
+    def __init__(self, buf):
+        self._buf = buf
+
+    def write(self, s):
+        self._buf.write(str(s))
+        return True
+
+    def flush(self):
+        try:
+            self._buf.flush()
+        except Exception:
+            pass
+
+
+def execute_code_lupa(code: str, func_name: str = '__main__') -> str:
+    """lupa 回退执行：无 lua 解释器时用 Python lupa 绑定执行 Lua 代码。
+
+    lupa 是可选依赖（``pip install lupa``）。未安装时抛 ``RuntimeError``。
+    返回 stdout 字符串，与 ``_execute_lua_code`` 语义一致。
+
+    支持：
+      - ``print(...)`` 重定向到 stdout
+      - ``io.write(...)`` 重定向到 stdout
+      - ``os.exit()`` / 语法错误 抛 ``RuntimeError``
+    """
+    try:
+        from lupa import LuaRuntime
+    except ImportError as exc:
+        raise RuntimeError(
+            'lupa 回退不可用：请安装 lua 解释器（lua5.x / luajit）'
+            '或执行 `pip install lupa`'
+        ) from exc
+
+    import io as _io
+
+    buf = _io.StringIO()
+    lua = LuaRuntime(unpack_returned_tuples=True)
+
+    def _lua_print(*args):
+        buf.write(' '.join(str(a) for a in args))
+        buf.write('\n')
+
+    def _lua_io_write(s):
+        buf.write(str(s))
+        return True
+
+    lua.globals().print = _lua_print
+    lua.globals().io = _LuaIoProxy(buf)
+    # io.write 直连（部分脚本直接 io.write）
+    lua.globals()['_lua_io_write'] = _lua_io_write
+
+    try:
+        lua.execute(code)
+    except Exception as exc:
+        raise RuntimeError(f'lupa 执行 Lua 失败: {exc}') from exc
+
+    return buf.getvalue().strip()
 
