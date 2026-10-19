@@ -87,6 +87,14 @@ class FileLock:
                 self._locked = True
             except (OSError, IOError):
                 self._locked = False
+        if not self._locked:
+            # BUG-212: 失败路径关闭并丢弃句柄——原实现把 open 的 fd 留在
+            # self._lock_fd，下次 acquire 直接覆盖导致文件句柄泄漏。
+            try:
+                self._lock_fd.close()
+            except Exception:
+                pass
+            self._lock_fd = None
         return self._locked
 
     def release(self) -> None:
@@ -111,7 +119,15 @@ class FileLock:
             self._locked = False
 
     def __enter__(self):
-        self.acquire()
+        # BUG-212: 原实现丢弃 acquire() 返回值——Windows 上 msvcrt.LK_NBLCK
+        # 锁被占用时非阻塞失败返回 False，with 主体照常在无锁状态下执行，
+        # 互斥契约静默失效。现在未获得锁显式抛 OSError。
+        if not self.acquire():
+            raise OSError(
+                f"FileLock: could not acquire lock on {self.lock_file_path!r} "
+                f"(lock held by another process/thread); use acquire()'s bool "
+                f"result to implement wait/retry"
+            )
         return self
     def do(self, f=print, pre_f=None, sub_f=None):
         """Apply a function for side effects, return self.
@@ -248,21 +264,31 @@ def persist(func: Optional[Callable] = None,
             need_refresh = call_force
             
             if not need_refresh and os.path.exists(cache_path):
-                with FileLock(cache_path):
+                # BUG-212: 原 with FileLock(cache_path) 形态在锁被占用（另一
+                # 进程正在写缓存）时静默放行，会读到半截/损坏 JSON——可解析
+                # 前缀时更是静默数据损坏。与写路径（BUG-144）对称：显式检查
+                # acquire()，未获锁按缓存未命中处理（重算，自然降级不崩）。
+                _rlock = FileLock(cache_path)
+                if _rlock.acquire():
                     try:
                         with open(cache_path, "r", encoding="utf-8") as f_cache:
                             cache_data = json.load(f_cache)
-                    
+
                         result = cache_data.get('result')
                         start_time = cache_data.get('start_time')
                         end_time = cache_data.get('end_time')
-                        
+
                         if call_force_when is not None and start_time is not None and end_time is not None:
                             if call_force_when(result, start_time, end_time):
                                 need_refresh = True
                     except Exception:
                         need_refresh = True
                         cache_data = None
+                    finally:
+                        _rlock.release()
+                else:
+                    need_refresh = True
+                    cache_data = None
 
             if not need_refresh and cache_data is not None:
                 return cache_data['result']
