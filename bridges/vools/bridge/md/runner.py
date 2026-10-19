@@ -78,10 +78,19 @@ def resolve_imports(
     md_dir: str,
     build_dir: str,
     visited: Optional[set] = None,
+    root_path: Optional[str] = None,
 ) -> List[CodeBlock]:
-    """解析 #!import 指令，展开所有块（包括导入的）。"""
+    """解析 #!import 指令，展开所有块（包括导入的）。
+
+    M4 修复：visited 用同一个 set 引用向下传递（不 copy），
+    避免菱形依赖（A→B, A→C, B→D, C→D）中 D 被重复展开并重复执行。
+    root_path 传入时，先把根 md 文件自身加入 visited（防循环 A→B→A）。
+    """
     if visited is None:
         visited = set()
+        if root_path:
+            _rp = os.path.abspath(root_path)
+            visited.add(_rp)
 
     imports = []
     for block in parsed.blocks:
@@ -130,7 +139,7 @@ def resolve_imports(
             target_parsed,
             os.path.dirname(target_path),
             build_dir,
-            visited.copy(),
+            visited,  # M4：共享引用，兄弟分支互可见
         )
 
         for ib in imported_blocks:
@@ -880,7 +889,7 @@ def _dispatch_exec(
         block_prelude = block.directives.get("prelude")
         if block_prelude is not None:
             config = {**config, "prelude": block_prelude}
-        return _execute_python(block.content, context, config, args)
+        return _execute_python(block.content, context, config, args, timeout)
 
     if lang in ("shell", "bash", "sh"):
         return _execute_shell(block.content, context, config, workdir, timeout, args)
@@ -1610,12 +1619,15 @@ def _execute_database_block(
             cmd = [
                 cli,
                 "-u", params["user"],
-                "-p" + params["password"],
                 "-h", params["host"],
                 "-P", params["port"],
                 params["dbname"],
                 "-e", "source " + tmp_path,
             ]
+            # M2 修复：不用 -p<password> argv（进程表可读），改 MYSQL_PWD 环境变量
+            _env = dict(os.environ)
+            if params.get("password"):
+                _env["MYSQL_PWD"] = params["password"]
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -1623,6 +1635,7 @@ def _execute_database_block(
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout,
+                env=_env,
             )
             return proc.stdout, proc.stderr, proc.returncode
         except subprocess.TimeoutExpired:
@@ -1849,52 +1862,78 @@ def _build_prelude_env(config: Dict) -> Dict[str, Any]:
     return prelude
 
 
-def _execute_python(content: str, context: Dict, config: Dict, args: Optional[str]) -> Tuple[str, str, int]:
-    """执行 Python 代码。"""
-    try:
-        import io
+def _execute_python(
+    content: str,
+    context: Dict,
+    config: Dict,
+    args: Optional[str],
+    timeout: Optional[int] = None,
+) -> Tuple[str, str, int]:
+    """执行 Python 代码（进程内 exec）。
 
-        exec_env = dict(context.get("env", {}))
-        exec_env.update(_build_prelude_env(config))
-        exec_env["__md_config"] = config
-        exec_env["__name__"] = "__md_block__"
-        exec_env["__builtins__"] = __builtins__
-
-        if args:
-            exec_env["__md_args"] = args.split()
-
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        old_stdin = sys.stdin
-        stdout_buf = io.StringIO()
-        stderr_buf = io.StringIO()
-
-        # 若上下文提供了 stdin 数据，重定向 sys.stdin
-        stdin_data = context.get("stdin")
-        stdin_buf = io.StringIO(stdin_data) if stdin_data is not None else None
-
+    注意：python 是进程内执行，无法像子进程那样硬 kill。
+    当 timeout > 0 时用线程级软超时（返回 rc=124，但工作线程可能仍在跑，
+    无法真正中断；适用于错误/死循环检测，不适用于严格资源隔离）。
+    """
+    def _run() -> Tuple[str, str, int]:
         try:
-            sys.stdout = stdout_buf
-            sys.stderr = stderr_buf
-            if stdin_buf is not None:
-                sys.stdin = stdin_buf
-            # 单命名空间执行：prelude 注入的模块/符号必须作为模块级全局可见，
-            # 否则块内 def 的函数 __globals__ 指向 globals 而看不到 prelude
-            # （曾用 exec(code, globals, exec_env) 双字典，导致 `def main(): base64...`
-            #  在函数体内解析不到 base64 → NameError，docs/33 Phase 1 prelude 失效）。
-            exec(content, exec_env)
-            exit_code = 0
+            import io
+
+            exec_env = dict(context.get("env", {}))
+            exec_env.update(_build_prelude_env(config))
+            exec_env["__md_config"] = config
+            exec_env["__name__"] = "__md_block__"
+            exec_env["__builtins__"] = __builtins__
+
+            if args:
+                exec_env["__md_args"] = args.split()
+
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+            old_stdin = sys.stdin
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+
+            # 若上下文提供了 stdin 数据，重定向 sys.stdin
+            stdin_data = context.get("stdin")
+            stdin_buf = io.StringIO(stdin_data) if stdin_data is not None else None
+
+            try:
+                sys.stdout = stdout_buf
+                sys.stderr = stderr_buf
+                if stdin_buf is not None:
+                    sys.stdin = stdin_buf
+                # 单命名空间执行：prelude 注入的模块/符号必须作为模块级全局可见，
+                # 否则块内 def 的函数 __globals__ 指向 globals 而看不到 prelude
+                # （曾用 exec(code, globals, exec_env) 双字典，导致 `def main(): base64...`
+                #  在函数体内解析不到 base64 → NameError，docs/33 Phase 1 prelude 失效）。
+                exec(content, exec_env)
+                exit_code = 0
+            finally:
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                sys.stdin = old_stdin
+
+            return stdout_buf.getvalue(), stderr_buf.getvalue(), exit_code
+
+        except SystemExit as e:
+            return "", str(e), e.code if isinstance(e.code, int) else 0
+        except Exception as e:
+            return "", str(e), 1
+
+    if timeout and timeout > 0:
+        import concurrent.futures as _cf
+        _pool = _cf.ThreadPoolExecutor(max_workers=1)
+        _fut = _pool.submit(_run)
+        try:
+            return _fut.result(timeout=timeout)
+        except _cf.TimeoutError:
+            return "", f"python 执行超时 ({timeout}s)", 124
         finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
-            sys.stdin = old_stdin
+            # 不等待工作线程退出（可能仍在跑），快速返回
+            _pool.shutdown(wait=False)
 
-        return stdout_buf.getvalue(), stderr_buf.getvalue(), exit_code
-
-    except SystemExit as e:
-        return "", str(e), e.code if isinstance(e.code, int) else 0
-    except Exception as e:
-        return "", str(e), 1
+    return _run()
 
 
 def _execute_shell(
@@ -1905,18 +1944,23 @@ def _execute_shell(
     timeout: int,
     args: Optional[str],
 ) -> Tuple[str, str, int]:
-    """执行 Shell 代码。"""
+    """执行 Shell 代码。
+
+    安全加固（M1 修复）：不用 shell=True 拼接（避免命令注入），
+    显式定位 bash/sh 并用 argv 数组传 `-c`。
+    """
     env = dict(context.get("env", {}))
     stdin_data = context.get("stdin")
 
-    if args:
-        full_cmd = f"{content}\n{args}"
-    else:
-        full_cmd = content
+    # 定位 shell 二进制
+    shell_bin = _shutil_which("bash") or _shutil_which("sh")
+    if not shell_bin:
+        return "", "shell 未找到 bash/sh，请安装", 1
+
+    full_cmd = content if not args else f"{content}\n{args}"
 
     proc = subprocess.run(
-        full_cmd,
-        shell=True,
+        [shell_bin, "-c", full_cmd],
         cwd=workdir,
         capture_output=True,
         text=True,
@@ -2082,7 +2126,25 @@ def _execute_via_bridge(
         if "args" in sig_params and args is not None:
             kwargs["args"] = args
 
-        result = helper.execute_code(block.content, **kwargs)
+        # bridge helper 若本身不支持 timeout 参数，则用线程级软超时兜底
+        _effective_timeout = int(timeout) if timeout else 0
+        _needs_wrapper = _effective_timeout > 0 and "timeout" not in sig_params
+
+        if _needs_wrapper:
+            import concurrent.futures as _cf
+            _pool = _cf.ThreadPoolExecutor(max_workers=1)
+            _fut = _pool.submit(helper.execute_code, block.content, **kwargs)
+            try:
+                result = _fut.result(timeout=_effective_timeout)
+            except _cf.TimeoutError:
+                return "", (
+                    f"{block.language} 执行超时 ({_effective_timeout}s) "
+                    f"（bridge helper 不支持 timeout 参数，线程级软超时触发）"
+                ), 124
+            finally:
+                _pool.shutdown(wait=False)
+        else:
+            result = helper.execute_code(block.content, **kwargs)
 
         if isinstance(result, bytes):
             # 子进程输出可能为 GBK（Windows PowerShell 5.1）/UTF-16，先探测再解码
@@ -2090,7 +2152,17 @@ def _execute_via_bridge(
             body, _bom = strip_bom(result)
             result = body.decode(info["encoding"], errors="replace")
 
-        return str(result), "", 0
+        _result_str = str(result)
+
+        # M3 修复：bridge helper 不返回 rc，用启发式检测明显错误（fail-closed）
+        _err_markers = ("error", "failed", "compilation failed", "编译错误",
+                        "执行失败", "traceback", "exception", "cannot", "undefined")
+        _lower = _result_str.lower()
+        if any(m in _lower for m in _err_markers):
+            # 结果看起来像错误，返回 rc=1（stderr 携带原输出）
+            return "", _result_str, 1
+
+        return _result_str, "", 0
 
     except ModuleNotFoundError as exc:
         # 区分是 vools.bridge 没装还是 helper 模块缺失
@@ -2400,7 +2472,7 @@ def run_md(
 
     md_dir = os.path.dirname(os.path.abspath(md_path))
 
-    all_blocks = resolve_imports(parsed, md_dir, build_dir)
+    all_blocks = resolve_imports(parsed, md_dir, build_dir, root_path=md_path)
 
     config = load_config(fd.config, md_dir)
 
