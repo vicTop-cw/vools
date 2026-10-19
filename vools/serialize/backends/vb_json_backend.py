@@ -85,8 +85,9 @@ class VBJsonBackend(BaseBackend):
         elif char == '[':
             return self._parse_array(json_str, index)
         else:
-            self._errors.append("Invalid JSON: must start with '{' or '['")
-            return None
+            # BUG-203：顶层标量（数字/字符串/bool/null）必须分派到 _parse_value，
+            # 否则 dumps(1.5) -> loads 会得到 None，标量数据丢失。
+            return self._parse_value(json_str, index)
 
     def get_errors(self) -> List[str]:
         """
@@ -274,7 +275,15 @@ class VBJsonBackend(BaseBackend):
         elif char == 'n':
             return self._parse_null(json_str, index)
         else:
-            return self._parse_number(json_str, index)
+            # 合法的数字起始字符，或 Infinity / NaN 字面量起始（I/N），才交给
+            # _parse_number；非法起始字符（如 'invalid' 的小写 'i'）返回 None 并
+            # 推进 index[0]，避免内层 while 挂死（BUG-185 同类）。
+            if char in '+-.0123456789' or char in 'IN':
+                return self._parse_number(json_str, index)
+            self._errors.append("Invalid value at position {}".format(index[0]))
+            if index[0] < len(json_str):
+                index[0] += 1
+            return None
 
     def _parse_string(self, json_str: str, index: List[int]) -> str:
         """
@@ -346,7 +355,16 @@ class VBJsonBackend(BaseBackend):
             解析后的数字（int 或 float）
         """
         self._skip_char(json_str, index)
-        
+
+        # BUG-203：识别标准 JSON 非有限浮点字面量（Infinity / -Infinity / NaN），
+        # 否则 _stringify 的 Infinity 会被 int() 吞成 0 / None，数据失真。
+        for _lit, _val in (('Infinity', float('inf')),
+                           ('-Infinity', float('-inf')),
+                           ('NaN', float('nan'))):
+            if json_str[index[0]:index[0]+len(_lit)] == _lit:
+                index[0] += len(_lit)
+                return _val
+
         value = []
         while index[0] >= 0 and index[0] < len(json_str):
             char = json_str[index[0]]
@@ -478,6 +496,15 @@ class VBJsonBackend(BaseBackend):
             return 'true' if obj else 'false'
         
         if isinstance(obj, (int, float)):
+            # BUG-203：非有限浮点必须输出标准 JSON 字面量（与 json.dumps 的
+            # Infinity / NaN 对齐），否则 loads 端会得到 0 / None，数据失真。
+            if isinstance(obj, float):
+                if obj != obj:
+                    return 'NaN'
+                if obj == float('inf'):
+                    return 'Infinity'
+                if obj == float('-inf'):
+                    return '-Infinity'
             return str(obj).replace(',', '.')
         
         if isinstance(obj, str):
