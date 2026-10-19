@@ -192,20 +192,27 @@ def partition_all(n: int, iterable: Iterable[A]) -> List[List[A]]:
 
     Example:
         >>> partition_all(3, range(10))
-        [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
+        [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, None, None]]
         >>> partition_all(2, ['a', 'b', 'c'])
-        [['a', 'b'], ['c']]
+        [['a', 'b'], ['c', None]]
+
+    Note:
+        BUG-213: 原实现与 partition 逐字相同（末组畸形不满），违背本函数
+        「所有组都有相同大小」的文档契约。现按惯例（参照 toolz
+        partition_all）末组以 None 补齐到 n，与 partition 语义区分。
     """
     return list(_partition_all(n, iterable))
 
 
 def _partition_all(n, iterable):
-    """partition_all 的生成器实现"""
+    """partition_all 的生成器实现：末组用 None 补齐到 n（BUG-213）"""
     it = iter(iterable)
     while True:
         batch = list(islice(it, n))
         if not batch:
             break
+        if len(batch) < n:
+            batch.extend([None] * (n - len(batch)))
         yield batch
 
 
