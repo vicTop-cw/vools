@@ -185,7 +185,13 @@ class VBJsonBackend(BaseBackend):
             if not key:
                 break
             
+            # BUG-185 兜底：子解析器未推进 index[0] 会让 while True 挂死。
+            before = index[0]
             value = self._parse_value(json_str, index)
+            if index[0] == before:
+                if index[0] < len(json_str):
+                    index[0] += 1
+                self._errors.append("Invalid value at position {}".format(index[0]))
             result[key] = value
         
         return result
@@ -226,7 +232,13 @@ class VBJsonBackend(BaseBackend):
                 index[0] += 1
                 continue
             
+            # BUG-185 兜底：任何子解析器未推进 index[0] 都会让 while True 挂死。
+            before = index[0]
             value = self._parse_value(json_str, index)
+            if index[0] == before:
+                if index[0] < len(json_str):
+                    index[0] += 1
+                self._errors.append("Invalid value at position {}".format(index[0]))
             result.append(value)
         
         return result
@@ -346,6 +358,11 @@ class VBJsonBackend(BaseBackend):
         
         num_str = ''.join(value)
         if not num_str:
+            # BUG-185: 空收集时不推进 index[0] 会让 _parse_array 的
+            # while True 原地重进同一字符 → 无限循环挂死。
+            if index[0] < len(json_str):
+                index[0] += 1
+            self._errors.append("Invalid Number at position {}".format(index[0]))
             return 0
         
         try:
@@ -376,6 +393,9 @@ class VBJsonBackend(BaseBackend):
             return False
         
         self._errors.append("Invalid Boolean at position {}".format(index[0]))
+        # BUG-185: 失败必须推进 index[0]，否则 _parse_array 无限循环。
+        if index[0] < len(json_str):
+            index[0] += 1
         return False
 
     def _parse_null(self, json_str: str, index: List[int]) -> None:
@@ -396,6 +416,9 @@ class VBJsonBackend(BaseBackend):
             return None
         
         self._errors.append("Invalid null value at position {}".format(index[0]))
+        # BUG-185: 失败必须推进 index[0]，否则 _parse_array 无限循环。
+        if index[0] < len(json_str):
+            index[0] += 1
         return None
 
     def _parse_key(self, json_str: str, index: List[int]) -> str:
