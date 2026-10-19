@@ -172,6 +172,13 @@ def rself(cls: Type) -> Type:
         if name.startswith('__') and name.endswith('__'):
             return attr
 
+        # 排除集合：类可声明 _rself_exclude 以跳过返回值包装（例如 VDate.date()
+        # 应返回原生 datetime.date，包装成 VDate 会触发 TypeError 崩溃）。
+        # 缺省为空集，不影响既有 @rself 类的行为（BUG-200）。
+        _exclude = getattr(type(self), '_rself_exclude', ())
+        if name in _exclude:
+            return attr
+
         # 获取属性在类中的原始定义（用于区分 property / classmethod / staticmethod）
         attr_def = None
         for base in type(self).__mro__:

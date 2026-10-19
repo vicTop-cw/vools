@@ -53,6 +53,10 @@ class VDate(datetime):
         fmt: 日期格式字符串，支持标准Python格式和自定义格式(yyyy, MM, dd等)
     """
 
+    # BUG-200: .date() 应返回原生 datetime.date，跳过 @rself 的返回值包装
+    #（包装成 VDate 会 TypeError 崩溃）。
+    _rself_exclude = {'date'}
+
     def __init__(self, dt=None, fmt=None):
         """初始化 VDate 实例。
         
@@ -647,14 +651,17 @@ class VDate(datetime):
         Returns:
             日期相等返回 True，否则返回 False
         """
+        # 注意：不用 self.date()/other.date() 参与比较。@rself 装饰器会把
+        # datetime.date 返回值用 VDate 构造包装，而 VDate.__new__ 不识别 date
+        # 类型会 raise TypeError（BUG-199）。改用 (year, month, day) 元组比较。
         if isinstance(other, VDate):
-            return self.date() == other.date()
+            return (self.year, self.month, self.day) == (other.year, other.month, other.day)
         elif isinstance(other, (datetime, date)):
-            return self.date() == other.date()
+            return (self.year, self.month, self.day) == (other.year, other.month, other.day)
         elif isinstance(other, str):
             try:
                 other_date = datetime.strptime(other, '%Y-%m-%d').date()
-                return self.date() == other_date
+                return (self.year, self.month, self.day) == (other_date.year, other_date.month, other_date.day)
             except Exception:
                 return False
         return False
@@ -668,14 +675,16 @@ class VDate(datetime):
         Returns:
             self < other 返回 True，否则返回 False
         """
+        # 与 __eq__ 同理：不用 self.date()/other.date()（@rself 会把它包装成
+        # VDate 并触发 TypeError），改用 (year, month, day) 元组比较（BUG-199）。
         if isinstance(other, VDate):
-            return self.date() < other.date()
+            return (self.year, self.month, self.day) < (other.year, other.month, other.day)
         elif isinstance(other, (datetime, date)):
-            return self.date() < other.date()
+            return (self.year, self.month, self.day) < (other.year, other.month, other.day)
         elif isinstance(other, str):
             try:
                 other_date = datetime.strptime(other, '%Y-%m-%d').date()
-                return self.date() < other_date
+                return (self.year, self.month, self.day) < (other_date.year, other_date.month, other_date.day)
             except Exception:
                 return False
         return False
