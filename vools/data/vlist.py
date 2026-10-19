@@ -276,11 +276,19 @@ class VList(Seq, metaclass=ListLikeMeta):
 
         Returns:
             切片后的 VList
+
+        Raises:
+            ValueError: 当 step 为 0 时抛出（与 Python 内建切片语义一致）
         """
         if start is None:
             start = 0
         if stop is None:
             stop = len(self)
+
+        if step == 0:
+            # BUG-188: step=0 时 i += step 永不推进，start > stop 场景下
+            # 循环条件 i > stop 且 i < len 恒为真，构成无限循环挂死。
+            raise ValueError("slice step cannot be zero")
 
         start = max(0, start) if start >= 0 else max(len(self) + start, 0)
         stop = min(len(self), stop) if stop >= 0 else min(len(self) + stop, len(self))
