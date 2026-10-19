@@ -16,6 +16,7 @@ __all__ = ['TaskStatus', 'Task', 'DagValidationError']
 
 import pickle
 import base64
+import io
 from enum import Enum
 from typing import Optional, Any, Dict, Set
 from datetime import datetime
@@ -28,6 +29,47 @@ from ...core.datetime_compat import datetime_fromisoformat
 #（函数、自定义类实例等），无条件 json.dumps 会抛 TypeError，任务无法持久化。
 # 这里统一用 pickle+base64 标记恢复，实在不行回退 repr 保证不崩溃。
 _PICKLE_MARKER = "__vools_pickle__:"
+
+
+class _SafeUnpickler(pickle.Unpickler):
+    """BUG-207: 受限反序列化器，find_class 走白名单，杜绝 __reduce__ gadget RCE。
+
+    仅允许恢复函数对象与常见标准库类型；os/subprocess/sys/__main__ 及一切
+    未在白名单的全局一律拒绝，抛 UnpicklingError（_restore_pickle 捕获后按纯
+    字符串回退，不执行任何 payload）。
+    """
+
+    _ALLOWED = {
+        'builtins': {
+            'function', 'globals', 'staticmethod', 'classmethod', 'object',
+            'slice', 'complex', 'frozenset', 'set',
+            # 异常层级（创建异常对象本身无害，构造参数为普通对象）
+            'BaseException', 'Exception', 'ArithmeticError', 'LookupError',
+            'ValueError', 'TypeError', 'KeyError', 'RuntimeError', 'AttributeError',
+            'NotImplementedError', 'IndexError', 'NameError', 'OSError',
+            'FileNotFoundError', 'PermissionError', 'StopIteration', 'ImportError',
+            'ModuleNotFoundError', 'OverflowError', 'ZeroDivisionError',
+            'UnicodeError', 'RecursionError', 'MemoryError', 'EOFError',
+            'ConnectionError', 'BrokenPipeError', 'ReferenceError',
+        },
+        'datetime': {'datetime', 'date', 'time', 'timedelta', 'timezone'},
+        'decimal': {'Decimal'},
+        'uuid': {'UUID'},
+        'collections': {'OrderedDict', 'defaultdict', 'deque', 'Counter'},
+    }
+
+    def find_class(self, module, name):
+        allowed = self._ALLOWED.get(module)
+        if allowed and name in allowed:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(
+            f"forbidden global {module}.{name} in vools task payload (BUG-207)"
+        )
+
+
+def _safe_pickle_loads(data: bytes):
+    """受限 pickle.loads，仅允许白名单全局（BUG-207）。"""
+    return _SafeUnpickler(io.BytesIO(data)).load()
 
 
 def _json_default(obj):
@@ -43,10 +85,10 @@ def _json_default(obj):
 
 
 def _restore_pickle(obj):
-    """递归恢复 __vools_pickle__ 标记字符串为原始对象"""
+    """递归恢复 __vools_pickle__ 标记字符串为原始对象（BUG-207：受限反序列化）"""
     if isinstance(obj, str) and obj.startswith(_PICKLE_MARKER):
         try:
-            return pickle.loads(
+            return _safe_pickle_loads(
                 base64.b64decode(obj[len(_PICKLE_MARKER):].encode("ascii"))
             )
         except Exception:

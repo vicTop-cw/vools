@@ -148,9 +148,10 @@ class TaskQueue:
         func_to_serialize = getattr(func, '__wrapped__', func)
         func_name = getattr(func_to_serialize, '__name__', '')
 
-        # BUG-150: lambda/局部函数既不能路径格式（getattr "<lambda>" 失败）也不能
-        # pickle（attribute lookup 失败）。注册到 _func_registry，生成 __registry__ 标记。
-        if func_name == '<lambda>':
+        # BUG-150/BUG-207: lambda 与 __main__ 函数既不能走路径格式（getattr "<lambda>"
+        # 失败），也不能用 pickle 持久化（pickle.loads 反序列化是任意代码执行 RCE）。
+        # 统一注册到进程内 _func_registry，生成 __registry__ 标记（同进程恢复）。
+        if func_name == '<lambda>' or getattr(func_to_serialize, '__module__', '') == '__main__':
             key = id(func_to_serialize)
             self._func_registry[key] = func_to_serialize
             return f"__registry__:{key}"
@@ -158,20 +159,6 @@ class TaskQueue:
         # 优先使用函数路径方式，这样可以正确处理装饰器
         try:
             return f"{func_to_serialize.__module__}:{func_name}"
-        except Exception:
-            pass
-
-        # 如果函数在 __main__ 模块中，尝试使用 pickle
-        if getattr(func_to_serialize, '__module__', '') == '__main__':
-            try:
-                pickle_data = pickle.dumps(func_to_serialize)
-                return base64.b64encode(pickle_data).decode('utf-8')
-            except Exception as e:
-                raise ValueError(f"Cannot pickle function in __main__: {e}")
-
-        try:
-            pickle_data = pickle.dumps(func_to_serialize)
-            return base64.b64encode(pickle_data).decode('utf-8')
         except Exception as e:
             raise ValueError(f"Cannot serialize function: {e}")
 
@@ -195,10 +182,13 @@ class TaskQueue:
             func = getattr(module, func_name)
             # 如果函数被装饰器包装，获取原始函数
             return getattr(func, '__wrapped__', func)
-        else:
-            # pickle格式
-            pickle_data = base64.b64decode(func_data.encode('utf-8'))
-            return pickle.loads(pickle_data)
+        # BUG-207: pickle 反序列化会执行 __reduce__ gadget（任意代码执行 RCE），已禁用。
+        # 函数仅通过 __registry__:<id>（同进程）或 <module>:<func> 路径恢复。
+        raise ValueError(
+            f"unsupported func_data format (BUG-207): pickle deserialization is "
+            f"disabled; use '__registry__:<id>' or '<module>:<func>', got: "
+            f"{func_data[:40]!r}"
+        )
 
     def execute_task(self, task: Task) -> Any:
         """
