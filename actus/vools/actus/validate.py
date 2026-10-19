@@ -14,16 +14,22 @@
 __all__ = ['validate_action', 'validate_graph', 'analyze_graph', 'check_entry_block',
            'check_args_schema', 'check_triggers', 'check_secrets',
            'check_block_languages', 'language_notices',
-           'validate_schema_md', 'check_schema_md_structure']
+           'validate_schema_md', 'check_schema_md_structure',
+           'check_classification', 'classification_notices', 'normalize_multi_field']
 
 import json
 import os
 import re
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from .errors import ActionError
 from .model import Action, parse_cfg_from_file
-from .constants import TRUST_LEVELS
+from .constants import (
+    TRUST_LEVELS,
+    KIND_LEVELS, PURPOSE_LEVELS, INDUSTRY_LEVELS, TRIGGER_DECL_LEVELS,
+    is_known_kind, is_known_purpose, is_known_industry, is_known_trigger_decl,
+    is_known_license, is_known_pricing, is_known_declared_feature,
+)
 
 def _resolve_schema_path() -> str:
     """定位 action.schema.json。
@@ -95,6 +101,13 @@ def validate_action(action: Action) -> List[str]:
     if meta.get('trust') not in TRUST_LEVELS:
         errors.append(f'schema: trust 非法: {meta.get("trust")!r}（仅允许 {TRUST_LEVELS}）')
 
+    # 3b) 分类体系 v2.0：kind 验证（未知值 → 打回，docs/03 §2.4）
+    kind = meta.get('kind')
+    if kind is not None and not is_known_kind(kind):
+        errors.append(
+            f'schema: kind 非法: {kind!r}（仅允许 {KIND_LEVELS}，'
+            'docs/03 §2.4 未知 kind 打回——决定执行逻辑，错误值导致执行混乱）')
+
     # 4) usage 类型（无 jsonschema 时的 fallback 检查）
     if 'usage' in meta and not isinstance(meta.get('usage'), str):
         errors.append(f'schema: usage 必须是字符串，实际为 {type(meta.get("usage")).__name__}')
@@ -118,6 +131,149 @@ def validate_action(action: Action) -> List[str]:
     errors.extend(check_ai_meta(meta))
 
     return errors
+
+
+def normalize_multi_field(values, known_levels: Tuple[str, ...], max_n: int = 5) -> Tuple[List[str], List[str]]:
+    """多值字段标准化（docs/03 §2.3）。
+
+    小写归一 → 去重 → 截断到 max_n；已知值进 valid，未知值进 warnings（保留不丢弃，
+    前向兼容：未来追加已知值后这些值立即生效）。
+
+    Returns:
+        (valid, warnings) —— valid 是归一后的已知值列表，warnings 是未知值提示。
+    """
+    if values is None:
+        return [], []
+    if isinstance(values, str):
+        values = [values]
+    valid: List[str] = []
+    warnings: List[str] = []
+    seen = set()
+    for v in values:
+        if not isinstance(v, str) or not v.strip():
+            continue
+        norm = v.strip().lower()
+        if norm in seen:
+            continue
+        seen.add(norm)
+        if norm in known_levels:
+            valid.append(norm)
+        else:
+            warnings.append(f'未知值: {v!r}（已接受，但可能影响索引覆盖）')
+    # 截断按"已收集总数"计（已知+未知），超限时只截已知值并追加警告
+    if len(valid) + len(warnings) > max_n:
+        warnings.append(f'值数量超出上限 {max_n}，已截断')
+        valid = valid[:max_n]
+    return valid, warnings
+
+
+def check_classification(meta: Dict) -> List[str]:
+    """分类体系 v2.0 验证（docs/03 §2.4 验证分级表）——只含打回级。
+
+    kind 是唯一打回级字段：它决定系统如何执行该动作（exec/link/demo/...），
+    错误值导致执行逻辑混乱（如把 link 当 exec 执行）。已在 validate_action
+    第 3b 步内联校验，此函数供独立调用（如 CLI check 单项验证）。
+    """
+    errors: List[str] = []
+    kind = meta.get('kind')
+    if kind is not None and not is_known_kind(kind):
+        errors.append(
+            f'schema: kind 非法: {kind!r}（仅允许 {KIND_LEVELS}，docs/03 §2.4）')
+    return errors
+
+
+def classification_notices(meta: Dict) -> List[str]:
+    """分类体系 v2.0 警告（docs/03 §2.4 验证分级表）——警告级，不判失败。
+
+    purpose/industry/trigger_decl 未知值 → 警告（分类标签，不影响执行逻辑，
+    只影响索引覆盖；未来追加已知值后立即生效）。多值字段超限 → 警告。
+    kind × purpose 语义冲突 → 警告（docs/03 §2.4 冲突检测）。
+    """
+    notices: List[str] = []
+
+    # purpose（多值，默认 [utility]）
+    purpose = meta.get('purpose')
+    if purpose is not None:
+        valid, warns = normalize_multi_field(purpose, PURPOSE_LEVELS)
+        notices.extend(f'purpose {w}' for w in warns)
+        if purpose in ('', [], ('',)) or (isinstance(purpose, list) and not purpose):
+            notices.append('purpose 为空，默认按 [utility] 处理')
+
+    # industry（多值，默认 [general]）
+    industry = meta.get('industry')
+    if industry is not None:
+        valid, warns = normalize_multi_field(industry, INDUSTRY_LEVELS)
+        notices.extend(f'industry {w}' for w in warns)
+
+    # trigger 声明（多值，默认 [manual]）——注意这是声明字段，
+    # 与 ## Triggers 段（triggers.py 真源）互补，不校验一致性
+    trigger_decl = meta.get('trigger')
+    if trigger_decl is not None and not isinstance(trigger_decl, (list, str)):
+        notices.append(f'trigger 必须是字符串或列表，实际为 {type(trigger_decl).__name__}')
+    elif trigger_decl is not None:
+        _, warns = normalize_multi_field(trigger_decl, TRIGGER_DECL_LEVELS)
+        notices.extend(f'trigger {w}' for w in warns)
+
+    # kind × purpose 语义冲突检测（警告级，docs/03 §2.4）
+    kind = meta.get('kind')
+    kind_l = str(kind).lower() if kind else ''
+    purpose_list, _ = normalize_multi_field(meta.get('purpose') or 'utility', PURPOSE_LEVELS)
+    if kind_l == 'doc' and any(p in ('source', 'sink', 'transform', 'compute', 'orchestrator') for p in purpose_list):
+        notices.append(
+            f'kind=doc 与 purpose={purpose_list} 语义冲突：纯文档不应声明执行用途（docs/03 §2.4）')
+    if kind_l == 'template' and 'orchestrator' in purpose_list:
+        notices.append(
+            f'kind=template 与 purpose=[orchestrator] 语义冲突：模板不编排（docs/03 §2.4）')
+
+    # ── 生态层声明（docs/03 §5.2 许可证 / §5.4 自声明特性） ──
+
+    # license（单值，默认 mit）——未知值警告（不阻断：作者可能用自定义许可证）
+    license_decl = meta.get('license')
+    if license_decl and not is_known_license(license_decl):
+        notices.append(
+            f'license 未知值: {license_decl!r}（默认 mit；已接受，'
+            '但消费者可能无法识别——建议补 license_url）')
+    if str(license_decl).lower() == 'custom' and not meta.get('license_url'):
+        notices.append('license=custom 但缺 license_url（许可证链接，便于使用者查阅）')
+
+    # pricing（单值，默认 free）——paid/subscription 在未接支付前按 gated 免费放行 + 警告
+    pricing_decl = meta.get('pricing')
+    if pricing_decl and not is_known_pricing(pricing_decl):
+        notices.append(f'pricing 未知值: {pricing_decl!r}（默认 free）')
+    if str(pricing_decl).lower() in ('paid', 'subscription'):
+        notices.append(
+            f'pricing={pricing_decl} 已声明，但当前版本未接支付通道：'
+            '按 gated 免费放行（docs/03 §5.2 gated 付费预留）')
+
+    # declared_features（多值，默认 []）——未知值警告；与扫描不符的检测在
+    # trust 决策侧完成（本模块只做形状与已知值校验）
+    declared = meta.get('declared_features')
+    if declared is not None and not isinstance(declared, (list, str)):
+        notices.append(f'declared_features 必须是列表或字符串，实际为 {type(declared).__name__}')
+    elif declared:
+        values = declared if isinstance(declared, list) else [declared]
+        unknown = [v for v in values
+                   if isinstance(v, str) and not is_known_declared_feature(v)]
+        if unknown:
+            notices.append(f'declared_features 未知值: {unknown}（已知值见 constants.DECLARED_FEATURE_LEVELS）')
+
+    # demo（string，默认 ""）——路径不存在 → 警告（演示文件降低采用门槛）
+    demo = meta.get('demo')
+    if demo:
+        candidates = [str(demo), os.path.join(os.path.dirname(action_path_of(meta) or ''), str(demo))]
+        if not any(os.path.isfile(c) for c in candidates):
+            notices.append(f'demo 文件不存在: {demo!r}（演示文件降低采用门槛，建议补齐）')
+
+    return notices
+
+
+def action_path_of(meta: Dict) -> str:
+    """meta 内记录的动作文件路径（缺 key 返回空串）。
+
+    indexer/扫描侧会把 _path 注入 meta；独立调用（只有 meta 无 _path）时返回空串，
+    demo 相对路径的候选退化为原值判断。
+    """
+    return meta.get('_path') or ''
 
 
 def check_entry_block(action: Action) -> List[str]:
@@ -536,8 +692,8 @@ def validate_schema_md(action: Action) -> List[str]:
     errors: List[str] = []
     meta = action.meta
 
-    # C04: 必填字段
-    for k in ('id', 'name', 'version', 'trust', 'entry'):
+    # C04: 必填字段（规范 L126 — kind 也是必填，不设默认）
+    for k in ('id', 'name', 'version', 'trust', 'entry', 'kind'):
         if not meta.get(k):
             errors.append(f'schema: 必填字段缺失: {k}')
 
@@ -545,10 +701,16 @@ def validate_schema_md(action: Action) -> List[str]:
     if meta.get('trust') not in TRUST_LEVELS:
         errors.append(f'schema: trust 非法: {meta.get("trust")!r}（仅允许 {TRUST_LEVELS}）')
 
+    # S3: kind 取值（规范 L103 — 打回级）
+    kind = meta.get('kind')
+    if kind is not None and not is_known_kind(kind):
+        errors.append(f'schema: kind 非法: {kind!r}（仅允许 {KIND_LEVELS}）')
+
     # C06: entry 指向存在的代码块
     errors.extend(check_entry_block(action))
 
-    # C07: args 契约自检
+    # C07: args 契约自检（meta['args'] 已由 model._parse_schema_md_action 从
+    # ## Input Schema JSON 代码块自动提取）
     errors.extend(check_args_schema(meta))
 
     # C08: dependencies 格式
@@ -582,10 +744,14 @@ def validate_schema_md(action: Action) -> List[str]:
     if not action.blocks:
         errors.append('schema: 未找到任何代码块（需要至少一个实现块）')
 
-    # C12: tag 唯一性
+    # C12: tag 唯一性（tag 已是 list，+= 安全）
     all_tags = []
     for b in action.blocks:
-        all_tags.extend(b['tag'])
+        t = b.get('tag', [])
+        if isinstance(t, list):
+            all_tags += t
+        elif t:
+            all_tags.append(t)
     seen = set()
     for t in all_tags:
         if t in seen:

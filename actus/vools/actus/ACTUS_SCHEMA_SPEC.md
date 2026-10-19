@@ -6,6 +6,29 @@
 
 ---
 
+### ⚠️ 双层 front-matter 是 Actus 私有约定（非 GFM 标准）
+
+Actus 采用"两个连续的 YAML front-matter 区段"设计：
+
+```
+---          ← 区域 0 开始（AIGC 合规留痕）
+aigc: true
+...
+---          ← 区域 0 结束（区域 1 的 --- 必须紧跟，不能插空行）
+---          ← 区域 1 开始（动作语义元数据）
+id: ...
+...
+---          ← 区域 1 结束
+```
+
+**所有通用 Markdown front-matter 工具（mkdocs / mdformat / pyyaml）只认识文件开头一段
+`---...---`**，Actus 双层设计是私有发明。影响范围：
+- `strip_frontmatter()` 剥第一段 → `parse_action_metadata()` 剥第二段 → 依次处理
+- 通用 front-matter 工具加载 `.actus.schema.md` 时会把两段拼起来得到坏掉的 YAML
+- 若需要同时被通用工具解析，可将区域 0 改为 HTML 注释 `<!-- aigc: ... -->`
+
+---
+
 ## 1. 文件命名与位置
 
 ```
@@ -25,7 +48,7 @@ actions/
 
 一个合法的 `.actus.schema.md` 文件**必须**按以下顺序组成：
 
-```
+````
 ┌─────────────────────────────────────────────┐
 │ 区域 0: AIGC 合规 front-matter (YAML)        │  ← strip_frontmatter 剥离
 ├─────────────────────────────────────────────┤
@@ -43,7 +66,7 @@ actions/
 ├─────────────────────────────────────────────┤
 │ 区域 7: 实现代码 (带 tag 的代码块)            │  ← 替代 #!entry 指向的块
 └─────────────────────────────────────────────┘
-```
+````
 
 ---
 
@@ -186,7 +209,7 @@ print(result)
 ```markdown
 ## Dependencies
 
-```yaml
+````yaml #!deps
 pip:
   - markitdown[all]>=0.0.1
 system:
@@ -194,12 +217,12 @@ system:
   - ffmpeg         # 可选，音频转写时需要
 env:
   - MARKITDOWN_CACHE_DIR=/tmp/markitdown
-```
+````
 ```
 
 **规则**:
 - 代码块语言标记为 `yaml`
-- 代码块指令为 `#!deps` 或 `#!dependencies`
+- 代码块指令为 `#!deps` 或 `#!dependencies`（写在 fence 行里，如 ` ```yaml #!deps `）
 - `pip`: pip 包列表（支持版本约束）
 - `system`: 系统包名（仅作声明，不自动安装）
 - `env`: 环境变量声明
@@ -212,7 +235,7 @@ env:
 ```markdown
 ## Triggers
 
-```yaml
+````yaml #!triggers
 - type: watch
   path: ./inbox/
   pattern: "*.pdf"
@@ -225,12 +248,12 @@ env:
 - type: webhook
   path: "/hooks/convert"
   secret_header: "X-Actus-Secret"
-```
+````
 ```
 
 **规则**:
 - 代码块语言标记为 `yaml`
-- 代码块指令为 `#!triggers`
+- 代码块指令为 `#!triggers`（写在 fence 行里）
 - 每个触发器必须是合法对象：
   - `cron`: 5 字段 cron 表达式
   - `watch`: 有效路径字符串
@@ -246,17 +269,17 @@ env:
 ```markdown
 ## Permissions
 
-```yaml
+````yaml #!permissions
 permissions:
   - files:read
   - files:write
   - process:spawn
-```
+````
 ```
 
 **规则**:
 - 代码块语言标记为 `yaml`
-- 代码块指令为 `#!permissions`
+- 代码块指令为 `#!permissions`（写在 fence 行里）
 - 每个权限必须在 `PERMISSIONS` 白名单中
 - 由 `check_secrets()` / `check_permissions()` 校验
 
@@ -267,8 +290,7 @@ permissions:
 ```markdown
 ## Implementation
 
-```python
-# tag: main
+````python tag=main
 from markitdown import MarkItDown
 from pathlib import Path
 
@@ -281,7 +303,7 @@ def convert_file_to_markdown(file_path: str, enable_ocr: bool = False, output_pa
         Path(output_path).write_text(result.markdown, encoding='utf-8')
     
     return result.markdown
-```
+````
 
 ```python
 # tag: helper
@@ -296,8 +318,12 @@ def _validate_file(path: str) -> bool:
 
 **规则**:
 - 代码块语言标记为实际语言（`python` / `javascript` / `bash` 等）
-- 代码块指令为 `#tag: <name>`（定义块标签）
-- `entry` 字段值必须匹配某个代码块的 `tag`
+- **tag 写法钉死**：在 fence 行里写 `tag=<name>`（vools.bridge.md `parse_block_directives` 解析）
+  - ✅ ` ```python tag=main `
+  - ✅ 多 tag：` ```python tag=main,helper `
+  - ❌ 禁止在代码块内容里写 `# tag: main`（规范前例的写法是旧格式迁移期，新规范不支持）
+  - 详见 `vools/bridge/md/parser.py` + `vools/bridge/md/directives.py`
+- `entry` 字段值必须匹配某个代码块的 tag
 - 由 `check_entry_block()` 校验
 - 支持多代码块，通过 tag 区分入口和辅助函数
 
@@ -453,6 +479,63 @@ def _validate_file(path: str) -> bool:
    - 读取 `args` JSON → 写入 `## Input Schema` 代码块
    - 保留原文件作为 `.bak`
 3. **兼容性**: 过渡期同时支持 `#!cfg` 和 front-matter，优先 front-matter
+
+---
+
+## 13.5 枚举值清单（单一真源 = `constants.py`）
+
+作者写新动作时**直接参考此表**，未知值会被校验器警告（`kind` 则打回）。
+
+### kind（执行类型，必填、打回级）
+
+| 值 | 含义 | 典型场景 |
+|---|---|---|
+| `exec` | 写临时文件 + 子进程执行实现块 | 普通 python/js/bash 动作 |
+| `link` | 外部链接（URI / URL） | 直接跳转的动作 |
+| `demo` | 演示/样例动作 | 模板或演示 |
+| `template` | 动作模板（预填参数的脚手架） | 快速生成新动作 |
+| `alias` | 别名（复用另一个动作的实现） | 同义动作 |
+| `bundle` | 动作打包（多动作一起发布） | 工具包 |
+| `doc` | 纯文档动作（无实现） | 知识类动作 |
+
+### purpose（用途，可选，默认 `[utility]`，警告级）
+
+| 值 | 含义 |
+|---|---|
+| `source` | 数据源（读取外部信息） |
+| `sink` | 数据汇（写入外部） |
+| `transform` | 转换（数据变形） |
+| `orchestrator` | 编排（协调多个子步骤） |
+| `notify` | 通知（发消息） |
+| `control` | 控制（自动化执行） |
+| `monitor` | 监控（持续观察） |
+| `compute` | 计算（算法/数值处理） |
+| `ai` | AI 辅助（LLM/ML 驱动） |
+| `data-store` | 数据存储 |
+| `security` | 安全（扫描/加密/审计） |
+| `utility` | 通用工具 |
+
+### industry（行业，可选，默认 `[general]`，警告级）
+
+`devops` / `finance` / `healthcare` / `hr` / `sales` / `marketing` / `customer-support` / `education` / `legal` / `general`
+
+### trigger 声明（可选，默认 `[manual]`，警告级）
+
+`manual` / `cron` / `watch` / `webhook` / `hotkey` / `on_startup` / `signal` / `dataset`
+
+### license（可选，默认 `mit`）
+
+`mit` / `apache-2.0` / `gpl-3.0` / `cc0` / `proprietary` / `custom`
+
+### pricing（可选，默认 `free`）
+
+`free` / `paid` / `subscription`
+
+### declared_features（可选，作者自声明）
+
+`network-access` / `file-write` / `state-persist` / `third-party-api` / `ui-automation`
+
+> 注：`context_applies`（适用上下文）不预设闭集——自由字符串，未知值警告。
 
 ---
 
