@@ -165,8 +165,12 @@ def _deserialize_fraction(state: Dict[str, Any]) -> fractions.Fraction:
 
 
 def _serialize_enum(obj: enum.Enum) -> Dict[str, Any]:
+    # BUG-204：模块路径与嵌套 __qualname__ 都含 '.'，不能拼成一个 'type' 串再用
+    # rsplit 切开（嵌套 enum 会被误切）。module / qualname 分开存储，避免歧义。
     return {
         'type': f'{type(obj).__module__}.{type(obj).__qualname__}',
+        'module': type(obj).__module__,
+        'qualname': type(obj).__qualname__,
         'name': obj.name,
         'value': obj.value,
     }
@@ -194,15 +198,23 @@ def _is_allowed_enum_module(module_path: str) -> bool:
 
 def _deserialize_enum(state: Dict[str, Any]) -> Any:
     type_name = state['type']
-    parts = type_name.rsplit('.', 1)
-    if len(parts) != 2:
-        raise ValueError(f'Invalid enum type reference: {type_name}')
-    module_path, cls_name = parts
+    # BUG-204: 优先使用序列化时单独存储的 module / qualname（module 与嵌套
+    # __qualname__ 都含 '.'，用 rsplit 切 'type' 串会误切嵌套 enum）。
+    module_path = state.get('module')
+    qualname = state.get('qualname')
+    if not module_path or not qualname:
+        parts = type_name.rsplit('.', 1)
+        if len(parts) != 2:
+            raise ValueError(f'Invalid enum type reference: {type_name}')
+        module_path, qualname = parts
     # BUG-100: 导入前白名单校验，禁止任意模块导入（导入即副作用）
     if not _is_allowed_enum_module(module_path):
         raise ValueError(f'Invalid enum module: {module_path}')
-    mod = __import__(module_path, fromlist=[cls_name])
-    cls = getattr(mod, cls_name)
+    mod = __import__(module_path, fromlist=[qualname])
+    # 沿 qualname 逐级解析嵌套类（如 'Outer.E' 先取 Outer 再取 E）
+    cls = mod
+    for part in qualname.split('.'):
+        cls = getattr(cls, part)
     # BUG-96: 仅允许 enum.Enum 子类，禁止任意类或函数被呼叫
     if not isinstance(cls, type) or not issubclass(cls, enum.Enum):
         raise ValueError(f'Invalid enum type: {type_name}')
