@@ -101,3 +101,19 @@ class TestImport:
     def test_all(self):
         from vools.sys.env_cmd import __all__
         assert "EnvCommands" in __all__
+
+
+class TestBug187Regression:
+    """BUG-187 回归：可选子包 vools.bridge 缺席时 nim() 不得崩溃。"""
+
+    def test_nim_without_bridge_graceful(self, capsys, monkeypatch):
+        """模拟 vools.bridge 不可导入：nim() 应优雅提示而非抛异常。"""
+        # 若 vools.bridge 已被导入缓存，builtins.__import__ 拦截会被绕过，
+        # 因此直接把相关模块在 sys.modules 里置 None，from-import 即抛 ImportError。
+        monkeypatch.setitem(sys.modules, "vools.bridge.core.loader", None)
+        monkeypatch.setitem(sys.modules, "vools.bridge.core", None)
+        monkeypatch.setitem(sys.modules, "vools.bridge", None)
+        EnvCommands().nim()  # 修复前此处抛 ModuleNotFoundError
+        out = capsys.readouterr().out
+        assert "Nim 环境信息" in out
+        assert "vools-bridges" in out

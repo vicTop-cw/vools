@@ -79,8 +79,14 @@ class EnvCommands:
         except FileNotFoundError:
             print("错误: nim 编译器未找到")
         
-        # 检查 Nim 库目录
-        from ..bridge.core.loader import _LIB_DIR
+        # 检查 Nim 库目录。vools.bridge 是可选子包（vools-bridges），
+        # 未安装时不应让整个命令崩溃，优雅降级提示即可。
+        try:
+            from ..bridge.core.loader import _LIB_DIR
+        except (ImportError, ModuleNotFoundError):
+            print("\nNim 库目录: 可选子包 vools-bridges 未安装，跳过库目录检查")
+            return
+
         print(f"\nNim 库目录: {_LIB_DIR}")
         
         if os.path.exists(_LIB_DIR):
