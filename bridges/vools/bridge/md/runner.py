@@ -764,6 +764,9 @@ DEFAULT_ROLE_MAP: Dict[str, str] = {
     "docker-compose": ROLE_BUILD,
     "compose": ROLE_BUILD,
     "nginx": ROLE_BUILD,
+    "terraform": ROLE_BUILD,
+    "tf": ROLE_BUILD,
+    "ansible": ROLE_BUILD,
     # 模板语言（P1）
     "jinja": ROLE_TEMPLATE,
     "jinja2": ROLE_TEMPLATE,
@@ -1034,6 +1037,7 @@ BUILTIN_BLOCK_LANGUAGES: Tuple[str, ...] = (
     "latex", "math", "tex",
     # 构建块（P1）
     "makefile", "make", "dockerfile", "docker-compose", "compose", "nginx",
+    "terraform", "tf", "ansible",
     # 模板语言（P1）
     "jinja", "jinja2", "mako", "handlebars", "ejs", "pug",
     # 纯数据块（P2）
@@ -1079,6 +1083,8 @@ _LANG_EXT_MAP: Dict[str, str] = {
     "dockerfile": ".Dockerfile",
     "docker-compose": ".yml", "compose": ".yml",
     "nginx": ".conf",
+    "terraform": ".tf", "tf": ".tf",
+    "ansible": ".yml",
     # 模板语言扩展名
     "jinja": ".j2", "jinja2": ".j2",
     "mako": ".mako",
