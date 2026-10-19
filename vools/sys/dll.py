@@ -297,10 +297,16 @@ def dll(
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
-            return _run_sync(
+            result = _run_sync(
                 f, dll_path, func_name, args, kwargs,
                 arg_ctypes, ret_ctype, ret_py_type, params, actual_fallback
             )
+            # fallback 可能是 async 函数：_run_sync 的 fallback 路径（L356/L379）
+            # 直接 `return fallback(*args)` 会返回未 await 的 coroutine object。
+            # 同步装饰器承诺同步返回结果，故在此用 asyncio.run 驱动它（BUG-196）。
+            if inspect.iscoroutine(result):
+                return asyncio.run(result)
+            return result
 
         @functools.wraps(f)
         async def async_wrapper(*args, **kwargs):
