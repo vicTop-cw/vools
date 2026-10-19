@@ -72,7 +72,7 @@ actions/
 
 ## 3. 区域 0: AIGC 合规 front-matter
 
-```markdown
+`````markdown
 ---
 aigc: true
 generated-by: atomcode
@@ -90,7 +90,7 @@ generated-at: 2026-09-15T10:30:00Z
 
 ## 4. 区域 1: 动作元数据 (YAML front-matter)
 
-```markdown
+`````markdown
 ---
 id: convert-file-to-markdown
 name: Convert File to Markdown
@@ -131,7 +131,7 @@ deprecated: false
 
 ## 5. 区域 2: 描述文档 (Markdown 正文)
 
-```markdown
+`````markdown
 # Convert File to Markdown
 
 Convert any supported file format to Markdown using Microsoft's MarkItDown library.
@@ -169,10 +169,10 @@ print(result)
 
 ## 6. 区域 3: 输入契约 (JSON Schema 代码块)
 
-```markdown
+``````markdown
 ## Input Schema
 
-```json
+````json
 {
   "type": "object",
   "properties": {
@@ -192,8 +192,8 @@ print(result)
   },
   "required": ["file_path"]
 }
-```
-```
+````
+``````
 
 **规则**:
 - 代码块语言标记为 `json`
@@ -206,7 +206,7 @@ print(result)
 
 ## 7. 区域 4: 依赖声明 (YAML 代码块)
 
-```markdown
+`````markdown
 ## Dependencies
 
 ````yaml #!deps
@@ -218,7 +218,7 @@ system:
 env:
   - MARKITDOWN_CACHE_DIR=/tmp/markitdown
 ````
-```
+````
 
 **规则**:
 - 代码块语言标记为 `yaml`
@@ -232,7 +232,7 @@ env:
 
 ## 8. 区域 5: 触发器声明 (YAML 代码块)
 
-```markdown
+`````markdown
 ## Triggers
 
 ````yaml #!triggers
@@ -249,7 +249,7 @@ env:
   path: "/hooks/convert"
   secret_header: "X-Actus-Secret"
 ````
-```
+````
 
 **规则**:
 - 代码块语言标记为 `yaml`
@@ -266,7 +266,7 @@ env:
 
 ## 9. 区域 6: 权限声明 (YAML 代码块)
 
-```markdown
+`````markdown
 ## Permissions
 
 ````yaml #!permissions
@@ -275,7 +275,7 @@ permissions:
   - files:write
   - process:spawn
 ````
-```
+````
 
 **规则**:
 - 代码块语言标记为 `yaml`
@@ -287,7 +287,7 @@ permissions:
 
 ## 10. 区域 7: 实现代码 (带 tag 的代码块)
 
-```markdown
+`````markdown
 ## Implementation
 
 ````python tag=main
@@ -305,7 +305,7 @@ def convert_file_to_markdown(file_path: str, enable_ocr: bool = False, output_pa
     return result.markdown
 ````
 
-```python
+````python
 # tag: helper
 def _validate_file(path: str) -> bool:
     """Validate file exists and is supported."""
@@ -331,7 +331,7 @@ def _validate_file(path: str) -> bool:
 
 ## 11. 完整示例
 
-```markdown
+`````markdown
 ---
 aigc: true
 generated-by: atomcode
