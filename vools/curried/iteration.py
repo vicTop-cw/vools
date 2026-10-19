@@ -216,10 +216,26 @@ def accumulate(func: Callable[[B, A], B], iterable: Iterable[A], initializer: Op
         [1, 3, 6, 10, 15]
         >>> accumulate(lambda x, y: x * y, [1, 2, 3, 4])
         [1, 2, 6, 24]
+        >>> accumulate(operator.add, [1, 2, 3], 10)
+        [10, 11, 13, 16]
+
+    Note:
+        BUG-214: 原实现把 initializer 作为 itertools.accumulate 的第三个
+        位置参数传入——该参数是 keyword-only ``initial``（py3.8+），py3.6/3.7
+        （本包声明的最低版本）完全不存在，故带 initializer 的调用在所有
+        Python 版本 100% TypeError。现走确定性手动累积，语义对齐 stdlib
+        py3.8 ``accumulate([...], func, initial=X)``：X 本身是输出首元素，
+        其后每步 ``func(prev, x)``。
     """
     if initializer is None:
         return list(itertools_accumulate(iterable, func))
-    return list(itertools_accumulate(iterable, func, initializer))
+    # 手动累积（BUG-214，py3.6 兼容无版本分支）：initializer 为输出首元素
+    out = [initializer]
+    acc = initializer
+    for x in iterable:
+        acc = func(acc, x)
+        out.append(acc)
+    return out
 
 
 @curry
