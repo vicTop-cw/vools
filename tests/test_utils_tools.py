@@ -86,9 +86,9 @@ class TestStringUtils:
         assert list(shift([1, 2, 3], 1, fill_value=0)) == [0, 1, 2]
         # 负数 num → 元素左移，fill_value 从右侧补入
         assert list(shift([1, 2, 3], -1, fill_value=0)) == [2, 3, 0]
-        # cycle=True → 纯轮转
-        assert list(shift([1, 2, 3], 1, cycle=True)) == [2, 3, 1]
-        assert list(shift([1, 2, 3], -1, cycle=True)) == [3, 1, 2]
+        # cycle=True → 纯轮转（deque.rotate 正数=右移、负数=左移，与 docstring 一致）
+        assert list(shift([1, 2, 3], 1, cycle=True)) == [3, 1, 2]
+        assert list(shift([1, 2, 3], -1, cycle=True)) == [2, 3, 1]
         # num=0 → 无变化
         assert list(shift([1, 2, 3], 0)) == [1, 2, 3]
 
