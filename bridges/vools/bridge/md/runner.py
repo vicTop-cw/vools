@@ -615,6 +615,84 @@ def run_block(
     return result
 
 
+#: docs/41 §A1：sigma 语言标记集（与 vools.actus.sigma.SIGMA_LANGUAGE_TAGS 同集合）
+SIGMA_LANGUAGE_TAGS = ("sigma", "sigma-spec", "sigma-md")
+
+
+# ═══════════════════════════════════════════════════════
+# 块分类：kind（执行模式）与 role（语义角色）
+# ═══════════════════════════════════════════════════════
+# 三层分离：language（语法格式）→ role（产出用途）→ kind（执行模式）。
+# 默认 role 由 language 推导，可用 #!role 覆盖；kind 由 role 或 language 决定。
+
+#: kind 枚举
+KIND_EXEC = "exec"            # 写临时文件 + 子进程直接跑
+KIND_BRIDGE = "bridge"        # 通过 bridge 编译器执行
+KIND_STATIC = "static"        # 只写产物文件（可选语法校验）
+KIND_PROTOCOL = "protocol"    # 通过协议调用外部服务
+KIND_DATABASE = "database"    # 执行数据库查询
+KIND_RENDER = "render"        # 富内容展示（sanitize + 卡片）
+KIND_GUI = "gui"              # 桌面窗口渲染
+KIND_SIGMA = "sigma"          # ΣLang 规约块
+KIND_META = "meta"            # actus 动作配置元数据（不进 build_dir）
+
+#: role 枚举
+ROLE_DEPS = "deps"              # 目标语言依赖声明（toml）
+ROLE_RUNTIME = "runtime"        # 目标语言运行配置（yaml）
+ROLE_LEGACY = "legacy"          # 老旧配置（ini）
+ROLE_GEN_CONFIG = "gen-config"  # 动态生成配置（lua 脚本，stdout 落盘）
+ROLE_ACTION_CONFIG = "action-config"  # actus 动作配置（#!configs）
+ROLE_DATA = "data"              # 纯数据展示（csv/xml/text）
+ROLE_DIAGRAM = "diagram"        # 图表（mermaid/plantuml/dot）
+ROLE_MATH = "math"              # 数学公式（latex/math）
+ROLE_BUILD = "build"            # 构建/基础设施（makefile/dockerfile/nginx）
+ROLE_GENERIC = "generic"        # 默认（无特殊角色）
+
+#: 合法 role 值集合
+VALID_ROLES = frozenset({
+    ROLE_DEPS, ROLE_RUNTIME, ROLE_LEGACY, ROLE_GEN_CONFIG,
+    ROLE_ACTION_CONFIG, ROLE_DATA, ROLE_DIAGRAM, ROLE_MATH,
+    ROLE_BUILD, ROLE_GENERIC,
+})
+
+
+def resolve_block_role(block: "CodeBlock") -> str:
+    """解析块的语义角色。
+
+    优先级：
+    1. `#!role=` 显式指定（若合法）
+    2. `#!configs` 裸指令 → action-config
+    3. language 默认映射（DEFAULT_ROLE_MAP）
+    4. 兜底 generic
+    """
+    directives = getattr(block, "directives", {}) or {}
+
+    explicit = directives.get("role", "")
+    if explicit and explicit.strip().lower() in VALID_ROLES:
+        return explicit.strip().lower()
+
+    # `#!configs` 裸指令：actus 动作配置块
+    if "configs" in directives:
+        return ROLE_ACTION_CONFIG
+
+    lang = (getattr(block, "language", "") or "").strip().lower()
+    return DEFAULT_ROLE_MAP.get(lang, ROLE_GENERIC)
+
+
+def resolve_block_kind(block: "CodeBlock") -> str:
+    """解析块的执行模式 kind。
+
+    优先级：role 决定 kind → language 默认 kind（LANGUAGE_KIND_MAP）→ bridge。
+    """
+    role = resolve_block_role(block)
+    role_kind = ROLE_KIND_MAP.get(role)
+    if role_kind:
+        return role_kind
+
+    lang = (getattr(block, "language", "") or "").strip().lower()
+    return LANGUAGE_KIND_MAP.get(lang, KIND_BRIDGE)
+
+
 def _execute_block(
     block: CodeBlock,
     context: Dict,
@@ -622,12 +700,171 @@ def _execute_block(
     args: Optional[str],
     timeout: int,
 ) -> Tuple[str, str, int]:
-    """执行代码块，返回 (stdout, stderr, exit_code)。"""
+    """执行代码块，返回 (stdout, stderr, exit_code)。
+
+    薄封装：所有实际 dispatch 走 _execute_by_kind。
+    """
+    return _execute_by_kind(block, context, config, args, timeout)
+
+
+def _execute_by_kind(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+    args: Optional[str],
+    timeout: int,
+) -> Tuple[str, str, int]:
+    """按 kind（执行模式）+ role（语义角色）路由到对应 handler。"""
+    kind = resolve_block_kind(block)
+
+    if kind == KIND_META:
+        return _execute_action_config_block(block, context, config)
+    if kind == KIND_STATIC:
+        return _dispatch_static(block, context, config)
+    if kind == KIND_PROTOCOL:
+        return _dispatch_protocol(block, context, config, timeout)
+    if kind == KIND_DATABASE:
+        return _dispatch_database(block, context, config, timeout)
+    if kind == KIND_RENDER:
+        return _execute_rich_block(block, context, config)
+    if kind == KIND_GUI:
+        return _execute_webview2(block, context, config)
+    if kind == KIND_SIGMA:
+        return _execute_sigma(block)
+    if kind == KIND_EXEC:
+        return _dispatch_exec(block, context, config, args, timeout)
+    # KIND_BRIDGE 或未识别
+    return _execute_via_bridge(block, context, config, timeout, args)
+
+
+#: language → 默认 role 映射（vools docs/md/config-blocks.md 语义）
+DEFAULT_ROLE_MAP: Dict[str, str] = {
+    # 配置格式（docs/md/config-blocks.md L10-L12）
+    "toml": ROLE_DEPS,           # 目标语言依赖声明
+    "yaml": ROLE_RUNTIME,        # 目标语言运行配置
+    "yml": ROLE_RUNTIME,
+    "ini": ROLE_LEGACY,          # 老旧配置
+    "lua": ROLE_GEN_CONFIG,      # 动态生成配置（脚本执行）
+    # 图表（P1）
+    "mermaid": ROLE_DIAGRAM,
+    "mmd": ROLE_DIAGRAM,
+    "plantuml": ROLE_DIAGRAM,
+    "puml": ROLE_DIAGRAM,
+    "dot": ROLE_DIAGRAM,
+    "graphviz": ROLE_DIAGRAM,
+    # 数学（P1）
+    "latex": ROLE_MATH,
+    "math": ROLE_MATH,
+    "tex": ROLE_MATH,
+    # 构建（P1）
+    "makefile": ROLE_BUILD,
+    "make": ROLE_BUILD,
+    "dockerfile": ROLE_BUILD,
+    "docker-compose": ROLE_BUILD,
+    "compose": ROLE_BUILD,
+    "nginx": ROLE_BUILD,
+    # 纯数据（P2）
+    "csv": ROLE_DATA,
+    "tsv": ROLE_DATA,
+    "xml": ROLE_DATA,
+    "text": ROLE_DATA,
+    "plain": ROLE_DATA,
+}
+
+#: role → kind 映射（role 比 language 更优先决定 kind）
+ROLE_KIND_MAP: Dict[str, str] = {
+    ROLE_DEPS: KIND_STATIC,
+    ROLE_RUNTIME: KIND_STATIC,
+    ROLE_LEGACY: KIND_STATIC,
+    ROLE_DATA: KIND_STATIC,
+    ROLE_DIAGRAM: KIND_STATIC,
+    ROLE_MATH: KIND_STATIC,
+    ROLE_BUILD: KIND_STATIC,
+    ROLE_GEN_CONFIG: KIND_EXEC,       # 生成配置要执行脚本
+    ROLE_ACTION_CONFIG: KIND_META,    # actus 元数据解析
+    ROLE_GENERIC: "",                 # 由 language 决定
+}
+
+#: language → kind 映射（bridge 全量登记，未知语言走 bridge）
+LANGUAGE_KIND_MAP: Dict[str, str] = {
+    # exec：写临时文件 + 子进程
+    "python": KIND_EXEC, "py": KIND_EXEC, "python3": KIND_EXEC,
+    "shell": KIND_EXEC, "bash": KIND_EXEC, "sh": KIND_EXEC,
+    "bat": KIND_EXEC, "batch": KIND_EXEC, "cmd": KIND_EXEC,
+    "powershell": KIND_EXEC, "pwsh": KIND_EXEC,
+    "node": KIND_EXEC, "nodejs": KIND_EXEC,
+    "js": KIND_EXEC, "javascript": KIND_EXEC,
+    # static：只写文件
+    "css": KIND_STATIC,
+    "json": KIND_STATIC, "toml": KIND_STATIC, "yaml": KIND_STATIC, "yml": KIND_STATIC,
+    "ini": KIND_STATIC,
+    # protocol：协议调用
+    "mcp": KIND_PROTOCOL,
+    "http": KIND_PROTOCOL,
+    # database
+    "sql": KIND_DATABASE, "sqlite": KIND_DATABASE,
+    "mysql": KIND_DATABASE, "postgresql": KIND_DATABASE, "pgsql": KIND_DATABASE,
+    # render：富内容展示
+    "html": KIND_RENDER, "svg": KIND_RENDER, "rich": KIND_RENDER,
+    # gui：桌面窗口
+    "webview2": KIND_GUI, "webview": KIND_GUI, "htmlview": KIND_GUI,
+    # sigma
+    "sigma": KIND_SIGMA, "sigma-spec": KIND_SIGMA, "sigma-md": KIND_SIGMA,
+    # meta（#!configs 裸指令触发，language 本身不作为 kind 触发条件）
+    # bridge 全量登记
+    "c": KIND_BRIDGE, "cpp": KIND_BRIDGE, "c++": KIND_BRIDGE,
+    "csharp": KIND_BRIDGE, "c#": KIND_BRIDGE,
+    "cangjie": KIND_BRIDGE, "cypy": KIND_BRIDGE,
+    "dart": KIND_BRIDGE, "elixir": KIND_BRIDGE, "erlang": KIND_BRIDGE,
+    "freebasic": KIND_BRIDGE, "go": KIND_BRIDGE, "golang": KIND_BRIDGE,
+    "haskell": KIND_BRIDGE, "java": KIND_BRIDGE, "julia": KIND_BRIDGE,
+    "kotlin": KIND_BRIDGE, "lua": KIND_BRIDGE, "lz": KIND_BRIDGE,
+    "mojo": KIND_BRIDGE, "moonbit": KIND_BRIDGE, "nim": KIND_BRIDGE,
+    "pentad": KIND_BRIDGE, "perl": KIND_BRIDGE, "php": KIND_BRIDGE,
+    "r": KIND_BRIDGE, "rb": KIND_BRIDGE, "rs": KIND_BRIDGE,
+    "ruby": KIND_BRIDGE, "rust": KIND_BRIDGE, "scala": KIND_BRIDGE,
+    "swift": KIND_BRIDGE, "tnr": KIND_BRIDGE,
+    "typescript": KIND_BRIDGE, "ts": KIND_BRIDGE,
+    "vbnet": KIND_BRIDGE, "vbscript": KIND_BRIDGE,
+    "zi": KIND_BRIDGE, "zig": KIND_BRIDGE,
+}
+
+#: exec 类 dispatch
+_EXEC_LANGUAGES = (
+    "python", "py", "python3",
+    "shell", "bash", "sh",
+    "bat", "batch", "cmd",
+    "powershell", "pwsh",
+    "node", "nodejs", "js", "javascript",
+)
+
+
+def _dispatch_exec(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+    args: Optional[str],
+    timeout: int,
+) -> Tuple[str, str, int]:
+    """exec kind：写临时文件 + 子进程直接跑。
+
+    gen-config role（如 lua）在本分支：执行脚本后把 stdout 落盘为配置文件。
+    """
     lang = block.language
     workdir = context.get("workdir", os.getcwd())
 
+    role = resolve_block_role(block)
+    if role == ROLE_GEN_CONFIG and lang not in _EXEC_LANGUAGES:
+        # lua 生成配置：优先走 bridge（lua 已在 registry），失败降级 python 兜底
+        stdout, stderr, rc = _execute_via_bridge(
+            block, context, config, timeout, args,
+            func_name=f"__md_block_{block.index}"
+        )
+        if rc == 0 and stdout:
+            return _finalize_gen_config(block, context, config, stdout), stderr, 0
+        return stdout, stderr, rc
+
     if lang == "python":
-        # 块级 prelude 指令（```python prelude=none）优先于 config（docs/33 §Phase 1）
         block_prelude = block.directives.get("prelude")
         if block_prelude is not None:
             config = {**config, "prelude": block_prelude}
@@ -636,47 +873,134 @@ def _execute_block(
     if lang in ("shell", "bash", "sh"):
         return _execute_shell(block.content, context, config, workdir, timeout, args)
 
-    # Windows 批处理：bat / batch / cmd —— 直接用系统 cmd.exe 执行
     if lang in ("bat", "batch", "cmd"):
         return _execute_windows_cmd(block.content, context, config, workdir, timeout, args)
 
-    # PowerShell：powershell（Windows PowerShell 5.1）/ pwsh（PowerShell Core 7+）
     if lang in ("powershell", "pwsh"):
         return _execute_powershell(block.content, context, config, workdir, timeout, args)
 
-    # webview2: WebView2 GUI 渲染
-    if lang in ("webview2", "webview", "htmlview"):
-        return _execute_webview2(block, context, config)
-
-    # 富内容展示块：html（计划 §4.2，P1）
-    # - level=1..3：L1 sanitize + 卡片渲染（静态展示）
-    # - level=4：源码展示降级形态（转义 + 复制/折叠按钮）
-    if lang in ("html", "svg", "rich"):
-        return _execute_rich_block(block, context, config)
-
-    # MCP 调用块：stdio 协议调用外部 MCP 服务器（零第三方依赖）
-    # 语法：```mcp #!server=filesystem #!tool=read_file
-    if lang == "mcp":
-        return _execute_mcp_block(block, context, config, timeout)
-
-    # Node.js：node / nodejs / js / javascript（直接调 node CLI，不走 bridge 管理层）
     if lang in ("node", "nodejs", "js", "javascript"):
         return _execute_node_block(block, context, config, timeout, args)
 
-    # CSS 静态块：输出 .css 文件（不执行），供宿主页面引用
+    # 兜底：未知 exec 语言走 bridge
+    return _execute_via_bridge(block, context, config, timeout, args)
+
+
+def _dispatch_static(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+) -> Tuple[str, str, int]:
+    """static kind：只写产物文件（可选语法校验），不执行脚本。
+
+    按 role 分到不同子目录：
+      deps       → artifacts/config/deps/block_{N}.toml
+      runtime    → artifacts/config/runtime/block_{N}.yaml
+      legacy     → artifacts/config/legacy/block_{N}.ini
+      data       → artifacts/data/block_{N}.csv
+      diagram    → artifacts/diagram/block_{N}.mmd
+      math       → artifacts/math/block_{N}.tex
+      build      → artifacts/build/block_{N}.Dockerfile
+      generic    → artifacts/static/block_{N}.{ext}
+
+    css 保持历史路径 artifacts/css/（向后兼容，走原 _execute_css_block）。
+    """
+    lang = (block.language or "").strip().lower()
     if lang == "css":
         return _execute_css_block(block, context, config)
 
-    # sigma / sigma-spec / sigma-md: ΣLang 规约块（docs/41 主题 A · A1 语言路由）
-    # 真源在 vools.actus.sigma；此处只做路由，不复制任何规约语义。
-    if lang.lower() in SIGMA_LANGUAGE_TAGS:
-        return _execute_sigma(block)
-
-    return _execute_via_bridge(block, context, config, timeout)
+    return _execute_static_block(block, context, config)
 
 
-#: docs/41 §A1：sigma 语言标记集（与 vools.actus.sigma.SIGMA_LANGUAGE_TAGS 同集合）
-SIGMA_LANGUAGE_TAGS = ("sigma", "sigma-spec", "sigma-md")
+def _dispatch_protocol(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+    timeout: int,
+) -> Tuple[str, str, int]:
+    """protocol kind：通过协议调用外部服务。"""
+    lang = block.language
+    if lang == "mcp":
+        return _execute_mcp_block(block, context, config, timeout)
+    if lang == "http":
+        return _execute_http_block(block, context, config, timeout)
+    return "", f"{lang} 协议块未实现", 1
+
+
+def _dispatch_database(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+    timeout: int,
+) -> Tuple[str, str, int]:
+    """database kind：执行数据库查询。"""
+    return _execute_database_block(block, context, config, timeout)
+
+
+def _execute_action_config_block(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+) -> Tuple[str, str, int]:
+    """meta kind：actus 动作配置块（#!configs）。
+
+    解析 JSON 内容，返回解析摘要（不写 build_dir）。由 actus 侧消费。
+    """
+    import json as _json
+    try:
+        data = _json.loads(block.content)
+    except Exception as exc:
+        return "", f"[configs] 无效 JSON: {exc}", 1
+    keys = list(data.keys()) if isinstance(data, dict) else []
+    return (
+        f"[configs] block {block.index} parsed ok, top-level keys: {keys}",
+        "",
+        0,
+    )
+
+
+def _finalize_gen_config(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+    stdout: str,
+) -> str:
+    """gen-config role：把脚本 stdout 落盘为配置文件。"""
+    import tempfile as _tempfile
+    role = resolve_block_role(block)
+    ext_map = {
+        ROLE_GEN_CONFIG: ".conf",
+    }
+    ext = ext_map.get(role, ".conf")
+    lang = (block.language or "").strip().lower()
+    if lang in ("toml",):
+        ext = ".toml"
+    elif lang in ("yaml", "yml"):
+        ext = ".yaml"
+    elif lang in ("json",):
+        ext = ".json"
+    elif lang in ("ini",):
+        ext = ".ini"
+
+    build_dir = context.get("build_dir") or (
+        config.get("build_dir") if isinstance(config, dict) else None
+    )
+    if not build_dir:
+        build_dir = _tempfile.mkdtemp(prefix="vools-md-")
+
+    out_dir = os.path.join(build_dir, "artifacts", "config", "gen")
+    os.makedirs(out_dir, exist_ok=True)
+
+    out_name = block.directives.get("out") or f"block_{block.index}{ext}"
+    if not os.path.splitext(out_name)[1]:
+        out_name = f"{out_name}{ext}"
+    out_path = os.path.join(out_dir, out_name)
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(stdout.strip() + "\n")
+
+    rel = os.path.join("artifacts", "config", "gen", out_name).replace("\\", "/")
+    return f"[configs] gen block {block.index} -> {rel}"
 
 _IS_WINDOWS = platform.system() == 'Windows'
 
@@ -693,7 +1017,632 @@ BUILTIN_BLOCK_LANGUAGES: Tuple[str, ...] = (
     "css",
     # MCP 调用块：stdio 协议调用外部 MCP 服务器
     "mcp",
+    # 配置格式静态块（docs/md/config-blocks.md 语义）
+    "json", "toml", "yaml", "yml", "ini",
+    # 图表块（P1）
+    "mermaid", "mmd", "plantuml", "puml", "dot", "graphviz",
+    # 数学块（P1）
+    "latex", "math", "tex",
+    # 构建块（P1）
+    "makefile", "make", "dockerfile", "docker-compose", "compose", "nginx",
+    # 纯数据块（P2）
+    "csv", "tsv", "xml", "text", "plain",
+    # 协议块
+    "http",
+    # 数据库块
+    "sql", "sqlite", "mysql", "postgresql", "pgsql",
 ) + SIGMA_LANGUAGE_TAGS
+
+
+# ═══════════════════════════════════════════════════════
+# static kind：只写产物文件（可选语法校验）
+# ═══════════════════════════════════════════════════════
+
+#: static role → (产物子目录, 默认扩展名)
+_STATIC_ROLE_TABLE: Dict[str, Tuple[str, str]] = {
+    ROLE_DEPS:          ("config/deps",      ".toml"),
+    ROLE_RUNTIME:       ("config/runtime",   ".yaml"),
+    ROLE_LEGACY:        ("config/legacy",    ".ini"),
+    ROLE_DATA:          ("data",      ".dat"),
+    ROLE_DIAGRAM:       ("diagram",   ".mmd"),
+    ROLE_MATH:          ("math",      ".tex"),
+    ROLE_BUILD:         ("build",     ".conf"),
+    ROLE_GENERIC:       ("static",    ""),
+}
+
+#: language → 默认扩展名（用于推断产物文件名）
+_LANG_EXT_MAP: Dict[str, str] = {
+    "css": ".css",
+    "json": ".json",
+    "toml": ".toml",
+    "yaml": ".yaml", "yml": ".yaml",
+    "ini": ".ini",
+    "csv": ".csv", "tsv": ".tsv",
+    "xml": ".xml", "text": ".txt", "plain": ".txt",
+    "mermaid": ".mmd", "mmd": ".mmd",
+    "plantuml": ".puml", "puml": ".puml",
+    "dot": ".dot", "graphviz": ".dot",
+    "latex": ".tex", "math": ".tex", "tex": ".tex",
+    "makefile": "Makefile", "make": "Makefile",
+    "dockerfile": ".Dockerfile",
+    "docker-compose": ".yml", "compose": ".yml",
+    "nginx": ".conf",
+}
+
+
+def _static_lang_ext(lang: str) -> str:
+    """静态块语言 → 产物扩展名（无映射则空串，由 role 兜底）。"""
+    return _LANG_EXT_MAP.get(lang, "")
+
+
+def _static_out_path(block: CodeBlock, context: Dict, config: Dict) -> Tuple[str, str, str]:
+    """计算静态块输出目录 + 默认文件名 + 最终路径。
+
+    Returns:
+        (relative_path, default_name, abs_path)
+    """
+    import tempfile as _tempfile
+
+    lang = (block.language or "").strip().lower()
+    role = resolve_block_role(block)
+    sub_dir, _ = _STATIC_ROLE_TABLE.get(role, _STATIC_ROLE_TABLE[ROLE_GENERIC])
+
+    ext = _static_lang_ext(lang)
+    if not ext:
+        # role 兜底扩展名
+        ext = _STATIC_ROLE_TABLE.get(role, _STATIC_ROLE_TABLE[ROLE_GENERIC])[1]
+
+    build_dir = context.get("build_dir") or (
+        config.get("build_dir") if isinstance(config, dict) else None
+    )
+    if not build_dir:
+        build_dir = _tempfile.mkdtemp(prefix="vools-md-")
+
+    out_name = (block.directives.get("out") or "").strip()
+    if out_name:
+        if not os.path.splitext(out_name)[1]:
+            out_name = f"{out_name}{ext}"
+    else:
+        out_name = f"block_{block.index}{ext}"
+
+    # 绝对路径
+    out_dir = os.path.join(build_dir, "artifacts", sub_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, out_name)
+
+    rel = os.path.join("artifacts", sub_dir, out_name).replace("\\", "/")
+    return rel, out_name, out_path
+
+
+def _validate_static_syntax(lang: str, content: str) -> Optional[str]:
+    """静态块语法校验。
+
+    Args:
+        lang: 语言标记（json/yaml/toml/ini/csv/xml）
+        content: 块内容
+
+    Returns:
+        错误消息（None = 通过）
+    """
+    text = (content or "").strip()
+    if not text:
+        return None  # 空内容不校验（容忍空块）
+
+    if lang in ("json",):
+        import json as _json
+        try:
+            _json.loads(text)
+        except Exception as exc:
+            return f"无效 JSON: {exc}"
+        return None
+
+    if lang in ("yaml", "yml"):
+        try:
+            import yaml as _yaml
+        except ImportError:
+            return None  # PyYAML 未装，降级不校验
+        try:
+            _yaml.safe_load(text)
+        except Exception as exc:
+            return f"无效 YAML: {exc}"
+        return None
+
+    if lang in ("toml",):
+        try:
+            if hasattr(__import__("tomllib", fromlist=["loads"]), "loads"):
+                import tomllib as _tomllib
+                _tomllib.loads(text)
+            else:
+                import toml as _toml
+                _toml.loads(text)
+        except ImportError:
+            return None  # tomllib/toml 均不可用，降级
+        except Exception as exc:
+            return f"无效 TOML: {exc}"
+        return None
+
+    if lang in ("ini",):
+        try:
+            import configparser as _cp
+            parser = _cp.ConfigParser()
+            parser.read_string(text)
+        except Exception as exc:
+            return f"无效 INI: {exc}"
+        return None
+
+    if lang in ("csv",):
+        import csv as _csv
+        try:
+            list(_csv.reader(text.splitlines()))
+        except Exception as exc:
+            return f"无效 CSV: {exc}"
+        return None
+
+    if lang in ("tsv",):
+        import csv as _csv
+        try:
+            list(_csv.reader(text.splitlines(), delimiter="\t"))
+        except Exception as exc:
+            return f"无效 TSV: {exc}"
+        return None
+
+    return None  # 其他格式不校验
+
+
+def _validate_json_schema(lang: str, content: str, schema_path: str) -> Optional[str]:
+    """JSON Schema 校验（仅 json/yaml；schema_path 为相对或绝对路径）。"""
+    try:
+        import jsonschema as _js
+    except ImportError:
+        return None  # jsonschema 未装，降级
+
+    try:
+        with open(schema_path, "r", encoding="utf-8") as f:
+            import json as _json
+            schema = _json.load(f)
+    except Exception as exc:
+        return f"Schema 读取失败: {exc}"
+
+    try:
+        if "yaml" in (lang,):
+            import yaml as _yaml
+            instance = _yaml.safe_load(content)
+        else:
+            import json as _json
+            instance = _json.loads(content)
+        _js.validate(instance=instance, schema=schema)
+    except Exception as exc:
+        return f"Schema 校验失败: {exc}"
+    return None
+
+
+def _execute_static_block(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+) -> Tuple[str, str, int]:
+    """static kind 统一入口：写文件 + 语法校验 + 可选 JSON Schema 校验。
+
+    这是 json/yaml/toml/ini/css/csv/xml/mermaid/latex/dockerfile/nginx
+    等所有「只写产物」块的统一实现。
+    """
+    lang = (block.language or "").strip().lower()
+    content = block.content or ""
+    directives = block.directives or {}
+
+    # 1. 语法校验（默认 syntax；#!validate=none 跳过）
+    validate_mode = (directives.get("validate") or "syntax").strip().lower()
+    if validate_mode not in ("syntax", "schema", "none"):
+        return "", f"validate 值只允许 syntax/schema/none: {validate_mode}", 1
+
+    if validate_mode in ("syntax", "schema"):
+        err = _validate_static_syntax(lang, content)
+        if err:
+            return "", f"[static] {lang} 语法校验失败: {err}", 1
+
+    # 2. JSON Schema 校验（#!schema=path）
+    schema_path = directives.get("schema")
+    if schema_path and validate_mode in ("schema", "syntax"):
+        if lang not in ("json", "yaml", "yml"):
+            return "", f"schema 校验仅支持 json/yaml 块（当前 {lang}）", 1
+        err = _validate_json_schema(lang, content, schema_path)
+        if err:
+            return "", f"[static] {lang} Schema 校验失败: {err}", 1
+
+    # 3. 写文件
+    rel, _name, out_path = _static_out_path(block, context, config)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    # 4. makefile role 额外支持 #!target=xxx 时执行 make
+    if lang in ("makefile", "make") and directives.get("target"):
+        target = directives["target"]
+        try:
+            proc = subprocess.run(
+                ["make", target],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=context.get("workdir") or os.path.dirname(out_path),
+                timeout=int(directives.get("timeout") or 30),
+            )
+            return (
+                f"[makefile] block {block.index} -> {rel}\n"
+                f"$ make {target} (rc={proc.returncode})\n{proc.stdout}",
+                proc.stderr,
+                proc.returncode,
+            )
+        except subprocess.TimeoutExpired:
+            return "", f"make {target} 超时", 124
+        except FileNotFoundError:
+            return "", "make 未安装", 1
+
+    return f"[static] block {block.index} ({lang}) -> {rel}", "", 0
+
+
+# ═══════════════════════════════════════════════════════
+# protocol kind：通过协议调用外部服务
+# ═══════════════════════════════════════════════════════
+
+
+def _execute_http_block(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+    timeout: int,
+) -> Tuple[str, str, int]:
+    """http 块：stdlib urllib.request 发送 HTTP 请求。
+
+    指令：
+      #!target=URL  或 #!url=URL  目标 URL（必填）
+      #!method=GET/POST/PUT/DELETE/PATCH   HTTP 方法（默认 GET）
+      #!headers={"Content-Type": "application/json"}  请求头（JSON）
+      块内容作为请求体（GET 忽略；其他方法默认 JSON body）
+
+    返回：
+      exit 0 = HTTP 2xx
+      exit 1 = 4xx/5xx（stdout=响应体，stderr=状态行）
+      exit 2 = 网络错误（DNS/连接）
+    """
+    import json as _json
+    import urllib.request as _urlreq
+    import urllib.error as _urlerr
+
+    directives = block.directives or {}
+
+    url = (directives.get("target") or directives.get("url") or "").strip()
+    if not url:
+        return "", "[http] 缺少 #!target=<URL> 或 #!url=<URL>", 1
+
+    method = (directives.get("method") or "GET").strip().upper()
+    if method not in ("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"):
+        return "", f"[http] 非法 method: {method}", 1
+
+    # headers 解析（JSON 字符串）
+    headers = {}
+    headers_raw = directives.get("headers")
+    if headers_raw:
+        try:
+            headers = _json.loads(headers_raw)
+            if not isinstance(headers, dict):
+                return "", "[http] headers 必须是 JSON 对象", 1
+        except Exception as exc:
+            return "", f"[http] headers 不是合法 JSON: {exc}", 1
+
+    # body：优先 #!body，其次块内容
+    body = None
+    body_raw = directives.get("body")
+    if body_raw is not None and body_raw != "":
+        body = body_raw.encode("utf-8")
+    elif method not in ("GET", "HEAD") and block.content.strip():
+        body = block.content.strip().encode("utf-8")
+        if "Content-Type" not in headers:
+            headers["Content-Type"] = "application/json"
+
+    req = _urlreq.Request(url, data=body, method=method, headers=headers)
+
+    default_timeout = 30
+    try:
+        timeout = int(directives.get("timeout") or default_timeout)
+    except ValueError:
+        timeout = default_timeout
+
+    try:
+        with _urlreq.urlopen(req, timeout=timeout) as resp:
+            resp_body = resp.read().decode("utf-8", errors="replace")
+            return resp_body, "", 0
+    except _urlerr.HTTPError as exc:
+        body_txt = ""
+        try:
+            body_txt = exc.read().decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            body_txt = ""
+        return body_txt, f"[http] {exc.code} {exc.reason}", 1
+    except _urlerr.URLError as exc:
+        return "", f"[http] 网络错误: {exc.reason}", 2
+    except Exception as exc:  # noqa: BLE001
+        return "", f"[http] 请求异常: {type(exc).__name__}: {exc}", 1
+
+
+# ═══════════════════════════════════════════════════════
+# database kind：执行数据库查询
+# ═══════════════════════════════════════════════════════
+
+
+def _shutil_which(cmd: str) -> Optional[str]:
+    """shutil.which 的安全包装（避免每次调用 import shutil）。"""
+    try:
+        import shutil as _shutil
+        return _shutil.which(cmd)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _split_sql_statements(sql: str) -> List[str]:
+    """按分号拆分 SQL 语句（忽略引号内的分号）。
+
+    单引号 / 双引号内的分号不算分隔符（用于字符串值含 ';' 的情况）。
+    """
+    stmts: List[str] = []
+    buf: List[str] = []
+    quote: Optional[str] = None
+    escape = False
+
+    for ch in sql:
+        if escape:
+            buf.append(ch)
+            escape = False
+            continue
+        if ch == "\\" and quote == "'":
+            buf.append(ch)
+            escape = True
+            continue
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            continue
+        if ch == ";":
+            stmts.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+
+    tail = "".join(buf).strip()
+    if tail:
+        stmts.append(tail)
+    return stmts
+
+
+def _parse_db_target(target: str) -> Tuple[str, Dict[str, str]]:
+    """解析 #!target 数据库连接串。
+
+    支持格式：
+      sqlite://./test.db
+      sqlite://C:\\path\\test.db
+      mysql://user:pass@host:port/dbname
+      postgresql://user:pass@host:port/dbname
+      pgsql://user:pass@host:port/dbname
+
+    Returns:
+        (driver, params_dict)
+    """
+    target = (target or "").strip()
+    parts = target.split("://", 1)
+    if len(parts) != 2:
+        return "sqlite", {"path": target or ":memory:"}
+
+    driver = parts[0].lower()
+    rest = parts[1]
+
+    if driver in ("sqlite", "sqlite3"):
+        return "sqlite", {"path": rest or ":memory:"}
+
+    if driver in ("mysql", "postgresql", "pgsql", "postgres"):
+        # user:pass@host:port/dbname
+        userinfo, _, tail = rest.rpartition("@")
+        hostport, _, dbname = tail.partition("/")
+        user = ""
+        password = ""
+        if "@" in rest:
+            user, _, password = userinfo.partition(":")
+        host, _, port = hostport.partition(":")
+        return driver, {
+            "user": user,
+            "password": password,
+            "host": host or "localhost",
+            "port": port or ("5432" if driver != "mysql" else "3306"),
+            "dbname": dbname,
+        }
+
+    return driver, {}
+
+
+def _execute_database_block(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+    timeout: int,
+) -> Tuple[str, str, int]:
+    """database kind：执行 SQL 查询。
+
+    指令：
+      #!target=sqlite://./db.sqlite    必填（sqlite/mysql/postgresql）
+      #!out=result.csv                 可选，把查询结果写 CSV
+      #!quiet                          可选，不打印结果
+
+    sqlite：走 stdlib sqlite3，零依赖。
+    mysql/postgresql：走 CLI 子进程（mysql / psql），未装则报安装提示。
+    """
+    import csv as _csv
+    import io as _io
+
+    directives = block.directives or {}
+    lang = (block.language or "").strip().lower()
+
+    target = directives.get("target", "")
+    if not target:
+        return "", f"[{lang}] 缺少 #!target=<连接串>", 1
+
+    driver, params = _parse_db_target(target)
+
+    # ── sqlite：stdlib ──
+    if driver == "sqlite":
+        import sqlite3 as _sqlite3
+        db_path = params["path"]
+        if db_path and db_path != ":memory:":
+            parent = os.path.dirname(os.path.abspath(db_path))
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+        conn = None
+        cur = None
+        last_select: Optional[str] = None
+        try:
+            conn = _sqlite3.connect(db_path)
+            conn.row_factory = _sqlite3.Row
+            cur = conn.cursor()
+            # 多语句（CREATE + INSERT + SELECT ...）用 executescript；单语句用 execute
+            sql_text = block.content.strip()
+            stmts = [s.strip() for s in _split_sql_statements(sql_text) if s.strip()]
+            # 找最后一个 SELECT/WITH 语句作为结果查询
+            for stmt in reversed(stmts):
+                upper = stmt.upper()
+                if upper.startswith(("SELECT", "WITH")):
+                    last_select = stmt
+                    break
+            # executescript 跑全部（CREATE/INSERT/DDL 等）
+            if stmts:
+                cur.executescript(sql_text)
+            # 单独跑结果查询（executescript 不返回 description）
+            if last_select is not None:
+                cur.execute(last_select)
+            rows = cur.fetchall() if last_select is not None else []
+            conn.commit()
+        except _sqlite3.Error as exc:
+            return "", f"[sqlite] 执行失败: {exc}", 1
+        finally:
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        if last_select is None or cur is None or cur.description is None:
+            # 非 SELECT（INSERT/UPDATE/DDL）
+            n = cur.rowcount if cur is not None else 0
+            return f"[sqlite] affected={n}", "", 0
+
+        # 查询结果 → CSV / 文本
+        columns = [d[0] for d in cur.description]
+        out_path = directives.get("out")
+        if out_path:
+            os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                writer = _csv.writer(f)
+                writer.writerow(columns)
+                for row in rows:
+                    writer.writerow(tuple(row))
+            return f"[sqlite] {len(rows)} rows -> {out_path}", "", 0
+
+        # 文本输出
+        buf = _io.StringIO()
+        buf.write("\t".join(columns) + "\n")
+        for row in rows:
+            buf.write("\t".join(str(v) for v in row) + "\n")
+        return buf.getvalue().rstrip(), "", 0
+
+    # ── mysql：CLI 子进程 ──
+    if driver == "mysql":
+        import tempfile as _tempfile
+        cli = _shutil_which("mysql")
+        if not cli:
+            return "", (
+                "[mysql] mysql CLI 未安装。请安装 mysql-client 或 "
+                "改用 #!target=sqlite:// 走 stdlib sqlite3。"
+            ), 1
+        # 写临时 .sql 文件
+        with _tempfile.NamedTemporaryFile(
+            mode="w", suffix=".sql", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(block.content)
+            tmp_path = f.name
+        try:
+            cmd = [
+                cli,
+                "-u", params["user"],
+                "-p" + params["password"],
+                "-h", params["host"],
+                "-P", params["port"],
+                params["dbname"],
+                "-e", "source " + tmp_path,
+            ]
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+            return proc.stdout, proc.stderr, proc.returncode
+        except subprocess.TimeoutExpired:
+            return "", f"[mysql] 执行超时 ({timeout}s)", 124
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    # ── postgresql：CLI 子进程 ──
+    if driver in ("postgresql", "pgsql", "postgres"):
+        import tempfile as _tempfile
+        cli = _shutil_which("psql")
+        if not cli:
+            return "", (
+                "[postgresql] psql CLI 未安装。请安装 postgresql-client 或 "
+                "改用 #!target=sqlite:// 走 stdlib sqlite3。"
+            ), 1
+        with _tempfile.NamedTemporaryFile(
+            mode="w", suffix=".sql", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(block.content)
+            tmp_path = f.name
+        try:
+            cmd = [
+                cli,
+                "-U", params["user"],
+                "-h", params["host"],
+                "-p", params["port"],
+                "-d", params["dbname"],
+                "-f", tmp_path,
+            ]
+            env = dict(os.environ)
+            if params.get("password"):
+                env["PGPASSWORD"] = params["password"]
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                timeout=timeout,
+            )
+            return proc.stdout, proc.stderr, proc.returncode
+        except subprocess.TimeoutExpired:
+            return "", f"[postgresql] 执行超时 ({timeout}s)", 124
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    return "", f"[{driver}] 未支持的数据库驱动: {target}", 1
 
 
 _KNOWN_LANGUAGES_CACHE: Optional[Tuple[str, ...]] = None
@@ -1050,17 +1999,55 @@ def _execute_powershell(
                 pass
 
 
-def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: int) -> Tuple[str, str, int]:
-    """通过 bridge helper 执行代码 - 支持所有 31 种桥接语言。"""
+def _execute_via_bridge(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+    timeout: int,
+    args: Optional[str] = None,
+    func_name: Optional[str] = None,
+) -> Tuple[str, str, int]:
+    """通过 bridge helper 执行代码 - 支持所有 31 种桥接语言。
+
+    加固点：
+      - 超时传递（helper 若支持 timeout 参数）
+      - args 传递（helper 若支持 args 参数）
+      - 错误分类（ImportError / ModuleNotFoundError / FileNotFoundError /
+        subprocess.TimeoutExpired / 通用）
+      - 编码统一（bytes 探测 + 降级 utf-8-replace）
+      - 未安装时给出安装提示
+    """
     try:
         from vools.bridge import get_helper
 
-        helper = get_helper(block.language)
+        lang = block.language
+        helper = get_helper(lang)
+
+        if helper is None:
+            return "", f"{lang} bridge 未注册（vools.bridge.registry）", 1
 
         if not helper.is_available():
-            return "", f"{block.language} 不可用", 1
+            return "", (
+                f"{lang} 编译器未安装或不可用。请安装 {lang} 编译器后重试，"
+                f"或参考 docs/03 §6.5 注册语言标记。"
+            ), 1
 
-        result = helper.execute_code(block.content, func_name=f"__md_block_{block.index}")
+        fname = func_name or f"__md_block_{block.index}"
+
+        # 尝试传超时 + args（helper 签名若支持）
+        kwargs: Dict = {"func_name": fname}
+        try:
+            import inspect as _insp
+            sig_params = set(_insp.signature(helper.execute_code).parameters)
+        except (TypeError, ValueError):
+            sig_params = set()
+
+        if "timeout" in sig_params and timeout:
+            kwargs["timeout"] = timeout
+        if "args" in sig_params and args is not None:
+            kwargs["args"] = args
+
+        result = helper.execute_code(block.content, **kwargs)
 
         if isinstance(result, bytes):
             # 子进程输出可能为 GBK（Windows PowerShell 5.1）/UTF-16，先探测再解码
@@ -1070,10 +2057,18 @@ def _execute_via_bridge(block: CodeBlock, context: Dict, config: Dict, timeout: 
 
         return str(result), "", 0
 
+    except ModuleNotFoundError as exc:
+        # 区分是 vools.bridge 没装还是 helper 模块缺失
+        msg = str(exc)
+        return "", f"{block.language} bridge 依赖缺失: {msg}", 1
     except ImportError:
         return "", f"{block.language} bridge 未安装", 1
-    except Exception as e:
-        return "", str(e), 1
+    except FileNotFoundError as exc:
+        return "", f"{block.language} 编译器路径不存在: {exc}", 1
+    except subprocess.TimeoutExpired:
+        return "", f"{block.language} 执行超时 ({timeout}s)", 124
+    except Exception as exc:  # noqa: BLE001
+        return "", f"{block.language} 执行异常: {type(exc).__name__}: {exc}", 1
 
 
 # ── 富内容展示：html / svg / rich（计划 §4.2，P1）──

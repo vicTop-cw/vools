@@ -57,6 +57,25 @@ BLOCK_DIRECTIVE_KEYS: Set[str] = {
     # MCP 调用块
     "server",
     "tool",
+    # ── 新增（角色 / 协议 / 数据库 / 静态块）──
+    # 语义角色
+    "role",
+    # actus 动作配置块裸指令
+    "configs",
+    # protocol（http / mcp）
+    "target",
+    "method",
+    "headers",
+    "body",
+    "url",
+    # static 块
+    "format",
+    "schema",
+    "validate",
+    "render",
+    "on_error",
+    "quiet",
+    "out",
 }
 
 # ═══════════════════════════════════════════════════════
@@ -184,6 +203,65 @@ def validate_directives(directives: Dict[str, str], language: str) -> List[str]:
             errors.append(f"{language} 块是富内容展示块，不能带 compile 指令")
         if "run" in directives and directives["run"]:
             errors.append(f"{language} 块是富内容展示块，不能带 run= 执行指令")
+
+    # ── 新增校验 ──
+
+    # role 值校验
+    if "role" in directives:
+        role = directives["role"].strip().lower()
+        valid_roles = {
+            "deps", "runtime", "legacy", "gen-config", "action-config",
+            "data", "diagram", "math", "build", "generic",
+        }
+        if role and role not in valid_roles:
+            errors.append(f"role 值只允许 {sorted(valid_roles)}: {directives['role']}")
+
+    # configs 裸指令校验（#!configs 无值）
+    if "configs" in directives and directives["configs"].strip():
+        errors.append("configs 是裸指令，不接受值")
+
+    # validate 值校验（syntax / schema / none）
+    if "validate" in directives:
+        val = directives["validate"].strip().lower()
+        if val and val not in ("syntax", "schema", "none"):
+            errors.append(f"validate 值只允许 syntax/schema/none: {directives['validate']}")
+
+    # schema 必须与 json/yaml 块搭配
+    if "schema" in directives and directives["schema"].strip():
+        if language not in ("json", "yaml", "yml"):
+            errors.append(f"schema 指令仅支持 json/yaml/yml 块（当前 {language}）")
+
+    # method 值校验（http 块）
+    if "method" in directives:
+        method = directives["method"].strip().upper()
+        valid_methods = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
+        if method and method not in valid_methods:
+            errors.append(f"method 值只允许 {sorted(valid_methods)}: {directives['method']}")
+
+    # on_error 值校验（fail / skip / report）
+    if "on_error" in directives:
+        val = directives["on_error"].strip().lower()
+        if val and val not in ("fail", "skip", "report"):
+            errors.append(f"on_error 值只允许 fail/skip/report: {directives['on_error']}")
+
+    # target / url / headers / body 必须在协议或数据库块上
+    for directive_key, allowed_langs in (
+        ("headers", ("http",)),
+        ("body", ("http",)),
+        ("url", ("http",)),
+        ("method", ("http",)),
+    ):
+        if directive_key in directives and directives[directive_key].strip():
+            if language not in allowed_langs:
+                errors.append(
+                    f"{directive_key} 指令仅支持 {allowed_langs} 块（当前 {language}）"
+                )
+
+    # target 必须用于 database / protocol 块
+    if "target" in directives and directives["target"].strip():
+        allowed = ("sql", "sqlite", "mysql", "postgresql", "pgsql", "http")
+        if language not in allowed:
+            errors.append(f"target 指令仅支持 {allowed} 块（当前 {language}）")
 
     return errors
 
