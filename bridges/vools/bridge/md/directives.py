@@ -85,6 +85,13 @@ BLOCK_DIRECTIVE_KEYS: Set[str] = {
 _DIRECTIVE_RE = re.compile(r'#!([a-zA-Z_][\w-]*)(?:=("[^"]*"|\'[^\']*\'|\S+))?')
 _BARE_KEY_RE = re.compile(r"(?:^|\s)([a-zA-Z_][\w-]*)(?:=(\S+))?(?=\s|$)")
 
+# 支持空格分隔值的指令（如 `#!import d.md`、`#!config path.toml`、`import d.md`）。
+# 这些指令的值通常是一个路径/URL/标识符，不含空格；
+# 其它指令（如 `#!run export=main`）仍走 `_BARE_KEY_RE`。
+_SPACE_VALUE_RE = re.compile(
+    r'#?(import|config|schema|url|target|format|role|out|on_error|workdir|prelude)\s+(\S+)'
+)
+
 
 def parse_block_directives(directive_str: str) -> Dict[str, str]:
     """
@@ -115,6 +122,13 @@ def parse_block_directives(directive_str: str) -> Dict[str, str]:
         if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
             value = value[1:-1]
         directives[key] = value
+
+    # 回填 #!key value（空格分隔）的指令值，如 `#!import d.md`
+    for match in _SPACE_VALUE_RE.finditer(directive_str):
+        key = match.group(1)
+        val = match.group(2)
+        if not directives.get(key) and val:
+            directives[key] = val
 
     # 再找裸指令（key 或 key=value，不带 #!）
     for match in _BARE_KEY_RE.finditer(directive_str):
@@ -259,7 +273,7 @@ def validate_directives(directives: Dict[str, str], language: str) -> List[str]:
 
     # target 必须用于 database / protocol 块
     if "target" in directives and directives["target"].strip():
-        allowed = ("sql", "sqlite", "mysql", "postgresql", "pgsql", "http")
+        allowed = ("sql", "sqlite", "mysql", "postgresql", "pgsql", "http", "mcp")
         if language not in allowed:
             errors.append(f"target 指令仅支持 {allowed} 块（当前 {language}）")
 
