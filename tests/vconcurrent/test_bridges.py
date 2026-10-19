@@ -73,6 +73,16 @@ class TestThreadProcessBridge:
         b.send_process_side('world')
         assert b.recv_thread_side(timeout=2.0) == 'world'
 
+    def test_send_unpicklable_returns_false_not_crash(self):
+        """BUG-191: ThreadProcessBridge 两侧 send 对 lambda 原抛 AttributeError，
+        现应返回 False。"""
+        b = ThreadProcessBridge()
+        try:
+            assert b.send_thread_side(lambda: 1) is False
+            assert b.send_process_side(lambda: 1) is False
+        finally:
+            b.close()
+
     def test_close(self):
         b = ThreadProcessBridge()
         b.close()
@@ -103,6 +113,25 @@ class TestChannelBridge:
         b = ChannelBridge()
         b.peer_connection.send('from_peer')
         assert b.recv(timeout=2.0) == 'from_peer'
+
+    def test_send_unpicklable_returns_false_not_crash(self):
+        """BUG-191: send 对不可 pickle 对象（lambda/file handle）原抛未捕获
+        AttributeError/TypeError，现应返回 False。"""
+        b = ChannelBridge()
+        try:
+            assert b.send(lambda: 1) is False
+            with open(__file__, encoding='utf-8') as fh:
+                assert b.send(fh) is False
+        finally:
+            b.close()
+
+    def test_send_pickle_unpicklable_returns_false(self):
+        """BUG-191: send_pickle 对 lambda 原抛 AttributeError，现返回 False。"""
+        b = ChannelBridge()
+        try:
+            assert b.send_pickle(lambda: 1) is False
+        finally:
+            b.close()
 
     def test_send_json_recv_json(self):
         b = ChannelBridge()
