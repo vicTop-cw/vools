@@ -151,7 +151,40 @@ _execute_block → _execute_by_kind → 对应 handler
 - `css` 块保持历史输出路径 `artifacts/css/`。
 - 所有未显式 `#!role` 的既有块（python/shell/mcp/sigma 等）行为与重构前一致。
 
-## 9. 测试
+## 9. bridge 可用语言盘点（D1）
 
-- `tests/test_md_kinds.py`（39 条）：kind 路由 / role 推导 / 静态配置块 / `#!configs` / sqlite / http / 新指令校验。
-- 既有 125 条（`test_md_enhanced.py` / `test_md_bridge.py` / `test_rich.py` / `test_webview2.py`）全量回归通过。
+`bridge/manager.py` 共注册 **27 种语言**（本机实测）：
+
+- **可用（23 种，编译器已装）**：python / c / nim / rust / cpp / go / java / csharp /
+  vbnet / julia / freebasic / cangjie / scala / lz / zi / bat / cmd / batch /
+  powershell / pwsh / erlang / elixir / haskell
+- **不可用（4 种，编译器未装）**：r / mojo / tnr / pentad
+
+静态/协议/渲染类语言（mermaid / dot / latex / jinja / mcp / sigma / html 等）不走
+bridge manager，由 `kind` 路由直接分发到对应 handler（`is_available=False` 属正常，
+无需编译器）。
+
+## 10. 纯数据块（D2）
+
+| 格式 | role | 产物路径 | 语法校验 |
+|---|---|---|---|
+| `csv` | data | `artifacts/data/block_N.csv` | stdlib `csv` |
+| `tsv` | data | `artifacts/data/block_N.tsv` | stdlib `csv` (delimiter=tab) |
+| `xml` | data | `artifacts/data/block_N.xml` | stdlib `ElementTree` |
+| `text` / `plain` | data | `artifacts/data/block_N.txt` | 无 |
+| `#!out=path` | 覆盖产物文件名 | 任意路径 | — |
+
+## 11. 边界行为（E1）
+
+- **空块**：内容为空则跳过语法校验，正常写空文件。
+- **未注册语言**：走 bridge 路径，找不到编译器时 `rc=1`，stderr 含「未知语言」或「不可用」。
+- **NUL 字节**：写文件时正常，不做额外处理。
+- **超长内容**：10 万字符级写入正常，无特殊上限。
+- **大 JSON `#!configs`**：解析正常，不限制嵌套深度。
+
+## 12. 测试
+
+- `tests/test_md_kinds.py`（64 条）：kind 路由 / role 推导 / 静态配置块 / `#!configs` / sqlite /
+  http / P1 图表·数学·构建·模板 / P2 纯数据 / 新指令校验 / 边界审视。
+- 既有 125 条（`test_md_enhanced.py` / `test_md_bridge.py` / `test_rich.py` /
+  `test_webview2.py`）全量回归通过。
