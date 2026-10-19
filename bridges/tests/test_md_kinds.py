@@ -538,6 +538,107 @@ class TestP1StaticBlocks:
         assert rc == 0, stderr
 
 
+# ═══════════════════════════════════════════════════════
+# D2: 纯数据块（csv/tsv/xml/text）
+# ═══════════════════════════════════════════════════════
+
+
+class TestPureDataBlocks:
+    """纯数据块：role=data → artifacts/data/。"""
+
+    def test_csv_block(self, tmp_path):
+        content = "id,name\n1,Alice\n2,Bob"
+        block = _block("csv", content, {}, index=20)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "data", "block_20.csv")
+        assert os.path.exists(out_path)
+        with open(out_path, "r", encoding="utf-8") as f:
+            assert "Alice" in f.read()
+
+    def test_tsv_block(self, tmp_path):
+        content = "id\tname\n1\tAlice"
+        block = _block("tsv", content, {}, index=21)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "data", "block_21.tsv")
+        assert os.path.exists(out_path)
+
+    def test_xml_block(self, tmp_path):
+        content = '<root><item id="1">Alice</item></root>'
+        block = _block("xml", content, {}, index=22)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "data", "block_22.xml")
+        assert os.path.exists(out_path)
+
+    def test_text_block(self, tmp_path):
+        content = "hello world"
+        block = _block("text", content, {}, index=23)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "data", "block_23.txt")
+        assert os.path.exists(out_path)
+
+    def test_xml_invalid_syntax(self, tmp_path):
+        # 无效 XML 应报错（stdlib xml 校验）
+        content = "<root><unclosed></root>"
+        block = _block("xml", content, {}, index=24)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 1
+        assert "XML" in stderr
+
+    def test_data_out_override(self, tmp_path):
+        content = "a,b\n1,2"
+        out_csv = os.path.join(str(tmp_path), "mydata.csv")
+        block = _block("csv", content, {"out": out_csv}, index=25)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        assert os.path.exists(out_csv)
+
+
+# ═══════════════════════════════════════════════════════
+# E1: 边界审视
+# ═══════════════════════════════════════════════════════
+
+
+class TestEdgeCases:
+    """空块 / 无编译器语言降级 / 极值输入。"""
+
+    def test_empty_static_block(self, tmp_path):
+        block = _block("yaml", "", {}, index=30)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        # 空 yaml 内容合法，写文件
+        assert rc == 0, stderr
+
+    def test_unknown_language_bridge(self, tmp_path):
+        # 未注册语言 → 走 bridge 路径报错（有编译器时可能 rc=0）
+        block = _block("unknown-lang-xyz", "print(1)", {}, index=31)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        # bridge 找不到编译器 → 报错
+        assert rc == 1
+        assert "未知语言" in stderr or "不可用" in stderr or "错误" in stderr
+
+    def test_null_bytes_in_content(self, tmp_path):
+        # 内容含 NUL 字节 → 不应崩溃
+        block = _block("text", "abc\x00def", {}, index=32)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+
+    def test_very_long_content(self, tmp_path):
+        # 10 万字符
+        content = "x" * 100_000
+        block = _block("text", content, {}, index=33)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+
+    def test_configs_very_large_json(self, tmp_path):
+        content = json.dumps({"items": list(range(1000))})
+        block = _block("json", content, directives={"configs": ""}, index=34)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

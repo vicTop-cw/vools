@@ -1207,6 +1207,14 @@ def _validate_static_syntax(lang: str, content: str) -> Optional[str]:
             return f"无效 TSV: {exc}"
         return None
 
+    if lang in ("xml",):
+        try:
+            import xml.etree.ElementTree as _ET
+            _ET.fromstring(text)
+        except Exception as exc:
+            return f"无效 XML: {exc}"
+        return None
+
     return None  # 其他格式不校验
 
 
