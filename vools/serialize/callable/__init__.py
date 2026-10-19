@@ -37,8 +37,9 @@ class CallableHandler(ABC):
         """获取对象的序列化状态"""
         raise NotImplementedError
 
-    @abstractmethod
-
+    # BUG-186: 此处原先误留一个悬空的 @abstractmethod（后接空行），
+    # 装饰器实际应用到下方具体方法 do，导致未 override do 的子类
+    # 实例化抛 TypeError。do 是带实现的普通方法，删除多余装饰器。
     def do(self, f=print, pre_f=None, sub_f=None):
         """Apply a function for side effects, return self.
 
