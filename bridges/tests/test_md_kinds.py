@@ -499,6 +499,24 @@ class TestP1StaticBlocks:
         with open(out_path, "r", encoding="utf-8") as f:
             assert "all:" in f.read()
 
+    def test_terraform_block(self, tmp_path):
+        content = 'resource "null_resource" "x" {}'
+        block = _block("terraform", content, {}, index=15)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "build", "block_15.tf")
+        assert os.path.exists(out_path)
+        with open(out_path, "r", encoding="utf-8") as f:
+            assert "null_resource" in f.read()
+
+    def test_ansible_block(self, tmp_path):
+        content = "- hosts: all\n  tasks: []"
+        block = _block("ansible", content, {}, index=16)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "build", "block_16.yml")
+        assert os.path.exists(out_path)
+
     # ── C4: 模板语言 ──
 
     def test_jinja_block(self, tmp_path):
