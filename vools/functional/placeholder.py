@@ -8,15 +8,17 @@ placeholder.py 优化版本
 """
 
 import sys
+import ast
 import random
 import string
 import math
 import builtins
 import operator
-from typing import Callable
+from typing import Callable, Dict, Any
 from inspect import signature, Parameter
 import re
 from functools import lru_cache
+from types import SimpleNamespace
 
 # 预编译正则表达式
 _ISOLATED_WORD_PATTERN = re.compile(r'(?<!\w)(\w+)(?!\w)')
@@ -54,6 +56,62 @@ safe_builtins = [
     'repr', 'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum',
     'tuple', 'zip', 'print', 'Exception'
 ]
+
+# BUG-208: 受限 __builtins__——白名单 + DSL 属性链编译代码所需的 getattr/hasattr。
+# 不含 __import__/open/eval/exec/compile/globals/locals/vars/__builtins__。
+_RESTRICTED_BUILTINS = {
+    k: getattr(builtins, k)
+    for k in list(safe_builtins) + ['getattr', 'hasattr', 'isinstance', 'issubclass']
+    if hasattr(builtins, k)
+}
+_RESTRICTED_BUILTINS_NS = SimpleNamespace(**_RESTRICTED_BUILTINS)
+
+# 匹配含双下划线的字符串常量/属性名（dunder 逃逸链的载体）
+_DUNDER_RE = re.compile(r'__\w+')
+
+
+def _safe_ns(base: Dict[str, Any]) -> Dict[str, Any]:
+    """BUG-208: 用受限 builtins 视图覆盖 namespace 中的 builtins/__builtins__ 键。
+
+    {**globals(), ...} 会把本模块的真实 builtins 模块带进去，调用者可借
+    builtins.eval(...) 绕过受限 __builtins__——这里统一覆盖为受限视图。
+    """
+    ns = dict(base)
+    ns['builtins'] = _RESTRICTED_BUILTINS_NS
+    ns['__builtins__'] = _RESTRICTED_BUILTINS
+    return ns
+
+
+def _check_expr_dangerous(expr: str) -> None:
+    """BUG-208: AST 级拒绝 dunder 属性访问与 '__*' 字符串常量。
+
+    受限 __builtins__ 挡不住对象图逃逸（math.__loader__.load_module('sys')、
+    ().__class__.__bases__[0].__subclasses__()、operator.attrgetter('__class__')），
+    这些链每一步都携带 dunder 名字——无论作为属性名还是字符串常量。拒绝所有
+    dunder 形态即可斩断链；普通属性（_.upper）与 '__' 参数名不受影响。
+    """
+    try:
+        tree = ast.parse(expr, mode='eval')
+    except SyntaxError:
+        try:
+            tree = ast.parse(expr, mode='exec')
+        except SyntaxError:
+            return  # 语法错误交给 eval 原样抛出
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and _DUNDER_RE.fullmatch(node.attr):
+            raise NameError(
+                f"dunder attribute access '{node.attr}' is not allowed (BUG-208)"
+            )
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and _DUNDER_RE.search(node.value):
+            raise NameError(
+                f"dunder string constant {node.value!r} is not allowed (BUG-208)"
+            )
+        if isinstance(node, ast.Name) and _DUNDER_RE.fullmatch(node.id):
+            raise NameError(
+                f"dunder name '{node.id}' is not allowed (BUG-208)"
+            )
+
 
 # 随机名称缓存
 _random_names_cache = []
@@ -302,6 +360,19 @@ class _IndexHolder:
         i = f"_{abs(i)}" if isinstance(i, int) and i < 0 else i
         expr = expr or f"lambda x{i},*_,**__: x{i}"
         env = env or {'math': math, 'builtins': builtins, 'operator': operator, 'random': random}
+        # BUG-208: 完整 builtins + 无 __builtins__ 键的 env 让 Python 自动注入真实
+        # builtins（__import__/open/eval 直接可用）→ eval(self.expr) 是 RCE。
+        # 防线一：注入受限 __builtins__（safe_builtins + getattr/hasattr，DSL 属性链
+        # 编译代码需要），阻断自动注入；'builtins' 键换受限视图（无 __import__）。
+        # 防线二（_check_expr_dangerous）：AST 级拒绝 dunder 属性访问与 '__' 字符串
+        # 常量，堵 math.__loader__.load_module('sys')、().__class__.__bases__…
+        # operator.attrgetter('__class__') 等受限 eval 经典逃逸链。口径与
+        # vools/security/safe_eval.safe_lambda 的子串黑名单一致但更精确（不误伤
+        # 默认表达式 lambda x,*_,**__ 的 __ 参数名）。
+        if '__builtins__' not in env:
+            env = dict(env)
+            env['__builtins__'] = _RESTRICTED_BUILTINS
+            env['builtins'] = _RESTRICTED_BUILTINS_NS
         
         # 直接设置属性（绕过 __setattr__）
         object.__setattr__(self, 'expr', expr)
@@ -396,6 +467,11 @@ class _IndexHolder:
     def call(self):
         """缓存 eval 结果"""
         if self._cached_call is None:
+            # BUG-208: eval 前拒绝 dunder 逃逸链（属性/字符串常量/裸名）。
+            # env 默认已带受限 __builtins__（见 __init__）；dunder 检查是斩断
+            # math.__loader__.load_module('sys') / ().__class__.__bases__ /
+            # operator.attrgetter('__class__') 等对象图逃逸的主防线。
+            _check_expr_dangerous(self.expr)
             cache_key = (self.expr, tuple(sorted(self.env.keys())))
             if cache_key not in _eval_cache:
                 _eval_cache[cache_key] = eval(self.expr, self.env)
@@ -585,7 +661,9 @@ class _IndexHolder:
                     indented_lines = ['    ' + line for line in expr_lines]
                     indented_expr = '\n'.join(indented_lines)
                     func_code = f"def anonymous({', '.join(arg_names)}):\n{indented_expr}"
-                    namespace = {**globals(), **locals()}
+                    # BUG-208: 拒绝 dunder 逃逸链 + 受限 builtins 视图
+                    _check_expr_dangerous(expr)
+                    namespace = _safe_ns({**globals(), **locals()})
                     exec(func_code, namespace)
                     return namespace['anonymous']
             
@@ -594,7 +672,9 @@ class _IndexHolder:
                 indented_lines = ['    ' + line for line in expr_lines]
                 indented_expr = '\n'.join(indented_lines)
                 func_code = f"def anonymous():\n{indented_expr}"
-                namespace = {**globals(), **locals()}
+                # BUG-208: 拒绝 dunder 逃逸链 + 受限 builtins 视图
+                _check_expr_dangerous(expr)
+                namespace = _safe_ns({**globals(), **locals()})
                 exec(func_code, namespace)
                 return namespace['anonymous']
             
@@ -604,12 +684,15 @@ class _IndexHolder:
             indented_lines = ['    ' + line for line in expr_lines]
             indented_expr = '\n'.join(indented_lines)
             func_code = f"def anonymous({arg_name}):\n{indented_expr}"
-            namespace = {**globals(), **locals()}
+            # BUG-208: 拒绝 dunder 逃逸链 + 受限 builtins 视图
+            _check_expr_dangerous(expr)
+            namespace = _safe_ns({**globals(), **locals()})
             exec(func_code, namespace)
             return namespace['anonymous']
     
     @property
     def __signature__(self):
+        _check_expr_dangerous(self.expr)
         sig = signature(eval(self.expr, self.env))
         return sig
     
