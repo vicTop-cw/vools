@@ -654,6 +654,19 @@ def _execute_block(
     if lang in ("html", "svg", "rich"):
         return _execute_rich_block(block, context, config)
 
+    # MCP 调用块：stdio 协议调用外部 MCP 服务器（零第三方依赖）
+    # 语法：```mcp #!server=filesystem #!tool=read_file
+    if lang == "mcp":
+        return _execute_mcp_block(block, context, config, timeout)
+
+    # Node.js：node / nodejs / js / javascript（直接调 node CLI，不走 bridge 管理层）
+    if lang in ("node", "nodejs", "js", "javascript"):
+        return _execute_node_block(block, context, config, timeout, args)
+
+    # CSS 静态块：输出 .css 文件（不执行），供宿主页面引用
+    if lang == "css":
+        return _execute_css_block(block, context, config)
+
     # sigma / sigma-spec / sigma-md: ΣLang 规约块（docs/41 主题 A · A1 语言路由）
     # 真源在 vools.actus.sigma；此处只做路由，不复制任何规约语义。
     if lang.lower() in SIGMA_LANGUAGE_TAGS:
@@ -672,8 +685,14 @@ BUILTIN_BLOCK_LANGUAGES: Tuple[str, ...] = (
     "python", "shell", "bash", "sh",
     "bat", "batch", "cmd", "powershell", "pwsh",
     "webview2", "webview", "htmlview",
+    # Node.js 别名（直接调 node CLI）
+    "node", "nodejs", "js", "javascript",
     # 富内容展示块：html/svg/rich（计划 §4.2，P1；默认 L1 静态，L4 源码展示降级）
     "html", "svg", "rich",
+    # CSS 静态块：输出 .css 文件
+    "css",
+    # MCP 调用块：stdio 协议调用外部 MCP 服务器
+    "mcp",
 ) + SIGMA_LANGUAGE_TAGS
 
 
@@ -1106,6 +1125,9 @@ def _execute_rich_block(
                 language="html",
                 source=block.content,
                 level=4,
+                foldable=bool(getattr(block, "foldable", False)),
+                collapsed=bool(getattr(block, "collapsed", False)),
+                fold_label=getattr(block, "fold_label", "") or "\u70b9\u51fb\u5c55\u5f00",
             )
             audit: List[str] = []
         else:
@@ -1143,6 +1165,132 @@ def _execute_rich_block(
         more = f" 等 {len(audit)} 项" if len(audit) > 20 else ""
         lines.append(f"[rich] L1 剥离 {len(audit)} 项: {shown}{more}")
     return "\n".join(lines), "", 0
+
+
+# ── Node.js（node / nodejs / js / javascript）──
+
+
+def _execute_node_block(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+    timeout: int,
+    args: Optional[str],
+) -> Tuple[str, str, int]:
+    """
+    执行 Node.js 代码块。
+
+    与 python 块同语义：直接调 node CLI，不经过 bridge 管理层。
+    """
+    import shutil as _shutil
+
+    if _shutil.which("node") is None:
+        return "", "node 未安装", 1
+
+    workdir = context.get("workdir", os.getcwd())
+    env = dict(os.environ)
+    env.update(config.get("env", {}) if isinstance(config, dict) else {})
+
+    # 写临时 .js 文件
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".js", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(block.content)
+        tmp_path = f.name
+
+    try:
+        cmd = ["node", tmp_path]
+        if args:
+            cmd.extend(args.split() if isinstance(args, str) else args)
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=workdir,
+            env=env,
+            timeout=timeout,
+        )
+        stdout = proc.stdout
+        stderr = proc.stderr
+        if stderr and "Warning" not in stderr:
+            # node 的 stderr 通常是日志，非致命；保留给调用方判断
+            pass
+        return stdout, stderr, proc.returncode
+    except subprocess.TimeoutExpired:
+        return "", f"node 超时 ({timeout}s)", 124
+    except Exception as e:
+        return "", str(e), 1
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+# ── CSS 静态块 ──
+
+
+def _execute_css_block(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+) -> Tuple[str, str, int]:
+    """
+    执行 CSS 静态块：把代码写入 {build_dir}/artifacts/css/ 目录。
+
+    与 html/svg 块同为静态资源：不执行任何脚本，仅输出文件。
+    """
+    build_dir = context.get("build_dir") or (
+        config.get("build_dir") if isinstance(config, dict) else None
+    )
+    if not build_dir:
+        build_dir = tempfile.mkdtemp(prefix="vools-md-")
+
+    css_dir = os.path.join(build_dir, "artifacts", "css")
+    os.makedirs(css_dir, exist_ok=True)
+
+    out_name = f"block_{block.index}.css"
+    out_path = os.path.join(css_dir, out_name)
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(block.content)
+
+    return f"[css] block {block.index} -> {out_path}", "", 0
+
+
+# ── MCP 调用块（stdio 协议，零第三方依赖）──
+
+
+def _execute_mcp_block(
+    block: CodeBlock,
+    context: Dict,
+    config: Dict,
+    timeout: int,
+) -> Tuple[str, str, int]:
+    """
+    执行 mcp 代码块。
+
+    通过 stdio 协议调用外部 MCP 服务器。
+    完整实现见 .mcp_client.execute_mcp_block。
+    """
+    from .mcp_client import execute_mcp_block as _mcp_run
+
+    workdir = context.get("workdir") or config.get("workdir") if isinstance(config, dict) else None
+    if workdir is None:
+        workdir = os.getcwd()
+
+    merged_config = dict(config) if isinstance(config, dict) else {}
+    merged_config["workdir"] = workdir
+
+    return _mcp_run(
+        block.content,
+        block.directives,
+        merged_config,
+        timeout=timeout,
+    )
 
 
 # ── webview2: WebView2 GUI 渲染 ──
@@ -1234,10 +1382,16 @@ def run_md(
     ensure_build_dir(build_dir)
 
     only_tags = set(only or [])
+    only_langs: Optional[set] = None  # 双语义：entry 若为语言则按语言过滤
     if not only_tags and fd.only:
         only_tags = set(fd.only)
     if not only_tags and fd.entry:
-        only_tags = {fd.entry}
+        entry = fd.entry
+        # 双语义：entry 值是可路由语言 → 语言选择器；否则 → tag 过滤器（旧行为）
+        if entry in BUILTIN_BLOCK_LANGUAGES:
+            only_langs = {entry}
+        else:
+            only_tags = {entry}
 
     artifacts_table: Dict[str, Any] = {}
     block_results: List[BlockResult] = []
@@ -1253,6 +1407,8 @@ def run_md(
             if only_tags and block.tag and not (set(block.tag) & only_tags):
                 continue
             if only_tags and not block.tag and only_tags:
+                continue
+            if only_langs and block.language not in only_langs:
                 continue
             parallel_blocks.append(block)
 
@@ -1273,6 +1429,8 @@ def run_md(
             if only_tags and block.tag and not (set(block.tag) & only_tags):
                 continue
             if only_tags and not block.tag and only_tags:
+                continue
+            if only_langs and block.language not in only_langs:
                 continue
 
             # M5: 智能缓存
