@@ -238,7 +238,13 @@ def exe(
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
-            return _run_sync(f, exe_path, args, kwargs, actual_fallback)
+            result = _run_sync(f, exe_path, args, kwargs, actual_fallback)
+            # fallback 可能是 async 函数：_run_sync 的 fallback 分支直接
+            # `return fallback(*args)` 会返回未 await 的 coroutine object。
+            # 同步装饰器承诺同步返回结果，故在此用 asyncio.run 驱动它（BUG-197）。
+            if inspect.iscoroutine(result):
+                return asyncio.run(result)
+            return result
 
         @functools.wraps(f)
         async def async_wrapper(*args, **kwargs):
@@ -323,10 +329,17 @@ async def _run_async(
     """
     executor = _get_executor()
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
+    result = await loop.run_in_executor(
         executor,
         lambda: _run_sync(func, exe_path, args, kwargs, fallback),
     )
+    # fallback 可能是 async 函数：_run_sync 的 fallback 分支直接
+    # `return fallback(*args)` 返回未 await 的 coroutine，在此 await 它，
+    # 避免把 coroutine object 当结果返回并消除
+    # "coroutine was never awaited" 资源泄漏警告（BUG-197）。
+    if inspect.iscoroutine(result):
+        return await result
+    return result
 
 
 __all__ = [
