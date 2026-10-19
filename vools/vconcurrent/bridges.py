@@ -672,6 +672,11 @@ class SharedBridge:
         """
         if self._shm is None:
             raise RuntimeError("Shared memory not initialized")
+        # BUG-190: 原 min(len(data), size-offset) 不校验 offset，负 offset 会让
+        # buf[offset:offset+n] 成空切片而 rvalue 非空 → memoryview 结构不匹配
+        # ValueError 崩溃；超界 offset 返回负字节数违背"实际写入字节数"契约。
+        if offset < 0 or offset >= self._size:
+            return 0
         n = min(len(data), self._size - offset)
         self._shm.buf[offset:offset + n] = data[:n]
         return n
@@ -688,6 +693,9 @@ class SharedBridge:
         """
         if self._shm is None:
             raise RuntimeError("Shared memory not initialized")
+        # BUG-190: offset 越界/负值直接返回 b""，避免 n 变负导致空切片读取。
+        if offset < 0 or offset >= self._size:
+            return b""
         n = min(n, self._size - offset)
         return bytes(self._shm.buf[offset:offset + n])
 
