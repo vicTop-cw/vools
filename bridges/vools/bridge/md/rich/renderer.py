@@ -137,12 +137,15 @@ def render_source_card(
     level: int = 4,
     foldable: bool = True,
     include_style: bool = True,
+    collapsed: bool = False,
+    fold_label: str = "\u70b9\u51fb\u5c55\u5f00",
 ) -> str:
     """渲染 L4 源码展示卡片（含复制/折叠按钮）。
 
     按钮仅为静态标记：
     - data-rich-copy：宿主脚本点击后复制 <pre> 文本；
-    - data-rich-fold：宿主脚本折叠/展开源码区。
+    - data-rich-fold：宿主脚本折叠/展开源码区；
+    - data-rich-collapsed：初始是否收起（宿主脚本读取此标记决定初始状态）。
     卡片自身不含任何 <script>，交互由宿主实现（不可信动作不可越权提升）。
 
     Args:
@@ -152,6 +155,8 @@ def render_source_card(
         level: 固定 4（L4 源码展示档位）
         foldable: 是否输出折叠按钮
         include_style: 是否内联最小样式
+        collapsed: 初始是否收起（仅当 foldable=True 时有效）
+        fold_label: 折叠按钮文案
 
     Returns:
         源码卡片 HTML 片段（纯静态）
@@ -165,20 +170,27 @@ def render_source_card(
     block_attr = _safe_attr(str(block_id))
     lang_attr = _safe_attr(str(language))
     escaped = escape_html(source)
+    safe_fold_label = _safe_attr(str(fold_label)) if fold_label else ""
 
     style_part = _CARD_STYLE if include_style else ""
 
     fold_btn = ""
+    source_attr = ""
     if foldable:
         fold_btn = (
             '<button type="button" class="md-rich-btn" '
-            'data-rich-fold data-rich-block="' + block_attr + '">折叠</button>'
+            'data-rich-fold data-rich-block="' + block_attr + '">'
+            + (f'{safe_fold_label}' if safe_fold_label else '折叠')
+            + "</button>"
         )
+        if collapsed:
+            source_attr = ' data-rich-collapsed="true"'
 
     return (
         f"{style_part}"
         f'<div class="md-rich-card md-rich-l4" '
-        f'data-rich-block="{block_attr}" data-rich-kind="source">'
+        f'data-rich-block="{block_attr}" data-rich-kind="source"'
+        f'{" data-rich-collapsed=\"true\"" if (foldable and collapsed) else ""}>'
         f'<div class="md-rich-card-head">'
         f'<span class="md-rich-card-title">源码</span>'
         f'<span class="md-rich-card-tag">{lang_attr}</span>'
@@ -188,7 +200,8 @@ def render_source_card(
         f"{fold_btn}"
         f"</span>"
         f"</div>"
-        f'<pre class="md-rich-source" data-rich-source="{block_attr}">'
+        f'<pre class="md-rich-source" data-rich-source="{block_attr}"'
+        f'{source_attr}>'
         f"<code>{escaped}</code>"
         f"</pre>"
         f"</div>"

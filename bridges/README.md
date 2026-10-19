@@ -358,3 +358,88 @@ Apache License 2.0 - 详见 [LICENSE](LICENSE) 文件
 - 作者: Victor
 - 邮箱: victortop921129@gmail.com
 - 项目: https://github.com/vicTop-cw/vools
+
+---
+
+## `vools.bridge.md` Markdown 增强
+
+`vools.bridge.md` 是 vools 的 Markdown 可执行文档引擎，支持代码折叠、MCP 调用、CSS 静态块、Node.js 别名、entry 双语义等能力。
+
+### 1. 代码折叠
+
+代码块通过 `#!fold` 指令标记为可折叠，配合 `#!collapse` 控制默认是否折叠、`#!fold-label` 自定义按钮文案。
+
+```markdown
+```python #!run #!fold=auto #!collapse=true #!fold-label=展开更多
+def greet(name):
+    return f"Hello, {name}!"
+```
+```
+
+指令说明：
+
+| 指令 | 取值 | 含义 |
+|---|---|---|
+| `#!fold` | `auto` / `manual` | 标记代码块可折叠（无值等于 `auto`） |
+| `#!collapse` | `true` / `false` | 默认是否折叠（默认 `false`，向后兼容） |
+| `#!fold-label` | 字符串（≤30 字符） | 折叠按钮文案（默认「点击展开」） |
+
+无 `#!fold` 指令的代码块保持完全向后兼容（`foldable=False`，不渲染折叠按钮）。
+
+### 2. MCP 块语言
+
+`mcp` 代码块通过 stdio JSON-RPC 协议调用外部 MCP 服务器，**零第三方依赖**（只用 Python 标准库）。
+
+```markdown
+#!config test.md
+
+```mcp #!server="npx -y @modelcontextprotocol/server-filesystem ." #!tool=read_file
+{"path": "./config.toml"}
+```
+```
+
+服务器解析优先级：
+
+1. `mcp.json` / `.mcp.json` / `mcp/mcp.json` 中的 `mcpServers.<name>` 配置
+2. `#!server` 内联命令（可加引号以支持带空格的值，如 `server="python script.py"`）
+
+其他指令：
+
+| 指令 | 含义 |
+|---|---|
+| `#!tool=<name>` | 要调用的工具名（必填） |
+| `#!timeout=<秒>` | 调用超时（默认 30s） |
+
+块内容为 JSON 参数（`#!tool=list` 时列出可用工具）。
+
+### 3. CSS 静态块 + Node.js 别名
+
+- **`css` 块**：不执行任何脚本，把代码写入 `build_dir/artifacts/css/block_N.css`。
+- **`node` / `nodejs` / `js` / `javascript` 块**：直接调用本机 `node CLI`（不走 bridge 管理层），语义与 `python` 块一致。
+
+### 4. entry 双语义
+
+`#!entry` 指令的值按类型分流：
+
+| 值 | 语义 |
+|---|---|
+| 可路由语言（如 `python`、`shell`、`mcp`…） | **语言选择器**：只执行该语言的代码块 |
+| 其他值（如 `main`、`test`） | **tag 过滤器**（旧行为，向后兼容） |
+
+示例：
+
+```markdown
+#!config test.md
+#!entry python
+
+# 只执行 python 块；shell/js 块会被跳过
+```
+
+### 5. 测试
+
+```bash
+cd bridges
+python -m pytest tests/test_md_enhanced.py -v
+```
+
+覆盖：折叠解析 + 渲染、MCP 端到端、CSS/JS 别名、entry 双语义、双版本漂移回归。

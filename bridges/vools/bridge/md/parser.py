@@ -60,6 +60,10 @@ class CodeBlock:
     tag: List[str] = field(default_factory=list)
     source_file: Optional[str] = None  # M3: 来源文件
     imported: bool = False  # M3: 是否来自 import
+    # ── 折叠支持（新增）──
+    foldable: bool = False       # 是否可折叠（有 fold 指令即可）
+    collapsed: bool = False      # 默认是否收起
+    fold_label: str = ""         # 折叠按钮文案（默认 "点击展开"）
 
 
 @dataclass
@@ -315,6 +319,12 @@ def parse_md(md_path: str) -> ParsedMD:
         tag = directives.get("tag", "").split(",") if directives.get("tag") else []
         tag = [t.strip() for t in tag if t.strip()]
 
+        # ── 折叠指令解析（新增）──
+        foldable = "fold" in directives  # 有 fold 指令即允许折叠（空值也算）
+        collapse_raw = (directives.get("collapse") or "").strip().lower()
+        collapsed = collapse_raw in ("true", "1", "yes", "on")
+        fold_label = (directives.get("fold-label") or "").strip() or "\u70b9\u51fb\u5c55\u5f00"
+
         blocks.append(
             CodeBlock(
                 index=idx,
@@ -322,6 +332,9 @@ def parse_md(md_path: str) -> ParsedMD:
                 directives=directives,
                 content=content,
                 tag=tag,
+                foldable=foldable,
+                collapsed=collapsed,
+                fold_label=fold_label,
             )
         )
 

@@ -50,13 +50,20 @@ BLOCK_DIRECTIVE_KEYS: Set[str] = {
     "svg",
     "rich",
     "level",
+    # 折叠支持（新增）
+    "fold",
+    "collapse",
+    "fold-label",
+    # MCP 调用块
+    "server",
+    "tool",
 }
 
 # ═══════════════════════════════════════════════════════
 # 块级指令解析
 # ═══════════════════════════════════════════════════════
 
-_DIRECTIVE_RE = re.compile(r"#!([a-zA-Z_][\w-]*)(?:=([^\s]+))?")
+_DIRECTIVE_RE = re.compile(r'#!([a-zA-Z_][\w-]*)(?:=("[^"]*"|\'[^\']*\'|\S+))?')
 _BARE_KEY_RE = re.compile(r"(?:^|\s)([a-zA-Z_][\w-]*)(?:=(\S+))?(?=\s|$)")
 
 
@@ -85,6 +92,9 @@ def parse_block_directives(directive_str: str) -> Dict[str, str]:
     for match in _DIRECTIVE_RE.finditer(directive_str):
         key = match.group(1)
         value = match.group(2) or ""
+        # 去除引号（支持带空格的值，如 server="python a.py"）
+        if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+            value = value[1:-1]
         directives[key] = value
 
     # 再找裸指令（key 或 key=value，不带 #!）
@@ -153,6 +163,19 @@ def validate_directives(directives: Dict[str, str], language: str) -> List[str]:
         else:
             if lv not in (1, 2, 3, 4):
                 errors.append(f"level 必须是 1-4: {directives['level']}")
+
+    # 折叠指令校验（新增）
+    fold_val = directives.get("fold", "").strip().lower()
+    if fold_val and fold_val not in ("auto", "manual"):
+        errors.append(f"fold 值只允许 auto/manual: {directives['fold']}")
+
+    collapse_val = directives.get("collapse", "").strip().lower()
+    if collapse_val and collapse_val not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+        errors.append(f"collapse 值只允许 true/false: {directives['collapse']}")
+
+    fold_label = directives.get("fold-label", "")
+    if fold_label and len(fold_label) > 30:
+        errors.append(f"fold-label 长度不能超过 30 字符: {len(fold_label)}")
 
     # 富内容块（html/svg/rich）与执行指令互斥：富内容只做展示，不执行。
     # 无指令块会被 parse_block_directives 默认注入 {"run": ""}，空值放行（默认展示）。
