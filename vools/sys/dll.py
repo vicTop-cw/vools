@@ -413,13 +413,20 @@ async def _run_async(
     """
     executor = _get_executor()
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
+    result = await loop.run_in_executor(
         executor,
         lambda: _run_sync(
             func, dll_path, func_name, args, kwargs,
             arg_ctypes, ret_ctype, ret_py_type, params, fallback
         ),
     )
+    # fallback 可能是 async 函数（coroutine function）：此时 _run_sync 在
+    # L356/L379 直接 `return fallback(*args, **kwargs)` 返回的是未 await 的
+    # coroutine。在此 await 它，避免把 coroutine object 当结果返回，
+    # 并消除 "coroutine was never awaited" 的资源泄漏警告。
+    if inspect.iscoroutine(result):
+        return await result
+    return result
 
 
 __all__ = [
