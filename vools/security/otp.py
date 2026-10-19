@@ -65,7 +65,10 @@ def verify_dynamic_code(
     Returns:
         bool: 验证是否通过
     """
-    if not code or not code.isdigit() or len(code) != 6:
+    # 长度校验与 generate_dynamic_code 的 digits 语义对齐：_hotp_truncate 按
+    # len(code) 位重算期望码，硬编码 6 会让 digits!=6 生成的码永远验证失败
+    # （BUG-201）。isdigit 已防非数字，这里只设合理上限防滥用。
+    if not code or not code.isdigit() or not 1 <= len(code) <= 10:
         return False
 
     # 防重放：已用过的动态码直接拒绝（否则同一码在时间窗内可无限重放）
