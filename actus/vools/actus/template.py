@@ -6,7 +6,6 @@
 
 import json
 import os
-import re
 import logging
 from typing import Dict, List, Optional
 from pathlib import Path
@@ -98,7 +97,11 @@ def main(params: dict) -> dict:
         
         return {"status": "ok", "data": {"response": result, "status_code": resp.status}}
     except urllib.error.HTTPError as e:
-        return {"status": "failed", "error": f"HTTP {e.code}: {e.reason}", "error_code": "http_error"}
+        return {
+            "status": "failed",
+            "error": f"HTTP {e.code}: {e.reason}",
+            "error_code": "http_error",
+        }
     except Exception as e:
         return {"status": "failed", "error": str(e)}
 

@@ -30,13 +30,15 @@ class RegistryEntry:
     dependencies: List[str] = None
     trust_level: str = "community"  # trusted / community / unverified
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """初始化后处理：将 None 字段归一为空列表，保证下游可迭代。"""
         if self.permissions is None:
             self.permissions = []
         if self.dependencies is None:
             self.dependencies = []
 
     def to_dict(self) -> dict:
+        """转为普通 dict（dataclass asdict）。"""
         return asdict(self)
 
 
@@ -51,7 +53,7 @@ class ActionRegistry:
     - 缓存远程索引
     """
 
-    def __init__(self, cache_dir: str = None):
+    def __init__(self, cache_dir: str = None) -> None:
         """
         参数:
             cache_dir: 远程索引缓存目录（默认 ~/.actus/cache）
@@ -64,6 +66,7 @@ class ActionRegistry:
 
     @property
     def cache_dir(self) -> str:
+        """缓存目录路径。"""
         return self._cache_dir
 
     # ── 索引构建 ──
@@ -356,7 +359,7 @@ class ActionRegistry:
         # 尝试 Ed25519 验证
         try:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-                Ed25519PublicKey, Ed25519PrivateKey
+                Ed25519PublicKey
             )
             from cryptography.hazmat.primitives import serialization
             import base64
@@ -480,7 +483,7 @@ class ActionRegistry:
 
         return cache_data.get("index")
 
-    def invalidate_cache(self, repo_url: str = None):
+    def invalidate_cache(self, repo_url: str = None) -> None:
         """使缓存失效。
 
         参数:
@@ -564,7 +567,7 @@ class ActionRegistry:
                 manifests.append(json.load(f))
         return manifests
 
-    def remove_installation(self, repo_url: str):
+    def remove_installation(self, repo_url: str) -> None:
         """移除安装清单。"""
         manifest_dir = os.path.join(os.path.expanduser("~"), ".actus", "installed")
         cache_key = self._url_to_cache_key(repo_url)

@@ -117,6 +117,7 @@ _LAZY = {
 
 
 def __getattr__(name):
+    """延迟加载子模块属性（PEP 562）；`sigma` 与 `_LAZY` 表中未加载的模块按需 import。"""
     # sigma：docs/41 主题 A，sigma-Law 规范引擎以子包形式导出（vools.actus.sigma）
     if name == 'sigma':
         return _importlib.import_module('.sigma', __name__)
@@ -129,7 +130,8 @@ def __getattr__(name):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__():
+def __dir__() -> list:
+    """返回模块可见属性（含延迟加载表与 sigma 子包）。"""
     return sorted(set(globals()) | set(_LAZY) | {'sigma'})
 
 

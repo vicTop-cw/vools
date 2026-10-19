@@ -60,6 +60,7 @@ _schema_cache = None
 
 
 def _load_schema() -> dict:
+    """加载 action.schema.json（带缓存），用于契约校验。"""
     global _schema_cache
     if _schema_cache is None:
         with open(_SCHEMA_PATH, 'r', encoding='utf-8') as f:
@@ -364,6 +365,7 @@ def validate_graph(actions: Dict[str, Action]) -> None:
     _KNOWN_RUNTIME_PREFIXES = ("system:", "lang:", "mcp:", "action:", "pip:", "npm:")
 
     def _is_build_dep(dep: str) -> bool:
+        """构建期依赖（pip/npm/cargo 包）：跳过图存在性校验。"""
         return any(dep.startswith(p) or dep == p.rstrip(":") for p in _KNOWN_BUILD_PREFIXES)
 
     def _is_runtime_dep(dep: str) -> bool:
@@ -387,6 +389,7 @@ def validate_graph(actions: Dict[str, Action]) -> None:
     path: List[str] = []
 
     def dfs(node: str) -> None:
+        """DFS 三色标记：检测循环依赖（GRAY=在栈上，遇到即为环）。"""
         color[node] = GRAY
         path.append(node)
         for dep in actions[node].meta.get('deps', []) or []:
@@ -437,14 +440,17 @@ def analyze_graph(actions: Dict[str, Action]) -> Dict[str, dict]:
     _KNOWN_RUNTIME_PREFIXES = ("system:", "lang:", "mcp:", "action:", "pip:", "npm:")
 
     def _is_build_dep(dep: str) -> bool:
+        """构建期依赖（pip/npm/cargo 包）：跳过图存在性校验。"""
         return any(dep.startswith(p) or dep == p.rstrip(":") for p in _KNOWN_BUILD_PREFIXES)
 
     def _is_runtime_dep(dep: str) -> bool:
+        """运行时依赖（system/lang/mcp/action 命令）：跳过图存在性校验。"""
         return any(dep.startswith(p) for p in _KNOWN_RUNTIME_PREFIXES)
 
     issues: Dict[str, dict] = {}
 
     def mark(aid: str, code: str, message: str) -> None:
+        """给节点打标签：同一节点保留最严重/最早的一条，避免信息淹没。"""
         # 同一节点保留最严重/最早的一条，避免信息淹没
         issues.setdefault(aid, {'code': code, 'message': message})
 
@@ -467,6 +473,7 @@ def analyze_graph(actions: Dict[str, Action]) -> Dict[str, dict]:
     color = {aid: WHITE for aid in actions}
 
     def dfs_cycle(node: str, stack: List[str]) -> None:
+        """DFS 三色标记收集环：环上的每个成员都打标记（不首遇即停）。"""
         color[node] = GRAY
         stack.append(node)
         for dep in edges.get(node, []):
