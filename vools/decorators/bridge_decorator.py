@@ -9,7 +9,9 @@ vools.decorators.bridge_decorator - @bridge 装饰器实现
   - "lang:func"（colon格式）：从桥接库加载 func
 """
 
+import asyncio
 import functools
+import inspect
 import logging
 import threading
 from typing import Callable, Optional, Any
@@ -248,6 +250,15 @@ def bridge(lang: str, symbol: str, fallback: Optional[Callable] = None):
             """记录警告日志"""
             _logger.warning(msg)
         
+        def _call_fallback(*fargs, **fkwargs):
+            # fallback 可能是 async 函数：直接调用会返回未 await 的 coroutine
+            # object。同步装饰器承诺同步返回结果，故在此用 asyncio.run 驱动它
+            # （BUG-198）。
+            result = fallback(*fargs, **fkwargs)
+            if inspect.iscoroutine(result):
+                return asyncio.run(result)
+            return result
+        
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             # 尝试获取桥接函数
@@ -265,12 +276,12 @@ def bridge(lang: str, symbol: str, fallback: Optional[Callable] = None):
                         )
                     )
                     if fallback is not None:
-                        return fallback(*args, **kwargs)
+                        return _call_fallback(*args, **kwargs)
                     raise
             
             # 路径2：桥接库不可用，调用 fallback
             if fallback is not None:
-                return fallback(*args, **kwargs)
+                return _call_fallback(*args, **kwargs)
             
             # 没有 fallback，抛出 RuntimeError
             raise RuntimeError(
