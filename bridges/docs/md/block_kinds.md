@@ -119,7 +119,7 @@ vbnet  vbscript  zi  zig
 | 指令 | 作用 | 适用 |
 |---|---|---|
 | `#!role=...` | 覆盖语义角色 | 任意块 |
-| `#!target=...` | 数据库连接串 / HTTP URL | sql / http |
+| `#!target=...` | 数据库连接串 / HTTP URL / mcp 目标 / makefile 目标 | sql / http / mcp / makefile |
 | `#!method=GET/POST/...` | HTTP 方法 | http |
 | `#!headers={...}` | HTTP 请求头（JSON） | http |
 | `#!body=...` | HTTP 请求体（优先级高于块内容） | http |
@@ -130,7 +130,7 @@ vbnet  vbscript  zi  zig
 | `#!render=...` | 渲染模式 | 静态块 |
 | `#!on_error=fail/skip/report` | 错误处理策略 | 任意块 |
 | `#!quiet` | 静默（不打印结果） | 任意块 |
-| `#!out=path` | 输出文件名 | 静态块 / sqlite |
+| `#!out=path` | 输出文件名（支持相对子路径 `config/app.toml`，防 `../` 穿越；绝对路径直接用） | 静态块 / sqlite |
 | `#!configs`（裸指令） | actus 动作配置块 | json |
 
 ## 7. 执行流程
@@ -184,7 +184,27 @@ bridge manager，由 `kind` 路由直接分发到对应 handler（`is_available=
 
 ## 12. 测试
 
-- `tests/test_md_kinds.py`（64 条）：kind 路由 / role 推导 / 静态配置块 / `#!configs` / sqlite /
+- `tests/test_md_kinds.py`（66 条）：kind 路由 / role 推导 / 静态配置块 / `#!configs` / sqlite /
   http / P1 图表·数学·构建·模板 / P2 纯数据 / 新指令校验 / 边界审视。
+- `tests/test_md_review_fixes.py`（17 条）：复核修复覆盖（bridge/python timeout / shell argv / MySQL MYSQL_PWD / bridge 错误标记 / import 菱形 visited / #!import 空格值 / target 白名单 / #!out 子路径 / makefile target / render / sigma）。
 - 既有 125 条（`test_md_enhanced.py` / `test_md_bridge.py` / `test_rich.py` /
-  `test_webview2.py`）全量回归通过。
+  `test_webview2.py`）全量回归通过。**合计 208 绿**（201 + 17，1 skip Windows shell）。
+
+## 13. 2026-10 复核发现的真实缺陷（已修复）
+
+独立 MCP 复核发现并修复的真实 bug（按严重度）：
+
+| 编号 | 严重度 | 问题 | 修复 |
+|---|---|---|---|
+| C1 | **Critical** | bridge 调用无强制兜底超时；python 块 timeout 被静默丢弃 | `_execute_via_bridge` + `_execute_python` 加 ThreadPoolExecutor 软超时 rc=124（线程无法硬 kill，文档注明） |
+| M1 | Major | `_execute_shell` 用 `shell=True` + 拼接 args → 命令注入面 | 改 argv 数组 `[bash/sh, -c, content]` |
+| M2 | Major | MySQL 密码 `-p<password>` argv 明文（`ps` 可见） | 改 `MYSQL_PWD` 环境变量 |
+| M3 | Major | `_execute_via_bridge` 恒返回 exit 0（bridge helper 无 rc API，错误被掩盖） | 错误标记启发式检测，明显错误返回 rc=1 |
+| M4 | Major | `resolve_imports` 用 `visited.copy()`，菱形依赖重复展开（A→B/A→C/B→D/C→D 时 D 展开两次；循环 A→B→A 重解析 A） | 改共享引用 + 根文件预置 visited（`root_path` 参数） |
+| C2 | Major | lua gen-config bridge 不可用时无 fallback | 实现 `execute_code_lupa`（`pip install lupa` 可选依赖，注入 print/io 重定向） |
+| C3 | Major | `#!out` 不支持相对子路径（如 `config/app.toml`），且 `../` 无防护 | 相对路径支持子目录 + `normpath` 穿越阻断；绝对路径向后兼容 |
+| C4 | Major | makefile `#!target=xxx` 被 `validate_directives` 拦截（实现支持但校验没放行） | target 白名单补 `makefile / make` |
+| m1 | Minor | `#!target` 白名单缺 `mcp` | 已补入 |
+| — | Bug | `parse_block_directives` 不支持 `#!import d.md`（空格分隔值，regex 只匹配 `key=val`） | 补 `_SPACE_VALUE_RE`，同时支持 `#!key value` 和无 `#!` 前缀的空格值 |
+
+> 详见 commit `3443c05` / `d1bb1de` / `e59a31a`。
