@@ -22,6 +22,15 @@ class TimedCache:
     """带过期时间和大小限制的缓存（线程安全）"""
     
     def __init__(self, max_size: int = 1000):
+        # BUG-210: max_size<=0 时旧实现任何 set 都对空缓存 popitem 抛
+        # KeyError（0>=0 / 0>=负数 恒 True），缓存完全不可用。与本文件
+        # memorize(duration<=0) 的 ValueError 口径一致，构造时显式拒绝。
+        if not isinstance(max_size, int) or isinstance(max_size, bool) \
+                or max_size <= 0:
+            raise ValueError(
+                f"参数 'max_size' 值无效: 必须为正整数，当前值: {max_size!r}。\n"
+                f"修复建议: 使用正数作为容量上限，例如 TimedCache(max_size=100)"
+            )
         self._cache = OrderedDict()  # type: ignore
         self._max_size = max_size
         self._lock = threading.Lock()
@@ -61,15 +70,28 @@ class TimedCache:
         return _MISS
     
     def set(self, key: str, result: Any):
-        """设置缓存值"""
+        """设置缓存值
+
+        BUG-210: 更新既有 key 只覆写并移到队尾，不驱逐（容量未涨却踢
+        LRU 头部无辜条目会无谓击穿命中率）；仅新增且满员时驱逐最旧，
+        while 兜底防御构造后 max_size 被外部调小的情形。
+        """
+        entry = {
+            'result': result,
+            'time': time.time()
+        }
         with self._lock:
-            if len(self._cache) >= self._max_size:
+            if key in self._cache:
+                self._cache[key] = entry
+                self._cache.move_to_end(key)
+                return
+            while len(self._cache) >= self._max_size and self._cache:
                 self._cache.popitem(last=False)
-            
-            self._cache[key] = {
-                'result': result,
-                'time': time.time()
-            }
+            if len(self._cache) >= self._max_size:
+                # max_size 被构造后改小到 0 等退化形状：不写入也不崩
+                # （__init__ 已拒绝 max_size<=0，这里纯防御）。
+                return
+            self._cache[key] = entry
     
     def clear(self) -> None:
         """清空缓存"""
