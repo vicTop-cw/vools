@@ -211,7 +211,7 @@ def validate_directives(directives: Dict[str, str], language: str) -> List[str]:
         role = directives["role"].strip().lower()
         valid_roles = {
             "deps", "runtime", "legacy", "gen-config", "action-config",
-            "data", "diagram", "math", "build", "generic",
+            "data", "diagram", "math", "build", "template", "generic",
         }
         if role and role not in valid_roles:
             errors.append(f"role 值只允许 {sorted(valid_roles)}: {directives['role']}")

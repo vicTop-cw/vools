@@ -646,13 +646,14 @@ ROLE_DATA = "data"              # 纯数据展示（csv/xml/text）
 ROLE_DIAGRAM = "diagram"        # 图表（mermaid/plantuml/dot）
 ROLE_MATH = "math"              # 数学公式（latex/math）
 ROLE_BUILD = "build"            # 构建/基础设施（makefile/dockerfile/nginx）
+ROLE_TEMPLATE = "template"      # 模板语言（jinja/mako/handlebars/ejs/pug）
 ROLE_GENERIC = "generic"        # 默认（无特殊角色）
 
 #: 合法 role 值集合
 VALID_ROLES = frozenset({
     ROLE_DEPS, ROLE_RUNTIME, ROLE_LEGACY, ROLE_GEN_CONFIG,
     ROLE_ACTION_CONFIG, ROLE_DATA, ROLE_DIAGRAM, ROLE_MATH,
-    ROLE_BUILD, ROLE_GENERIC,
+    ROLE_BUILD, ROLE_TEMPLATE, ROLE_GENERIC,
 })
 
 
@@ -763,6 +764,13 @@ DEFAULT_ROLE_MAP: Dict[str, str] = {
     "docker-compose": ROLE_BUILD,
     "compose": ROLE_BUILD,
     "nginx": ROLE_BUILD,
+    # 模板语言（P1）
+    "jinja": ROLE_TEMPLATE,
+    "jinja2": ROLE_TEMPLATE,
+    "mako": ROLE_TEMPLATE,
+    "handlebars": ROLE_TEMPLATE,
+    "ejs": ROLE_TEMPLATE,
+    "pug": ROLE_TEMPLATE,
     # 纯数据（P2）
     "csv": ROLE_DATA,
     "tsv": ROLE_DATA,
@@ -780,6 +788,7 @@ ROLE_KIND_MAP: Dict[str, str] = {
     ROLE_DIAGRAM: KIND_STATIC,
     ROLE_MATH: KIND_STATIC,
     ROLE_BUILD: KIND_STATIC,
+    ROLE_TEMPLATE: KIND_STATIC,
     ROLE_GEN_CONFIG: KIND_EXEC,       # 生成配置要执行脚本
     ROLE_ACTION_CONFIG: KIND_META,    # actus 元数据解析
     ROLE_GENERIC: "",                 # 由 language 决定
@@ -1025,6 +1034,8 @@ BUILTIN_BLOCK_LANGUAGES: Tuple[str, ...] = (
     "latex", "math", "tex",
     # 构建块（P1）
     "makefile", "make", "dockerfile", "docker-compose", "compose", "nginx",
+    # 模板语言（P1）
+    "jinja", "jinja2", "mako", "handlebars", "ejs", "pug",
     # 纯数据块（P2）
     "csv", "tsv", "xml", "text", "plain",
     # 协议块
@@ -1047,6 +1058,7 @@ _STATIC_ROLE_TABLE: Dict[str, Tuple[str, str]] = {
     ROLE_DIAGRAM:       ("diagram",   ".mmd"),
     ROLE_MATH:          ("math",      ".tex"),
     ROLE_BUILD:         ("build",     ".conf"),
+    ROLE_TEMPLATE:      ("templates", ".tmpl"),
     ROLE_GENERIC:       ("static",    ""),
 }
 
@@ -1067,6 +1079,12 @@ _LANG_EXT_MAP: Dict[str, str] = {
     "dockerfile": ".Dockerfile",
     "docker-compose": ".yml", "compose": ".yml",
     "nginx": ".conf",
+    # 模板语言扩展名
+    "jinja": ".j2", "jinja2": ".j2",
+    "mako": ".mako",
+    "handlebars": ".hbs",
+    "ejs": ".ejs",
+    "pug": ".pug",
 }
 
 
@@ -1091,6 +1109,9 @@ def _static_out_path(block: CodeBlock, context: Dict, config: Dict) -> Tuple[str
     if not ext:
         # role 兜底扩展名
         ext = _STATIC_ROLE_TABLE.get(role, _STATIC_ROLE_TABLE[ROLE_GENERIC])[1]
+    # 统一前导点（Makefile / Dockerfile 等特殊名保留原样）
+    if ext and not ext.startswith(".") and ext.lower() not in ("makefile",):
+        ext = "." + ext
 
     build_dir = context.get("build_dir") or (
         config.get("build_dir") if isinstance(config, dict) else None

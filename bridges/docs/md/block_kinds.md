@@ -25,7 +25,8 @@
 | `data` | 纯数据展示 | csv / tsv / xml / text | 写 `artifacts/data/` | static |
 | `diagram` | 图表 | mermaid / plantuml / dot | 写 `artifacts/diagram/` | static |
 | `math` | 数学公式 | latex / math / tex | 写 `artifacts/math/` | static |
-| `build` | 构建/基础设施 | makefile / dockerfile / nginx | 写 `artifacts/build/` | static |
+| `build` | 构建/基础设施 | makefile / dockerfile / docker-compose / nginx | 写 `artifacts/build/` | static |
+| `template` | 模板语言 | jinja / mako / handlebars / ejs / pug | 写 `artifacts/templates/` | static |
 | `generic` | 默认 | 其他 | 按 language 决定 | — |
 
 ## 3. 执行模式（kind）
@@ -57,6 +58,7 @@ lua（role=gen-config）
 css  json  toml  yaml  ini  csv  tsv  xml  text  plain
 mermaid/mmd  plantuml/puml  dot/graphviz  latex/math/tex
 makefile/make  dockerfile  docker-compose  nginx
+jinja/jinja2  mako  handlebars  ejs  pug
 ```
 
 ### 4.3 protocol（协议调用）

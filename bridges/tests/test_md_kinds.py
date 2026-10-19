@@ -404,6 +404,140 @@ class TestLuaGenConfig:
             assert "lua" in stderr.lower() or "不可用" in stderr
 
 
+# ═══════════════════════════════════════════════════════
+# C1/C2/C3/C4: P1 阶段块（图表 / 数学 / 构建 / 模板）
+# ═══════════════════════════════════════════════════════
+
+
+class TestP1StaticBlocks:
+    """P1 阶段静态块：图表 / 数学 / 构建 / 模板语言。
+
+    这些语言 bridge helper 已注册但编译器未装（is_available=False），
+    所以走 static kind（只写产物文件）。
+    """
+
+    # ── C1: 图表 ──
+
+    def test_mermaid_block(self, tmp_path):
+        content = "graph TD;\n  A-->B;"
+        block = _block("mermaid", content, {}, index=1)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "diagram", "block_1.mmd")
+        assert os.path.exists(out_path)
+        # static 块 stdout 只含产物路径，不含内容
+        assert "artifacts/diagram/block_1.mmd" in stdout
+
+    def test_plantuml_block(self, tmp_path):
+        content = "@startuml\nAlice -> Bob\n@enduml"
+        block = _block("plantuml", content, {}, index=2)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "diagram", "block_2.puml")
+        assert os.path.exists(out_path)
+
+    def test_dot_block(self, tmp_path):
+        content = 'digraph G { a -> b }'
+        block = _block("dot", content, {}, index=3)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "diagram", "block_3.dot")
+        assert os.path.exists(out_path)
+
+    # ── C2: 数学 ──
+
+    def test_latex_block(self, tmp_path):
+        content = r"\begin{equation}E = mc^2\end{equation}"
+        block = _block("latex", content, {}, index=4)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "math", "block_4.tex")
+        assert os.path.exists(out_path)
+
+    def test_math_block(self, tmp_path):
+        content = r"\frac{1}{2}"
+        block = _block("math", content, {}, index=5)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+
+    # ── C3: 构建 / 基础设施 ──
+
+    def test_dockerfile_block(self, tmp_path):
+        content = "FROM python:3.11\nRUN pip install vools"
+        block = _block("dockerfile", content, {}, index=6)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "build", "block_6.Dockerfile")
+        assert os.path.exists(out_path)
+        with open(out_path, "r", encoding="utf-8") as f:
+            assert "FROM" in f.read()
+
+    def test_docker_compose_block(self, tmp_path):
+        content = "services:\n  app:\n    image: python:3.11"
+        block = _block("docker-compose", content, {}, index=7)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "build", "block_7.yml")
+        assert os.path.exists(out_path)
+
+    def test_nginx_block(self, tmp_path):
+        content = "server {\n  listen 80;\n}"
+        block = _block("nginx", content, {}, index=8)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "build", "block_8.conf")
+        assert os.path.exists(out_path)
+
+    def test_makefile_block(self, tmp_path):
+        # 不执行 make（无 target 指令时纯写文件 rc=0）
+        content = "all:\n\techo hi"
+        block = _block("makefile", content, {}, index=9)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "build", "block_9Makefile")
+        assert os.path.exists(out_path)
+        with open(out_path, "r", encoding="utf-8") as f:
+            assert "all:" in f.read()
+
+    # ── C4: 模板语言 ──
+
+    def test_jinja_block(self, tmp_path):
+        content = "Hello {{ name }}!"
+        block = _block("jinja", content, {}, index=10)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "templates", "block_10.j2")
+        assert os.path.exists(out_path)
+
+    def test_handlebars_block(self, tmp_path):
+        content = "{{#if user}}{{user.name}}{{/if}}"
+        block = _block("handlebars", content, {}, index=11)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "templates", "block_11.hbs")
+        assert os.path.exists(out_path)
+
+    def test_pug_block(self, tmp_path):
+        content = "h1 Hello"
+        block = _block("pug", content, {}, index=12)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+        out_path = os.path.join(str(tmp_path), "artifacts", "templates", "block_12.pug")
+        assert os.path.exists(out_path)
+
+    def test_mako_block(self, tmp_path):
+        content = "${name}"
+        block = _block("mako", content, {}, index=13)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+
+    def test_ejs_block(self, tmp_path):
+        content = "<%= name %>"
+        block = _block("ejs", content, {}, index=14)
+        stdout, stderr, rc = _execute_block(block, _ctx(tmp_path), _config(), None, 10)
+        assert rc == 0, stderr
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
