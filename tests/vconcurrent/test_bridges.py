@@ -215,6 +215,45 @@ class TestSharedBridge:
             b.close()
             b.unlink()
 
+    def test_write_negative_offset_returns_zero_not_crash(self):
+        """BUG-190: 负 offset 原让 buf[-3:2] 空切片配非空 rvalue 抛
+        memoryview ValueError，现应返回 0。"""
+        b = _new_bridge(size=1024)
+        if b is None:
+            return
+        try:
+            assert b.write(b'hello', offset=-3) == 0
+        finally:
+            b.close()
+            b.unlink()
+
+    def test_write_oob_offset_returns_zero_not_negative(self):
+        """BUG-190: 超界 offset 原返回负字节数（-84）违背"实际写入字节数"
+        契约，现应返回 0。"""
+        b = _new_bridge(size=16)
+        if b is None:
+            return
+        try:
+            assert b.write(b'hello', offset=100) == 0
+        finally:
+            b.close()
+            b.unlink()
+
+    def test_read_invalid_offset_returns_empty(self):
+        """BUG-190: read 越界/负 offset 返回 b''，不静默错读。"""
+        b = _new_bridge(size=16)
+        if b is None:
+            return
+        try:
+            b.write(b'hello')
+            assert b.read(5, offset=100) == b''
+            assert b.read(5, offset=-3) == b''
+            # 正常读取不受影响
+            assert b.read(5) == b'hello'
+        finally:
+            b.close()
+            b.unlink()
+
     def test_write_object_read_object(self):
         b = _new_bridge(size=4096)
         if b is None:
