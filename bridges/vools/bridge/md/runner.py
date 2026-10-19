@@ -876,13 +876,26 @@ def _dispatch_exec(
 
     role = resolve_block_role(block)
     if role == ROLE_GEN_CONFIG and lang not in _EXEC_LANGUAGES:
-        # lua 生成配置：优先走 bridge（lua 已在 registry），失败降级 python 兜底
+        # lua 生成配置：优先走 bridge，失败降级 lupa 回退
         stdout, stderr, rc = _execute_via_bridge(
             block, context, config, timeout, args,
             func_name=f"__md_block_{block.index}"
         )
         if rc == 0 and stdout:
             return _finalize_gen_config(block, context, config, stdout), stderr, 0
+        # lua 不可用时尝试 lupa 回退（无第三方运行时依赖，可选依赖）
+        if lang in ("lua", "lua5.1", "lua5.3", "lua54", "lua51", "luajit"):
+            try:
+                from vools.bridge.lua.compiler import execute_code_lupa
+            except Exception:
+                execute_code_lupa = None
+            if execute_code_lupa is not None:
+                try:
+                    lupa_out = execute_code_lupa(block.content)
+                except Exception as lupa_exc:
+                    return stdout, f"{stderr}\n[lupa fallback] {lupa_exc}", rc
+                if lupa_out:
+                    return _finalize_gen_config(block, context, config, lupa_out), "", 0
         return stdout, stderr, rc
 
     if lang == "python":
@@ -1135,16 +1148,40 @@ def _static_out_path(block: CodeBlock, context: Dict, config: Dict) -> Tuple[str
         build_dir = _tempfile.mkdtemp(prefix="vools-md-")
 
     out_name = (block.directives.get("out") or "").strip()
+    out_path_override = None  # 绝对路径时直接覆盖
     if out_name:
-        if not os.path.splitext(out_name)[1]:
-            out_name = f"{out_name}{ext}"
+        out_name = out_name.replace("/", os.sep)
+        if os.path.isabs(out_name):
+            # 绝对路径：直接用（旧行为向后兼容，如 test_data_out_override）
+            out_path_override = out_name
+        else:
+            # 相对路径：防 ../ 穿越 + 支持子目录（如 #!out=config/app.toml）
+            norm = os.path.normpath(out_name)
+            if norm == ".." or norm.startswith(".." + os.sep):
+                norm = os.path.basename(out_name)
+            out_name = norm
+            if not os.path.splitext(out_name)[1]:
+                out_name = f"{out_name}{ext}"
     else:
         out_name = f"block_{block.index}{ext}"
 
-    # 绝对路径
+    if out_path_override is not None:
+        # 绝对路径分支：直接写目标位置
+        out_dir = os.path.dirname(out_path_override)
+        os.makedirs(out_dir, exist_ok=True)
+        return (
+            os.path.abspath(out_path_override).replace("\\", "/"),
+            os.path.basename(out_path_override),
+            out_path_override,
+        )
+
+    # 相对路径（或默认）：拼到 artifacts/<sub_dir>/ 下
     out_dir = os.path.join(build_dir, "artifacts", sub_dir)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, out_name)
+    out_parent = os.path.dirname(out_path)
+    if out_parent and not os.path.isdir(out_parent):
+        os.makedirs(out_parent, exist_ok=True)
 
     rel = os.path.join("artifacts", sub_dir, out_name).replace("\\", "/")
     return rel, out_name, out_path
