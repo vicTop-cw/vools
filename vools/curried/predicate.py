@@ -221,10 +221,17 @@ def is_in(iterable: Iterable) -> Callable[[Any], bool]:
         True
         >>> is_in([1, 2, 3])(5)
         False
+
+    Note:
+        BUG-216: 构造时物化快照——原实现闭包持有一次性迭代器（生成器等
+        合法 Iterable），谓词每次查询推进迭代器，耗尽后静默给错答案。
+        谓词工厂返回可复用 Callable，多次查询是契约用法，源必须在构造
+        时定格。
     """
+    values = list(iterable)  # BUG-216: 物化快照，谓词可重复查询
     @curry
     def _is_in(val: Any) -> bool:
-        return val in iterable
+        return val in values
     return _is_in
 
 
@@ -244,10 +251,15 @@ def is_not_in(iterable: Iterable) -> Callable[[Any], bool]:
         True
         >>> is_not_in([1, 2, 3])(2)
         False
+
+    Note:
+        BUG-216: 同 is_in——一次性源耗尽后原实现恒 True（源中元素被
+        静默误判 not in，语义反转）。构造时物化快照保证多次查询正确。
     """
+    values = list(iterable)  # BUG-216: 物化快照，谓词可重复查询
     @curry
     def _is_not_in(val: Any) -> bool:
-        return val not in iterable
+        return val not in values
     return _is_not_in
 
 
@@ -291,7 +303,18 @@ def issubclass_(class_or_tuple: Union[type, tuple], cls: type) -> bool:
         True
         >>> issubclass_(object)(int)
         False
+        >>> issubclass_((int, float))(object)
+        True
+
+    Note:
+        BUG-217: Args 承诺「类或类元组」，原实现元组被 isclass 短路恒静默
+        False（且整体传 issubclass 子类侧也不受 stdlib 支持）。现补元组
+        分支：每个元素都是 cls 的子类才 True；含非类元素按本函数"非类
+        静默 False"哲学返回 False。
     """
+    if isinstance(class_or_tuple, tuple):
+        # BUG-217: 兑现 docstring 的类元组承诺（Returns 复数主语=全部）
+        return all(isclass(c) and issubclass(c, cls) for c in class_or_tuple)
     if not isclass(class_or_tuple):
         return False
     return issubclass(class_or_tuple, cls)
