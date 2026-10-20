@@ -1,54 +1,144 @@
 ---
+
 AIGC:
+
     Label: "1"
+
     ContentProducer: 001191440300708461136T1XGW3
+
     ProduceID: 9f2a11add43fbf12a546606fb2b962ab_bf0c3c41af4411f18f50525400aeaaa3
+
     ReservedCode1: PLACEHOLDER
+
     ContentPropagator: 001191440300708461136T1XGW3
+
     PropagateID: 9f2a11add43fbf12a546606fb2b962ab_bf0c3c41af4411f18f50525400aeaaa3
+
     ReservedCode2: PLACEHOLDER
+
 ---
+
+
 
 # trusted-python
 
+
+
 ```json #!cfg
+
 {
+
   "id": "actus.generated.zhzh",
+
   "name": "Zhzh",
+
   "version": "1.0.0",
+
   "trust": "audit",
+
+  "kind": "template",
+
+  "platform": [
+
+    "windows"
+
+  ],
+
   "deps": [],
+
   "entry": "main",
+
   "description": "测试动作：处理文本数据",
+
   "usage": "\u8c03\u7528\u793a\u4f8b: actus_generated_zhzh({\"param\": \"value\"});\n\u8fd4\u56de: {\"status\": \"ok\"}",
+
   "author": "ai-scaffold",
-  "permissions": ["files:read"],
+  "platform": ["desktop"],
+  "tests": ["tests/test_zhzh.py"],
+
+  "permissions": [],
+
   "args": {
+
     "type": "object",
+
     "properties": {
-      "param": { "type": "string", "description": "参数说明" }
+
+      "param": {
+
+        "type": "string",
+
+        "description": "参数说明"
+
+      }
+
     },
-    "required": ["param"]
+
+    "required": [
+
+      "param"
+
+    ]
+
   },
-  "ai": { "generated": true, "author": "ai-scaffold", "evolve_policy": "confirm" }
+
+  "ai": {
+
+    "generated": true,
+
+    "author": "ai-scaffold",
+
+    "evolve_policy": "confirm"
+
+  }
+
 }
 ```
 
+
+
 ```python #!run tag=main
+
 """
+
 动作入口函数（trusted Python 模板）。
 
+
+
 入参:
+
     param (str): 从 args 传入的参数。
+
 返回:
+
     dict: 执行结果，序列化为 JSON 返回给调用方。
+
 """
 
+
+
 import json, os
+
 def main(params: dict) -> dict:
+
     param = params.get('param')
+
     result = f"processed: {param}"
-    return {"status": "ok", "result": result}
+
+    return {"status": "ok", "result": result, "data": None}
+
+
+
+# 入口自调用协议：读 ACTUS_PARAMS → 调 main(params) → 打印
+
+params = json.loads(os.environ.get('ACTUS_PARAMS') or '{}')
+
+print(json.dumps(main(params), ensure_ascii=False))
+
+
+
+
+
 
 
 # 引擎契约：调用必须在模块级，见 docs/38 §1
@@ -81,3 +171,4 @@ if __name__ == "__main__":
     params = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
     print(json.dumps(main(**params), ensure_ascii=False, indent=2))
 ```
+

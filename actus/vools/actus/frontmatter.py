@@ -15,21 +15,64 @@ __all__ = ['strip_frontmatter', 'parse_action_metadata']
 _FM_OPEN = '---'
 _FM_CLOSE = '---'
 
+# AIGC 合规块的特征键（区域 0）——strip_frontmatter 只剥这一块，
+# 不再无差别剥首个 front-matter（存量 bug：单 front-matter 的 .actus.schema.md
+# 会被剥掉唯一元数据块，导致 parse_action_metadata 拿到空 meta）。
+_AIGC_KEYS = ('AIGC', 'aigc', 'generated-by', 'generated-by-at')
+
+
+def _split_frontmatter_blocks(text: str):
+    """把文件拆成 [(kind, yaml_text, body_after), ...] front-matter 序列 + 尾随正文。
+
+    kind ∈ ('aigc', 'meta')：按块内特征键判别。
+    返回 (blocks, body)：blocks 是前导 front-matter 块列表，body 是最后一个
+    front-matter 闭合行之后的正文。
+    """
+    lines = text.split('\n')
+    blocks = []
+    i = 0
+    # 跳过文件开头的空行（不改变既有"不以 --- 开头 → 原样返回"语义）
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    while i < len(lines) and lines[i].strip() == _FM_OPEN:
+        end_idx = None
+        for j in range(i + 1, len(lines)):
+            if lines[j].strip() == _FM_CLOSE:
+                end_idx = j
+                break
+        if end_idx is None:
+            break  # 无闭合 → 不当 front-matter（交给下游按规范报错）
+        yaml_text = '\n'.join(lines[i + 1:end_idx])
+        # 判别：任一行以 AIGC:/aigc:/generated-by: 起始 → AIGC 合规块，否则元数据块
+        kind = 'meta'
+        for ln in yaml_text.split('\n'):
+            if ln.strip().startswith(('AIGC:', 'aigc:', 'generated-by:')):
+                kind = 'aigc'
+                break
+        blocks.append((kind, yaml_text))
+        i = end_idx + 1
+    return blocks, '\n'.join(lines[i:]).lstrip('\n')
+
 
 def strip_frontmatter(text: str) -> str:
-    """剥离首个 YAML front-matter 区段，返回其余正文。
+    """剥离区域 0（AIGC 合规留痕），返回其余正文（含区域 1 元数据 front-matter）。
 
     - 文件不以 --- 开头 → 原样返回；
     - 只有开头的 --- 无闭合 → 原样返回（交给下游按规范报错）；
-    - 闭合行之后的全部内容原样返回（保留换行结构）。
+    - **只剥 AIGC 特征块**：元数据块（含 id/name/... 等动作字段）原样保留，
+      供 parse_action_metadata 解析（存量 bug 修复：此前无差别剥首个块，
+      单 front-matter 的 .actus.schema.md 会丢掉唯一元数据）。
     """
-    lines = text.split('\n')
-    if not lines or lines[0].strip() != _FM_OPEN:
+    blocks, body = _split_frontmatter_blocks(text)
+    if not blocks:
         return text.lstrip('\n') if text.startswith('\n') else text
-    for i in range(1, len(lines)):
-        if lines[i].strip() == _FM_CLOSE:
-            return '\n'.join(lines[i + 1:]).lstrip('\n')
-    return text
+    # 把非 AIGC 块重新拼回正文前部（它们本来就是元数据，不是要剥的合规块）
+    kept = []
+    for kind, yaml_text in blocks:
+        if kind != 'aigc':
+            kept.append(f'{_FM_OPEN}\n{yaml_text}\n{_FM_CLOSE}')
+    prefix = ('\n'.join(kept) + '\n') if kept else ''
+    return (prefix + body).lstrip('\n')
 
 
 def parse_action_metadata(text: str) -> tuple:
@@ -43,21 +86,19 @@ def parse_action_metadata(text: str) -> tuple:
     - 正文不以 --- 开头 → 返回 ({}, text)
     - 只有开头的 --- 无闭合 → 返回 ({}, text)
     - 解析失败 → 抛出 ActionError
+    - AIGC 合规块（区域 0）自动跳过，只取元数据块（区域 1）
     """
-    lines = text.split('\n')
-    if not lines or lines[0].strip() != _FM_OPEN:
+    blocks, body = _split_frontmatter_blocks(text)
+    meta_blocks = [b for b in blocks if b[0] == 'meta']
+    if not meta_blocks:
         return {}, text
 
-    end_idx = None
-    for i in range(1, len(lines)):
-        if lines[i].strip() == _FM_CLOSE:
-            end_idx = i
-            break
-    if end_idx is None:
-        return {}, text
-
-    yaml_text = '\n'.join(lines[1:end_idx])
-    remaining = '\n'.join(lines[end_idx + 1:]).lstrip('\n')
+    yaml_text = meta_blocks[0][1]
+    # 若 AIGC 块在元数据块之前，它已被 _split 剔除；remaining 需要把
+    # 后续非首个元数据块之后的内容拼回来（正常文件只有一个元数据块）
+    remaining = body
+    for kind, yt in meta_blocks[1:]:
+        remaining = f'{_FM_OPEN}\n{yt}\n{_FM_CLOSE}\n{remaining}'
 
     try:
         import yaml

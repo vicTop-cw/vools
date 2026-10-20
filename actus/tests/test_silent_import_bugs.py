@@ -74,8 +74,9 @@ MIN_VALID_ACTION = '''# demo
   "id": "actus.test.demo",
   "name": "demo",
   "version": "1.0.0",
-  "trust": "trusted",
+  "trust": "sandbox",
   "entry": "main",
+  "platform": ["desktop"],
   "description": "demo action",
   "args": {"type": "object", "properties": {}}
 }

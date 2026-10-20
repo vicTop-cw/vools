@@ -1,13 +1,22 @@
 ---
-id: calculator
+id: actus.basics.calculator
 name: Calculator
 version: 1.0.0
 trust: sandbox
+kind: exec
+purpose: [compute, control]
+industry: [general]
+trigger: [manual]
+context_applies: []
 entry: main
 description: A beautiful calculator with modern UI
 author: vools
 platform: desktop
 tags: [calculator, gui, webview2, utility]
+license: mit
+pricing: free
+declared_features: [ui-automation]
+demo: calculator.demo.actus.md
 max_instances: 1
 deprecated: false
 ---
@@ -27,7 +36,7 @@ result = action.execute()
 
 ## Implementation
 
-```webview2 title="Calculator" width=400 height=600 resizable=false devtools=false
+```webview2 #!run tag=main title="Calculator" width=400 height=600 resizable=false devtools=false
 <!DOCTYPE html>
 <html lang="en">
 <head>

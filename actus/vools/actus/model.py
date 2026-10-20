@@ -101,6 +101,65 @@ class Action:
         """动作分类标签，用于 AI 搜索和过滤。"""
         return self.meta.get('tags', [])
 
+    # —— 分类体系 v2.0 便捷读取（docs/03 §2 分类体系章节） ——
+
+    @property
+    def kind(self) -> str:
+        """执行类型（exec/link/demo/template/alias/bundle/doc），默认 exec。"""
+        return self.meta.get('kind') or 'exec'
+
+    @property
+    def purpose(self) -> list:
+        """用途分类（多值 1..5），默认 [utility]。"""
+        v = self.meta.get('purpose')
+        if v is None:
+            return ['utility']
+        return v if isinstance(v, list) else [v]
+
+    @property
+    def industry(self) -> list:
+        """行业分类（多值 1..5），默认 [general]。"""
+        v = self.meta.get('industry')
+        if v is None:
+            return ['general']
+        return v if isinstance(v, list) else [v]
+
+    @property
+    def trigger_decl(self) -> list:
+        """触发方式声明（多值），默认 [manual]。"""
+        v = self.meta.get('trigger')
+        if v is None:
+            return ['manual']
+        return v if isinstance(v, list) else [v]
+
+    @property
+    def context_applies(self) -> list:
+        """适用上下文（Quicker 式：exe 名/文件类型/OS），默认 []。"""
+        v = self.meta.get('context_applies')
+        if v is None:
+            return []
+        return v if isinstance(v, list) else [v]
+
+    @property
+    def license(self) -> str:
+        """许可证声明，默认 mit。"""
+        return self.meta.get('license') or 'mit'
+
+    @property
+    def demo(self) -> str:
+        """演示文件路径（相对动作文件同目录解析，降低采用门槛）。"""
+        return self.meta.get('demo') or ''
+
+    @property
+    def declared_features(self) -> list:
+        """作者自声明特性（network-access/file-write/...）。"""
+        return self.meta.get('declared_features') or []
+
+    @property
+    def pricing(self) -> str:
+        """定价模式（free/paid/subscription），默认 free。"""
+        return self.meta.get('pricing') or 'free'
+
     @property
     def cached_artifacts(self) -> list:
         """缓存的编译产物路径列表（dll, exe, so 等）。"""
@@ -138,6 +197,16 @@ class Action:
             'path': self.path,
             'sha256': self.sha256,
             'cached_artifacts': self.cached_artifacts,
+            # 分类体系 v2.0（docs/03 §2）：5 维度 + 生态层声明
+            'kind': self.kind,
+            'purpose': self.purpose,
+            'industry': self.industry,
+            'trigger_decl': self.trigger_decl,
+            'context_applies': self.context_applies,
+            'license': self.license,
+            'pricing': self.pricing,
+            'declared_features': self.meta.get('declared_features') or [],
+            'demo': self.meta.get('demo') or '',
         }
 
 
@@ -281,6 +350,9 @@ def _parse_schema_md_action(raw: str, path: str, sha: str) -> Action:
     if meta.get('entry'):
         fd['entry'] = meta['entry']
 
+    # path 同步进 meta：classification_notices 等只收 meta 的校验面
+    # （demo 相对路径定位、自包含检查）需要知道动作文件在哪（docs/03 §5.4）。
+    meta.setdefault('path', path.replace(os.sep, '/'))
     return Action(meta=meta, path=path.replace(os.sep, '/'), sha256=sha,
                   raw=raw, body=remaining_body, blocks=blocks, file_directives=fd)
 

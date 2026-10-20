@@ -1,12 +1,15 @@
 # `.actus.schema.md` 硬性约定格式规范
 
-> **状态**: v0.1 — 内部规范草案  
-> **替代目标**: `contracts/action.schema.json`、`#!cfg` 内联元数据块、`#!entry` 等文件级指令  
+> **状态**: v2.0 — 与分类体系 v2.0 / contracts/action.schema.json 对齐  
+> **配套规范**: `docs/03-动作规范.md`（三层边界 / 分类体系 / 生态层 / 协议统一）
+> **机器校验真源**: `contracts/action.schema.json`（JSON Schema draft-07；
+>   front-matter 字段表是本规范的人读投影，改字段必须三处同步）
+> **替代目标**: `#!cfg` 内联元数据块、`#!entry` 等文件级指令（旧格式 `.actus.md` 仍向后兼容）
 > **核心原则**: 单一 `.md` 文件 = 完全自包含的动作定义，**无 JSON 文件、无外部 schema 引用**
 
 ---
 
-### ⚠️ 双层 front-matter 是 Actus 私有约定（非 GFM 标准）
+### ⚠️ front-matter 双层约定（区域 0 可省略）
 
 Actus 采用"两个连续的 YAML front-matter 区段"设计：
 
@@ -23,9 +26,15 @@ id: ...
 
 **所有通用 Markdown front-matter 工具（mkdocs / mdformat / pyyaml）只认识文件开头一段
 `---...---`**，Actus 双层设计是私有发明。影响范围：
-- `strip_frontmatter()` 剥第一段 → `parse_action_metadata()` 剥第二段 → 依次处理
+- `strip_frontmatter()` 剥区域 0 → `parse_action_metadata()` 剥区域 1 → 依次处理
 - 通用 front-matter 工具加载 `.actus.schema.md` 时会把两段拼起来得到坏掉的 YAML
 - 若需要同时被通用工具解析，可将区域 0 改为 HTML 注释 `<!-- aigc: ... -->`
+
+**区域 0 可省略**（无 AIGC 合规声明时）：`strip_frontmatter()` 按内容判别
+（块内含 `AIGC:` / `generated-by:` 键才是区域 0），只剥合规块；元数据块
+（含 `id`/`name` 等动作字段）原样保留给 `parse_action_metadata()`。
+`vools/actus/actions/basics/` 下 4 个种子动作即单层形态（2026-10-19 修复：
+旧实现无差别剥首个块，单层文件的唯一元数据会被剥掉导致解析失败）。
 
 ---
 

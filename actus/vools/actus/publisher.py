@@ -25,12 +25,12 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import time
 from typing import Any, Callable, Dict, List, Optional
 
 from .repo import (REGISTRY_FILENAMES, ActionRepo, RepoError, is_dev_repo,
                    parse_ref, registry_path, repo_url, run_git, save_registry)
+from .constants import is_action_file
 
 #: GitHub 凭据的环境变量名（docs/40 vault 的键名同此）
 GITHUB_TOKEN_ENV = 'GITHUB_TOKEN'
@@ -230,25 +230,25 @@ class GitHubClient:
 # ── 发布到仓（途径 C/B 的本地部分）──────────────────────────────────────
 
 def validate_action_paths(paths: List[str]) -> List[str]:
-    """要发布的动作路径：目录则展开其中的 `*.actus.md`。"""
+    """要发布的动作路径：目录则展开其中的动作文件（.actus.md / .actus.schema.md）。"""
     out: List[str] = []
     for p in paths:
         ap = os.path.abspath(p)
         if os.path.isfile(ap):
-            if not ap.endswith('.actus.md'):
+            if not is_action_file(ap):
                 raise PublishError('action_invalid',
-                                   f'动作文件需以 .actus.md 结尾：{ap}')
+                                   f'动作文件需以 .actus.md / .actus.schema.md 结尾：{ap}')
             out.append(ap)
         elif os.path.isdir(ap):
             for dirpath, dirnames, filenames in os.walk(ap):
                 dirnames[:] = [d for d in dirnames if d != '__pycache__']
                 for fn in sorted(filenames):
-                    if fn.endswith('.actus.md'):
+                    if is_action_file(fn):
                         out.append(os.path.join(dirpath, fn))
         else:
             raise PublishError('action_not_found', f'路径不存在：{ap}')
     if not out:
-        raise PublishError('action_not_found', '没有任何 .actus.md 可供发布')
+        raise PublishError('action_not_found', '没有任何动作文件可供发布')
     return sorted(set(out))
 
 

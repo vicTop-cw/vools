@@ -11,6 +11,7 @@ import re
 import time
 from typing import Dict, List, Optional, Tuple
 from vools.core.dataclass_compat import dataclass, asdict
+from .constants import is_action_file
 
 
 @dataclass
@@ -90,7 +91,7 @@ class ActionRegistry:
         entries = []
         for root, dirs, files in os.walk(actions_dir):
             for fname in files:
-                if not fname.endswith(".actus.md"):
+                if not is_action_file(fname):
                     continue
                 fpath = os.path.join(root, fname)
                 entry = self._parse_action_file(fpath, repo_dir)
@@ -203,6 +204,56 @@ class ActionRegistry:
         if tags and not any(t in entry.tags for t in tags):
             return False
         return True
+
+    def filter_by_quality(self, level: str = None, limit: int = 50,
+                          repo_dir: str = None) -> List[dict]:
+        """按质量分级过滤（docs/03 §5.3，借鉴 HA Quality Scale）。
+
+        质量分级从真实数据计算（签名/Omega/执行指标/维护活跃度），非手工申报——
+        杜绝自写自测恒绿。数据源不可用时降级 bronze，绝不虚报更高等级。
+
+        参数:
+            level: 目标等级（platinum/gold/silver/bronze/internal）；
+                   None 时返回全部（每条带 computed quality 字段）。
+            limit: 最大返回数。
+            repo_dir: 仓库根（签名验证与动作文件定位用；缺省取 cache_dir 上一级）。
+
+        返回:
+            [{entry, quality, evidence}] 按质量等级降序。
+        """
+        from .quality import quality_scale, QUALITY_LEVELS, _LEVEL_RANK
+
+        if level is not None and level not in QUALITY_LEVELS:
+            raise ValueError(f'未知质量等级: {level!r}（支持 {QUALITY_LEVELS}）')
+
+        results: List[dict] = []
+        for entry in self._entries.values():
+            action = self._entry_to_action(entry, repo_dir)
+            if action is None:
+                continue
+            q = quality_scale(action)
+            if level is not None and q['quality'] != level:
+                continue
+            results.append({'entry': entry, 'quality': q['quality'],
+                            'evidence': q['evidence']})
+
+        results.sort(key=lambda r: (-_LEVEL_RANK.get(r['quality'], 0), r['entry'].id))
+        return results[:limit]
+
+    def _entry_to_action(self, entry, repo_dir: str = None):
+        """RegistryEntry → Action（质量计算用；解析失败返回 None）。"""
+        from .model import parse_cfg_from_file
+        root = repo_dir or os.path.dirname(self._cache_dir.rstrip(os.sep))
+        fpath = os.path.join(root, entry.path)
+        if not os.path.isfile(fpath):
+            # cache_dir 上一级不是仓库根时，退回绝对路径尝试
+            fpath = entry.path if os.path.isfile(entry.path) else None
+        if not fpath:
+            return None
+        try:
+            return parse_cfg_from_file(fpath)
+        except Exception:
+            return None
 
     def _score_entry(self, entry: RegistryEntry,
                      query_lower: str, query_words: set) -> float:

@@ -206,6 +206,12 @@ class MCPServer:
             trust = brief.get('trust')
             if trust:
                 desc = f'[{trust}] {desc}'
+            # 分类体系 v2.0（docs/03 §2）：描述带 purpose/industry 摘要，
+            # AI 选工具时能按"做什么/服务谁"判断（此前只有 trust 前缀，
+            # 7 个动作在 AI 眼里除了 trust 完全同质）。
+            purpose = brief.get('purpose') or ['utility']
+            industry = brief.get('industry') or ['general']
+            desc = f'{desc}\n\n【分类】用途: {"/".join(purpose)} · 行业: {"/".join(industry)}'
             # docs/10 §A.3：拼接 usage 字段，供 AI 理解用法
             usage = brief.get('usage')
             if usage:
@@ -218,15 +224,27 @@ class MCPServer:
 
         tools.extend([
             {'name': 'actus_list',
-             'description': '列出全部可用动作（id/name/version/trust/tags）',
+             'description': '列出全部可用动作（id/name/version/trust/kind/purpose/industry/tags）',
              'inputSchema': {'type': 'object', 'properties': {
-                 'tag': {'type': 'string', 'description': '按标签过滤（逗号分隔）'}}}},
+                 'tag': {'type': 'string', 'description': '按标签过滤（逗号分隔）'},
+                 'kind': {'type': 'string',
+                          'description': '按执行类型过滤（exec/link/demo/template/alias/bundle/doc）'},
+                 'purpose': {'type': 'string',
+                             'description': '按用途过滤（source/sink/transform/orchestrator/notify/control/monitor/compute/ai/data-store/security/utility）'},
+                 'industry': {'type': 'string',
+                              'description': '按行业过滤（devops/finance/healthcare/hr/sales/marketing/customer-support/education/legal/general）'}}}},
             {'name': 'actus_search',
-             'description': '搜索动作（支持标签、关键词、作者过滤）',
+             'description': '搜索动作（支持标签、关键词、作者、kind/purpose/industry 过滤）',
              'inputSchema': {'type': 'object', 'properties': {
                  'query': {'type': 'string', 'description': '搜索关键词'},
                  'tag': {'type': 'string', 'description': '标签过滤（逗号分隔）'},
                  'author': {'type': 'string', 'description': '作者过滤'},
+                 'kind': {'type': 'string',
+                          'description': '按执行类型过滤（exec/link/demo/template/alias/bundle/doc）'},
+                 'purpose': {'type': 'string',
+                             'description': '按用途过滤（source/sink/transform/.../utility）'},
+                 'industry': {'type': 'string',
+                              'description': '按行业过滤（devops/finance/.../general）'},
                  'limit': {'type': 'integer', 'description': '最大返回数', 'default': 20}}}},
             {'name': 'actus_recommend',
              'description': '根据任务描述推荐最相关的动作（语义匹配）',
@@ -1023,6 +1041,10 @@ class MCPServer:
             idx = actuscore.load_index()
             tag_filter = args.get('tag')
             tags = tag_filter.split(',') if tag_filter else None
+            # 分类体系 v2.0（docs/03 §2）：kind/purpose/industry 过滤
+            kind_f = (args.get('kind') or '').strip().lower() or None
+            purpose_f = (args.get('purpose') or '').strip().lower() or None
+            industry_f = (args.get('industry') or '').strip().lower() or None
             rows = []
             for aid, b in idx['actions'].items():
                 if aid.startswith('_invalid:'):
@@ -1030,8 +1052,17 @@ class MCPServer:
                 action_tags = b.get('tags', [])
                 if tags and not any(t in action_tags for t in tags):
                     continue
+                if kind_f and (b.get('kind') or 'exec') != kind_f:
+                    continue
+                if purpose_f and purpose_f not in (b.get('purpose') or ['utility']):
+                    continue
+                if industry_f and industry_f not in (b.get('industry') or ['general']):
+                    continue
                 rows.append({'id': aid, 'name': b.get('name'), 'version': b.get('version'),
                              'trust': b.get('trust'), 'status': b.get('status'),
+                             'kind': b.get('kind') or 'exec',
+                             'purpose': b.get('purpose') or ['utility'],
+                             'industry': b.get('industry') or ['general'],
                              'tags': action_tags})
             return text_result({'status': 'ok', 'data': {'actions': rows}})
 
@@ -1042,6 +1073,10 @@ class MCPServer:
             tags = tag_filter.split(',') if tag_filter else None
             author = args.get('author')
             limit = args.get('limit', 20)
+            # 分类体系 v2.0（docs/03 §2）：kind/purpose/industry 过滤
+            kind_f = (args.get('kind') or '').strip().lower() or None
+            purpose_f = (args.get('purpose') or '').strip().lower() or None
+            industry_f = (args.get('industry') or '').strip().lower() or None
             rows = []
             for aid, b in idx['actions'].items():
                 if aid.startswith('_invalid:'):
@@ -1051,10 +1086,19 @@ class MCPServer:
                     continue
                 if author and b.get('author') != author:
                     continue
+                if kind_f and (b.get('kind') or 'exec') != kind_f:
+                    continue
+                if purpose_f and purpose_f not in (b.get('purpose') or ['utility']):
+                    continue
+                if industry_f and industry_f not in (b.get('industry') or ['general']):
+                    continue
                 if query and query not in aid.lower() and query not in b.get('name', '').lower() and query not in ' '.join(action_tags).lower():
                     continue
                 rows.append({'id': aid, 'name': b.get('name'), 'version': b.get('version'),
                              'trust': b.get('trust'), 'status': b.get('status'),
+                             'kind': b.get('kind') or 'exec',
+                             'purpose': b.get('purpose') or ['utility'],
+                             'industry': b.get('industry') or ['general'],
                              'tags': action_tags})
             return text_result({'status': 'ok', 'data': {'actions': rows[:limit], 'total': len(rows)}})
 

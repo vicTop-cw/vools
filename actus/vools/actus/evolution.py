@@ -11,6 +11,8 @@ import time
 from typing import Callable, Dict, List, Optional
 from vools.core.dataclass_compat import dataclass, field, asdict
 
+from .constants import is_action_file
+
 
 @dataclass
 class EvolutionConfig:
@@ -478,7 +480,7 @@ class EvolutionEngine:
                     "message": f"Version {version} not found for {action_id}"}
 
         # 找到快照文件
-        files = [f for f in os.listdir(version_dir) if f.endswith('.actus.md')]
+        files = [f for f in os.listdir(version_dir) if is_action_file(f)]
         if not files:
             return {"status": "error", "message": "No snapshot found"}
 
@@ -507,8 +509,8 @@ class EvolutionEngine:
         if not os.path.isdir(dir1) or not os.path.isdir(dir2):
             return {"status": "error", "message": "Version not found"}
 
-        files1 = [f for f in os.listdir(dir1) if f.endswith('.actus.md')]
-        files2 = [f for f in os.listdir(dir2) if f.endswith('.actus.md')]
+        files1 = [f for f in os.listdir(dir1) if is_action_file(f)]
+        files2 = [f for f in os.listdir(dir2) if is_action_file(f)]
 
         if not files1 or not files2:
             return {"status": "error", "message": "Snapshot not found"}
@@ -561,7 +563,7 @@ class EvolutionEngine:
         if os.path.isdir(actions_dir):
             for root, dirs, files in os.walk(actions_dir):
                 for fname in files:
-                    if not fname.endswith('.actus.md'):
+                    if not is_action_file(fname):
                         continue
                     fpath = os.path.join(root, fname)
                     try:

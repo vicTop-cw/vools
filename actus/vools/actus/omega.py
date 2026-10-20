@@ -16,6 +16,8 @@ import re
 import os
 import glob
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+from .constants import is_action_file
 from pathlib import Path
 
 
@@ -82,18 +84,19 @@ def _find_omega_spec(action_id: str, actions_dir: str) -> Optional[str]:
 
 def _find_action_file(action_id: str, actions_dir: str) -> Optional[str]:
     """查找动作文件路径。"""
-    # 搜索 .actus.md 文件
+    # 搜索动作文件（.actus.md / .actus.schema.md 双后缀）
     for root, dirs, files in os.walk(actions_dir):
         for fname in files:
-            if fname.endswith(".actus.md"):
-                fpath = os.path.join(root, fname)
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    if f'"{action_id}"' in content or f"'{action_id}'" in content:
-                        return fpath
-                except Exception:
-                    continue
+            if not is_action_file(fname):
+                continue
+            fpath = os.path.join(root, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    content = f.read()
+                if f'"{action_id}"' in content or f"'{action_id}'" in content:
+                    return fpath
+            except Exception:
+                continue
     return None
 
 

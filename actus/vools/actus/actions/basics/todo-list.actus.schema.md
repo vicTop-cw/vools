@@ -1,13 +1,22 @@
 ---
-id: todo-list
+id: actus.basics.todo_list
 name: Todo List
 version: 1.0.0
 trust: sandbox
+kind: exec
+purpose: [control, data-store]
+industry: [general]
+trigger: [manual]
+context_applies: []
 entry: main
 description: A beautiful todo list application with modern UI
 author: vools
 platform: desktop
 tags: [todo, gui, webview2, productivity]
+license: mit
+pricing: free
+declared_features: [ui-automation, state-persist]
+demo: todo-list.demo.actus.md
 max_instances: 1
 deprecated: false
 ---
@@ -27,7 +36,7 @@ result = action.execute()
 
 ## Implementation
 
-```webview2 title="Todo List" width=500 height=700 resizable=false devtools=false
+```webview2 #!run tag=main title="Todo List" width=500 height=700 resizable=false devtools=false
 <!DOCTYPE html>
 <html lang="en">
 <head>

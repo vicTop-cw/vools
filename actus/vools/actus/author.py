@@ -19,6 +19,7 @@ from typing import Callable, Dict, List, Optional
 from .errors import ActionError
 from .model import Action, parse_cfg_from_file
 from .validate import validate_action
+from .constants import is_action_file
 
 
 class Pipeline:
@@ -378,9 +379,8 @@ def _find_action_file(action_id: str, repo_root: str) -> Optional[str]:
     # 递归搜索
     for root, dirs, files in os.walk(actions_dir):
         for fname in files:
-            if fname.endswith('.actus.schema.md') or fname.endswith('.actus.md'):
-                full = os.path.join(root, fname)
-                candidates.append(full)
+            if is_action_file(fname):
+                candidates.append(os.path.join(root, fname))
 
     for path in candidates:
         if os.path.isfile(path):

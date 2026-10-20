@@ -28,6 +28,8 @@ from typing import Any, Callable, Dict, List, Optional
 __all__ = [
     'CallLogStore', 'get_store', 'write_call_log', 'recent_call_logs',
     'instrument', 'log_path', 'reset_store',
+    'write_action_metric', 'aggregate_metrics', 'popular_actions',
+    'trending_actions', 'metrics_path',
 ]
 
 _TZ = timezone(timedelta(hours=8))
@@ -37,6 +39,16 @@ _DDL = (
     "id INTEGER PRIMARY KEY AUTOINCREMENT, seq INTEGER, ts TEXT, tool TEXT, "
     "caller TEXT, ns TEXT, params_json TEXT, result_json TEXT, ok INTEGER, "
     "runtime_ms INTEGER)"
+)
+
+# action_metrics 表（docs/03 §5.1 使用量指标）：
+# 每次动作执行一行（action_id/ts/caller/ok/runtime_ms），
+# aggregate_metrics 聚合出 popular/trending——Quicker 的杀手指标
+# （"7日日均用量 + 总使用量"区分「安装了」vs「真正在用」）。
+_METRICS_DDL = (
+    "CREATE TABLE IF NOT EXISTS action_metrics ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, action_id TEXT, ts TEXT, "
+    "caller TEXT, ok INTEGER, runtime_ms INTEGER)"
 )
 
 # 进程内单调序号（多实例并发时由 DB 侧 max(seq) 校正）
@@ -51,6 +63,17 @@ def _now_iso() -> str:
 
 
 def _default_meta() -> str:
+    """指标/call_log 的默认落盘目录。
+
+    优先级（docs/03 §4.1）：
+      1. ACTUS_METRICS_DIR：显式指标目录（生产部署用；安装态 site-packages/_meta
+         可能只读，共享安装下统计会静默丢失——这个环境变量就是逃生门）；
+      2. ACTUS_REPO_ROOT/_meta：仓库态；
+      3. 模块上三级/_meta：安装态兜底（best-effort 写失败不抛）。
+    """
+    metrics_dir = os.environ.get('ACTUS_METRICS_DIR')
+    if metrics_dir:
+        return metrics_dir
     root = os.environ.get('ACTUS_REPO_ROOT')
     if root:
         return os.path.join(root, '_meta')
@@ -294,3 +317,151 @@ class _InstrumentCtx:
         except Exception:
             pass  # best-effort：绝不因日志失败影响业务
         return False  # 不吞异常
+
+
+# ═══════════════════════════════════════════════════════════════
+# 使用量指标（docs/03 §5.1）：执行计数 → 聚合 → popular/trending
+# ═══════════════════════════════════════════════════════════════
+# 与 call_log 同库（_meta/call_log.db），独立表 action_metrics。
+# 复用短连接 + best-effort 模式：写指标失败不影响执行，绝不影响原返回值。
+
+def metrics_path(meta_dir: Optional[str] = None) -> str:
+    """指标数据库路径（缺省与 call_log 同库）。"""
+    return log_path(meta_dir)
+
+
+def _metrics_connect(meta_dir: Optional[str] = None):
+    """action_metrics 表的短连接（用完即关，复用 call_log 连接模式）。"""
+    path = metrics_path(meta_dir)
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    db = sqlite3.connect(path, check_same_thread=False, timeout=5)
+    db.execute(_METRICS_DDL)
+    return db
+
+
+def write_action_metric(action_id: str, ok: bool = True,
+                        runtime_ms: int = 0, caller: str = '',
+                        meta_dir: Optional[str] = None) -> bool:
+    """追加一行动作执行指标。best-effort：失败返回 False，不抛出。
+
+    执行计数（非安装计数）——Quicker 经验：只有执行计数才能区分
+    「安装了」vs「真正在用」（docs/03 §5.1）。
+    """
+    if not action_id:
+        return False
+    try:
+        db = _metrics_connect(meta_dir)
+        try:
+            db.execute(
+                "INSERT INTO action_metrics (action_id, ts, caller, ok, runtime_ms) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (action_id, _now_iso(), caller or '', 1 if ok else 0,
+                 int(runtime_ms)))
+            db.commit()
+        finally:
+            db.close()
+        return True
+    except Exception:
+        return False
+
+
+def aggregate_metrics(action_id: str, meta_dir: Optional[str] = None) -> dict:
+    """聚合单动作执行指标（docs/03 §5.1）。
+
+    Returns:
+        {total, last_7d, last_30d, success_rate, avg_runtime_ms, unique_callers}
+        无记录时全部为 0（不伪造数据）。
+    """
+    out = {
+        'total': 0, 'last_7d': 0, 'last_30d': 0,
+        'success_rate': 0.0, 'avg_runtime_ms': 0, 'unique_callers': 0,
+    }
+    try:
+        db = _metrics_connect(meta_dir)
+        try:
+            now = datetime.now(_TZ)
+            d7 = (now - timedelta(days=7)).isoformat(timespec='seconds')
+            d30 = (now - timedelta(days=30)).isoformat(timespec='seconds')
+
+            row = db.execute(
+                "SELECT COUNT(*), AVG(ok), AVG(runtime_ms), "
+                "COUNT(DISTINCT caller) FROM action_metrics WHERE action_id = ?",
+                (action_id,)).fetchone()
+            if row and row[0]:
+                total = int(row[0])
+                out['total'] = total
+                out['success_rate'] = round(float(row[1] or 0), 4)
+                out['avg_runtime_ms'] = int(row[2] or 0)
+                out['unique_callers'] = int(row[3] or 0)
+
+            for key, cutoff in (('last_7d', d7), ('last_30d', d30)):
+                r = db.execute(
+                    "SELECT COUNT(*) FROM action_metrics "
+                    "WHERE action_id = ? AND ts >= ?",
+                    (action_id, cutoff)).fetchone()
+                out[key] = int(r[0]) if r and r[0] else 0
+        finally:
+            db.close()
+    except Exception:
+        pass  # best-effort：查询失败返回零值，不抛出
+    return out
+
+
+def popular_actions(limit: int = 10, period_days: int = 30,
+                    meta_dir: Optional[str] = None) -> List[dict]:
+    """按执行计数 top-N（docs/03 §5.1 popular）。
+
+    Returns:
+        [{action_id, count, success_rate}] 按计数降序。
+    """
+    limit = max(1, int(limit or 10))
+    out: List[dict] = []
+    try:
+        db = _metrics_connect(meta_dir)
+        try:
+            cutoff = (datetime.now(_TZ) - timedelta(days=period_days)).isoformat(
+                timespec='seconds')
+            rows = db.execute(
+                "SELECT action_id, COUNT(*) AS c, AVG(ok) AS sr "
+                "FROM action_metrics WHERE ts >= ? "
+                "GROUP BY action_id ORDER BY c DESC LIMIT ?",
+                (cutoff, limit)).fetchall()
+            for (aid, c, sr) in rows:
+                out.append({'action_id': aid, 'count': int(c),
+                            'success_rate': round(float(sr or 0), 4)})
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return out
+
+
+def trending_actions(limit: int = 10, meta_dir: Optional[str] = None) -> List[dict]:
+    """按 7 日相对 30 日增长率排序（docs/03 §5.1 trending）。
+
+    增长率 = (last_7d / 7) / (last_30d / 30)，近 7 日占比越高越"热"。
+    """
+    limit = max(1, int(limit or 10))
+    scored: List[dict] = []
+    try:
+        db = _metrics_connect(meta_dir)
+        try:
+            d30 = (datetime.now(_TZ) - timedelta(days=30)).isoformat(
+                timespec='seconds')
+            rows = db.execute(
+                "SELECT action_id, COUNT(*) FROM action_metrics WHERE ts >= ? "
+                "GROUP BY action_id", (d30,)).fetchall()
+        finally:
+            db.close()
+        for (aid, c30) in rows:
+            agg = aggregate_metrics(aid, meta_dir=meta_dir)
+            c7 = agg.get('last_7d', 0)
+            daily30 = c30 / 30.0
+            daily7 = c7 / 7.0
+            growth = (daily7 / daily30) if daily30 > 0 else (2.0 if daily7 > 0 else 0.0)
+            scored.append({'action_id': aid, 'count_30d': c30, 'count_7d': c7,
+                           'growth': round(growth, 3)})
+        scored.sort(key=lambda r: (-r['growth'], -r['count_7d']))
+        return scored[:limit]
+    except Exception:
+        return []

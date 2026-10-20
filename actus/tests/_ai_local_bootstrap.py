@@ -6,7 +6,7 @@
 布局是「仓库根下再套一层 `vools/<子包>/`」。当二者都装在同一解释器里时：
 
     vools.__path__ = [<local-packages>/site-packages/vools,   ← 先被扫到
-                      E:/IDEProjects/AI/vools/actus/vools]
+                      <repo_root>/actus/vools]
 
 `vools` 是 namespace package（两个目录都没有 `__init__.py`），
 已安装的 wheel 排在前面，于是 `import vools.actus` 拿到的是 0.7.9

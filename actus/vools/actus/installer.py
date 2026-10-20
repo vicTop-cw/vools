@@ -9,11 +9,12 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import time
 from typing import Optional, Tuple, List
 
 from . import registry as registry_mod
+from ._proc import run_cmd_safe
+from .constants import is_action_file
 
 
 class ActionInstaller:
@@ -84,7 +85,7 @@ class ActionInstaller:
         for dirpath, dirnames, filenames in os.walk(repo_dir):
             dirnames[:] = [d for d in dirnames if d not in ('.git', '__pycache__')]
             for fn in sorted(filenames):
-                if not fn.endswith('.actus.md'):
+                if not is_action_file(fn):
                     continue
                 full = os.path.join(dirpath, fn)
                 try:
@@ -321,9 +322,9 @@ class ActionInstaller:
             return {"status": "error", "message": "Local path not found"}
 
         try:
-            result = subprocess.run(
+            result = run_cmd_safe(
                 ["git", "log", "--oneline", "-n", str(version + 1)],
-                cwd=local_path, capture_output=True, text=True, timeout=10
+                cwd=local_path, timeout=10
             )
             if result.returncode != 0:
                 return {"status": "error", "message": f"Git log failed: {result.stderr}"}
@@ -333,9 +334,9 @@ class ActionInstaller:
                 return {"status": "error", "message": f"Version {version} not found"}
 
             target_commit = lines[version].split()[0]
-            checkout = subprocess.run(
+            checkout = run_cmd_safe(
                 ["git", "checkout", target_commit],
-                cwd=local_path, capture_output=True, text=True, timeout=10
+                cwd=local_path, timeout=10
             )
             if checkout.returncode != 0:
                 return {"status": "error", "message": f"Checkout failed: {checkout.stderr}"}
@@ -355,12 +356,12 @@ class ActionInstaller:
             return {"status": "error", "message": "Local path not found"}
 
         try:
-            local = subprocess.run(["git", "rev-parse", "HEAD"],
-                cwd=local_path, capture_output=True, text=True, timeout=10)
+            local = run_cmd_safe(["git", "rev-parse", "HEAD"],
+                cwd=local_path, timeout=10)
             local_commit = local.stdout.strip() if local.returncode == 0 else ""
 
-            remote = subprocess.run(["git", "ls-remote", "origin", "HEAD"],
-                cwd=local_path, capture_output=True, text=True, timeout=10)
+            remote = run_cmd_safe(["git", "ls-remote", "origin", "HEAD"],
+                cwd=local_path, timeout=10)
             remote_commit = remote.stdout.split()[0] if remote.returncode == 0 and remote.stdout else ""
 
             return {
@@ -425,7 +426,7 @@ class ActionInstaller:
         for actions_dir in self.discover_actions_dirs():
             for root, dirs, files in os.walk(actions_dir):
                 for fname in files:
-                    if not fname.endswith(".actus.md"):
+                    if not is_action_file(fname):
                         continue
                     fpath = os.path.join(root, fname)
                     # 快速检查：读取文件中的 id 字段
@@ -535,17 +536,15 @@ class ActionInstaller:
             (return_code, stdout, stderr)
         """
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
+            result = run_cmd_safe(cmd, timeout=120)
+            if result.returncode == -9:
+                return -1, "", "Git command timed out"
+            if result.returncode == -1:
+                # run_cmd_safe 把 Popen 抛的 FileNotFoundError 等吞成 rc=-1，
+                # stderr 是异常字符串。git 不存在时按可读文案报，
+                # 而不是把裸异常消息透传（BUG-13.26 同族）。
+                return -1, "", "Git not found. Please install Git."
             return result.returncode, result.stdout, result.stderr
-        except subprocess.TimeoutExpired:
-            return -1, "", "Git command timed out"
-        except FileNotFoundError:
-            return -1, "", "Git not found. Please install Git."
         except Exception as e:
             return -1, "", str(e)
 
