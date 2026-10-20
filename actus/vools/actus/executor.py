@@ -16,6 +16,7 @@ import json
 import os
 import secrets
 import threading
+import time
 from datetime import datetime, timezone, timedelta
 
 from .errors import ActionError
@@ -166,6 +167,7 @@ def execute(action_id: str, params: dict = None,
 
     meta_dir, artifacts_dir = _meta_dirs(meta_dir, artifacts_dir)
     exec_id = new_exec_id()
+    _t_start = time.time()  # 使用量指标计时起点（docs/03 §4.1）
 
     # ── 依赖检查（执行前）──
     action_obj = None
@@ -327,6 +329,24 @@ def execute(action_id: str, params: dict = None,
                               result['status'],
                               (result.get('error') or {}).get('message'))
         records.append_log(meta_dir, f"{exec_id} {action_id} -> {result['status']}")
+
+        # ── 使用量指标埋点（docs/03 §4.1：执行计数区分「安装了」vs「真正在用」）──
+        # best-effort：写指标失败绝不影响执行结果（与 calllog 设计一致）。
+        # 落点与 call_log 同库（_meta/call_log.db 的 action_metrics 表），
+        # popular_actions / trending_actions / quality_scale 全部消费此数据。
+        # caller 记调用来源：confirmed=True 的人工放行 vs False 的 MCP/CLI 自动调用，
+        # 让 unique_callers 聚合能区分"哪个通道在用"（docs/03 §4.1）。
+        try:
+            from .calllog import write_action_metric
+            write_action_metric(
+                action_id,
+                ok=(result['status'] in ('ok', 'partial')),
+                runtime_ms=int((time.time() - _t_start) * 1000),
+                caller='confirmed' if confirmed else 'executor',
+                meta_dir=meta_dir,
+            )
+        except Exception:
+            pass  # best-effort：指标缺失不改变回执
 
         # ── 事件总线通知 (Phase G5) ──
         try:

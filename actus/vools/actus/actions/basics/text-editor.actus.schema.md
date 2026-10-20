@@ -1,13 +1,22 @@
 ---
-id: text-editor
+id: actus.basics.text_editor
 name: Text Editor
 version: 1.0.0
 trust: sandbox
+kind: exec
+purpose: [control, data-store]
+industry: [general]
+trigger: [manual]
+context_applies: []
 entry: main
 description: A beautiful text editor with modern UI
 author: vools
 platform: desktop
 tags: [editor, gui, webview2, productivity]
+license: mit
+pricing: free
+declared_features: [ui-automation, file-write]
+demo: text-editor.demo.actus.md
 max_instances: 1
 deprecated: false
 ---
@@ -27,7 +36,7 @@ result = action.execute()
 
 ## Implementation
 
-```webview2 title="Text Editor" width=800 height=600 resizable=true devtools=false
+```webview2 #!run tag=main title="Text Editor" width=800 height=600 resizable=true devtools=false
 <!DOCTYPE html>
 <html lang="en">
 <head>

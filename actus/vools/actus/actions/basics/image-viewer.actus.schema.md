@@ -1,13 +1,22 @@
 ---
-id: image-viewer
+id: actus.basics.image_viewer
 name: Image Viewer
 version: 1.0.0
 trust: sandbox
+kind: exec
+purpose: [source]
+industry: [general]
+trigger: [manual]
+context_applies: []
 entry: main
 description: A beautiful image viewer with modern UI
 author: vools
 platform: desktop
 tags: [image, viewer, gui, webview2]
+license: mit
+pricing: free
+declared_features: [ui-automation]
+demo: image-viewer.demo.actus.md
 max_instances: 1
 deprecated: false
 ---
@@ -27,7 +36,7 @@ result = action.execute()
 
 ## Implementation
 
-```webview2 title="Image Viewer" width=900 height=700 resizable=true devtools=false
+```webview2 #!run tag=main title="Image Viewer" width=900 height=700 resizable=true devtools=false
 <!DOCTYPE html>
 <html lang="en">
 <head>

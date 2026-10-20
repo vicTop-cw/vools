@@ -67,10 +67,16 @@ class _Rec:
 
 
 def _patch_run(monkeypatch, rec):
+    """拦截 jump 的子进程调用。
+
+    实现走 `run_cmd_safe`（进程树安全包装，_proc.py），不是裸
+    `subprocess.run`——补丁必须打在真实调用点上（jump.run_cmd_safe），
+    否则 rec.calls 恒空、断言退化成 IndexError（存量测试与实现漂移）。
+    """
     def fake_run(cmd, **kw):
         rec.calls.append(list(cmd))
         return rec
-    monkeypatch.setattr(jump.subprocess, "run", fake_run)
+    monkeypatch.setattr(jump, "run_cmd_safe", fake_run)
 
 
 def test_scan_remote_quotes_path(monkeypatch):
@@ -93,7 +99,7 @@ def test_push_scp_mkdir_quotes_path(monkeypatch):
     def fake_run(cmd, **kw):
         calls.append(list(cmd))
         return rec
-    monkeypatch.setattr(jump.subprocess, "run", fake_run)
+    monkeypatch.setattr(jump, "run_cmd_safe", fake_run)
 
     jump._push_scp("/local/a", "/remote/My Dir", "h", "u", 22, None, None,
                    ["/local/a"], 30)

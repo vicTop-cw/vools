@@ -11,6 +11,8 @@ import subprocess
 import time
 from typing import Dict, List, Optional, Tuple
 
+from ._proc import run_cmd_safe, kill_tree
+
 
 def shquote(value) -> str:
     """把一个值安全地引用为【单个】POSIX shell 单词。
@@ -159,7 +161,7 @@ def scan_remote_files(remote_path: str, remote_host: str, remote_user: str,
     ssh_cmd.extend([remote_target, cmd])
 
     try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+        result = run_cmd_safe(ssh_cmd, timeout=timeout)
         if result.returncode != 0:
             return {"__error__": result.stderr.strip()}
 
@@ -182,8 +184,6 @@ def scan_remote_files(remote_path: str, remote_host: str, remote_user: str,
             except (ValueError, OSError):
                 continue
         return files
-    except subprocess.TimeoutExpired:
-        return {"__error__": "远程扫描超时"}
     except Exception as e:
         return {"__error__": str(e)}
 
@@ -260,7 +260,7 @@ def upload_single(local_file: str, remote_file: str,
     scp_cmd = ["scp"] + build_ssh_opts(key_path, port, timeout)
     scp_cmd.extend([local_file, remote_target])
     try:
-        result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=timeout)
+        result = run_cmd_safe(scp_cmd, timeout=timeout)
         return result.returncode == 0
     except Exception:
         return False
@@ -276,7 +276,7 @@ def download_single(remote_file: str, local_file: str,
     scp_cmd = ["scp"] + build_ssh_opts(key_path, port, timeout)
     scp_cmd.extend([remote_target, local_file])
     try:
-        result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=timeout)
+        result = run_cmd_safe(scp_cmd, timeout=timeout)
         return result.returncode == 0
     except Exception:
         return False
@@ -513,17 +513,15 @@ def _push_scp(local_path, remote_path, remote_host, remote_user,
     ssh_cmd = ["ssh"] + build_ssh_opts(key_path, port, timeout)
     ssh_cmd.extend([f"{remote_user}@{remote_host}",
                     "mkdir -p " + shquote(remote_path)])
-    subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
+    run_cmd_safe(ssh_cmd, timeout=30)
     scp_cmd.extend([local_path, remote_target])
 
     try:
-        result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=timeout)
+        result = run_cmd_safe(scp_cmd, timeout=timeout)
         if result.returncode != 0:
             return {"status": "error", "message": result.stderr}
         total_bytes = sum(os.path.getsize(f) for f in files if os.path.isfile(f))
         return {"status": "ok", "files_transferred": len(files), "bytes": total_bytes}
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "message": f"传输超时（{timeout}秒）"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -544,18 +542,28 @@ def _push_tar_ssh(local_path, remote_path, remote_host, remote_user,
 
     try:
         tar_proc = subprocess.Popen(tar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ssh_cmd = ["ssh"] + build_ssh_opts(key_path, port, timeout) + [remote_target, remote_cmd]
-        ssh_proc = subprocess.Popen(ssh_cmd, stdin=tar_proc.stdout,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ssh_proc.communicate(timeout=timeout)
-        tar_proc.wait(timeout=10)
+        try:
+            ssh_cmd = ["ssh"] + build_ssh_opts(key_path, port, timeout) + [remote_target, remote_cmd]
+            ssh_proc = subprocess.Popen(ssh_cmd, stdin=tar_proc.stdout,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except Exception:
+            # ssh 缺失/无法启动：tar 已起但无人消费管道 → 必须杀掉，否则孤儿进程
+            # 继续写管道直到写满后挂死（与超时同族：整树安全）。
+            kill_tree(tar_proc)
+            raise
+        try:
+            ssh_proc.communicate(timeout=timeout)
+            tar_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            # 管线超时：tar 与 ssh 都要杀掉，否则 tar 的孤儿进程继续写管道
+            kill_tree(ssh_proc)
+            kill_tree(tar_proc)
+            return {"status": "error", "message": f"传输超时（{timeout}秒）"}
         if ssh_proc.returncode != 0:
             return {"status": "error", "message": "ssh 失败"}
         files = collect_files(local_path, exclude)
         total_bytes = sum(os.path.getsize(f) for f in files if os.path.isfile(f))
         return {"status": "ok", "files_transferred": len(files), "bytes": total_bytes}
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "message": f"传输超时（{timeout}秒）"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -567,7 +575,7 @@ def _pull_scp(remote_path, local_path, remote_host, remote_user,
     scp_cmd = ["scp", "-r"] + build_ssh_opts(key_path, port, timeout)
     scp_cmd.extend([remote_target, local_path])
     try:
-        result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=timeout)
+        result = run_cmd_safe(scp_cmd, timeout=timeout)
         if result.returncode != 0:
             return {"status": "error", "message": result.stderr}
         file_count = 0
@@ -579,8 +587,6 @@ def _pull_scp(remote_path, local_path, remote_host, remote_user,
                     file_count += 1
                     total_bytes += os.path.getsize(fpath)
         return {"status": "ok", "files_transferred": file_count, "bytes": total_bytes}
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "message": f"传输超时（{timeout}秒）"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -601,11 +607,23 @@ def _pull_tar_ssh(remote_path, local_path, remote_host, remote_user,
     try:
         ssh_cmd = ["ssh"] + build_ssh_opts(key_path, port, timeout) + [remote_target, remote_tar_cmd]
         ssh_proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        tar_cmd = ["tar", "xzf", "-", "-C", local_path]
-        tar_proc = subprocess.Popen(tar_cmd, stdin=ssh_proc.stdout,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        tar_proc.communicate(timeout=timeout)
-        ssh_proc.wait(timeout=10)
+        try:
+            tar_cmd = ["tar", "xzf", "-", "-C", local_path]
+            tar_proc = subprocess.Popen(tar_cmd, stdin=ssh_proc.stdout,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except Exception:
+            # tar 缺失/无法启动：ssh 已起但无人读管道 → 远端 tar 继续写会挂死，
+            # 本地 ssh 进程也必须杀掉（与超时同族：整树安全）。
+            kill_tree(ssh_proc)
+            raise
+        try:
+            tar_proc.communicate(timeout=timeout)
+            ssh_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            # 管线超时：tar 与 ssh 都要杀掉，否则 ssh 的孤儿进程继续写管道
+            kill_tree(tar_proc)
+            kill_tree(ssh_proc)
+            return {"status": "error", "message": f"传输超时（{timeout}秒）"}
         if tar_proc.returncode != 0:
             return {"status": "error", "message": "解压失败"}
         file_count = 0
@@ -617,8 +635,6 @@ def _pull_tar_ssh(remote_path, local_path, remote_host, remote_user,
                     file_count += 1
                     total_bytes += os.path.getsize(fpath)
         return {"status": "ok", "files_transferred": file_count, "bytes": total_bytes}
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "message": f"传输超时（{timeout}秒）"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 __all__ = [

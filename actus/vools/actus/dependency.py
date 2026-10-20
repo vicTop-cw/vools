@@ -12,7 +12,6 @@
 
 import json
 import os
-import subprocess
 import sys
 import shutil
 from typing import Dict, List, Optional, Tuple, Set
@@ -21,6 +20,7 @@ from enum import Enum
 from collections import deque
 
 from ._proc import run_cmd_safe as _run_cmd_safe  # noqa: F401  (进程树安全 subprocess)
+from .constants import is_action_file
 
 
 class DepStrategy(Enum):
@@ -359,14 +359,15 @@ class DependencyResolver:
         # 在 actions 目录中搜索
         for root, dirs, files in os.walk(self._actions_root):
             for f in files:
-                if f.endswith(".actus.md"):
-                    path = os.path.join(root, f)
-                    try:
-                        content = open(path, encoding="utf-8").read()
-                        if f'"id": "{dep.name}"' in content or f'"id":"{dep.name}"' in content:
-                            return DepCheckResult(dep.name, True, f"动作 {dep.name} 存在: {path}")
-                    except Exception:
-                        pass
+                if not is_action_file(f):
+                    continue
+                path = os.path.join(root, f)
+                try:
+                    content = open(path, encoding="utf-8").read()
+                    if f'"id": "{dep.name}"' in content or f'"id":"{dep.name}"' in content:
+                        return DepCheckResult(dep.name, True, f"动作 {dep.name} 存在: {path}")
+                except Exception:
+                    pass
         return DepCheckResult(dep.name, False, f"动作 {dep.name} 未找到")
 
     def check_all(self, deps: List[Dependency]) -> List[DepCheckResult]:
@@ -597,14 +598,15 @@ class DependencyResolver:
         """查找动作文件路径。"""
         for root, dirs, files in os.walk(self._actions_root):
             for f in files:
-                if f.endswith(".actus.md"):
-                    path = os.path.join(root, f)
-                    try:
-                        content = open(path, encoding="utf-8").read()
-                        if f'"id": "{action_id}"' in content or f'"id":"{action_id}"' in content:
-                            return path
-                    except Exception:
-                        pass
+                if not is_action_file(f):
+                    continue
+                path = os.path.join(root, f)
+                try:
+                    content = open(path, encoding="utf-8").read()
+                    if f'"id": "{action_id}"' in content or f'"id":"{action_id}"' in content:
+                        return path
+                except Exception:
+                    pass
         return None
 
     def _extract_deps_from_file(self, path: str) -> list:

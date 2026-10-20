@@ -71,6 +71,10 @@ def _build_parser():
 
     p_list = sub.add_parser('list', help='列出动作')
     p_list.add_argument('--all', action='store_true', help='包含 invalid/conflict')
+    p_list.add_argument('--kind', help='按执行类型过滤（exec/link/demo/template/alias/bundle/doc）')
+    p_list.add_argument('--purpose', help='按用途过滤（source/sink/transform/.../utility）')
+    p_list.add_argument('--industry', help='按行业过滤（devops/finance/.../general）')
+    p_list.add_argument('--tag', help='按标签过滤（逗号分隔）')
 
     p_val = sub.add_parser('validate', help='校验动作')
     p_val.add_argument('action_id', nargs='?', help='动作 id（缺省 = 全仓库）')
@@ -576,14 +580,29 @@ def _dispatch(args) -> int:
 
     if args.command == 'list':
         idx = actuscore.load_index()
+        # 分类体系 v2.0（docs/03 §2）：kind/purpose/industry/tag 过滤
+        kind_f = (getattr(args, 'kind', None) or '').strip().lower() or None
+        purpose_f = (getattr(args, 'purpose', None) or '').strip().lower() or None
+        industry_f = (getattr(args, 'industry', None) or '').strip().lower() or None
+        tag_f = (getattr(args, 'tag', None) or '').strip().lower() or None
+        tags = tag_f.split(',') if tag_f else None
         rows = []
         for aid, a in idx['actions'].items():
             if aid.startswith('_invalid:') and not args.all:
                 continue
             if a.get('status') != 'valid' and not args.all:
                 continue
+            if kind_f and (a.get('kind') or 'exec') != kind_f:
+                continue
+            if purpose_f and purpose_f not in (a.get('purpose') or ['utility']):
+                continue
+            if industry_f and industry_f not in (a.get('industry') or ['general']):
+                continue
+            if tags and not any(t in (a.get('tags') or []) for t in tags):
+                continue
             rows.append({k: a.get(k) for k in
-                         ('id', 'name', 'version', 'trust', 'status', 'description')})
+                         ('id', 'name', 'version', 'trust', 'status', 'description',
+                          'kind', 'purpose', 'industry', 'tags')})
         _out({'status': 'ok', 'data': {'actions': rows, 'count': len(rows)}})
         return 0
 

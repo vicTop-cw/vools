@@ -1,0 +1,273 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Actus Action",
+  "description": "Actus 动作契约 — 校验 .actus.md / .actus.schema.md 的元数据（docs/03 §6 + 分类体系 v2.0 docs/03 §2）",
+  "type": "object",
+  "required": ["id", "name", "version", "trust", "entry"],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "description": "全局唯一动作标识（反域名风格，docs/03 §4.2）"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "人类可读名称"
+    },
+    "version": {
+      "type": "string",
+      "description": "semver 版本号"
+    },
+    "trust": {
+      "type": "string",
+      "enum": ["audit", "trusted", "sandbox"],
+      "description": "信任级别"
+    },
+    "entry": {
+      "type": "string",
+      "description": "入口代码块 tag（kind=exec 时必填）"
+    },
+    "description": {
+      "type": "string"
+    },
+    "usage": {
+      "type": "string",
+      "description": "MCP 工具描述拼接用（docs/10 §A.3）"
+    },
+    "author": {
+      "type": "string"
+    },
+    "platform": {
+      "description": "目标平台（字符串或数组均可，docs/03 §2；check_platform 同口径）",
+      "oneOf": [
+        { "type": "string", "enum": ["desktop", "web", "macos", "harmonyos", "linux"] },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["desktop", "web", "macos", "harmonyos", "linux"] }
+        }
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "自由分类标签（人类搜索用，与结构化分类互补）"
+    },
+    "max_instances": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "最大并发实例数，0=无上限"
+    },
+    "deprecated": {
+      "type": "boolean",
+      "default": false
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "files:read", "files:write", "files:delete",
+          "net:connect", "net:listen",
+          "process:spawn",
+          "ui:notify", "ui:control", "ui:capture",
+          "sys:settings"
+        ]
+      },
+      "description": "所需权限白名单"
+    },
+    "args": {
+      "type": "object",
+      "description": "入参 JSON Schema（draft-07）"
+    },
+    "secrets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "所需密钥名清单（docs/10 §E.1）"
+    },
+    "deps": {
+      "type": "array",
+      "description": "依赖声明（旧格式；schema.md 用 dependencies 对象）"
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "依赖声明（新格式：pip/npm/action/mcp/system 分类）"
+    },
+    "triggers": {
+      "type": "array",
+      "description": "触发器配置（cron/watch/webhook/hotkey/on_startup，docs/10 §B.1）",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["cron", "watch", "webhook", "hotkey", "on_startup", "interval"]
+          },
+          "expr": { "type": "string" },
+          "path": { "type": "string" },
+          "events": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "recursive": { "type": "boolean" },
+          "debounce_ms": { "type": "integer" },
+          "key": { "type": "string" },
+          "enabled": { "type": "boolean" }
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "description": "工作流定义（WorkflowExecutor 消费）",
+      "required": ["nodes"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/node" }
+        },
+        "graph": { "$ref": "#/definitions/workflow_graph" }
+      }
+    },
+    "ai": {
+      "type": "object",
+      "description": "AI 生成元数据（docs/10 §D.4）",
+      "properties": {
+        "generated": { "type": "boolean" },
+        "author": { "type": "string" },
+        "evolve_policy": {
+          "type": "string",
+          "enum": ["confirm", "auto", "never"]
+        }
+      }
+    },
+    "cached_artifacts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "缓存的编译产物路径（dll/exe/so）"
+    },
+    "adapter": {
+      "type": "string",
+      "description": "引用的适配器 id（adapter.*，exec_iface 的 adapter 通道用）"
+    },
+
+    "kind": {
+      "type": "string",
+      "enum": ["exec", "link", "demo", "template", "alias", "bundle", "doc"],
+      "description": "分类体系 v2.0 维度 1：执行类型（未知值打回，docs/03 §2.4）"
+    },
+    "purpose": {
+      "description": "分类体系 v2.0 维度 2：用途（多值 1..5，未知值警告）",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": { "type": "string" }
+        }
+      ]
+    },
+    "industry": {
+      "description": "分类体系 v2.0 维度 3：行业（多值 1..5，未知值警告）",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": { "type": "string" }
+        }
+      ]
+    },
+    "trigger": {
+      "description": "分类体系 v2.0 维度 4：主触发声明（多值 1..8，不替代 triggers 段）",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "type": "string" }
+        }
+      ]
+    },
+    "context_applies": {
+      "description": "分类体系 v2.0 维度 5：适用上下文（Quicker 式，自由字符串多值）",
+      "type": "array",
+      "maxItems": 10,
+      "items": { "type": "string" }
+    },
+    "license": {
+      "type": "string",
+      "enum": ["mit", "apache-2.0", "gpl-3.0", "cc0", "proprietary", "custom"],
+      "default": "mit",
+      "description": "作者声明的许可证（未知值警告）"
+    },
+    "license_url": {
+      "type": "string",
+      "description": "license=custom 时的许可证链接"
+    },
+    "pricing": {
+      "type": "string",
+      "enum": ["free", "paid", "subscription"],
+      "default": "free",
+      "description": "定价模式（gated 付费预留；未接支付前 paid 按 gated 免费放行）"
+    },
+    "declared_features": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "string",
+        "enum": ["network-access", "file-write", "state-persist", "third-party-api", "ui-automation"]
+      },
+      "description": "作者自声明特性（供 trust 决策预计算，与扫描不符警告）"
+    },
+    "demo": {
+      "type": "string",
+      "description": "演示文件路径（gif/mp4/md），降低采用门槛"
+    }
+  },
+  "definitions": {
+    "node": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "action": { "type": "string" },
+        "action_id": { "type": "string" },
+        "args": { "type": "object" },
+        "params": { "type": "object" },
+        "depends": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "deps": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "condition": { "type": "string" },
+        "on_failure": {
+          "type": "string",
+          "enum": ["abort", "continue", "fallback"]
+        },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "workflow_graph": {
+      "type": "object",
+      "properties": {
+        "parallel": { "type": "boolean", "default": true },
+        "max_concurrency": { "type": "integer", "minimum": 1 },
+        "fail_fast": { "type": "boolean" },
+        "on_failure": {
+          "type": "string",
+          "enum": ["abort", "continue", "fallback"]
+        }
+      }
+    }
+  }
+}

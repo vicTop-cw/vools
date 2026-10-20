@@ -15,20 +15,28 @@ __all__ = ['validate_action', 'validate_graph', 'analyze_graph', 'check_entry_bl
            'check_args_schema', 'check_triggers', 'check_secrets',
            'check_block_languages', 'language_notices',
            'validate_schema_md', 'check_schema_md_structure',
-           'check_classification', 'classification_notices', 'normalize_multi_field']
+           'check_classification', 'classification_notices', 'normalize_multi_field',
+           # 资产化治理（future_plan §3 修订落地）
+           'check_platform', 'check_id_namespace', 'check_usage_executable',
+           'check_self_contained', 'check_trust_tests', 'resolve_test_binding',
+           'check_secrets_hardcode', 'check_omega_gate', 'governance_notices']
 
 import json
 import os
 import re
+import sys
 from typing import Dict, List, Tuple
 
 from .errors import ActionError
 from .model import Action, parse_cfg_from_file
 from .constants import (
-    TRUST_LEVELS,
+    TRUST_LEVELS, PLATFORMS,
     KIND_LEVELS, PURPOSE_LEVELS, INDUSTRY_LEVELS, TRIGGER_DECL_LEVELS,
     is_known_kind, is_known_purpose, is_known_industry, is_known_trigger_decl,
     is_known_license, is_known_pricing, is_known_declared_feature,
+    # 资产化治理
+    is_known_platform, is_namespaced_id, is_secret_sensitive_name,
+    SECRET_SENSITIVE_HARDCODE_RE,
 )
 
 def _resolve_schema_path() -> str:
@@ -97,6 +105,14 @@ def validate_action(action: Action) -> List[str]:
         if not meta.get(k):
             errors.append(f'schema: 必填字段缺失: {k}')
 
+    # 2b) platform 必填 + 取值合法（future_plan §3 #1：不再缺省全平台）
+    if not meta.get('platform'):
+        errors.append('schema: 必填字段缺失: platform')
+    errors.extend(check_platform(meta))
+
+    # 2c) id 命名约束（future_plan §3 #6：至少两段点分小写）
+    errors.extend(check_id_namespace(meta))
+
     # 3) trust 取值
     if meta.get('trust') not in TRUST_LEVELS:
         errors.append(f'schema: trust 非法: {meta.get("trust")!r}（仅允许 {TRUST_LEVELS}）')
@@ -129,6 +145,22 @@ def validate_action(action: Action) -> List[str]:
 
     # 8) ai 元数据校验（docs/10 §D.4）
     errors.extend(check_ai_meta(meta))
+
+    # ── 资产化治理（future_plan §3 修订落地）─────────────────────
+    # 9) 单文件自包含：entry 不得引用动作目录内同名模块（docs/47 §3）
+    errors.extend(check_self_contained(action))
+
+    # 10) trust↔测试绑定：audit/trusted 必须有测试（docs/47 §4）
+    errors.extend(check_trust_tests(action))
+
+    # 11) secrets 强制：硬编码凭据 / 未声明敏感 env（future_plan §3 #4）
+    errors.extend(check_secrets_hardcode(action))
+
+    # 12) Ω-gate 编排契约（kind=bundle 显式编排类型必须声明，docs/47 §5）
+    errors.extend(check_omega_gate(action))
+
+    # 13) usage 可执行形态（存在但纯描述 → 打回，future_plan §3 #8）
+    errors.extend(check_usage_executable(meta))
 
     return errors
 
@@ -270,10 +302,18 @@ def classification_notices(meta: Dict) -> List[str]:
 def action_path_of(meta: Dict) -> str:
     """meta 内记录的动作文件路径（缺 key 返回空串）。
 
-    indexer/扫描侧会把 _path 注入 meta；独立调用（只有 meta 无 _path）时返回空串，
-    demo 相对路径的候选退化为原值判断。
+    解析顺序（与 check_self_contained / check_trust_tests 的 abs_path 口径一致）：
+      1. meta['_path']：indexer/扫描侧注入的绝对路径；
+      2. meta['_abs_path']：author/scattered 侧的注入；
+      3. meta['path']：Action 自带的相对路径（parse_cfg_from_file 单独调用时）。
+    相对 path 按 ACTUS_REPO_ROOT 解析，保证 demo 等相对字段可定位。
     """
-    return meta.get('_path') or ''
+    abs_path = meta.get('_path') or meta.get('_abs_path') or meta.get('path') or ''
+    if abs_path and not os.path.isabs(abs_path):
+        env = os.environ.get('ACTUS_REPO_ROOT')
+        if env:
+            abs_path = os.path.join(env, abs_path)
+    return abs_path
 
 
 def check_entry_block(action: Action) -> List[str]:
@@ -506,6 +546,388 @@ def check_ai_meta(meta: dict) -> List[str]:
     return errors
 
 
+# ════════════════════════════════════════════════════════════════════
+# 资产化治理（future_plan §3 修订落地，docs/47）
+# ────────────────────────────────────────────────────────────────────
+# 薄：不重复 MCP/SKILL 官方治理规范，.actus.md 只保留最小执行契约；
+# 厚：platform 必填 / 自包含 / trust↔测试 / secrets 强制 / Ω-gate /
+#     id 命名 / usage 可执行——每条都有校验兜底，不做空壳。
+# ════════════════════════════════════════════════════════════════════
+
+# kind 豁免清单：非可执行资产（不参与 trust↔测试绑定）
+_NON_EXEC_KINDS = ('demo', 'template', 'alias', 'doc', 'link')
+
+
+def check_platform(meta: dict) -> List[str]:
+    """platform 必填 + 取值合法（future_plan §3 #1，docs/03 §2 平台枚举）。
+
+    历史缺陷：platform 为选填、缺省即全平台 → 动作无法表达真实运行域
+    （如 adapter.cli.pandoc 只能跑在 windows/desktop），资产池按平台过滤失真。
+    落地：缺字段报错（见 validate_action 2b），取值非法报错，多余值警告级。
+    """
+    errors: List[str] = []
+    platforms = meta.get('platform')
+    if platforms is None:
+        return errors                     # 缺失已在 validate_action 2b 单独报
+    if isinstance(platforms, str):
+        platforms = [platforms]
+    if not isinstance(platforms, list):
+        return ['semantic: platform 必须是字符串或数组']
+    unknown = [p for p in platforms
+               if isinstance(p, str) and not is_known_platform(p)]
+    if unknown:
+        errors.append(
+            f'semantic: platform 含未知值: {unknown}'
+            f'（已知值 {PLATFORMS}，docs/03 §2 可使用平台）')
+    if any(not isinstance(p, str) or not p.strip() for p in platforms):
+        errors.append('semantic: platform 元素必须是非空字符串')
+    return errors
+
+
+def check_id_namespace(meta: dict) -> List[str]:
+    """id 命名约束（future_plan §3 #6）：至少两段点分小写（反向域名风格）。
+
+    注意：只做格式校验（actus.test.foo 格式合法仍通过），「测试味 id 不进
+    资产池」的严格判定在 indexer 资产池层（结合 kind 与测试夹具引用豁免），
+    否则引擎测试里引用的夹具动作会被通用校验打成 error，破坏测试。
+    """
+    errors: List[str] = []
+    aid = meta.get('id')
+    if aid and not is_namespaced_id(aid):
+        errors.append(
+            f'semantic: id {aid!r} 不符合资产池命名：至少两段点分小写'
+            '（如 actus.hello / jump.push，docs/47 §3.4）')
+    return errors
+
+
+def check_usage_executable(meta: dict) -> List[str]:
+    """usage 必须可执行（future_plan §3 #8）。
+
+    usage 的存在意义是「一句话告诉我怎么跑」，纯描述文本不可执行。
+    规则：
+      - usage 缺失 / 非字符串 → 警告（governance_notices），不判失败
+        （存量动作大量缺 usage，硬打回会连坐资产池）；
+      - usage 存在但纯描述（不含 actus run / 动作 id / 函数式调用形态）→ 打回；
+      - 极短占位符（如 'u'）无实义，视同缺失 → 仅警告，不判失败。
+    """
+    errors: List[str] = []
+    usage = meta.get('usage')
+    if usage is None or not isinstance(usage, str):
+        return errors
+    aid = meta.get('id') or ''
+    text = usage.strip()
+    if not text:
+        return errors
+    if 'actus run' in text or ' run ' in text or aid in text:
+        return errors
+    # 函数式调用形态（sigma 模板：`actus_<namespace>_<name>({...})`；
+    # 一般动作：`<id>(args)` 或 `调用示例: foo(...)`）→ 可执行，不判失败。
+    if '(' in text and ')' in text:
+        if 'actus' in text or aid.split('.')[-1] in text or '调用示例' in text:
+            return errors
+    # 极短占位符（'u' 等）无描述语义，视同缺失 → 仅警告。
+    if len(text) <= 3:
+        return errors
+    errors.append(
+        f'semantic: usage 不可执行（docs/47 §3.5）：{usage!r}'
+        '——应含可执行调用形态，如 `actus run <id> [args]`')
+    return errors
+
+
+def _extract_block_source(action: Action, tag: str) -> str:
+    """从 body 提取指定 tag 代码块源码（近似解析，够静态扫描用）。
+
+    blocks 只记录 {language, tag, directives}，不含源码；这里按常见围栏
+    `` ```lang #!tag=a,b `` 与 `` ```lang #!entry `` 形态从 action.body 提取。
+    提取不到返回空串（扫描侧保守跳过，不误报）。
+    """
+    body = action.body or ''
+    if not body:
+        return ''
+    fence_re = re.compile(
+        r'^```([^\n]*)\n(.*?)^```',
+        re.MULTILINE | re.DOTALL,
+    )
+    for m in fence_re.finditer(body):
+        header = m.group(1) or ''
+        if tag in header:
+            return m.group(2)
+    return ''
+
+
+def _repo_root_from_path(action: Action) -> str:
+    """推断仓库根：动作绝对路径 <root>/actions/... → 上溯到 actions 目录的上级。
+
+    支持多级子目录结构（actions/a.actus.md 与 actions/<sub>/a.actus.md 均命中）。
+
+    无绝对路径（单文件校验、未过 indexer）时回退 ACTUS_REPO_ROOT / 当前目录。
+    """
+    abs_path = action.meta.get('_path') or getattr(action, 'path', '') or ''
+    if abs_path:
+        # action.path 可能是仓库相对路径（如 actions/x.actus.md），也可能是绝对路径
+        if not os.path.isabs(abs_path):
+            env = os.environ.get('ACTUS_REPO_ROOT')
+            if env:
+                abs_path = os.path.join(env, abs_path)
+        norm = os.path.normpath(abs_path)
+        parent = os.path.dirname(norm)
+        # 逐级上溯直到父目录名 == 'actions'；找不到则放弃该分支
+        while parent and os.path.basename(parent) != 'actions':
+            next_parent = os.path.dirname(parent)
+            if next_parent == parent:
+                break
+            parent = next_parent
+        if os.path.basename(parent) == 'actions':
+            return os.path.dirname(parent)
+    env = os.environ.get('ACTUS_REPO_ROOT')
+    if env:
+        return env
+    # 引擎代码侧仓库（vools/actus）作为兜底，便于包内种子动作自校验
+    return os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+
+
+def resolve_test_binding(action: Action) -> Tuple[bool, List[str]]:
+    """trust↔测试绑定解析（docs/47 §4）。
+
+    判定顺序：
+      1. meta.tests 显式声明（路径列表）→ 逐一检查文件存在；
+      2. 自动推断：<root>/tests/**/*.py 内容包含完整动作 id（单词边界）。
+    返回 (bound, refs)：bound=是否有测试绑定；refs=引用文件相对路径列表。
+    """
+    meta = action.meta
+    aid = meta.get('id') or ''
+    if not aid:
+        return False, []
+
+    declared = meta.get('tests')
+    if declared:
+        if isinstance(declared, str):
+            declared = [declared]
+        if isinstance(declared, list):
+            root = _repo_root_from_path(action)
+            refs = []
+            for d in declared:
+                if os.path.isabs(str(d)):
+                    cand = str(d)
+                else:
+                    cand = os.path.join(root, str(d))
+                if os.path.isfile(cand):
+                    refs.append(str(d))
+            if refs:
+                return True, refs
+
+    root = _repo_root_from_path(action)
+    tests_dir = os.path.join(root, 'tests')
+    if not os.path.isdir(tests_dir):
+        return False, []
+    refs: List[str] = []
+    pat = re.compile(rf'(?<![\w.]){re.escape(aid)}(?![\w.])')
+    for dirpath, _dirnames, filenames in os.walk(tests_dir):
+        for fn in sorted(filenames):
+            if not fn.endswith('.py'):
+                continue
+            full = os.path.join(dirpath, fn)
+            try:
+                with open(full, 'r', encoding='utf-8', errors='ignore') as f:
+                    if pat.search(f.read()):
+                        refs.append(os.path.relpath(full, root).replace(os.sep, '/'))
+            except OSError:
+                continue
+    return bool(refs), refs
+
+
+def check_trust_tests(action: Action) -> List[str]:
+    """trust↔测试绑定（future_plan §3 #3，docs/47 §4）。
+
+    - trust=audit：必须带测试（缺绑定 → 打回：audit 级动作没有测试等于裸奔）；
+    - trust=trusted：必须有回归记录（缺绑定 → 打回：trusted 是「可信」承诺，
+      必须有可复跑的验证闭环）；
+    - trust=sandbox：豁免（沙箱隔离本身就是安全边界，不强制测试）；
+    - kind ∈ demo/template/alias/doc/link：非可执行资产，豁免。
+    """
+    errors: List[str] = []
+    meta = action.meta
+    trust = meta.get('trust')
+    if trust not in ('audit', 'trusted'):
+        return errors
+    kind = str(meta.get('kind') or 'exec').lower()
+    if kind in _NON_EXEC_KINDS:
+        return errors
+
+    bound, refs = resolve_test_binding(action)
+    if bound:
+        return errors
+    hint = '（可用 meta.tests 显式声明测试文件，或补 tests/ 下引用该 id 的用例）'
+    errors.append(
+        f'trust: trust={trust} 但无测试绑定{hint}（docs/47 §4：'
+        'audit 必须带测试，trusted 必须有回归记录）')
+    return errors
+
+
+def check_self_contained(action: Action) -> List[str]:
+    """单文件自包含校验（future_plan §3 #2，docs/47 §3）。
+
+    资产化动作必须「单文件可跑」：entry 代码块不得依赖动作目录内同名
+    模块（相对导入另一个 .py）——否则复制/分发动作时漏文件即静默失败。
+
+    豁免：
+      - 标准库（sys.stdlib_module_names）；
+      - 已安装第三方包（importlib.util.find_spec 命中且不在动作目录树内）；
+      - vools 家族（运行时自动注入核心库，docs/08 §1 依赖注入约定）；
+      - actuscore（引擎内置运行时，索引/执行环境注入，同属依赖注入约定）。
+    仅静态正则扫描，查不到即跳过（不误报）。
+    """
+    errors: List[str] = []
+    entry = action.meta.get('entry')
+    if not entry:
+        return errors
+    source = _extract_block_source(action, entry)
+    if not source:
+        return errors
+
+    import_re = re.compile(r'^\s*(?:from|import)\s+([a-zA-Z_]\w*)', re.MULTILINE)
+    imported = set()
+    for m in import_re.finditer(source):
+        line = source[:m.start()].count('\n')
+        # 跳过注释行内的 import 字样
+        prefix = source.split('\n')[line].lstrip()
+        if prefix.startswith('#'):
+            continue
+        imported.add(m.group(1))
+
+    if not imported:
+        return errors
+
+    abs_path = action.meta.get('_path') or ''
+    if not abs_path:
+        return errors
+    action_dir = os.path.dirname(os.path.normpath(abs_path))
+
+    try:
+        stdlib = set(sys.stdlib_module_names)  # py3.10+
+    except AttributeError:
+        stdlib = set()
+
+    for mod in imported:
+        if mod in stdlib or mod == 'vools' or mod.startswith('vools.') \
+                or mod == 'actuscore' or mod.startswith('actuscore.'):
+            continue
+        # 动作目录内同名模块（相对导入 → 违约）
+        if os.path.isfile(os.path.join(action_dir, mod + '.py')) or \
+                os.path.isdir(os.path.join(action_dir, mod)):
+            errors.append(
+                f'selfcontained: entry 相对导入 {mod!r} 破坏单文件自包含'
+                f'（{os.path.join(action_dir, mod + ".py")} 存在，docs/47 §3）')
+            continue
+        # 已安装包则豁免
+        try:
+            import importlib.util
+            if importlib.util.find_spec(mod) is not None:
+                continue
+        except (ImportError, ValueError):
+            pass
+        errors.append(
+            f'selfcontained: entry 导入 {mod!r} 既非标准库也非已安装包，'
+            '无法确认自包含（docs/47 §3——资产动作应单文件可跑）')
+    return errors
+
+
+def check_secrets_hardcode(action: Action) -> List[str]:
+    """secrets 强制（future_plan §3 #4，docs/47 §6）。
+
+    静态扫描 entry 源码：
+      - 硬编码敏感凭据（password/token/api_key/secret = "..."）→ 打回
+        （凭据必须走 Vault 注入，不得落盘动作文件）；
+      - 读取敏感 env（os.environ['X'] / os.getenv('X')，X 命中敏感字样）
+        但未在 meta.secrets 声明 → 打回（声明缺失 → 运行时无注入）。
+    豁免 ACTUS_* 系统级变量（引擎注入，与动作无关）。
+    """
+    errors: List[str] = []
+    entry = action.meta.get('entry')
+    if not entry:
+        return errors
+    source = _extract_block_source(action, entry)
+    if not source:
+        return errors
+
+    # 1) 硬编码凭据
+    if SECRET_SENSITIVE_HARDCODE_RE.search(source):
+        errors.append(
+            'secrets: 检测到硬编码敏感凭据（password/token/api_key/secret 等'
+            '直接赋字面量）——凭据必须走 Vault 注入，不得写入动作文件（docs/47 §6）')
+
+    # 2) 敏感 env 未声明
+    declared_envs = set()
+    for s in action.meta.get('secrets') or []:
+        if isinstance(s, dict) and s.get('env'):
+            declared_envs.add(s['env'])
+
+    env_read_re = re.compile(
+        r'(?:os\.environ\s*\[\s*[\'"]([A-Za-z_][A-Za-z0-9_]*)[\'"]\s*\]'
+        r'|os\.getenv\s*\(\s*[\'"]([A-Za-z_][A-Za-z0-9_]*)[\'"]\s*\)'
+        r'|os\.environ\.get\s*\(\s*[\'"]([A-Za-z_][A-Za-z0-9_]*)[\'"]\s*\)'
+        r'|getenv\s*\(\s*[\'"]([A-Za-z_][A-Za-z0-9_]*)[\'"]\s*\))')
+    for m in env_read_re.finditer(source):
+        env = next((g for g in m.groups() if g), None)
+        if not env or env.startswith('ACTUS_'):
+            continue
+        if env in declared_envs:
+            continue
+        if is_secret_sensitive_name(env):
+            errors.append(
+                f'secrets: 读取敏感环境变量 {env} 但未在 meta.secrets 声明'
+                '（docs/47 §6——声明后运行时才会注入 Vault 凭据）')
+    return errors
+
+
+def check_omega_gate(action: Action) -> List[str]:
+    """Ω-gate 编排契约（future_plan §3 #5，docs/47 §5）。
+
+    编排动作（kind=bundle）跨动作组装，下游失败必须可容错解包
+    （内层 data.status==ok 即成功），否则编排链一处失败即静默中断。
+    规则：
+      - kind=bundle（显式编排类型）：必须声明 meta.contract='omega-gate'
+        （或 entry 源码含 Ω-gate 解包形态 data.status）→ 缺则打回；
+      - 普通带 deps 的动作：缺失仅警告（governance_notices），不判失败。
+    """
+    errors: List[str] = []
+    if str(action.meta.get('kind') or '').lower() != 'bundle':
+        return errors
+    if action.meta.get('contract') == 'omega-gate':
+        return errors
+    source = _extract_block_source(action, action.meta.get('entry') or '')
+    if 'data.status' in source:
+        return errors
+    errors.append(
+        'omega-gate: kind=bundle 编排动作未声明 Ω-gate 契约'
+        '（meta.contract="omega-gate" 或 entry 内使用 data.status 解包，'
+        'docs/47 §5——编排链必须可容错，禁止一处失败静默中断）')
+    return errors
+
+
+def governance_notices(meta: dict) -> List[str]:
+    """资产化治理警告级项（docs/47）：不判失败，但索引/检查时展示。
+
+    - usage 缺失或非字符串（纯描述已由 check_usage_executable 打回）；
+    - 普通带 deps 动作缺 Ω-gate 契约声明。
+    """
+    notices: List[str] = []
+
+    usage = meta.get('usage')
+    if usage is None:
+        notices.append('info: 缺 usage 字段——建议补一行可执行调用示例（docs/47 §3.5）')
+    elif not isinstance(usage, str):
+        notices.append(f'info: usage 必须是字符串，实际为 {type(usage).__name__}')
+
+    if meta.get('deps') and str(meta.get('kind') or 'exec').lower() != 'bundle':
+        notices.append(
+            'info: 编排动作（deps 非空）建议声明 Ω-gate 契约'
+            '（meta.contract="omega-gate"，docs/47 §5）')
+
+    return notices
+
+
 def validate_graph(actions: Dict[str, Action]) -> None:
     """校验依赖图：deps 存在性 + 循环检测（docs/04 §4/§5）。
 
@@ -697,6 +1119,14 @@ def validate_schema_md(action: Action) -> List[str]:
         if not meta.get(k):
             errors.append(f'schema: 必填字段缺失: {k}')
 
+    # C04b: platform 必填 + 取值合法（future_plan §3 #1）
+    if not meta.get('platform'):
+        errors.append('schema: 必填字段缺失: platform')
+    errors.extend(check_platform(meta))
+
+    # C04c: id 命名约束（future_plan §3 #6）
+    errors.extend(check_id_namespace(meta))
+
     # C05: trust 取值
     if meta.get('trust') not in TRUST_LEVELS:
         errors.append(f'schema: trust 非法: {meta.get("trust")!r}（仅允许 {TRUST_LEVELS}）')
@@ -757,6 +1187,9 @@ def validate_schema_md(action: Action) -> List[str]:
         if t in seen:
             errors.append(f'schema: 代码块 tag 重复: {t!r}')
         seen.add(t)
+
+    # C13: usage 可执行形态（future_plan §3 #8）
+    errors.extend(check_usage_executable(meta))
 
     return errors
 

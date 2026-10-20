@@ -2,12 +2,18 @@
 """
 测试 vools-actus 基础 GUI 动作 - 使用绝对路径
 """
+# 仓库根（由本测试文件位置推导，可移植；原为绝对路径硬编码）
+import os
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 import sys
+
 import os
 
+
 # 添加 actus/vools 目录到路径（绝对路径）
-vools_actus_dir = r'E:\IDEProjects\AI\vools\actus\vools'
+vools_actus_dir = os.path.join(_REPO_ROOT, 'actus', 'vools')
 sys.path.insert(0, vools_actus_dir)
 
 print("Python 路径:")

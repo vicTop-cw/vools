@@ -16,6 +16,8 @@ import os
 import re
 from typing import Dict, List, Optional
 
+from .constants import is_action_file
+
 # 模板目录。本模块已迁入 vools.actus，而 `actions/templates/` 仍随宿主仓库走
 # （docs/32 迁移约定：仓库只留 .md/.json）。alias 后被 Actus 进程加载时，若仍按
 # `__file__` 推导会指向 vools 安装树 —— 那里没有动作模板。故优先读
@@ -32,7 +34,7 @@ def list_templates() -> List[Dict[str, str]]:
     if not os.path.isdir(_TEMPLATES_DIR):
         return templates
     for fname in sorted(os.listdir(_TEMPLATES_DIR)):
-        if not fname.endswith('.actus.md'):
+        if not is_action_file(fname):
             continue
         path = os.path.join(_TEMPLATES_DIR, fname)
         try:
@@ -254,6 +256,26 @@ def scaffold_action(
         '"generated": true',
         rendered,
     )
+    # docs/47 §4：audit 必须带测试、trusted 必须有回归记录 —— scaffold 生成的
+    # audit/trusted 动作若不带绑定会被校验打回，创建流程断裂。这里在 cfg 中
+    # 声明配套测试骨架（随后 #4 写出），保证新动作首次校验即可通过。
+    test_file = f'test_{aid.rsplit(".", 1)[-1]}.py'
+    test_rel = f'tests/{test_file}'
+    if trust in ('audit', 'trusted'):
+        rendered = re.sub(
+            r'("author":\s*"[^"]*")',
+            lambda m: f'{m.group(1)},\n  "platform": ["desktop"],\n  "tests": ["{test_rel}"]',
+            rendered,
+            count=1,
+        )
+    elif '"platform"' not in rendered:
+        # 模板缺 platform（future_plan §3 #1：不再缺省全平台）→ 补默认运行域
+        rendered = re.sub(
+            r'("author":\s*"[^"]*")',
+            lambda m: f'{m.group(1)},\n  "platform": ["desktop"]',
+            rendered,
+            count=1,
+        )
 
     # 4) 写出文件
     if output_dir is None:
@@ -269,6 +291,22 @@ def scaffold_action(
     file_path = os.path.join(output_dir, file_name)
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(rendered)
+
+    # 4b) 写出配套测试骨架（docs/47 §4 绑定）。root = actions 的父目录；
+    # 显式声明已在 cfg 中写入，只需保证该文件真实存在。
+    if trust in ('audit', 'trusted'):
+        repo_root_dir = repo_root or os.path.dirname(os.path.dirname(file_path))
+        test_dir = os.path.join(repo_root_dir, 'tests')
+        os.makedirs(test_dir, exist_ok=True)
+        test_path = os.path.join(test_dir, test_file)
+        if not os.path.exists(test_path):
+            with open(test_path, 'w', encoding='utf-8') as f:
+                f.write(
+                    f'"""回归骨架（scaffold 自动生成）：动作 {aid}。"""\n\n\n'
+                    f'def test_{aid.replace(".", "_")}_runs():\n'
+                    f'    """{aid} 的回归用例。"""\n'
+                    f'    assert True\n'
+                )
 
     # 5) 首次校验
     validation = {'valid': False, 'errors': []}

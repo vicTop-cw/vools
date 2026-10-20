@@ -23,11 +23,14 @@ __all__ = [
 import json
 import os
 import re
-import subprocess
 import time
+from typing import Any, Dict, List, Optional
+
+from .constants import is_action_file
 from typing import Any, Dict, List, Optional, Tuple
 
 from .visibility import GatedKeyStore
+from ._proc import run_cmd_safe
 
 #: 命名硬约束后缀（docs/41 §D2）
 REPO_SUFFIX = '.actus'
@@ -190,9 +193,10 @@ class ActionRepo:
         for dirpath, dirnames, filenames in os.walk(base):
             dirnames[:] = [d for d in dirnames if d != '__pycache__']
             for fn in sorted(filenames):
-                if fn.endswith('.actus.md'):
-                    out.append(os.path.relpath(os.path.join(dirpath, fn), self.root)
-                               .replace(os.sep, '/'))
+                if not is_action_file(fn):
+                    continue
+                out.append(os.path.relpath(os.path.join(dirpath, fn), self.root)
+                           .replace(os.sep, '/'))
         return sorted(out)
 
     def status(self) -> Dict[str, Any]:
@@ -327,15 +331,19 @@ def run_git(root: str, args: List[str], timeout: int = 120) -> Dict[str, Any]:
     """
     safe_args = [re.sub(r'://[^/@]*@', '://***@', a) for a in args]
     try:
-        proc = subprocess.run(['git'] + list(args), cwd=root, capture_output=True,
-                              text=True, encoding='utf-8', errors='replace',
-                              timeout=timeout)
-    except FileNotFoundError as exc:
-        return {'ok': False, 'code': 'dependency_missing',
-                'message': f'git 不可用：{exc}', 'argv': safe_args}
-    except subprocess.TimeoutExpired:
+        proc = run_cmd_safe(['git'] + list(args), cwd=root, timeout=timeout)
+    except Exception as exc:
+        # run_cmd_safe 内部已吞掉 Popen 异常（rc=-1 + stderr=异常消息），这里
+        # 的 except 实际只在极罕见情形（如被 SIGKILL 前）触发，作兜底。
         return {'ok': False, 'code': 'timeout',
-                'message': f'git 超时（{timeout}s）', 'argv': safe_args}
+                'message': f'git 执行失败：{exc}', 'argv': safe_args}
+    if proc.returncode == -1:
+        # run_cmd_safe 把 Popen 抛的 FileNotFoundError 等吞成 rc=-1，
+        # stderr 里是异常字符串。git 不存在时按 dependency_missing 报，
+        # 而不是笼统 timeout（BUG-13.26）。
+        msg = (proc.stderr or '').strip()
+        return {'ok': False, 'code': 'dependency_missing',
+                'message': msg or f'git 不可用（returncode=-1）', 'argv': safe_args}
     return {'ok': proc.returncode == 0, 'exit': proc.returncode,
             'stdout': (proc.stdout or '').strip(),
             'stderr': (proc.stderr or '').strip(),

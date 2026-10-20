@@ -113,6 +113,24 @@ _LAZY = {
     'fingerprint': '.loophelpers', 'clipboard_write': '.loophelpers',
     'clipboard_clear': '.loophelpers', 'focus_window': '.loophelpers',
     'run_playback': '.loophelpers',
+    # 分类体系 v2.0（docs/03 §2）：多维度分类 + 统一接口 + 生态层
+    'KIND_LEVELS': '.constants', 'PURPOSE_LEVELS': '.constants',
+    'INDUSTRY_LEVELS': '.constants', 'TRIGGER_DECL_LEVELS': '.constants',
+    'CLASSIFICATION_VERSION': '.constants',
+    'ExecutionContext': '.exec_iface', 'ExecResult': '.exec_iface',
+    'ActionExecutor': '.exec_iface', 'executor_for': '.exec_iface',
+    'ERROR_KINDS': '.exec_iface',
+    'quality_scale': '.quality', 'QUALITY_LEVELS': '.quality',
+    'write_action_metric': '.calllog', 'aggregate_metrics': '.calllog',
+    'popular_actions': '.calllog', 'trending_actions': '.calllog',
+    'add_default_repo': '.curator', 'remove_default_repo': '.curator',
+    'list_default_repos': '.curator', 'create_collection': '.curator',
+    'load_collection': '.curator', 'list_collections': '.curator',
+    'share_collection': '.curator', 'get_featured': '.curator',
+    # actions（种子动作 façade，定义在 vools/actus/actions/basics/*.actus.schema.md）
+    'get_all_actions': '.actions', 'load_action': '.actions',
+    'CalculatorAction': '.actions', 'TodoListAction': '.actions',
+    'TextEditorAction': '.actions', 'ImageViewerAction': '.actions',
 }
 
 
@@ -215,10 +233,29 @@ _intent = [
 _sigma = [
     'sigma',
 ]
+# 分类体系 v2.0（docs/03 §2）：5 维度分类 + 统一执行接口 + 生态层
+_classification = [
+    'KIND_LEVELS', 'PURPOSE_LEVELS', 'INDUSTRY_LEVELS', 'TRIGGER_DECL_LEVELS',
+    'CLASSIFICATION_VERSION',
+    'ExecutionContext', 'ExecResult', 'ActionExecutor', 'executor_for',
+    'ERROR_KINDS',
+    'quality_scale', 'QUALITY_LEVELS',
+    'write_action_metric', 'aggregate_metrics',
+    'popular_actions', 'trending_actions',
+    'add_default_repo', 'remove_default_repo', 'list_default_repos',
+    'create_collection', 'load_collection', 'list_collections',
+    'share_collection', 'get_featured',
+]
+# 种子动作 façade（定义在 vools/actus/actions/basics/*.actus.schema.md）
+_actions = [
+    'get_all_actions', 'load_action',
+    'CalculatorAction', 'TodoListAction', 'TextEditorAction', 'ImageViewerAction',
+]
 
 __all__ = (
     _base + _model + _exec + _workflow + _registry + _records
     + _concurrency + _sandbox + _trust + _security + _adapter
     + _install + _selfheal + _project + _notify + _health
     + _jump + _webhook + _intent + _sigma
+    + _classification + _actions
 )

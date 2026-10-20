@@ -110,6 +110,14 @@ include = ["vools*"]
     "*.md",
     "templates/*",
     "static/*",
+    # 种子动作（三层动作边界的第 1 层，docs/08 §1）：
+    # vools/actus/actions/**/*.actus.md + *.actus.schema.md 随 wheel 分发，
+    # pip 装上即有 4 个基线 GUI 动作（此前只收 *.md 与 vools/actus/ 直属层，
+    #   basics/ 下的 .actus.schema.md 进不了 wheel，装上后索引恒空）。
+    "actions/*.actus.md",
+    "actions/*.actus.schema.md",
+    "actions/**/*.actus.md",
+    "actions/**/*.actus.schema.md",
     # _shiki/：highlight.py 的 SHIKI_SCRIPT 指向 _shiki/render.mjs（Shiki 高亮）。
     # 此前 package-data 未包含它，wheel 落盘后 render.mjs 缺失，
     # `check_shiki_available()` 恒为 False（与"迁移漏搬 bundle"同族缺陷，只是发生在打包层）。
