@@ -654,15 +654,16 @@ def merge_with(fn: Callable) -> Callable:
         keys = set().union(*dicts)
         for key in keys:
             values = [d[key] for d in dicts if key in d]
-            if len(values) == 1:
-                result[key] = values[0]
-            else:
-                # fn 可能接受多个位置参数 (如 max(a,b,c)) 或单个 iterable (如 sum([...]))
-                # 先尝试展开传递，TypeError 时回退到列表传递
-                try:
-                    result[key] = fn(*values)
-                except TypeError:
-                    result[key] = fn(values)
+            # BUG-218: fn 是每键的唯一合并通道——原实现 len(values)==1
+            # 旁路（fn 不被调用、原样透传），违背 docstring「fn 接收多个
+            # 值返回合并结果」与 toolz 同名函数每键必调语义，产出类型不
+            # 一致的混合结果。fn 可能接受多个位置参数 (如 max(a,b,c)) 或
+            # 单个 iterable (如 sum([...]))：先展开传递，TypeError 回退
+            # 列表传递（单元素列表与 toolz 传参习惯兼容）。
+            try:
+                result[key] = fn(*values)
+            except TypeError:
+                result[key] = fn(values)
         return result
     return _merge_with
 
