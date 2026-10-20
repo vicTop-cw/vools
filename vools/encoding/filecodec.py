@@ -350,7 +350,8 @@ def read_text(path: str, encoding: Optional[str] = None) -> str:
     return body.decode(enc, errors="replace")
 
 
-def write_text(path: str, text: str, encoding: str = "utf-8", bom: bool = False) -> str:
+def write_text(path: str, text: str, encoding: str = "utf-8", bom: bool = False,
+               errors: str = "strict") -> str:
     """统一编码写入文件，返回实际使用的编码名。
 
     - 默认 ``utf-8`` 无 BOM（跨平台最安全）。
@@ -358,6 +359,12 @@ def write_text(path: str, text: str, encoding: str = "utf-8", bom: bool = False)
     - ``utf-16``/``utf-32`` 平台字节序编码在 ``str.encode`` 时 Python 会自动加
       平台 BOM，与 ``bom=True`` 叠加会重复，故需 BOM 时改用显式 ``-le`` 字节序。
     - 自动创建父目录。
+    - ``errors`` 默认 ``strict``（对齐 ``open(..., encoding=enc)`` 与
+      ``str.encode`` 标准语义）：目标编码装不下的字符（如 GBK 写 emoji）
+      抛 ``UnicodeEncodeError``，把换编码/过滤的决定权留给调用方。
+      BUG-219: 原实现硬编码 ``replace``——不可编码字符被替换成 ``?``
+      静默落盘、函数伪装成功，属不可逆数据损坏。确要有损替换时请显式
+      ``errors="replace"``。
 
     >>> import tempfile, os
     >>> p = tempfile.mktemp(suffix=".txt")
@@ -369,7 +376,7 @@ def write_text(path: str, text: str, encoding: str = "utf-8", bom: bool = False)
     if bom and enc in ("utf-16", "utf-32"):
         # Python 的 utf-16/utf-32 codec 自带平台 BOM，需 BOM 时改显式 LE
         enc = enc + "-le"
-    data = text.encode(enc, errors="replace")
+    data = text.encode(enc, errors=errors)
     if bom:
         bom_bytes = _BOM_BY_ENCODING.get(enc)
         if bom_bytes:
@@ -383,8 +390,11 @@ def write_text(path: str, text: str, encoding: str = "utf-8", bom: bool = False)
 
 
 def convert(src: str, dst: str, encoding: str = "utf-8", bom: bool = False,
-            in_encoding: Optional[str] = None) -> Dict[str, object]:
+            in_encoding: Optional[str] = None, errors: str = "strict") -> Dict[str, object]:
     """文件编码转换：把 ``src`` 按探测/指定编码读入，按 ``dst`` 编码写出。
+
+    ``errors`` 透传给 :func:`write_text`（BUG-219：默认 strict，目标编码
+    装不下的字符抛 UnicodeEncodeError 而非静默 '?' 落盘）。
 
     返回::
 
@@ -400,7 +410,7 @@ def convert(src: str, dst: str, encoding: str = "utf-8", bom: bool = False,
     info = detect(read_bytes(src)) if not in_encoding else {
         "encoding": normalize_encoding(in_encoding), "bom": None}
     text = read_text(src, encoding=in_encoding)
-    to_enc = write_text(dst, text, encoding=encoding, bom=bom)
+    to_enc = write_text(dst, text, encoding=encoding, bom=bom, errors=errors)
     return {
         "src": src,
         "dst": dst,
