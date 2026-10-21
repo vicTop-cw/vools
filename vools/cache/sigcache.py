@@ -65,9 +65,17 @@ def _remember_ref(func: Any, key: int) -> None:
 
     BUG-113: 函数被 GC 后 CPython 会复用其 id，导致新对象误命中旧签名。
     用弱引用不阻止 GC，仅用于校验。
+
+    BUG-275: 弱引用挂回调，函数被 GC 时惰性清理 _SIG_REFS 与 _SIG_CACHE 中的
+    对应条目（原实现 dead ref 永久残留，导致 _SIG_REFS 无界增长）。回调晚到
+    最多造成一次缓存 miss（重新计算），无害。
     """
+    def _on_collected(ref, _key=key):
+        _SIG_REFS.pop(_key, None)
+        _SIG_CACHE.pop(_key, None)
+
     try:
-        _SIG_REFS[key] = weakref.ref(func)
+        _SIG_REFS[key] = weakref.ref(func, _on_collected)
     except TypeError:
         # 不可弱引用的对象（部分 C 扩展）回退：不记录，信任 id 唯一
         _SIG_REFS.pop(key, None)
@@ -350,6 +358,8 @@ def _set_cache(key: int, sig: inspect.Signature, *, overwrite: bool = False) -> 
     # LRU 淘汰
     while len(_SIG_CACHE) > _MAX_CACHE_SIZE:
         evicted_key, evicted_sig = _SIG_CACHE.popitem(last=False)
+        # BUG-275: 淘汰必须同步清理弱引用表，否则 _SIG_REFS 无界增长（泄漏）
+        _SIG_REFS.pop(evicted_key, None)
         log.debug("LRU 淘汰: key=%s sig=%s", evicted_key, evicted_sig)
 
 
