@@ -7,12 +7,18 @@
     RhopCrypto(key)                   密钥加密/解密验证一体对象
         encrypt_json(payload)         对 JSON（dict）加密，输出加密 JSON 文本（str）
         decrypt_verify(token)         用本地固定密钥解密后比对内容，明确区分通过/失败
+        encrypt_secret(plaintext)     把配置敏感信息（密码/token/密钥）加密为 RHOP-ENC 密文
+        decrypt_secret(cipher)        解密 RHOP-ENC 密文（密钥不符/被篡改给出明确原因）
+    is_secret(value)                  判断字符串是否是 RHOP-ENC 密文
 
 输出格式（加密 JSON 文本）:
     {"v":1, "alg":"fernet", "ct": "<Fernet token base64>"}
     - v: 信封版本
     - alg: 算法标识（当前 fernet）
     - ct: 加密载荷（Fernet token，urlsafe base64 文本）
+
+输出格式（配置密文）:
+    "RHOP-ENC:<Fernet token>"     # 由 python -m vools.rhop.secret enc 生成
 
 失败原因（VerifyResult.reason）明确区分:
     "OK"            解密成功且内容有效（json 可解析）
@@ -36,6 +42,9 @@ _ENV_KEY_FIELD = "ct"
 
 # 默认环境变量名
 ENV_RHOP_KEY = "RHOP_KEY"
+
+# 配置密文前缀（明文 ↔ 密文 双支持用；见 RhopCrypto.encrypt_secret / decrypt_secret）
+SECRET_PREFIX = "RHOP-ENC:"
 
 # 密钥派生参数（固定本地密钥 → Fernet key）
 _DERIVE_ALG = "sha256"
@@ -94,6 +103,11 @@ def load_key(
     raise ValueError(
         "rhop: 未找到本地固定密钥。请通过 source / path / 环境变量 {0} 提供。".format(env_name)
     )
+
+
+def is_secret(value: Any) -> bool:
+    """判断字符串是否是 rhop 密文（``RHOP-ENC:`` 前缀）。"""
+    return isinstance(value, str) and value.startswith(SECRET_PREFIX)
 
 
 class RhopCrypto(object):
@@ -180,3 +194,57 @@ class RhopCrypto(object):
             return VerifyResult(False, None, "NOT_JSON")
 
         return VerifyResult(True, payload, "OK")
+
+    # ------------------------------------------------------------------
+    # 配置密文（明文 / 密文 双支持：敏感字段用 RHOP-ENC: 前缀承载）
+    # ------------------------------------------------------------------
+
+    def encrypt_secret(self, plaintext: Union[str, bytes, None]) -> str:
+        """把一段明文（密码 / token / 密钥）加密成 ``RHOP-ENC:<token>`` 密文。
+
+        与 ``encrypt_json`` 共用同一把 Fernet 密钥与派生参数，因此配置文件里的
+        密文可以用 ``python -m vools.rhop.secret enc`` 离线生成后回填。
+
+        Args:
+            plaintext: 明文文本；None / 空串返回空串（不产出空密文）。
+
+        Returns:
+            str: ``RHOP-ENC:...`` 密文文本。
+        """
+        if plaintext is None or plaintext == "":
+            return ""
+        if isinstance(plaintext, bytes):
+            plaintext = plaintext.decode("utf-8")
+        token = self._fernet.encrypt(str(plaintext).encode("utf-8")).decode("ascii")
+        return SECRET_PREFIX + token
+
+    def decrypt_secret(self, value: Union[str, None]) -> str:
+        """解密 ``RHOP-ENC:`` 密文，返回明文。
+
+        Args:
+            value: 密文文本；None / 空串返回空串。
+
+        Raises:
+            ValueError: 前缀不符（不是 rhop 密文）或解密失败（密钥不符/密文被篡改），
+                        错误文本明确区分两种原因，便于配置诊断。
+        """
+        if value is None or value == "":
+            return ""
+        text = str(value).strip()
+        if not text.startswith(SECRET_PREFIX):
+            raise ValueError(
+                "不是 rhop 密文（应以 %r 开头）；明文请直接填明文区，"
+                "密文请用 python -m vools.rhop.secret enc \"<明文>\" 生成" % SECRET_PREFIX
+            )
+        token = text[len(SECRET_PREFIX):].strip()
+        if not token:
+            return ""
+        try:
+            return self._fernet.decrypt(token.encode("ascii")).decode("utf-8")
+        except InvalidToken:
+            raise ValueError(
+                "密文解密失败：密钥不符或密文被篡改"
+                "（请确认 RHOP_KEY / 密钥文件与生成密文时一致）"
+            )
+        except Exception as exc:
+            raise ValueError("密文解密失败：%s" % exc)
