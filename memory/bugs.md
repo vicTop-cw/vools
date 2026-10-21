@@ -4418,3 +4418,51 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 - evidence: vools/task/core/storage.py claim_task 入口新增 `lease_seconds = int(lease_seconds)` 强制转换。新增 tests/vconcurrent/test_dag_scheduler_regression.py 3 项 GREEN 验证 WorkerPool/ThreadPool 正常启动。tests/task/ 45 项 GREEN。
 
 
+## BUG-268 [2026-10-21T12:30:24Z] [low] OPEN
+- summary: Table.from_file 假值陷阱收尾：rows=0 读全文件（已由并发改动修复待提交）；cols=[] 残留表头未过滤 → 3 列名 + 空数据行的畸形表
+- detail: vools/data/table.py Table.from_file 的假值陷阱（BUG-255 报告中已注明的延后项，现 table.py 空闲后处理）：参数 rows/cols 用真值判断，显式 0/空列表被当成「未提供」：
+
+① rows=0（文档：最大行数）：`if rows and i >= rows: break` 中 0 为 falsy → 不 break → 读整个文件。实测 4 行 CSV：from_file(rows=0) 读回全部数据行（期望 0 行）；from_file(rows=2) 正确截断。该处已由并发 agent 在工作区改为 `rows is not None`（未提交），本轮一并提交。
+② cols=[]（文档：要读取的列索引）：行循环已改为 `cols is not None` → 每行取空列（[]），但**表头选择仍是 `if columns and cols:`（falsy）** → 列名未过滤，保留全部表头。实测 3 列 CSV：from_file(cols=[]) -> rows=3、列名=['a','b','c']、首行=[]（**列名 3 个而数据行宽度 0，表结构不一致**）；对照 cols=None -> 3 列全取、cols=[0,2] -> 2 列正确。
+
+影响：显式 0 行请求读取全文件（大文件性能/内存风险）、空列选择得到表头与数据宽度不一致的畸形表，均无错误信号。
+
+修复：rows/cols 全部改为 is None / is not None 判断（含表头过滤处 `if columns and cols is not None:`），空列表按调用方意图生效（0 列选择 = 0 列）。
+- reported_by: agent-vools-hardening
+
+
+## BUG-269 [2026-10-21T23:10:00Z] [medium] FIXED
+- summary: get_week num 方向反转——正数指向过去，与文档「正数=未来」相反
+- detail: vools/datetime/utils.py 函数 get_week 与 vools/datetime/vdate_class.py VDate.get_week 实现均为 `w0 - timedelta(days=num * 7)`——正 num 返回更早日期，与 docstring/文档「正数=未来」相反。
+  实测：get_week('20240101', num=1) 返回 '20231225'（上周一），期望 '20240108'（下周一）。
+  影响面：调用方按文档使用正数偏移时得到错误结果。
+修法：utils.py 与 vdate_class.py 统一改为 `w0 + timedelta(days=num * 7)`。
+- reported_by: agent-bug-hunt-datetime
+- task_id: T0d001
+
+### FIXED(2026-10-21T23:15:00Z / BUG-269)
+- evidence: utils.py get_week + vdate_class.py VDate.get_week 改为 `w0 + timedelta(days=num * 7)`。新增 tests/test_get_week_direction_regression.py（含 num 正负方向 / weekday 参数 / 偏移一致性共 15 项）；更新既有 tests/test_get_week_assert_validation_regression.py 与 tests/test_datetime_utils.py 的 num 期望值（旧测试基于错误方向语义）。tests/datetime 全 GREEN。
+
+## BUG-270 [2026-10-21T23:10:00Z] [medium] FIXED
+- summary: VDate.__add__/__sub__ 用 datetime(y,m,d,h,m,s) 构造丢失 microsecond 分量
+- detail: vools/datetime/vdate_class.py VDate.__add__ 与 __sub__ 四个分支均用 `datetime(self.year, self.month, self.day, self.hour, self.minute, self.second)` 构造结果——丢弃 microsecond。
+  实测：VDate(datetime(2024,1,1,12,0,0,123456)) + 1 → microsecond=0（期望 123456）。加/减 timedelta 与 int/float 四分支同受影响。
+  影响面：含微秒的 VDate 算术运算后静默归零，造成时间戳/排序/比较错误。
+修法：四个 datetime 构造统一加 `self.microsecond` 参数。
+- reported_by: agent-bug-hunt-datetime
+- task_id: T0d002
+
+### FIXED(2026-10-21T23:15:00Z / BUG-270)
+- evidence: vdate_class.py __add__/__sub__ 四处 `datetime(...)` 构造加 `self.microsecond`。新增 tests/test_vdate_microsecond_arithmetic_regression.py（+1/-1/+timedelta/-timedelta/+float 共 8 项）。tests/datetime 全 GREEN。
+
+## BUG-271 [2026-10-21T23:10:00Z] [medium] FIXED
+- summary: VDate.__new__ 正则不带小数秒 → 毫秒/微秒字符串报 ValueError "需要指定日期格式"
+- detail: vools/datetime/vdate_class.py VDate.__new__ 两条时间正则 `^\d{4}-\d{2}-\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9]$` 与 `^\d{4}\d{2}\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9]$` 不含 `(?:\.\d+)?` 小数秒分支。输入含子秒的字符串（如 '2024-01-01 12:30:45.123456' / '20240101 12:30:45.123'）不匹配任何分支 → 落到 else raise ValueError("需要指定日期格式")。
+  实测：VDate('2024-01-01 12:30:45.123456') → ValueError。同时 utils.py vDate() 走 `datetime.strptime` 也报 unconverted data remains。
+  影响面：含毫秒/微秒的字符串无法构造 VDate。
+修法：两处正则加 `(?:\.\d+)?`，并解析小数秒构造 microsecond 参数；utils.py vDate() 同步修。
+- reported_by: agent-bug-hunt-datetime
+- task_id: T0d003
+
+### FIXED(2026-10-21T23:15:00Z / BUG-271)
+- evidence: vdate_class.py 两条时间正则加 `(?:\.\d+)?` + 解析小数秒构造 microsecond 参数；utils.py vDate() 同步修。新增 tests/test_datetime_microsecond_string_regression.py（'yyyy-MM-dd HH:MM:SS.ffffff' / 'yyyyMMdd HH:MM:SS.fff' / 无毫秒对照共 8 项）。tests/datetime 全 GREEN。

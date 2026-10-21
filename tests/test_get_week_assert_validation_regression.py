@@ -68,7 +68,9 @@ class TestLegalPathsUnchanged:
         assert get_week('2024-01-03') == '2024-01-01'
 
     def test_week_offset(self):
-        assert get_week('20240101', num=1) == '20231225'
+        # BUG-242: 正数=未来，2024-01-01 周一 + 1 周 = 2024-01-08（下周一）
+        assert get_week('20240101', num=1) == '20240108'
+        assert get_week('20240101', num=-1) == '20231225'
 
     def test_dash_format_preserved(self):
         assert get_week('2024-01-03') == '2024-01-01'
