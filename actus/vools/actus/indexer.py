@@ -268,6 +268,11 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
     by_kind: Dict[str, list] = {}
     by_purpose: Dict[str, list] = {}
     by_industry: Dict[str, list] = {}
+    # ── docs/03 §2.6 索引扩展：by_name / by_md5（ACTUS_REFACTOR_PLAN §3.5）──
+    # by_name：小写归一 → [action_id]（多命中保留全部，resolver 报 ambiguous）
+    # by_md5：32 位 hex → action_id（单值，内容指纹唯一）
+    by_name: Dict[str, list] = {}
+    by_md5: Dict[str, str] = {}
     for aid, brief in entries.items():
         if aid.startswith('_invalid:'):
             continue
@@ -277,6 +282,14 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
             by_purpose.setdefault(p, []).append(aid)
         for ind in (brief.get('industry') or ['general']):
             by_industry.setdefault(ind, []).append(aid)
+        # by_name：brief.name 小写归一 → 多命中保留全部
+        name_val = str(brief.get('name') or '').strip().lower()
+        if name_val:
+            by_name.setdefault(name_val, []).append(aid)
+        # by_md5：brief.md5（32 hex）→ 单值（内容指纹唯一）
+        md5_val = str(brief.get('md5') or '').strip().lower()
+        if md5_val and len(md5_val) == 32:
+            by_md5[md5_val] = aid
 
     index = {
         'schema_version': '2.0.0',
@@ -286,6 +299,8 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
         'by_kind': {k: sorted(v) for k, v in sorted(by_kind.items())},
         'by_purpose': {k: sorted(v) for k, v in sorted(by_purpose.items())},
         'by_industry': {k: sorted(v) for k, v in sorted(by_industry.items())},
+        'by_name': {k: sorted(v) for k, v in sorted(by_name.items())},
+        'by_md5': {k: v for k, v in sorted(by_md5.items())},
     }
     if graph_issues:
         # 摘要保留，便于体检/排障；逐节点详情已在各 action.errors 里

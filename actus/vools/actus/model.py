@@ -20,9 +20,10 @@ class Action:
 
     meta: dict
     path: str                 # 仓库相对路径，如 actions/hello.actus.md
-    sha256: str               # 原始文件（含 front-matter）指纹
-    raw: str                  # 原始文件全文
-    body: str                 # 剥离 front-matter 后的正文（vools 可解析）
+    sha256: str               # 原始文件（含 front-matter）指纹（SHA-256）
+    md5: str = ''             # 原始文件 MD5 指纹（32 hex，ACTUS_REFACTOR_PLAN §3.5 索引扩展）
+    raw: str = ''             # 原始文件全文（空串兜底，兼容无 raw 的构造场景）
+    body: str = ''            # 剥离 front-matter 后的正文（vools 可解析）
     blocks: List[dict] = field(default_factory=list)  # [{index,language,tag,directives}]
     file_directives: dict = field(default_factory=dict)  # entry/only/build-dir 等
 
@@ -196,6 +197,7 @@ class Action:
             'deps': self.deps,
             'path': self.path,
             'sha256': self.sha256,
+            'md5': self.md5,
             'cached_artifacts': self.cached_artifacts,
             # 分类体系 v2.0（docs/03 §2）：5 维度 + 生态层声明
             'kind': self.kind,
@@ -260,6 +262,7 @@ def parse_cfg_from_file(path: str) -> Action:
         raw = f.read()
 
     sha = hashlib.sha256(raw.encode('utf-8')).hexdigest()
+    md5 = hashlib.md5(raw.encode('utf-8')).hexdigest()
 
     # 格式检测：.actus.schema.md 后缀走 YAML front-matter 解析
     basename = os.path.basename(path)
@@ -292,10 +295,10 @@ def parse_cfg_from_file(path: str) -> Action:
                 fd[parts[0]] = parts[1].strip() if len(parts) > 1 else ''
 
     return Action(meta=meta, path=path.replace(os.sep, '/'), sha256=sha,
-                  raw=raw, body=body, blocks=blocks, file_directives=fd)
+                  md5=md5, raw=raw, body=body, blocks=blocks, file_directives=fd)
 
 
-def _parse_schema_md_action(raw: str, path: str, sha: str) -> Action:
+def _parse_schema_md_action(raw: str, path: str, sha: str, md5: str = '') -> Action:
     """解析 .actus.schema.md 格式的动作文件。
 
     结构：
@@ -354,7 +357,7 @@ def _parse_schema_md_action(raw: str, path: str, sha: str) -> Action:
     # （demo 相对路径定位、自包含检查）需要知道动作文件在哪（docs/03 §5.4）。
     meta.setdefault('path', path.replace(os.sep, '/'))
     return Action(meta=meta, path=path.replace(os.sep, '/'), sha256=sha,
-                  raw=raw, body=remaining_body, blocks=blocks, file_directives=fd)
+                  md5=md5, raw=raw, body=remaining_body, blocks=blocks, file_directives=fd)
 
 
 def parse_action_from_schema_md(raw: str, path: str = '') -> Action:
@@ -364,7 +367,8 @@ def parse_action_from_schema_md(raw: str, path: str = '') -> Action:
     """
     import hashlib
     sha = hashlib.sha256(raw.encode('utf-8')).hexdigest()
-    return _parse_schema_md_action(raw, path, sha)
+    md5 = hashlib.md5(raw.encode('utf-8')).hexdigest()
+    return _parse_schema_md_action(raw, path, sha, md5)
 
 
 def _validate_meta_required(meta: dict) -> None:
