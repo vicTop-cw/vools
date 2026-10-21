@@ -193,9 +193,20 @@ class CodecRegistry:
         return cls._encoders.copy()
     
     @classmethod
-
+    def get_encoders(cls) -> Dict[str, Callable]:
+        """
+        获取所有编码器
+        
+        Returns:
+            编码器字典 {format_name: encoder_func}
+        """
+        return cls._encoders.copy()
+    
     def do(self, f=print, pre_f=None, sub_f=None):
         """Apply a function for side effects, return self.
+
+        BUG-276: 原实现被错位的 @classmethod 装饰——self 绑定为类，
+        传给 f 的是类对象且返回类而非实例；恢复为实例方法。
 
         Args:
             f: Function to apply (default print)
@@ -212,6 +223,8 @@ class CodecRegistry:
         if sub_f:
             sub_f(rs)
         return self
+
+    @classmethod
     def get_decoders(cls) -> Dict[str, Callable]:
         """
         获取所有解码器
