@@ -22,7 +22,7 @@ import inspect
 import textwrap
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Optional, Any
+from typing import Callable, Optional, Any, get_type_hints
 from ..core.ast_compat import is_none_literal
 
 
@@ -49,17 +49,35 @@ _PY_TO_CTYPES = {
 def _map_py_to_ctype(py_type: Optional[type]) -> Any:
     """将 Python 类型映射为对应的 ctypes 类型。
 
-    未注册的类型或 None 默认映射为 ``c_int``。
+    支持类型对象与字符串名称（如 'str'、'int'）双形态输入，兼容 PEP 563
+    字符串注解。未注册的类型或 None 默认映射为 ``c_int``。
 
     Args:
-        py_type: Python 类型，可为 None（表示无类型注解）。
+        py_type: Python 类型对象或字符串名称（如 'str'），可为 None。
 
     Returns:
         Any: 对应的 ctypes 类型对象。
     """
     if py_type is None:
         return ctypes.c_int
-    return _PY_TO_CTYPES.get(py_type, ctypes.c_int)
+
+    # 先按类型对象查表
+    ctype = _PY_TO_CTYPES.get(py_type)
+    if ctype is not None:
+        return ctype
+
+    # 字符串名称防御性映射（PEP 563 场景）
+    _NAME_TO_CTYPES = {
+        'int': ctypes.c_int,
+        'float': ctypes.c_double,
+        'str': ctypes.c_char_p,
+        'bytes': ctypes.c_char_p,
+        'bool': ctypes.c_bool,
+    }
+    if isinstance(py_type, str):
+        return _NAME_TO_CTYPES.get(py_type, ctypes.c_int)
+
+    return ctypes.c_int
 
 
 def _convert_arg(arg: Any, c_type: Any) -> Any:
@@ -83,17 +101,24 @@ def _convert_arg(arg: Any, c_type: Any) -> Any:
 def _convert_result(result: Any, ret_ctype: Any, ret_py_type: Optional[type]) -> Any:
     """转换 DLL 函数返回值为 Python 类型。
 
-    当前仅处理 bytes → str 的自动解码（UTF-8）。
+    当前仅处理 bytes → str 的自动解码（UTF-8）。``ret_py_type`` 可以是类型
+    对象或字符串名称（PEP 563 返回注解场景）。
 
     Args:
         result: DLL 函数返回的原始结果。
         ret_ctype: 返回值的 ctypes 类型。
-        ret_py_type: 期望的 Python 返回类型，可为 None。
+        ret_py_type: 期望的 Python 返回类型（类型对象或字符串名称），可为 None。
 
     Returns:
         Any: 转换后的返回值。
     """
-    if ret_py_type is str and isinstance(result, bytes):
+    # 统一将字符串 'str'/'bytes' 转成类型对象以兼容 PEP 563
+    if ret_py_type == 'str':
+        if isinstance(result, bytes):
+            return result.decode('utf-8')
+    elif ret_py_type == 'bytes':
+        return result
+    elif ret_py_type is str and isinstance(result, bytes):
         return result.decode('utf-8')
     return result
 
@@ -122,6 +147,10 @@ def _parse_dll_spec(spec: str) -> tuple:
 def _extract_annotations(func: Callable) -> tuple:
     """从函数签名中提取类型注解。
 
+    优先用 ``typing.get_type_hints(func)`` 解析 PEP 563 字符串注解
+    （``from __future__ import annotations`` 或 py3.6 字符串注解写法），
+    失败回退到 ``inspect.signature`` 原始注解。
+
     Args:
         func: 待解析的函数对象。
 
@@ -134,15 +163,23 @@ def _extract_annotations(func: Callable) -> tuple:
     sig = inspect.signature(func)
     params = list(sig.parameters.values())
 
+    # 优先用 get_type_hints 解析字符串注解（PEP 563）
+    try:
+        hints = get_type_hints(func)
+    except Exception:
+        hints = {}
+
     arg_py_types = []
     for param in params:
-        if param.annotation is inspect.Parameter.empty:
+        if param.name in hints:
+            arg_py_types.append(hints[param.name])
+        elif param.annotation is inspect.Parameter.empty:
             arg_py_types.append(None)
         else:
             arg_py_types.append(param.annotation)
 
-    ret_py_type = None
-    if sig.return_annotation is not inspect.Parameter.empty:
+    ret_py_type = hints.get('return', None)
+    if ret_py_type is None and sig.return_annotation is not inspect.Parameter.empty:
         ret_py_type = sig.return_annotation
 
     return arg_py_types, ret_py_type, params
