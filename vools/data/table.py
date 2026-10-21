@@ -1277,6 +1277,8 @@ class Table(Seq):
 
         def safe_eval(row):
             # BUG-94: replace col names then AST-validate + restricted builtins
+            # 注：未知列名/语法错误/非白名单节点统一返回 False 是**有意设计**，
+            # 由 tests/data/test_table_where_safety.py 锁定（安全拒绝语义）。
             safe = expr
             for col in self._columns:
                 # word-boundary match to avoid partial matches
