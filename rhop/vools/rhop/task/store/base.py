@@ -26,8 +26,15 @@ from ..errors import TaskNotFound, StoreUnavailable
 from ..models import TaskRecord, TaskState, utcnow_iso
 
 
-class TaskStore(object):
-    """任务存储抽象基类。
+class TaskStore(abc.ABC):
+    """任务存储抽象基类（**真 ABC**：契约受强制）。
+
+    实现约定（backend 必须全部实现，否则无法实例化）：下方标了
+    ``@abc.abstractmethod`` 的方法即为契约面。继承 ``abc.ABC`` 而非 ``object``
+    是刻意的——只有设了 ``ABCMeta``，``__abstractmethods__`` 才会被计算，
+    缺失实现的子类在**构造期**就抛 TypeError，而不是拖到运行期某个调用点才炸
+    （历史缺陷 BUG-279：旧写法 class TaskStore(object) 让 @abstractmethod 完全惰性，
+    裸 TaskStore() 与零实现子类都能实例化，create_store 的 isinstance 校验也就形同虚设）。
 
     Args:
         spec: 存储规格 dict（``kind`` / ``path`` / ``table`` / ``journal_mode`` ...

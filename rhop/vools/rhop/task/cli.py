@@ -93,44 +93,44 @@ def _build_parser() -> argparse.ArgumentParser:
     p_submit.add_argument("--timeout", type=float, default=None, help="--wait 的总超时秒")
     p_submit.add_argument("--poll", type=float, default=None, help="轮询间隔秒")
 
-    p_serve = sub.add_parser("serve", help="B 侧常驻消费")
+    p_serve = _sub("serve", "B 侧常驻消费")
     p_serve.add_argument("--once", action="store_true", help="只跑一轮")
     p_serve.add_argument("--max-iterations", type=int, default=None)
     p_serve.add_argument("--no-closed-on-exit", action="store_true",
                          help="退出时不把心跳写成 closed")
 
-    p_once = sub.add_parser("once", help="B 侧只跑一轮（等同 serve --once）")
+    p_once = _sub("once", "B 侧只跑一轮（等同 serve --once）")
     p_once.add_argument("--no-closed-on-exit", action="store_true")
 
-    p_status = sub.add_parser("status", help="查看任务状态")
+    p_status = _sub("status", "查看任务状态")
     p_status.add_argument("--state", default=None, help="按状态过滤（PENDING/RUNNING/...）")
     p_status.add_argument("--limit", type=int, default=200)
     p_status.add_argument("--show-payload", action="store_true", help="回显解密后的载荷")
     p_status.add_argument("--watch", action="store_true", help="持续刷新直到全部终结")
     p_status.add_argument("--interval", type=float, default=2.0)
 
-    p_watch = sub.add_parser("watch", help="A 侧盯完成（含 B 心跳判活）")
+    p_watch = _sub("watch", "A 侧盯完成（含 B 心跳判活）")
     p_watch.add_argument("--timeout", type=float, default=None)
     p_watch.add_argument("--poll", type=float, default=None)
     p_watch.add_argument("--dead-grace", type=int, default=3)
 
-    p_hb = sub.add_parser("check-heartbeat", help="查看 B 心跳状态")
+    p_hb = _sub("check-heartbeat", "查看 B 心跳状态")
     p_hb.add_argument("--max-age", type=float, default=None, help="自定义判活秒数")
 
-    sub.add_parser("close", help="往心跳文件写 closed（远端停机指令）")
+    _sub("close", "往心跳文件写 closed（远端停机指令）")
 
-    p_cancel = sub.add_parser("cancel", help="取消任务")
+    p_cancel = _sub("cancel", "取消任务")
     p_cancel.add_argument("--task", required=True)
 
-    p_requeue = sub.add_parser("requeue", help="重置单个任务回 PENDING")
+    p_requeue = _sub("requeue", "重置单个任务回 PENDING")
     p_requeue.add_argument("--task", required=True)
 
-    sub.add_parser("retry-failed", help="把所有 FAILED 重置回 PENDING")
+    _sub("retry-failed", "把所有 FAILED 重置回 PENDING")
 
-    p_sync = sub.add_parser("sync", help="本地库模式：强制推/拉同步包")
+    p_sync = _sub("sync", "本地库模式：强制推/拉同步包")
     p_sync.add_argument("--direction", choices=["push", "pull", "both"], default="both")
 
-    p_conf = sub.add_parser("config", help="校验并打印已解析配置")
+    p_conf = _sub("config", "校验并打印已解析配置")
     p_conf.add_argument("--check-store", action="store_true", help="实际打开存储（校验路径/权限）")
     return parser
 
@@ -432,11 +432,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.command:
         parser.print_help()
         return 2
-    if not os.path.isfile(args.config):
-        sys.stderr.write("[rhop-task] 配置文件不存在: %s\n" % args.config)
+
+    # 全局选项可能出现在子命令之前或之后（两级 parents + SUPPRESS），这里统一归一
+    args.json = bool(getattr(args, "json", False))
+    args.strict_secrets = bool(getattr(args, "strict_secrets", False))
+    args.no_warn_plaintext = bool(getattr(args, "no_warn_plaintext", False))
+    config_path = getattr(args, "config", None)
+    if not config_path:
+        sys.stderr.write("[rhop-task] 缺少 --config <配置文件>\n")
+        return 2
+    args.config = config_path
+    if not os.path.isfile(config_path):
+        sys.stderr.write("[rhop-task] 配置文件不存在: %s\n" % config_path)
         return 2
     try:
-        config = TaskConfig.from_file(args.config,
+        config = TaskConfig.from_file(config_path,
                                       strict_secrets=args.strict_secrets,
                                       warn_plaintext=not args.no_warn_plaintext)
     except RhopTaskError as exc:

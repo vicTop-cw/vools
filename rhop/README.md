@@ -29,6 +29,36 @@ MVP 出口判据：
 
 完整 v2 设计（镜像 DB / 状态机 / 业务 API）见 `analysis/rhop-PLAN.md`。
 
+## 通用任务队列（2026-10-21 新增，v0.2.0）
+
+**A[host] 把加密 JSON 指令交给 B[server]，B 解密后按指示执行；多任务与依赖由 SQLite 管理。**
+表结构与流转参照 `vools.pyk.look_upon`，但**去掉 P0..P3 跳板角色**，改为配置驱动的方向 A/B/C；
+数据库做成抽象，可换后端。
+
+| 能力 | 落点 |
+|---|---|
+| 方向驱动配置（A 提交 / B 执行 / C 中转，无跳板链） | `vools/rhop/task/config.py` |
+| **数据库抽象**：单一共享库 `sqlite-shared`（默认）/ 双方各自持库 `sqlite-local` / 可注册 PostgreSQL | `vools/rhop/task/store/` |
+| 任务表 + 状态机 + DAG 依赖 + 重试 + 取消 + 失效锁回收 | `vools/rhop/task/{models,queue}.py`、`task/store/sqlite_store.py` |
+| 加密载荷（A→B 的加密 JSON）与可加密结果 | `vools/rhop/task/queue.py` |
+| **心跳**：B 每 5 秒写 `<name>.heartbeat` 时间戳；不动=挂了；写 `closed`=停机 | `vools/rhop/task/heartbeat.py` |
+| 执行通道 + **默认白名单**（action/handler 放行，任意命令需显式放开） | `vools/rhop/task/exec.py` |
+| **明文/密文双支持** + 明文告警（给命令与回填指引） | `vools/rhop/task/secrets.py`、`vools/rhop/secret.py` |
+| 双方各自持库时的加密同步收敛 | `vools/rhop/task/sync.py` |
+| CLI：`submit / serve / once / status / watch / check-heartbeat / close / sync / config` | `vools/rhop/task/cli.py` |
+| **静态 HTML 配置生成器**（离线、页内生成密文、与 Python 密文互通） | `rhop/tools/config_generator.html` |
+
+快速开始：
+
+```bash
+python -m vools.rhop.task --config rhop-B.json serve                  # B 常驻
+python -m vools.rhop.task --config rhop-A.json submit --file tasks.json # A 提交
+python -m vools.rhop.task --config rhop-A.json status                  # 双方看同一份状态
+python -m vools.rhop.secret enc "my-password"                          # 生成配置密文
+```
+
+详见 [`docs/task-queue.md`](docs/task-queue.md)。
+
 ## 地基规划（2026-10-18）
 
 将 rhop 打磨为**配置驱动、A/B/C 三角拓扑**交互地基：只提供配置 + 指定动作方式，即可完成任意双方交互。
@@ -42,5 +72,7 @@ MVP 出口判据：
 
 - 地基规划状态一览：`docs/groundwork.md`
 - SftpChannel 使用说明与验证记录：`docs/sftp-channel.md`
-- 详细规划与出口判据：`analysis/rhop-PLAN.md` 附录 C
+- **通用任务队列（表结构 / 状态机 / 心跳 / 配置 / CLI / 后端抽象）**：`docs/task-queue.md`
+- 配置生成器：`tools/config_generator.html`（浏览器直接打开）
+- 详细规划与出口判据：`analysis/rhop-PLAN.md` 附录 C、附录 D
 *（内容由AI生成，仅供参考）*

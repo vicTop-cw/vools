@@ -92,6 +92,21 @@ class TestConfigCommand:
     def test_no_subcommand_prints_help(self, env, capsys):
         assert main(["--config", env["A"]]) == 2
 
+    def test_global_options_accepted_after_subcommand(self, env, capsys):
+        """`--config/--json` 放在子命令之后也要生效（两级 parents + SUPPRESS 归一）。"""
+        main(["--config", env["A"], "--no-warn-plaintext", "submit", "--file", env["tasks"]])
+        capsys.readouterr()
+        code = main(["status", "--config", env["A"], "--json", "--no-warn-plaintext"])
+        out = capsys.readouterr().out
+        assert code == 0
+        rows = json.loads(out)
+        assert len(rows) == 2
+        assert rows[0]["state"] == TaskState.PENDING
+
+    def test_missing_config_is_reported(self, capsys):
+        assert main(["status"]) == 2
+        assert "缺少 --config" in capsys.readouterr().err
+
 
 class TestSubmitAndRun:
     def test_submit_from_file(self, env, capsys):
