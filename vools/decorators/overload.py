@@ -6,7 +6,9 @@
 - 非同名注册 (AllowSyncName)：允许函数名与原始函数不同（需配合 Priority）
 - 严格类型检查 (Strict)：按参数类型注解精确匹配
 - 模糊匹配 (Ambiguous)：多个候选时取第一个，而非报错
-- 注册模式：export_mode 控制 register 的返回值（默认返回管理器支持链式）
+- 注册模式：export_mode 控制 register 的返回值——**默认返回原函数**
+  （因此注册应使用不同函数名，如示例中的 add_int）；需要把管理器绑回
+  名字时用 export_mode=ParentMode / ExportAsManager。
 
 示例:
     >>> from vools.decorators.overload import overload, Priority, AllowSyncName, Strict, Ambiguous
@@ -14,7 +16,7 @@
     ... def add(a, b):
     ...     return a + b
     ...
-    >>> @add.register          # 返回管理器，支持链式
+    >>> @add.register          # 默认返回原函数，注意用异名 add_int
     ... def add_int(a: int, b: int):
     ...     return a + b
     ...
@@ -84,11 +86,9 @@ _DEFAULT_MODE = Priority | Strict | AllowSyncName
 # =============================================================================
 
 ParentMode = 'parent'            # 返回新管理器（继承父级模式）
-# BUG-228: 原为 None——与"未传 export_mode"同值，register 的
-# `export_mode is not None` 门会把显式选择误判为未传，令"显式返回原函数"
-# 能力结构性不可达。同族哨兵 ParentMode/ExportAsManager 均为唯一字符串，
-# 此处对齐为唯一字符串。
-ExportAsFunction = 'function'    # 返回原函数（不创建新管理器）
+# export_mode 的默认值即 None（"不改变原函数"）。ExportAsFunction 是它的
+# 具名别名——两者等价（tests/oop/test_overload_new.py 锁定该契约）。
+ExportAsFunction = None          # 返回原函数（不创建新管理器），等同默认
 ExportAsManager = 'manager'      # 返回新管理器（等同于 ParentMode 语义）
 
 
@@ -305,8 +305,9 @@ class OverloadManager:
             func: 要注册的函数；若为 None 则返回装饰器
             priority: 优先级（默认 0；在 Priority 模式下生效）
             export_mode: 决定 register 调用的返回值
-                - None (默认)：返回管理器，支持链式（与模块头文档一致）
-                - ExportAsFunction：返回原函数（显式选择）
+                - None (默认)：**返回原函数，不改变原函数**（契约由
+                  tests/oop/test_overload_new.py 锁定）
+                - ExportAsFunction：名为默认值的别名，同样返回原函数
                 - ParentMode / ExportAsManager：返回新管理器（继承父级模式）
                 - OverloadMode 值：以指定模式创建新管理器
 
@@ -314,13 +315,12 @@ class OverloadManager:
             原函数 / 管理器 —— 取决于 export_mode
 
         Note:
-            BUG-227: 原默认分支返回原函数 f——同名注册 ``@f.register
-            def f(...)``（_register_function 显式允许的正统写法）会把名字 f
-            重绑成新函数、Manager 从命名空间丢失，此后 f(...) 直接调用最后
-            注册的函数，priority/strict/count/模糊检测全部 dispatch 静默
-            旁路；且与模块头 L9、示例注释 L17、overload() L500 三处
-            「默认返回管理器支持链式」承诺直接矛盾。现默认返回 self，
-            需要原函数语义请显式 export_mode=ExportAsFunction。
+            BUG-245: 默认值返回原函数意味着**同名注册** ``@f.register
+            def f(...)`` 会把名字 f 重绑成刚注册的函数、Manager 从命名空间
+            丢失，此后 f(...) 直调最后注册的函数（priority/strict/模糊检测
+            全部旁路）。正确用法是**异名注册**（如 ``@add.register def
+            add_int(...)``，模块头示例即此风格）或显式
+            ``export_mode=ParentMode`` 把管理器绑回名字。
         """
         eff_export_mode = export_mode if export_mode is not None else self.export_mode
 
@@ -328,11 +328,8 @@ class OverloadManager:
             eff_priority = priority if priority is not None else 0
             self._register_function(f, priority=eff_priority)
 
-            # BUG-227: 默认返回管理器（链式/同名注册风格不再打断 dispatch）；
-            # ExportAsFunction 显式值保留"返回原函数"给主动选择的调用方。
-            if eff_export_mode is None:
-                return self
-            if eff_export_mode is ExportAsFunction:
+            # 默认（None / ExportAsFunction 别名）：不改变原函数，返回 f
+            if eff_export_mode is None or eff_export_mode is ExportAsFunction:
                 return f
 
             # ParentMode / ExportAsManager：创建子管理器并返回
@@ -514,7 +511,8 @@ def overload(func: Optional[Callable] = None,
         func: 被装饰的函数（若不传，返回装饰器）
         mode: 重载模式，默认 Priority | Strict | AllowSyncName
         priority: 主函数优先级
-        export_mode: register 的默认返回策略（默认 None → 返回管理器）
+        export_mode: register 的默认返回策略（默认 None → **返回原函数**；
+            ParentMode / ExportAsManager 时返回管理器）
 
     返回:
         OverloadManager 实例

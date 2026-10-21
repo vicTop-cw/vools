@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""回归测试：overload.register 默认返回管理器 + 三哨兵互异（BUG-227/228）。
+"""回归测试：overload.register 的 export_mode 契约（BUG-245 修正版）。
 
-BUG-227：`register` 默认分支返回原函数 f——同名注册 `@f.register def f(...)`
-（_register_function 显式允许的正统写法）把名字 f 重绑成新函数、Manager 丢失，
-此后 dispatching 全部旁路（实测 g() 报 "missing 1 required positional
-argument: 'a'" 而非重载系统错误）；且与模块头 L9、示例注释 L17、overload()
-L500 三处「默认返回管理器支持链式」承诺直接矛盾。
+契约由 tests/oop/test_overload_new.py 锁定，并在本文件同口径复验：
+- `export_mode=None`（默认）→ **返回原函数、不改变原函数**；
+- `ExportAsFunction` 是 None 的具名别名，行为同默认；
+- `ParentMode` / `ExportAsManager` → 返回 OverloadManager（管理器）；
+- 因此注册应使用**异名**（模块头示例 `add_int` 风格）；同名注册会把名字
+  重绑成新函数、管理器丢失（BUG-245 已在 register docstring 注明该陷阱）。
 
-BUG-228：`ExportAsFunction` 误定义成 None——与「未传 export_mode」同值，被
-register 的 `export_mode is not None` 门截胡，「显式选择返回原函数」结构性
-不可达（L331 分支永假）。同族哨兵 ParentMode='parent'/ExportAsManager=
-'manager' 均为唯一字符串，现对齐为 'function'。
+历史：BUG-227/228 曾把默认返回值改成管理器，导致
+`tests/oop/test_overload_new.py::TestExportModes::test_export_none_original_function`
+失败；BUG-245 回滚该行为并把模块头/overload() 的误导性表述改为与本契约一致。
 """
 
 import pytest
@@ -32,48 +32,37 @@ def _fresh_registry():
     reset_registry()
 
 
-class TestDefaultReturnsManager:
-    """BUG-227 核心：默认返回管理器，同名注册不打断 dispatch。"""
+class TestDefaultReturnsOriginalFunction:
+    """默认 export_mode=None：返回原函数（测试锁定契约）。"""
 
-    def test_default_returns_manager(self):
+    def test_default_returns_function(self):
         @overload
         def f(x):
             return "base"
 
-        assert isinstance(f.register(lambda x: "impl"), OverloadManager)
+        def impl(x):
+            return "impl"
 
-    def test_same_name_registration_dispatches(self):
+        assert f.register(impl) is impl          # 不是管理器
+
+    def test_export_as_function_alias(self):
+        # ExportAsFunction 就是 None 的别名（同一哨兵）
+        assert ExportAsFunction is None
+
         @overload
-        def g():
-            return "noarg"
+        def f(x):
+            return "base"
 
-        @g.register
-        def g(a):
-            return f"one:{a}"
+        def impl(x):
+            return "impl"
 
-        assert type(g).__name__ == "OverloadManager"
-        assert g() == "noarg"        # 修复前：TypeError missing 'a'（直调 g(a)）
-        assert g(7) == "one:7"
+        assert f.register(impl, export_mode=ExportAsFunction) is impl
 
-    def test_same_name_method_dispatches(self):
-        class K:
-            @overload
-            def m(self):
-                return "noarg"
-
-            @m.register
-            def m(self, a):
-                return f"one:{a}"
-
-        k = K()
-        assert k.m() == "noarg"
-        assert k.m(7) == "one:7"
-
-    def test_module_header_example_verbatim(self):
+    def test_different_name_registration_dispatches(self):
+        # 模块头示例风格：异名注册 + 含 Ambiguous 模式（默认模式无
+        # Ambiguous，主函数与重载同匹配会按文档抛"模糊调用"）
         from vools.decorators.overload import (
             AllowSyncName, Ambiguous, Priority, Strict)
-
-        reset_registry()
 
         @overload(mode=Priority | AllowSyncName | Strict | Ambiguous)
         def add(a, b):
@@ -83,45 +72,52 @@ class TestDefaultReturnsManager:
         def add_int(a: int, b: int):
             return a + b
 
+        assert isinstance(add, OverloadManager)
         assert add(1, 2) == 3
         assert add("a", "b") == "ab"
 
 
-class TestSentinelExportAsFunction:
-    """BUG-228 核心：显式 ExportAsFunction 真的返回原函数。"""
+class TestManagerModes:
+    """ParentMode / ExportAsManager：返回管理器。"""
+
+    def test_parent_mode(self):
+        @overload
+        def f(x):
+            return "base"
+
+        m = f.register(lambda x: "impl", export_mode=ParentMode)
+        assert isinstance(m, OverloadManager)
+
+    def test_export_as_manager(self):
+        @overload
+        def f(x):
+            return "base"
+
+        m = f.register(lambda x: "impl", export_mode=ExportAsManager)
+        assert isinstance(m, OverloadManager)
 
     def test_sentinels_distinct(self):
-        assert len({ExportAsFunction, ParentMode, ExportAsManager}) == 3
+        assert ParentMode != ExportAsManager
+        assert ExportAsFunction is None
 
-    def test_explicit_export_as_function(self):
+
+class TestSameNameTrapDocumented:
+    """同名注册的已知陷阱（行为断言，防文档漂移）。"""
+
+    def test_same_name_rebinds_to_function(self):
         @overload
-        def f(x):
-            return "base"
+        def g():
+            return "noarg"
 
-        plain = lambda x: "plain"  # noqa: E731
-        assert f.register(plain, export_mode=ExportAsFunction) is plain
+        @g.register
+        def g(a):
+            return f"one:{a}"
 
-    def test_decorator_level_export_mode(self):
-        @overload(export_mode=ExportAsFunction)
-        def g(x):
-            return "base"
+        # 默认返回原函数 → 名字 g 已重绑为刚注册的函数（管理器丢失）
+        assert not isinstance(g, OverloadManager)
+        assert g(7) == "one:7"
 
-        gimpl = lambda x: "g-impl"  # noqa: E731
-        assert g.register(gimpl) is gimpl
-
-    def test_parent_mode_still_manager(self):
-        @overload
-        def f(x):
-            return "base"
-
-        assert isinstance(
-            f.register(lambda x: "pm", export_mode=ParentMode), OverloadManager)
-
-    def test_export_as_manager_still_manager(self):
-        @overload
-        def f(x):
-            return "base"
-
-        assert isinstance(
-            f.register(lambda x: "em", export_mode=ExportAsManager),
-            OverloadManager)
+    def test_register_docstring_mentions_trap(self):
+        doc = OverloadManager.register.__doc__ or ""
+        assert "同名注册" in doc
+        assert "异名" in doc
