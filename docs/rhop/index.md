@@ -3,9 +3,9 @@
 > **模块路径**：`vools.rhop`（独立子项目 `rhop/`）
 > **依赖版本**：Python 3.6+（WSL/Docker py3.6 已全量验证）
 > **平台支持**：Windows/macOS/Linux
-> **测试状态**：✅ 已测试（Step 1 全量 52/52 通过）
+> **测试状态**：✅ 已测试（`rhop/tests` 458 passed；含任务队列 313 个新用例）
 > **编号**：#A21
-> **最后更新**：2026-10-18
+> **最后更新**：2026-10-21
 
 ---
 
@@ -33,13 +33,44 @@
 
 ---
 
+## 通用任务队列（2026-10-21 完成）
+
+**A[host] 把加密 JSON 指令交给 B[server]，B 解密后按指示执行；多任务与依赖由 SQLite 管理。**
+参照 `vools.pyk.look_upon` 的表结构与流转，去掉 P0..P3 跳板角色，改为配置驱动的方向 A/B/C；
+数据库做成抽象（单一共享库 / 双方各自持库 / 可注册 PostgreSQL）。
+
+| 子模块 | 能力 |
+|---|---|
+| `vools.rhop.task.config` | 方向驱动配置（A/B/C ↔ SEND/RECV/RELAY）、存储后端选择、路径模板 |
+| `vools.rhop.task.store` | **存储抽象** `TaskStore` + `register_store()`；`sqlite-shared`（默认）/ `sqlite-local` |
+| `vools.rhop.task.queue` | `TaskQueue`：提交 / DAG 校验 / 原子领取 / 重试 / 取消 / 结果回写 |
+| `vools.rhop.task.heartbeat` | `Heartbeat` + `HeartbeatPump`：B 每 5 秒写 `<name>.heartbeat`；不动=挂了；写 `closed`=停机 |
+| `vools.rhop.task.exec` | 执行通道（action / cli / handler）+ **默认白名单** |
+| `vools.rhop.task.secrets` | 敏感信息**明文/密文双支持** + 明文告警（含生成命令与回填指引） |
+| `vools.rhop.task.sync` | 各自持库模式的加密同步收敛（两个单向文档 + 版本单调） |
+| `vools.rhop.task.cli` | `submit / serve / once / status / watch / check-heartbeat / close / sync / config` |
+| `vools.rhop.secret` | 密文工具：`enc` / `dec` / `keygen`（`RHOP-ENC:` 前缀） |
+
+```bash
+python -m vools.rhop.task --config rhop-B.json serve                     # B 常驻（心跳+执行）
+python -m vools.rhop.task --config rhop-A.json submit --file tasks.json  # A 提交（载荷加密）
+python -m vools.rhop.task --config rhop-A.json status                    # 双方看同一份状态
+python -m vools.rhop.secret enc "my-password"                            # 生成配置密文
+```
+
+配置文件生成器（离线静态页面，页内可直接生成密文）：`rhop/tools/config_generator.html`。
+详细表结构 / 状态机 / 心跳协议 / CLI：`rhop/docs/task-queue.md`。
+
+---
+
 ## 核心模块
 
 | 模块 | 能力 |
 |------|------|
-| `vools.rhop.crypto` | 本地固定密钥抽象：`load_key` / `RhopCrypto` / `encrypt_json` / `decrypt_verify`（Fernet 信封） |
+| `vools.rhop.crypto` | 本地固定密钥抽象：`load_key` / `RhopCrypto` / `encrypt_json` / `decrypt_verify`（Fernet 信封）；配置密文 `encrypt_secret` / `decrypt_secret`（`RHOP-ENC:`） |
 | `vools.rhop.transport` | 通道选择与镜像传输：`select_transport` / `OnlineChannel` / `SharedPath` / `SftpChannel` / `GitChannel` |
 | `vools.rhop.watch` | `RhopWatcher`：shared path 新文件监控 + 解密验证回调 |
+| `vools.rhop.task` | 通用任务队列（见上节）：A 提交加密 JSON 指令 → B 解密执行，SQLite 管依赖/状态 |
 
 ## 公开 API
 
@@ -108,6 +139,7 @@ watcher.stop()
 
 | 文档 | 内容 |
 |------|------|
-| `analysis/rhop-PLAN.md` | 详细规划与出口判据（附录 C：Step 1-4 与 vq 迁移） |
-| `rhop/docs/groundwork.md` | 地基规划状态一览（C2.1 完成，C2.2-2.4 待办） |
+| `analysis/rhop-PLAN.md` | 详细规划与出口判据（附录 C：地基规划；附录 D：通用任务队列） |
+| `rhop/docs/groundwork.md` | 地基规划 + 任务队列 状态一览 |
+| `rhop/docs/task-queue.md` | **通用任务队列**：表结构、状态机、心跳协议、配置 schema、CLI、后端抽象 |
 | [SftpChannel 使用说明](sftp-channel.md) | SftpChannel 构造参数、公开 API、示例与验证记录 |

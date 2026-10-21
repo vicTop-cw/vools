@@ -185,14 +185,20 @@ from vools.cache.sigcache import get_signature
 
 ### rhop 协议子项目
 
-详细文档：[rhop/index.md](../rhop/index.md) / [rhop/sftp-channel.md](../rhop/sftp-channel.md)
+详细文档：[rhop/index.md](../rhop/index.md) / [rhop/sftp-channel.md](../rhop/sftp-channel.md) / [rhop/task-queue.md](../../rhop/docs/task-queue.md)
 
 | 名称 | 说明 | 模块 |
 |------|------|------|
 | `SftpChannel` | paramiko 优先的 SFTP 通道（支持注入式回退） | vools.rhop.transport |
 | `select_transport` | 传输选择（在线优先 / 离线回退 shared path） | vools.rhop.transport |
-| `RhopCrypto` | 加密封装 | vools.rhop.crypto |
+| `RhopCrypto` | 加密封装（`encrypt_json` / 解密验证 / 配置密文 `RHOP-ENC:`） | vools.rhop.crypto |
 | `RhopWatcher` | 文件监控（shared_path, crypto, on_packet, extensions, backend, interval） | vools.rhop.watch |
+| `TaskQueue` | 通用任务队列：提交（载荷加密）/ DAG 依赖 / 原子领取 / 重试 / 取消 / 结果回写 | vools.rhop.task |
+| `TaskConfig` | 方向驱动配置（`role=A/B/C`）+ 存储后端 + 心跳 + 执行白名单；明文/密文双支持 | vools.rhop.task.config |
+| `TaskStore` / `register_store` | 存储抽象与后端注册（`sqlite-shared` 默认 / `sqlite-local` / 可接 PostgreSQL） | vools.rhop.task.store |
+| `Heartbeat` / `HeartbeatPump` | 心跳：B 每 5 秒写 `<name>.heartbeat`；不动=挂了；写 `closed`=停机；后台线程与任务解耦 | vools.rhop.task.heartbeat |
+| `TaskDaemon` | 常驻进程（A 提交等待 / B 心跳+消费），`python -m vools.rhop.task` | vools.rhop.task.daemon |
+| `TaskSync` | 各自持库（`sqlite-local`）模式的加密同步收敛 | vools.rhop.task.sync |
 
 ### actus 动作引擎
 

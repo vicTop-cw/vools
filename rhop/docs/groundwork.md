@@ -54,4 +54,37 @@ rhop 地基 = 传输介质（可插拔） + 公开动作（可验证） + 三角
 - 详细规划与出口判据：`analysis/rhop-PLAN.md` 附录 C「地基规划 — 配置驱动 A/B/C 三角交互」
 - SftpChannel 用法与验证：`docs/sftp-channel.md`
 - 包概览与 MVP：`README.md`
+
+---
+
+## 通用任务队列（2026-10-21 完成，v0.2.0）
+
+在地基之上补齐"**A 提交加密 JSON 指令 → B 解密执行，多任务与依赖由 SQLite 管理**"这一层，
+仍然只靠配置：方向（A/B/C）+ 介质 + 存储后端 + 执行白名单。
+
+| # | 能力 | 状态 | 落点 |
+|---|---|---|---|
+| Q1 | 方向驱动配置（无 P0..P3 跳板角色） | **已完成** | `vools/rhop/task/config.py` |
+| Q2 | 数据库抽象（共享单一库 / 双方各自持库 / 可注册 PG） | **已完成** | `vools/rhop/task/store/` |
+| Q3 | 任务表 + 状态机 + DAG + 重试 + 取消 + 失效锁回收 | **已完成** | `vools/rhop/task/{models,queue}.py` |
+| Q4 | 加密载荷与可加密结果（payload_enc / payload_sha） | **已完成** | `vools/rhop/task/queue.py` |
+| Q5 | 心跳 `xxxx.heartbeat`（5 秒时间戳 / `closed` 停机 / 后台线程与任务解耦） | **已完成** | `vools/rhop/task/heartbeat.py` |
+| Q6 | 执行白名单（默认只放行代码内注册的动作/处理器） | **已完成** | `vools/rhop/task/exec.py` |
+| Q7 | 明文/密文双支持 + 明文告警（含生成命令与回填指引） | **已完成** | `vools/rhop/task/secrets.py`、`vools/rhop/secret.py` |
+| Q8 | 本地库模式的加密同步收敛 | **已完成** | `vools/rhop/task/sync.py` |
+| Q9 | CLI（submit/serve/once/status/watch/check-heartbeat/close/sync/config） | **已完成** | `vools/rhop/task/cli.py` |
+| Q10 | 静态 HTML 配置生成器（离线、页内生成密文、与 Python 互通） | **已完成** | `tools/config_generator.html` |
+
+出口判据（全部通过，2026-10-21）：
+
+- [x] 既有 145 个用例全绿不回退；新增 313 个用例全绿（`rhop/tests` 合计 **458 passed**）
+- [x] 共享单一库：A `submit` → B `once` 按依赖顺序执行 → A `status` **无需任何同步**即见 `COMPLETED` 与解密结果
+- [x] 双方各自持库：`sqlite-local` + `TaskSync` 收敛，结果回流、取消传播、旧版本不覆盖新状态
+- [x] 心跳：B 每 5 秒写时间戳（长任务期间由后台线程照跳）；`closed` 触发 B 优雅停机；冻结/缺失 → A 判 `stale`/`missing` 并退出等待
+- [x] 明文配了会告警并打印生成密文的命令；密文可解；`--strict-secrets` 可把明文升级为报错
+- [x] 存储后端可切换、未知 kind 明确报错、PG 只需 `register_store(kind, factory)`
+- [x] 白名单：未放行的命令落 `FAILED` 且不重试；`allow_any` 才放开
+- [x] HTML 生成器：`file://` 离线可用，页内密文与 Python 双向互通（Node 交叉验证）
+
+详细文档：`docs/task-queue.md`；规划附录：`analysis/rhop-PLAN.md` 附录 D。
 *（内容由AI生成，仅供参考）*

@@ -10,6 +10,7 @@ from vools.rhop.task.models import TaskRecord, TaskState, utcnow_iso
 from vools.rhop.task.store import (
     DEFAULT_STORE_KIND,
     SqliteTaskStore,
+    TaskStore,
     available_store_kinds,
     create_store,
     register_store,
@@ -351,3 +352,78 @@ class TestSyncApply:
         with pytest.raises(StoreError):
             store.apply_task(TaskRecord())
         store.close()
+
+
+class TestAbstractContract:
+    """TaskStore 必须是**真 ABC**（BUG-279 收口）：契约靠 ABCMeta 强制，而不是靠注释。"""
+
+    #: 文档 §4.4 与 store/base.py 共同承诺的契约面（锁定它，防止悄悄加/减方法导致文档漂移）
+    CONTRACT = (
+        "init_schema", "insert_tasks", "set_state", "update_fields", "claim_next",
+        "clean_stale_locks", "reset_failed", "requeue", "set_cancel_requested",
+        "apply_task", "apply_state", "get_task", "list_tasks", "all_task_names",
+        "count_by_state", "close",
+    )
+
+    def test_task_store_is_real_abc(self):
+        import abc
+
+        assert isinstance(TaskStore, abc.ABCMeta), \
+            "TaskStore 没用 ABCMeta：@abc.abstractmethod 会完全惰性（BUG-279）"
+
+    def test_bare_instantiation_is_rejected(self):
+        with pytest.raises(TypeError) as exc:
+            TaskStore()
+        assert "abstract" in str(exc.value).lower()
+
+    def test_incomplete_subclass_cannot_be_instantiated(self):
+        class Incomplete(TaskStore):
+            pass
+
+        with pytest.raises(TypeError) as exc:
+            Incomplete()
+        message = str(exc.value)
+        # 报错必须点名缺失方法，否则使用者无从下手
+        assert "init_schema" in message and "claim_next" in message
+
+    def test_abstract_set_matches_documented_contract(self):
+        assert set(TaskStore.__abstractmethods__) == set(self.CONTRACT)
+
+    def test_partial_subclass_reports_only_missing_methods(self):
+        class Almost(TaskStore):
+            def init_schema(self):
+                pass
+
+            def close(self):
+                pass
+
+        with pytest.raises(TypeError) as exc:
+            Almost()
+        message = str(exc.value)
+        assert "init_schema" not in message.replace("with abstract methods", "")
+        assert "claim_next" in message
+
+    def test_sqlite_store_implements_full_contract(self):
+        assert SqliteTaskStore.__abstractmethods__ == frozenset()
+
+    def test_registered_backend_is_concrete(self, tmp_path):
+        store = _store(tmp_path)
+        try:
+            assert type(store).__abstractmethods__ == frozenset()
+        finally:
+            store.close()
+
+    def test_create_store_reports_broken_backend_readably(self, tmp_path):
+        """工厂造不出完整实现时，create_store 必须给可读的 StoreUnavailable（而非裸 TypeError）。"""
+
+        class Broken(TaskStore):
+            def init_schema(self):
+                pass
+
+        register_store("unit-broken-abc", lambda spec, ctx: Broken())
+        with pytest.raises(StoreUnavailable) as exc:
+            create_store({"kind": "unit-broken-abc"}, _ctx(tmp_path))
+        message = str(exc.value)
+        assert "unit-broken-abc" in message
+        assert "完整实现" in message
+        assert "claim_next" in message       # 缺失方法名要透出来

@@ -1425,3 +1425,65 @@ rhop 地基 = 传输介质（可插拔） + 公开动作（可验证） + 三角
 - Py3.6 基线继续遵守；paramiko 为**可选依赖**（缺失自动回退）
 - 明文凭据仍由配置侧管理（如 `~/.sftp_creds.json`、configs.py），rhop 只读配置、不落盘凭据
 *（内容由AI生成，仅供参考）*
+
+---
+
+## 附录 D：通用任务队列 — A 提交加密 JSON 指令 → B 解密执行（2026-10-21）
+
+> **动机**：地基解决了"怎么把加密包装到对方并执行一个动作"，但 A 往往有**一批带依赖的任务**要交给 B，
+> 还需要看见整体进展、B 挂了要能发现、要能远程停机。参照 `vools.pyk.look_upon` 的表结构与流转
+> 补齐这一层，但**去掉 P0..P3 跳板角色**，做成配置驱动的通用队列；数据库做成抽象以便后续接 PostgreSQL。
+
+### D.1 目标形态
+
+```
+A[提交方 role=A]  ──写行(加密载荷)──▶  共享介质上的 SQLite  ──原子领取(依赖门控)──▶  B[执行方 role=B]
+   status() 直接读同一份库（共享库时零延迟）        │                                  run_resident()
+   check-heartbeat / close ◀── xxxx.heartbeat ◀── 每 5 秒写时间戳 / 写入 closed ────┘
+```
+
+- 使用方式：**只配方向（A/B/C）+ 介质 + 存储后端 + 执行白名单**，无跳板链、无脚本角色。
+- 任务身份与依赖用 `task_name`（不是自增 id）——这样共享库 / 各自持库 / PG 三种拓扑能共用同一份语义。
+
+### D.2 改造项与状态
+
+| # | 改造项 | 状态 | 落点 |
+|---|---|---|---|
+| D1 | 任务模型与状态机（PENDING→LOCKED→RUNNING→COMPLETED/FAILED/RETRY_PENDING/CANCELLED） | **已完成** | `vools/rhop/task/models.py` |
+| D2 | **存储抽象**：单一共享库（默认）/ 双方各自持库 / 可注册 PG | **已完成** | `vools/rhop/task/store/{base,sqlite_store,__init__}.py` |
+| D3 | 队列主流程：提交/DAG 校验/原子领取/重试/取消/失效锁回收/结果回写 | **已完成** | `vools/rhop/task/queue.py` |
+| D4 | 加密载荷（`payload_enc` + `payload_sha`）与可加密结果 | **已完成** | `vools/rhop/task/queue.py` |
+| D5 | 心跳 `xxxx.heartbeat`：5 秒时间戳 / 不动=挂了 / 写 `closed`=停机 / 后台线程与任务解耦 | **已完成** | `vools/rhop/task/heartbeat.py` |
+| D6 | 执行通道 + 白名单（action / cli / handler，默认只放行代码内注册集合） | **已完成** | `vools/rhop/task/exec.py` |
+| D7 | 明文/密文双支持 + 明文告警（打印生成命令与"填密文/清明文"指引） | **已完成** | `vools/rhop/task/secrets.py`、`vools/rhop/secret.py` |
+| D8 | 本地库模式的加密同步收敛（两个单向文档 + 版本单调） | **已完成** | `vools/rhop/task/sync.py` |
+| D9 | 常驻 daemon 与 CLI（submit/serve/once/status/watch/check-heartbeat/close/sync/config） | **已完成** | `vools/rhop/task/{daemon,cli}.py` |
+| D10 | 静态 HTML 配置生成器（离线、页内生成密文、与 Python 密文互通） | **已完成** | `rhop/tools/config_generator.html` |
+
+### D.3 出口判据（全部通过）
+
+- [x] 既有 145 个用例全绿不回退；新增 313 个用例全绿（合计 **458 passed**）
+- [x] **共享单一库**：A `submit` → B 按依赖顺序执行 → A `status` 无需同步即见 `COMPLETED` 与解密结果
+- [x] **双方各自持库**：`sqlite-local` + `TaskSync` 收敛；结果回流、取消传播、旧版本不覆盖新状态
+- [x] **心跳**：长任务期间后台线程照跳；运维/A 端写 `closed` 使 B 优雅停机；冻结/缺失 → A 判 `stale`/`missing` 并退出等待
+- [x] **明文告警 + 密文可用**：`--strict-secrets` 可把明文升级为报错
+- [x] **后端可换**：未知 kind 明确报错并列出可用值；PG 只需 `register_store(kind, factory)`
+- [x] **白名单**：未放行命令落 `FAILED` 且不重试；`allow_any` 才放开
+- [x] **HTML 生成器**：`file://` 离线可用；JS↔Python 密文双向互通（Node 交叉验证 + 派生密钥逐字节一致）
+
+### D.4 过程中发现并修掉的真实缺陷
+
+| 缺陷 | 影响 | 处置 |
+|---|---|---|
+| `RhopConfig.build_shared()` 在只给 `shared.write` 时走 `LocalSharedPath`，绕过 `parse_endpoint` | `http://` 介质被 `abspath` 成本地目录，数据库会**静默建到错误位置** | 统一改走 `make_shared_path`；`TaskConfig` 再对 `://` 形态做二次防御 |
+| 任务字段 `max_retries=0` / `retry_delay_min=0` 被 `or` 兜底吞成默认值 | 「不重试」变成重试 3 次；「立即重排」变成等 5 分钟 | 改用 `_first_present()` 显式判空 |
+| 执行载荷未注入任务上下文的 `value` | `cli.stdin_from_value` 永不生效、处理器拿不到任务参数 | 执行前 `setdefault(value/task_name/task_type)`，对齐 look_upon 的 ctx 语义 |
+| HTML 页内 Fernet 用了规范里的"点号 + 独立 HMAC"格式 | `cryptography` 的实现是 `base64url(header‖iv‖ct‖hmac)`，页面生成的密文 Python **解不开** | 按 `cryptography` 实现改写；Node 交叉验证双向通过 |
+
+### D.5 兼容与保留
+
+- 既有公开 API、行为与 145 个用例全部保留；`pyproject` 版本升到 `0.2.0`，新增 `rhop-task` / `rhop-secret` 入口
+- 补上 `attrs>=17` 依赖声明（`envelope.py` 导入期即依赖它，此前漏声明）
+- Py3.6 基线继续遵守（无 dataclasses / 无 `datetime.fromisoformat`；UTC 用 `datetime.now(timezone.utc)`）
+- 明文凭据仍由配置侧管理：rhop 只读配置、不落盘密钥；日志/回显一律打码
+*（内容由AI生成，仅供参考）*

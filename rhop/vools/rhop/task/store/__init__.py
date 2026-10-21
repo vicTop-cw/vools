@@ -98,7 +98,15 @@ def create_store(spec: Optional[dict] = None, ctx: Optional[dict] = None) -> Tas
             "接入 PostgreSQL 等后端请调用 register_store() 注册工厂。" % (
                 kind, ", ".join(available_store_kinds()))
         )
-    store = factory(spec, ctx)
+    try:
+        store = factory(spec, ctx)
+    except TypeError as exc:
+        # TaskStore 是真 ABC：缺实现的子类在构造期就抛 TypeError（含缺失方法名）。
+        # 这里转成可读的 StoreUnavailable，让"接了不完整后端"在配置期就暴露，
+        # 而不是等运行期某个调用点 AttributeError（BUG-279 的收口）。
+        raise StoreUnavailable(
+            "存储后端 %r 的工厂未能构造出完整实现：%s。"
+            "请确认该后端已实现 TaskStore 的全部 @abstractmethod 契约方法。" % (kind, exc))
     if not isinstance(store, TaskStore):
         raise StoreUnavailable("存储后端 %r 的工厂未返回 TaskStore 实例" % kind)
     return store
