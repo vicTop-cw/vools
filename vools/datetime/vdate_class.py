@@ -612,10 +612,12 @@ class VDate(datetime):
         """
         if isinstance(other, timedelta):
             new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second) + other
-            return VDate(new_datetime)
+            # BUG-241: 沿用源实例格式，避免算术结果 str 与构造结果不一致
+            #（datetime 输入会被推断成 '%Y-%m-%d %H:%M:%S'）
+            return VDate(new_datetime, fmt=self.fmt)
         elif isinstance(other, (int, float)):
             new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second) + timedelta(days=other)
-            return VDate(new_datetime)
+            return VDate(new_datetime, fmt=self.fmt)
         else:
             raise TypeError("只能对整数或 timedelta 执行加法操作")
 
@@ -635,7 +637,12 @@ class VDate(datetime):
         """
         if isinstance(other, (int, float)):
             new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second) - timedelta(days=other)
-            return VDate(new_datetime)
+            return VDate(new_datetime, fmt=self.fmt)
+        elif isinstance(other, timedelta):
+            # BUG-241: docstring/类型注解承诺支持 timedelta（"timedelta 减法返回
+            # 新的 VDate 实例"），原实现缺失该分支 → 落到 else 抛 TypeError。
+            new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second) - other
+            return VDate(new_datetime, fmt=self.fmt)
         elif isinstance(other, (datetime, VDate)):
             diff = self.timestamp() - other.timestamp()
             return diff / 86400
