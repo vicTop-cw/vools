@@ -471,6 +471,13 @@ class EventBus:
         按优先级顺序调用所有匹配的订阅者（精确匹配 + 通配符匹配）。
         精确匹配的订阅者优先于通配符订阅者。
 
+        订阅者惯例签名（自动判定）：``handler(event, *args, **kwargs)`` 或
+        退化形态 ``handler(*args, **kwargs)``。
+
+        异常语义（BUG-229）：订阅者抛出的异常**原样传播**（对齐同族
+        MessageDispatcher.dispatch / Delegate.invoke）；需要逐个隔离请用
+        :meth:`publish_safe`。
+
         Args:
             event: 事件名。
             *args: 位置参数。
@@ -491,21 +498,21 @@ class EventBus:
 
         all_handlers.sort(key=lambda x: (x[0], x[1]))
 
+        # BUG-229: 非安全版 publish 不吞业务异常（对齐同族 dispatch/invoke）；
+        # 调用形态由 _call_handler 一次性签名判定，不用 TypeError 探测（避免
+        # 业务 TypeError 被误判重试导致双执行）。
         results: List[Any] = []
         for _, _, handler in all_handlers:
-            try:
-                results.append(handler(event, *args, **kwargs))
-            except TypeError:
-                try:
-                    results.append(handler(*args, **kwargs))
-                except Exception:
-                    results.append(None)
-            except Exception:
-                results.append(None)
+            results.append(self._call_handler(handler, event, args, kwargs))
         return results
 
     def publish_safe(self, event: str, *args: Any, **kwargs: Any) -> List[Any]:
         """安全发布事件，单个订阅者异常不影响其他订阅者。
+
+        订阅者惯例签名与 :meth:`publish` 相同（自动判定 handler 是否接收
+        event 首参）。异常隔离：单个订阅者的异常被捕获并以 ``None`` 占位，
+        其余订阅者继续执行（BUG-229：此前 publish 与 publish_safe 行为一致，
+        区分失效）。
 
         Args:
             event: 事件名。
@@ -530,13 +537,35 @@ class EventBus:
         results: List[Any] = []
         for _, _, handler in all_handlers:
             try:
-                try:
-                    results.append(handler(event, *args, **kwargs))
-                except TypeError:
-                    results.append(handler(*args, **kwargs))
+                results.append(self._call_handler(handler, event, args, kwargs))
             except Exception:
                 results.append(None)
         return results
+
+    @staticmethod
+    def _call_handler(handler: Callable[..., Any], event: str,
+                      args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
+        """按签名判定调用形态后调用订阅者，不捕获业务异常。
+
+        BUG-229: 原实现用 `except TypeError` 探测「handler(event, ...) 是否
+        接受 event 首参」——订阅者内部抛业务 TypeError 时会被误判为签名不
+        匹配而重试（*args 形态订阅者实测被执行两次、真实错误被吞）。
+        现改为一次性签名判定：`sig.bind(event, *args, **kwargs)` 成功则带
+        event 调用，否则退化为不带 event 的形态；判定不触发调用，调用本身
+        的任何异常都原样上抛。
+        """
+        try:
+            from ..cache.sigcache import get_signature
+            sig = get_signature(handler)
+        except Exception:
+            # 签名不可得（内建/C 可调用体）：默认带 event 形态
+            sig = None
+        if sig is not None:
+            try:
+                sig.bind(event, *args, **kwargs)
+            except TypeError:
+                return handler(*args, **kwargs)
+        return handler(event, *args, **kwargs)
 
     # ------------------------------------------------------------------
     # 查询
