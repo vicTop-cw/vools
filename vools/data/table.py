@@ -1150,12 +1150,21 @@ class Table(Seq):
         """限制行数
 
         Args:
-            n: 返回行数
-            offset: 偏移量
+            n: 返回行数（>=0）
+            offset: 偏移量（>=0）
 
         Returns:
             新的 Table
+
+        Raises:
+            ValueError: n 或 offset 为负数（BUG-247）
         """
+        # BUG-247: 原 end=min(offset+n, len) 在 n<0 时形成负切片，
+        # limit(-1) 静默返回「去掉最后一行」而非报错/空。
+        if n < 0:
+            raise ValueError(f"n 必须 >= 0，收到 {n!r}")
+        if offset < 0:
+            raise ValueError(f"offset 必须 >= 0，收到 {offset!r}")
         end = min(offset + n, len(self._data))
         return Table(
             [row[:] for row in self._data[offset:end]],
@@ -1557,13 +1566,23 @@ class Table(Seq):
         """替换列中的值 (对应 QAXReplace)
         
         Args:
-            col_num: 列索引
+            col_num: 列索引（从0开始，0 <= col_num < 列数）
             replace_before: 要替换的值
             replace_after: 替换后的值
         
         Returns:
             self (支持链式)
+
+        Raises:
+            IndexError: col_num 越界（BUG-247）
         """
+        # BUG-247: 原实现无校验——col_num=-1 命中 row[-1]（最后一列）、
+        # col_num>=len 静默 no-op，调用方得不到错误。
+        if not isinstance(col_num, int) or isinstance(col_num, bool):
+            raise TypeError(f"col_num 必须是整数，收到 {type(col_num).__name__}: {col_num!r}")
+        if col_num < 0 or col_num >= len(self._columns):
+            raise IndexError(
+                f"col_num 必须在 0..{len(self._columns) - 1} 范围内（从0开始），收到 {col_num!r}")
         for row in self._data:
             if col_num < len(row) and row[col_num] == replace_before:
                 row[col_num] = replace_after

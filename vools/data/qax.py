@@ -702,10 +702,15 @@ class Qax(Table):
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: col 为整数且不在 1..列数 范围内（BUG-247）
         """
         if col is not None:
             if isinstance(col, int):
-                col_idx = col - 1
+                # BUG-247: 原 `col - 1` 无校验，col=0/-1 经负索引静默写到最后
+                # 一列，col>列数 静默 no-op。
+                col_idx = self._check_1based(col, len(self._columns), '列') - 1
             else:
                 col_idx = self._get_col_index(col)
             return self.replace(col_idx, old, new)
