@@ -3938,7 +3938,7 @@ c._connected           # False
 
 ### FIXED(2026-10-21T07:16:24Z / BUG-237)
 - evidence: vools/sql/postgres/connection.py `connect` 修复：两处 `self._driver_name = 'psycopg2'/'psycopg'` 从 `import` 之后、`connect()` 之前移到 `self._conn = ...connect(...)` 成功之后、与 `self._connected = True` 同步置位（L89-119 区，注释点名 BUG-237）。修复前实测（注入模拟「psycopg2 已安装但 connect 抛 OperationalError 认证失败」——真实高频场景，本机无驱动故用等同行为桩）：`PostgresConnection(password='wrong').connect()` 抛异常后 `driver_name == 'psycopg2'` 而 `_connected == False`，违背属性 docstring「驱动名称，未连接时为 None」，`bool(conn.driver_name)` 为 True 误导状态判断。修复后 probe 三态全对：认证失败后 driver_name None/connected False、成功连接后 driver_name 'psycopg2'/connected True、无驱动 ImportError 且 driver_name None。新增回归 tests/test_pg_driver_name_contract_regression.py 4 项 GREEN（失败保持 None ×2 + 成功置位 + 无驱动）；tests/sql/ + test_sql_postgres_connection.py + test_sql_core_decorators.py + 回归共 128 项 GREEN（EXIT=0 完整捕获）。同轮对照记录：postgres 连接层其余实现（execute 的 cursor.description 判定、executemany/cursor 连接守卫、try/finally 关游标）经审为正确样板——反证 BUG-236 的 sqlite 层是偏离件。commit 9c7e971 推送 gitcode master。
-## BUG-238 [2026-10-21T07:21:50Z] [medium] OPEN
+## BUG-238 [2026-10-21T07:21:50Z] [medium] FIXED
 - summary: vconcurrent.multiprocessing_mod SharedValue 的 lock=False（multiprocessing.Value 合法选项）令 get()/set() 必崩 AttributeError——裸 ctypes 对象无 get_lock；参数一用即废且类 docstring 未声明限制，lock=True 默认路径掩盖问题零覆盖
 - detail: vools/vconcurrent/multiprocessing_mod.py `SharedValue`（L372-408）的 `lock` 构造参数为假——`lock=False` 时 `get()/set()` 必崩：
 
@@ -3970,3 +3970,96 @@ sv.raw.value = 9                               # 直访可用（但公开的 get
 - reported_by: agent-vools-hardening
 - task_id: T0r695
 
+
+
+### FIXED(2026-10-21T07:30:17Z / BUG-238)
+- evidence: vools/vconcurrent/multiprocessing_mod.py `SharedValue.get()/set()` 改为按底层形态分支：`lock = getattr(self._value, 'get_lock', None)`，为 None 时直接读写 `.value`（无锁语义=调用方自管同步，与 multiprocessing.Value(lock=False) 本义一致），有锁时 `with lock():`（docstring 补 BUG-238 说明）。修复前实测：`SharedValue('i',0,lock=False)` 底层为裸 ctypes `c_long`（hasattr get_lock False），`set(7)`/`get()` 均抛 `AttributeError: 'c_long' object has no attribute 'get_lock'`——公开构造参数 lock 一用即废；lock=True（默认）路径正常故既有测试全绿、零覆盖 lock=False。修复后 probe 4 项：lock=True get 42、lock=False set/get 7、double typecode 3.14、负数 -5 全对。新增回归 tests/test_shared_value_lock_false_regression.py 9 项 GREEN（lock=True 3 + lock=False 4 含 raw 无 get_lock 形态断言与 raw.value 互通 + 上下文管理器双形态）；tests/vconcurrent/ 270 项 + 回归共 279 项 GREEN（EXIT=0 完整捕获）。
+
+【并发工作区事故记录 · 需后续轮关注】commit 6d27444 除我的 2 文件外，混入了其他 agent 恰在提交前批量 git add 的 150+ 暂存文件（.gitignore/HANDOFF_SUMMARY.md/_fix_spec_fences_final.py/actus/_meta/* 等），因 `git commit` 提交整个 index 而非仅我的 pathspec。核查：我的两文件完整在 HEAD、外来文件内容随本次提交落库未丢失、工作区现完全干净、近 8 次历史提交仅此次污染（files=155 vs 其余 2-3）。未重写历史（共享工作区、他方可能已依赖该 HEAD）。**后续轮次加固**：改用 path-limited commit（`git commit -m ... -- <file1> <file2>`）避免再次裹挟他方暂存内容。commit 6d27444 推送 gitcode master。
+## BUG-239 [2026-10-21T07:44:52Z] [medium] FIXED
+- summary: datetime.dates_format EnhancedDateFormatter 上下文更新串非原子——边解析边写 self.context，后续失败被 catch-all 吞成原文返回，部分变量残留（实测 {x<-10;y<-20;1/0} 后 x/y 已生效）且真实错误静默；应副本求值成功再提交，保留同串内先赋值后引用语义
+- detail: vools/datetime/dates_format.py `EnhancedDateFormatter._evaluate_context_update`（L714-767）处理 `{var1 <- value1 ; var2 <- value2 ; expr}` 更新串时**边解析边写入 self.context**，任一后续步骤失败被 catch-all 吞掉——**部分赋值残留 + 静默失败**：
+
+```python
+        try:
+            parts = expr_part.split(';')
+            result = None
+            for i, part in enumerate(parts):
+                ...
+                if '<-' in part:
+                    parsed_value = self._parse_value(var_value)
+                    self.context[var_name] = parsed_value     # ← 立即写入，无回滚
+                    result = parsed_value
+                else:
+                    ...
+                    result = safe_eval_expression(part, vars=self.context)
+            return result if result is not None else ""
+        except Exception:
+            return f"{{{expr_part}}}"                          # ← 静默吞掉，返回原文
+```
+
+实测（py3.11）：
+```python
+f = EnhancedDateFormatter("{x <- 10 ; y <- 20 ; 1/0}")
+f.format()        # → "{x <- 10 ; y <- 20 ; 1/0}"（原文返回，无异常）
+f.get('x'), f.get('y')   # (10, 20) ← 部分赋值已残留！
+
+f = EnhancedDateFormatter("{k <- 5 ; __import__('os')}")
+f.format()        # 安全求值拒绝（BUG-101 防护完好）→ 原文返回
+f.get('k')        # 5 ← 仍是残留
+```
+
+双重问题：
+1. **非原子更新**：多变量更新串的语义是一个整体（docstring 示例 `{x <- 10 ; y <- 20 ; x + y}`），失败时**半套变量已生效**——用户读 `get('x')`/后续 `format()` 使用脏状态，无回滚无告警；
+2. **静默失败**：`except Exception: return f"{{...}}"` 把真实错误（除零、非法表达式、值解析失败）全部兜成原文占位符——该原文会**原样进入最终输出串**（日期/文件名/SQL 片段），错误在远处才暴露。
+
+tests/ 对上下文更新串仅有成功路径覆盖，失败态零覆盖。
+
+修复方向：**副本求值、成功才提交**——`staged = dict(self.context)`，迭代中以 `staged` 为准（赋值写 staged、`safe_eval_expression(part, vars=staged)` 保证同串内先赋值后引用可见，即保留 `{x <- 10 ; y <- 20 ; x + y} == 30` 的既有语义），全部成功后再 `self.context.update(staged)`；异常路径保持返回原文（占位符可见的既有行为），但**不再污染 context**。
+- reported_by: agent-vools-hardening
+- task_id: T0r696
+
+
+
+### FIXED(2026-10-21T07:49:58Z / BUG-239)
+- evidence: vools/datetime/dates_format.py `_evaluate_context_update` 重写为副本求值：`staged = dict(self.context)`，迭代中赋值写 `staged`、`safe_eval_expression(part, vars=staged)` 读 staged（保留同串内先赋值后引用可见语义），全部步骤成功后 `self.context.update(staged)` 一次性提交；异常路径保持 `return f"{{{expr_part}}}"`（既有占位符可见行为）但不再污染上下文。修复前实测：`EnhancedDateFormatter("{x <- 10 ; y <- 20 ; 1/0}").format()` → 原文返回无异常且 `get('x')==10`、`get('y')==20`（部分赋值残留）；`{k <- 5 ; __import__('os')}` 安全求值拒绝后 k=5 同样残留。修复后 probe 8 项：失败后 x/y/k 均 None、正常 `{x <- 10 ; y <- 20 ; x + y}` == 30 且 x/y 生效、字符串值赋值、纯赋值串返回最后值、既有上下文不破坏。新增回归 tests/test_dates_format_atomic_update_regression.py 7 项 GREEN；tests/datetime/ 26 项 + 回归 GREEN（EXIT=0）。同轮记录不报：单赋值占位符 `{a <- 1}`（无分号）因 gate 要求 `<-` 且有 `;` 而不走更新分支、返回原文——docstring 仅文档化分号形式，属未文档化能力，非违约。**流程加固生效**：本次改用 path-limited commit（`git commit -m ... -- <files>`），提交仅含我的 2 文件（上轮 155 文件裹挟事故未复现）。commit 4a118dd 推送 gitcode master。
+## BUG-240 [2026-10-21T07:56:21Z] [medium] FIXED
+- summary: datetime.utils get_week 用 assert 做公开入参校验（weekday 1-7 / 日期长度 8|10），BUG-7 同族复现——python -O 下校验消失，非法 weekday=0 静默算出错误周起始日（实测 -O 返回 20231231）且非 -O 抛 AssertionError 而非 ValueError；全库唯一两处生产 assert
+- detail: vools/datetime/utils.py `get_week`（L108-134）用 **`assert` 做公开入参校验**——与 BUG-7（"assert 做入参校验，python -O 会剥离 assert，优化模式下校验直接消失"）同族复现：
+
+```python
+def get_week(dt, num: int = 0, weekday: int = 1):
+    """...
+        weekday: 一周的开始（1-7，默认为1即周一）   ← 文档明确范围
+    """
+    ...
+    assert(1 <= weekday <= 7)      # ← -O 下被整行剔除
+    dt = str(dt)[:10].strip()
+    l = len(dt)
+    assert(l in (8, 10))           # ← 同上
+    fmt = '%Y-%m-%d' if l == 10 else '%Y%m%d'
+    dt = datetime.strptime(dt, fmt)
+    w0 = dt - timedelta(days=(int(dt.strftime('%u')) - weekday))
+```
+
+实测（py3.11）：
+```python
+python -O -c "from vools.datetime.utils import get_week; print(get_week('20240101', weekday=0))"
+# → '20231231'   ← weekday=0 超出文档范围 1-7，-O 下校验消失、静默算出错误的周起始日
+# 非 -O 下: AssertionError（校验存在但错误类型也只是断言）
+# 9 字符输入（len 不在 8/10）: -O 下 fmt 误选后抛 strptime ValueError（非清晰校验错误）
+```
+
+危害：
+1. **`-O`/`PYTHONOPTIMIZE` 部署下公开 API 的入参校验整体消失**——非法 `weekday`（0、8、负数）算出偏移一日的错误周起点，调用方拿到错日期链（周报统计/分区 key 全错），无任何异常；
+2. 即便非 `-O`，校验失败抛的是 `AssertionError`（非 `ValueError` 这类可编程捕获的业务错误），与库内其它入口的 `ValueError` 口径不一致；
+3. 全库 assert 扫描确认：23 处 assert 中**仅此两处是生产入参校验**（其余均在 docstring 示例或模块内自测函数里）。
+
+修复方向：两处 assert 改显式校验——`if not (1 <= weekday <= 7): raise ValueError(f"weekday 必须在 1-7（周一=1），收到 {weekday!r}")`、`if l not in (8, 10): raise ValueError(f"日期字符串长度必须为 8 或 10，收到 {len(dt)}: {dt!r}")`；不改任何合法路径行为。
+- reported_by: agent-vools-hardening
+- task_id: T0r697
+
+
+
+### FIXED(2026-10-21T08:04:23Z / BUG-240)
+- evidence: vools/datetime/utils.py `get_week` 两处 assert 改显式 ValueError（注释点名 BUG-240/BUG-7 同族）：`if not (1 <= weekday <= 7): raise ValueError("weekday 必须在 1-7 之间（周一=1），收到 ...")`、`if l not in (8, 10): raise ValueError("日期字符串长度必须为 8 或 10（yyyyMMdd / yyyy-MM-dd），收到长度 N: ...")`。修复前实测：`python -O -c "...get_week('20240101', weekday=0)"` → 返回 '20231231'（assert 被剥离、非法 weekday 静默算出偏移一日的错误周起点、无异常）；非 -O 下抛 AssertionError（不便业务捕获）。修复后验证：常规模式 7 项 probe 全对（weekday 0/8/-1/100 → ValueError、长度 7 → ValueError、None → None、正常 20240101→'20240101'、2024-01-03→'2024-01-01'、num=1→'20231225'）；`-O` 模式子进程验证 4 项非法输入全部仍抛 ValueError（**校验在优化模式下存活**）。全库 assert 扫描：23 处命中中仅此两处是生产入参校验，其余均在 docstring 示例或模块内自测函数（oop/calltype L283、utils/stuff L863、curry_decorator L360+ 均为测试代码）→ 记录不报。同轮记录：`get_week(dt, weekday=7)` 返回同 ISO 周内周日（2024-01-03→2024-01-07）——实现的是「同一 ISO 周内的指定星期几」语义，与 docstring「一周的开始」措辞歧义但默认 weekday=1 两读法皆正确，判非缺陷。新增回归 tests/test_get_week_assert_validation_regression.py 13 项 GREEN（常规校验 6 + -O 子进程校验 1 + 合法路径 5 等）；tests/datetime/ + test_utils_tools.py + 回归 GREEN（EXIT=0）。commit 0861148 推送 gitcode master（path-limited commit，仅 2 文件）。
