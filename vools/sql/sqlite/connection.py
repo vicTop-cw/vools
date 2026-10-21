@@ -114,12 +114,12 @@ class SqliteConnection(Connection):
         else:
             cursor.execute(sql, params)
 
-        sql_upper = sql.strip().upper()
-
-        if sql_upper.startswith(('SELECT', 'WITH', 'PRAGMA', 'EXPLAIN')):
-            columns = []
-            if cursor.description is not None:
-                columns = [desc[0] for desc in cursor.description]
+        # BUG-236: 用 DB-API 权威信号判断有无结果集——原先靠 SQL 前缀
+        # startswith(('SELECT','WITH',...))，带前导/块注释的 SELECT 与
+        # INSERT ... RETURNING 被误判为 DML → 真实返回行被静默丢弃
+        # （rows=[]、rowcount=-1）。description 为 None 才是无结果集。
+        if cursor.description is not None:
+            columns = [desc[0] for desc in cursor.description]
             rows = cursor.fetchall()
             result = ResultSet(
                 columns=columns,
@@ -149,7 +149,15 @@ class SqliteConnection(Connection):
 
         返回：
             受影响的总行数
+
+        异常：
+            RuntimeError: 连接未建立（BUG-236：与 execute/cursor 守卫一致，
+                原实现直接 self._conn.cursor() 抛 AttributeError）
         """
+        # BUG-236: 补连接状态守卫，与 execute/cursor() 的错误契约一致
+        if not self._connected or self._conn is None:
+            raise RuntimeError('Database connection is not established')
+
         cursor = self._conn.cursor()
         cursor.executemany(sql, seq_of_params)
         rowcount = cursor.rowcount
