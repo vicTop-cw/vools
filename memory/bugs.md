@@ -4490,3 +4490,95 @@ _extract_annotations（L122-148）直接取 inspect 的 `param.annotation` / `si
 ### FIXED(2026-10-21T23:30:00Z / BUG-272)
 - evidence: vools/sys/dll.py 三处修复：① _extract_annotations 优先用 typing.get_type_hints(func) 解析字符串注解（失败回退 inspect.signature 原始注解）；② _map_py_to_ctype 增加字符串名称防御性映射（'str'/'int'/'float'/'bytes'/'bool'）；③ _convert_result 兼容字符串 'str'/'bytes' 作为 ret_py_type。修复前实测：_extract_annotations -> ['str','int']（字符串）→ _map_py_to_ctype('str') -> c_long（应为 c_char_p），_convert_result(b'hello', None, 'str') -> b'hello'（未解码）。修复后 probe 全对：arg_types=[str,int]（类型对象）、ret_type=str、map('str')->c_char_p、convert(b'hello',None,str)->'hello'。新增回归 tests/test_dll_pep563_regression.py 19 项 GREEN；tests/test_sys_dll.py 原有测试全 GREEN。
 
+## BUG-273 [2026-10-21T12:57:18Z] [high] FIXED
+- summary: decorators.overload 在 PEP 563 字符串注解下崩溃：_create_strict_check 与 strict 装饰器用裸 __annotations__ 做 isinstance 检查，from __future__ import annotations 下每次分派抛 TypeError: isinstance() arg 2 must be a type
+- detail: vools/decorators/overload.py 在 PEP 563 字符串注解（from __future__ import annotations）下分派崩溃（high）：
+
+两处直接读 `func.__annotations__` 且把结果当类型对象传给 isinstance：
+① _create_strict_check（L157-205）：`annotations = func.__annotations__` -> `expected = annotations[name]` -> `isinstance(value, expected)`；
+② strict 装饰器 `_wrap`（L559-577）：`annotations = f.__annotations__` -> 同样的 isinstance 调用。
+
+实测（临时模块带 from __future__ import annotations，@overload(mode=Priority|Strict|AllowSyncName|Ambiguous) + 两个 int/str 重载）：
+- add(1, 2) -> TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+- add('a', 'b') -> 同样 TypeError
+即**任何调用**都在分派时崩溃（不是静默错选，而是硬失败）。对照无 future 注解的同构模块：调用正常返回。
+@strict 装饰器（L561）在同样的 future 注解模块下也会对每次调用抛同一 TypeError。
+
+影响：现代代码普遍使用 from __future__ import annotations；使用 @overload Strict 模式或 @strict 的模块在该环境下**完全不可用**（每次调用 TypeError）。
+
+修复方向：新增 _resolve_annotations(func) 辅助函数（get_type_hints 优先、失败回退 __annotations__，并剔除仍为字符串的注解以避免 isinstance 崩溃），两处改用该函数。
+- reported_by: agent-vools-hardening
+
+
+
+### FIXED(2026-10-21T13:04:12Z / BUG-273)
+- evidence: vools/decorators/overload.py 修复（commit 64c778f）：新增 `_resolve_annotations(func)`——typing.get_type_hints(func) 优先解析（兼容 PEP 563 字符串注解），失败回退 func.__annotations__，并剔除仍为字符串的项（前向引用/未定义名 → 降级为不限制而非崩溃）；`_create_strict_check`（L182）与 `strict` 装饰器 `_wrap`（L582）两处改用该函数。
+
+修复前实测（临时模块 from __future__ import annotations）：@overload(...|Strict|...) 的 add(1,2) / add('a','b') 均抛 TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union（任何调用都崩溃）；@strict 装饰的函数同样每次调用崩溃。
+
+修复后 probe 4 项全对：add(1,2)->'base'、add('a','b')->'base'（不再崩溃）、typed(1,'x')->'1-x'（@strict 正常）、typed('1','x')->TypeError（类型校验仍生效）。新增回归 tests/test_overload_pep563_regression.py 6 项 GREEN（含临时 future 模块复现 + _resolve_annotations 解析/剔除断言）；tests/decorators/ + tests/oop/ 220 项 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-274 [2026-10-21T13:11:46Z] [low] FIXED
+- summary: oop.calltype get_callable_type 公共 API 对跨模块类的 staticmethod 稳定误判为普通函数（依赖调用栈帧扫描，类不在当前作用域就找不到）；帧内匹配还有同类名身份校验缺陷
+- detail: vools/oop/calltype.py `get_callable_type`（公共导出 API，在 vools.oop.__all__ 中）对 staticmethod 的识别依赖调用栈帧扫描，跨模块时失效：
+
+L53-114 的「通过类访问的静态方法」分支：inspect.isfunction(obj) 且 __qualname__ 含类路径（≥2 段）时，遍历 sys._getframe 与 sys._current_frames，在**当前调用栈的局部/全局变量**里找同名类，再检查其 __dict__[method_name] 是否 staticmethod。
+
+实测：
+- 独立模块中定义 class Other: @staticmethod smake(...) -> get_callable_type(other.Other.smake) 返回 CALLABLE_FUNCTION（应为 CALLABLE_STATICMETHOD）——因为 Other 不在当前帧的 locals/globals 中，栈扫描找不到类。
+- 同帧内定义的 class Local: @staticmethod lmake 则正确返回 CALLABLE_STATICMETHOD。
+- 对照：classmethod（inspect.ismethod 分支）与实例方法绑定调用均正确。
+
+另外 L69-81 的帧内匹配有身份校验缺陷：staticmethod 对象必有 __func__，所以 else 分支（`value.__dict__.get(method_name).__func__ is obj` 的身份比较）不可达；实际只比较 `class_attr.__func__.__name__ == method_name`（仅名字相同即判定）——若帧内存在**同名静态方法的不同类**，会把普通函数误判为 STATICMETHOD。
+
+影响：公共 API 对「从其他模块类访问的 staticmethod」稳定误判为普通函数；同名静态方法场景可能反向误判。启发式不可靠源于用调用栈推断对象归属，而函数对象自身带有确定性的 __qualname__/__globals__ 信息。
+
+修复方向：新增基于 obj.__qualname__ + obj.__globals__ 的确定性解析（逐级解析模块级/类级路径，命中类后检查 __dict__[name] 是否 staticmethod；<locals> 局部类回退现有栈逻辑）；栈兜底分支的身份校验改为 `class_attr.__func__ is obj`，避免同名类误判。
+- reported_by: agent-vools-hardening
+
+
+
+### FIXED(2026-10-21T13:18:24Z / BUG-274)
+- evidence: vools/oop/calltype.py 修复（commit b665146）：新增 `_resolve_staticmethod_owner(obj)`——用 obj.__qualname__ + obj.__globals__ 逐级解析类路径（模块级/嵌套类确定性命中），检查 cls.__dict__[name] 是否 staticmethod；<locals> 局部类返回 None 交回栈兜底。get_callable_type 中在栈扫描前优先调用该解析；栈兜底的身份校验从「只比 __func__.__name__」改为 `class_attr.__func__ is obj`。
+
+修复前实测：独立模块中 class Other 的 @staticmethod smake -> get_callable_type(Other.smake) 返回 CALLABLE_FUNCTION（应 STATICMETHOD）；同帧类则正确。另帧内同名静态方法的不同类会把普通函数误判为 STATICMETHOD（L69-81 身份分支不可达）。
+
+修复后 probe 8 项全对：跨模块 staticmethod -> STATICMETHOD、instance method via cls -> FUNCTION、classmethod -> CLASSMETHOD、类本身 -> CLASS、绑定实例方法 -> INSTANCEMETHOD、模块级同名 process -> FUNCTION（不误判）、Holder.process -> STATICMETHOD、同帧局部 staticmethod -> STATICMETHOD（栈兜底仍有效）。新增回归 tests/test_calltype_staticmethod_regression.py 11 项 GREEN；tests/oop/ 112 项 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-275 [2026-10-21T13:23:38Z] [medium] FIXED
+- summary: cache.sigcache 内存泄漏：LRU 淘汰只清 _SIG_CACHE 不清 _SIG_REFS，弱引用表随缓存条目数无界增长；函数 GC 后 dead ref 也永不清理
+- detail: vools/cache/sigcache.py 的签名缓存内存泄漏：
+
+_sigcache 用两个全局表：_SIG_CACHE（id(func) -> Signature，LRU，上限 4096）与 _SIG_REFS（id(func) -> weakref，BUG-113 的 id 复用防护）。清理路径不一致：
+- remove_signature（L272-277）：删 _SIG_CACHE 同时 `_SIG_REFS.pop(key, None)` ✓
+- clear_cache（L292-296）：两表 clear ✓
+- **LRU 淘汰（_set_cache L350-353）：`_SIG_CACHE.popitem(last=False)` 只删缓存条目，从未清理 `_SIG_REFS[evicted_key]`** ✗
+
+后果：
+① 缓存超过 4096 条目后，_SIG_REFS 持续增长且**永不收缩**——每个曾缓存过的函数 id 都留下一条 int key + weakref 对象（约 80-100 字节），长时间运行/大量动态函数的进程无界泄漏；
+② 函数被 GC 后其弱引用成为 dead ref 留在 _SIG_REFS 中（没有 weakref 回调清理），即使缓存条目已因 id 复用被 _key_is_valid 删除（L130 `del _SIG_CACHE[key]`），_SIG_REFS 条目依旧残留。
+
+实测：连续对 N 个临时函数调用 get_signature（N > 4096）后，len(_SIG_CACHE) == 4096 而 len(_SIG_REFS) == N（应为 ≤4096）。
+
+修复方向：① LRU 淘汰时同步 `_SIG_REFS.pop(evicted_key, None)`；② _remember_ref 给 weakref 挂回调，在函数被 GC 时惰性清理 _SIG_REFS 与 _SIG_CACHE 中的对应条目（回调晚到最多造成一次缓存 miss，无害）。
+- reported_by: agent-vools-hardening
+
+
+
+### FIXED(2026-10-21T13:30:17Z / BUG-275)
+- evidence: vools/cache/sigcache.py 修复（commit 1e74790）：① _set_cache 的 LRU 淘汰分支新增 `_SIG_REFS.pop(evicted_key, None)`（与 _SIG_CACHE.popitem 同步清理两表）；② _remember_ref 给 weakref 挂回收回调 `_on_collected(ref, _key=key)`，函数被 GC 时惰性清理 _SIG_REFS 与 _SIG_CACHE 对应条目（回调晚到最多一次缓存 miss，无害）。
+
+修复前实测：连续 get_signature 5000 个临时函数后 _SIG_CACHE=4096（上限）而 _SIG_REFS=5000（无界泄漏）；单独函数 get_signature 后 del + gc.collect()，两表仍各残留 1 条 dead ref。
+
+修复后 probe 8 项全对：4200 函数后 _SIG_CACHE=4096 且 _SIG_REFS=4096（有界）、GC 后两表清零、同一函数命中同一签名、cache_info size/maxsize 正常、remove_signature True/False、clear_cache 清空。新增回归 tests/test_sigcache_refs_leak_regression.py 7 项 GREEN（monkeypatch 缩小上限避免慢测）；sig/cache 相关测试 84 项 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-276 [2026-10-21T13:39:19Z] [medium] OPEN
+- summary: encoding.core CodecRegistry 装饰器错位：@classmethod 被错放在注入的 do 助手上，致 get_decoders 缺 @classmethod（类调用 TypeError）且 do 变类方法（向 f 传类对象、返回类而非实例）
+- detail: vools/encoding/core.py. CodecRegistry 的装饰器错位（公共 API 双缺陷）：
+
+类体中 `@classmethod` 装饰器（L195）被错误地放在注入的 do 侧效助手（L197-214）上，导致：
+① **get_decoders 缺失 @classmethod**（L215 定义直接跟在 do 之后，无装饰器）：`CodecRegistry.get_decoders()` 抛 TypeError: missing 1 required positional argument: 'cls'；而对称的 `get_encoders()`（L185 @classmethod）正常——公共 API 破损且不对称。实例调用 `CodecRegistry().get_decoders()` 因 cls 收到实例而碰巧可用，掩盖了问题。
+② **do 被误设为 classmethod**：do 的语义是「对 self 应用函数并返回 self」（文档："Apply a function for side effects, return self"），classmethod 下 self 绑定为**类**：实测 `CodecRegistry().do(f)` 把 `CodecRegistry` 类对象传给 f（应为实例），且返回类对象（`res is inst == False`）。
+
+全库扫描确认：do 助手在 3 个类中出现，仅此处带装饰器；get_decoders/get_encoders 仅此一处定义——即本文件唯一错位，非普遍模式。
+
+修复：删除 do 上的 @classmethod（恢复实例方法语义），给 get_decoders 补 @classmethod。
+- reported_by: agent-vools-hardening
+
