@@ -661,8 +661,10 @@ class Qax(Table):
             return func(values)
         # BUG-178: QAX 风格列号从 1 开始，col 可为 int。原 `func + '(' + col + ')'`
         # 在 col 为 int 时 str+int 拼接 TypeError；先转列名。
+        # BUG-251: 原 `col - 1` 无校验——col=0/-1 经负索引对最后一列计算/静默失败。
         if isinstance(col, int):
-            col = self._columns[col - 1]
+            col = self._columns[self._check_1based(
+                col, len(self._columns), '列') - 1]
         return self.compute(func + '(' + col + ')')
 
     # ==================== 连接合并 ====================
@@ -875,9 +877,12 @@ class Qax(Table):
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: 列号越界（BUG-250）
         """
         if isinstance(col, int):
-            col = col - 1
+            col = self._check_1based(col, len(self._columns), '列') - 1
         return self.to_date(col)
 
     def QAXColToNum(self, col):
@@ -888,9 +893,12 @@ class Qax(Table):
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: 列号越界（BUG-250）
         """
         if isinstance(col, int):
-            col = col - 1
+            col = self._check_1based(col, len(self._columns), '列') - 1
         return self.to_num(col)
 
     def QAXColToStr(self, col):
@@ -901,9 +909,12 @@ class Qax(Table):
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: 列号越界（BUG-250）
         """
         if isinstance(col, int):
-            col = col - 1
+            col = self._check_1based(col, len(self._columns), '列') - 1
         return self.to_str(col)
 
     def SetColName(self, oldName, newName):
@@ -915,9 +926,14 @@ class Qax(Table):
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: oldName 为整数且越界（BUG-251）
         """
         if isinstance(oldName, int):
-            col_num = oldName - 1
+            # BUG-251: 原 `oldName - 1` 无校验，越界静默 no-op。
+            col_num = self._check_1based(
+                oldName, len(self._columns), '列') - 1
         else:
             try:
                 col_num = self._columns.index(oldName)
@@ -930,11 +946,19 @@ class Qax(Table):
 
         Args:
             col: 列名或列号（从1开始）
-            new_index: 新位置（从1开始）
+            new_index: 新位置（从1开始，1..列数）
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: col 或 new_index 越界（BUG-251）
         """
         if isinstance(col, int):
-            col = self._columns[col - 1]
+            # BUG-251: 原 `col - 1` 无校验，SetOrdinal(0, 2) 实际移动最后一列。
+            col = self._columns[self._check_1based(
+                col, len(self._columns), '列') - 1]
+        # BUG-251: new_index 原样 -1 交给 base，0/-1 经负索引静默移到最前。
+        new_index = self._check_1based(
+            new_index, len(self._columns), '新位置')
         return self.set_ordinal(col, new_index - 1)
