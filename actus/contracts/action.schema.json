@@ -229,6 +229,20 @@
     "demo": {
       "type": "string",
       "description": "演示文件路径（gif/mp4/md），降低采用门槛"
+    },
+    "md5": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{32}$",
+      "description": "动作文件内容 MD5 指纹（32 hex，索引扩展 by_md5 反向索引真源，ACTUS_REFACTOR_PLAN §3.5）"
+    },
+    "target": {
+      "type": "string",
+      "description": "kind=link/alias 时的目标动作 id；link 做参数浅合并转发，alias 做纯别名"
+    },
+    "languages": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "动作文件内含的可执行语言标记（索引扩展维度，docs/03 §2.6 索引扩展）"
     }
   },
   "definitions": {
