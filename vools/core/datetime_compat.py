@@ -46,14 +46,31 @@ else:
     _DATETIME_RE = re.compile(
         r'^(\d{4})-(\d{1,2})-(\d{1,2})'
         r'[T ](\d{1,2}):(\d{1,2})(?::(\d{1,2})(?:\.(\d{1,6}))?)?'
-        r'(?:Z|[+-]\d{2}:?\d{2})?$'
+        r'(Z|[+-]\d{2}:?\d{2})?$'
     )
 
     _DATE_RE = re.compile(r'^(\d{4})-(\d{1,2})-(\d{1,2})$')
 
     _TIME_RE = re.compile(
-        r'^(\d{1,2}):(\d{1,2})(?::(\d{1,2})(?:\.(\d{1,6}))?)?$'
+        r'^(\d{1,2}):(\d{1,2})(?::(\d{1,2})(?:\.(\d{1,6}))?)?'
+        r'(Z|[+-]\d{2}:?\d{2})?$'
     )
+
+    def _parse_tzinfo(tz_part):
+        """把 ISO 时区后缀解析为 tzinfo（BUG-242）。
+
+        原实现虽在正则里允许 ``Z``/``±HH:MM`` 后缀，却从不构造 tzinfo ——
+        带时区输入被静默当成本地 naive 时间：同一 UTC 时刻的两个值相减会
+        得到 8 小时差（stdlib py3.7+ fromisoformat 保留时区、差值为 0）。
+        """
+        if not tz_part:
+            return None
+        if tz_part == 'Z':
+            return datetime.timezone.utc
+        sign = 1 if tz_part[0] == '+' else -1
+        hh = int(tz_part[1:3])
+        mm = int(tz_part[-2:])
+        return datetime.timezone(sign * datetime.timedelta(hours=hh, minutes=mm))
 
     def datetime_fromisoformat(date_string):
         """
@@ -63,6 +80,7 @@ else:
         - YYYY-MM-DDTHH:MM:SS
         - YYYY-MM-DD HH:MM:SS
         - 带微秒、不带秒等变体
+        - 带时区后缀（``Z`` / ``±HH:MM``，BUG-242：返回 aware datetime）
 
         Args:
             date_string: ISO 格式的日期时间字符串。
@@ -93,7 +111,7 @@ else:
             except ValueError:
                 continue
 
-        # 尝试用正则解析
+        # 尝试用正则解析（含时区后缀，BUG-242）
         m = _DATETIME_RE.match(s)
         if m:
             year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -104,7 +122,8 @@ else:
                 micro_str = m.group(7).ljust(6, '0')
                 microsecond = int(micro_str)
             return datetime.datetime(
-                year, month, day, hour, minute, second, microsecond
+                year, month, day, hour, minute, second, microsecond,
+                tzinfo=_parse_tzinfo(m.group(8)),
             )
 
         raise ValueError(
@@ -143,6 +162,9 @@ else:
         """
         兼容版 time.fromisoformat（Python 3.6）。
 
+        支持常见时间格式与可选时区后缀（BUG-242：``10:30:00+08:00`` 返回
+        aware time，与 stdlib py3.7+ 一致；原实现直接 ValueError）。
+
         Args:
             time_string: ISO 格式的时间字符串。
 
@@ -173,7 +195,8 @@ else:
             if m.group(4):
                 micro_str = m.group(4).ljust(6, '0')
                 microsecond = int(micro_str)
-            return datetime.time(hour, minute, second, microsecond)
+            return datetime.time(hour, minute, second, microsecond,
+                                 tzinfo=_parse_tzinfo(m.group(5)))
 
         raise ValueError(
             'Invalid isoformat string: %r' % time_string
