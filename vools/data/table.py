@@ -1532,27 +1532,50 @@ class Table(Seq):
             other_index[key].append(row)
         
         # 执行连接
+        matched_other_keys = set()
         for s_row in self._data:
             key = s_row[self._columns.index(on_col)] if on_col in self._columns else None
             s_vals = [s_row[self._columns.index(c)] if c in self._columns else None for c in self_cols]
-            
+
             if key in other_index:
+                matched_other_keys.add(key)
                 for o_row in other_index[key]:
                     o_vals = [o_row[other._columns.index(c)] if c in other._columns else None for c in other_cols]
                     if join_type == 'inner':
                         result_data.append(s_vals + [v for c, v in zip(other_cols, o_vals) if c != on_col])
                     else:
                         result_data.append(s_vals + [v for c, v in zip(other_cols, o_vals)])
-            elif join_type in ('left', 'outer'):
+                    if first:
+                        # BUG-277 附带：`first`（只返回第一个匹配）原实现仅在
+                        # 处理完该 self 行的**全部**匹配后才跳出，多个匹配仍返回多行。
+                        break
+                if first:
+                    break
+                continue
+            if join_type in ('left', 'outer'):
                 # BUG-171: 原实现按 `len(other_cols) - (1 if on_col in other_cols else 0)`
                 # 填充 None。但 result_columns（非 inner）与匹配分支（L1471）都保留全部
                 # other_cols（含 on_col），未匹配行因此比表头少一列，导致行长度不一致。
                 # 改为与匹配分支一致的列数：未匹配时 other 侧全部为 None。
                 result_data.append(s_vals + [None] * len(other_cols))
-            
-            if first and key in other_index:
+            if first:
                 break
-        
+
+        # BUG-277: right / outer 必须补齐**右表未匹配行**——原实现从不补，
+        # right 实际等同 inner、outer 实际等同 left，静默丢失右表独有数据。
+        # 列布局与上面非 inner 分支一致：self 侧 None + 全部 other_cols。
+        # first=True 语义为「只返回第一个匹配」，不做补齐。
+        if join_type in ('right', 'outer') and not first:
+            for o_key, o_rows in other_index.items():
+                if o_key in matched_other_keys:
+                    continue
+                for o_row in o_rows:
+                    o_vals = [
+                        o_row[other._columns.index(c)] if c in other._columns else None
+                        for c in other_cols
+                    ]
+                    result_data.append([None] * len(self_cols) + o_vals)
+
         return Table(result_data, columns=result_columns, name=self._name)
     
     def merge(self, other: 'Table', vertical: bool = True) -> 'Table':
