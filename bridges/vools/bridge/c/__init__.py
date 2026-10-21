@@ -36,6 +36,7 @@ from typing import Any
 from ..core.loader import load_from_path, SharedLibrary
 from ..core.types import CTypeMapper, LangType
 from ..manager import get_helper, manager
+from ..probe import _run_cmd_timeout
 from .._base import LangBridge, FunctionSpec, FunctionParser
 
 # 平台判断
@@ -72,10 +73,9 @@ def _get_c_path():
                     if os.path.isfile(gcc_path):
                         # 测试 gcc 是否可用
                         try:
-                            result = subprocess.run(
+                            result = _run_cmd_timeout(
                                 [gcc_path, '--version'],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, timeout=10
+                                timeout=10,
                             )
                             if result.returncode == 0:
                                 return gcc_path
@@ -527,16 +527,15 @@ def _compile_c_code(code: str, func_name: str, cache_dir: str = None) -> str:
             '-o', lib_path, '-O2', c_file
         ]
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         compile_cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
-        cwd=cache_dir
+        cwd=cache_dir,
+        timeout=300,
     )
 
     if result.returncode != 0:
         raise RuntimeError(
-            f'C compilation failed:\n{result.stderr}\n{result.stdout}'
+            f'C compilation failed:\n{result.stderr.decode("utf-8", errors="replace")}\n{result.stdout.decode("utf-8", errors="replace")}'
         )
 
     try:
@@ -722,18 +721,17 @@ class CBridge(LangBridge):
                 output_path = os.path.join(output_dir, f'lib{project_name}.so')
                 compile_cmd = [compiler_path, '-shared', '-fPIC', '-O2', '-o', output_path] + c_files
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             compile_cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            cwd=output_dir
+            cwd=output_dir,
+            timeout=300,
         )
 
         if result.returncode != 0:
             raise RuntimeError(
                 f'C project compilation failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}\n'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
                 f'files: {c_files}'
             )
 

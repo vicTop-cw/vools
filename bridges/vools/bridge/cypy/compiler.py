@@ -91,6 +91,36 @@ def cypy_compiler_available() -> bool:
     return True
 
 
+def _find_msvc_cl():
+    """定位 MSVC cl.exe（Windows）。
+
+    搜索顺序：
+        1. VS_BUILD_TOOLS 环境变量（指向 BuildTools 根目录）
+        2. VSINSTALLDIR 环境变量（Visual Studio 安装目录）
+        3. 标准安装目录自动探测（%ProgramFiles(x86)%\\Microsoft Visual Studio\\...）
+    返回找到的第一个 cl.exe 绝对路径；找不到返回 None。
+    """
+    import glob
+    roots = []
+    vs_build_tools = os.environ.get('VS_BUILD_TOOLS')
+    if vs_build_tools:
+        roots.append(vs_build_tools)
+    vs_install_dir = os.environ.get('VSINSTALLDIR')
+    if vs_install_dir:
+        roots.append(vs_install_dir)
+    if _IS_WINDOWS:
+        for env_key in ('ProgramFiles(x86)', 'ProgramFiles'):
+            pf = os.environ.get(env_key)
+            if pf:
+                roots.append(os.path.join(pf, 'Microsoft Visual Studio'))
+    pattern = os.path.join('VC', 'Tools', 'MSVC', '*', 'bin', 'Host*', 'x64', 'cl.exe')
+    for root in roots:
+        msvc = glob.glob(os.path.join(root, pattern))
+        if msvc:
+            return msvc[0]
+    return None
+
+
 def cypy_run_available() -> bool:
     """探测完整执行链路（转译 + Cython 编译运行）是否可用。"""
     if not cypy_compiler_available():
@@ -102,9 +132,8 @@ def cypy_run_available() -> bool:
     cl = shutil.which('cl')
     gcc = shutil.which('gcc')
     if cl is None and gcc is None:
-        # MSVC 常见路径
-        import glob
-        msvc = glob.glob(r'D:\VisualStudioBuildTools\VC\Tools\MSVC\*\bin\Host*\x64\cl.exe')
+        # 未进 PATH 时自动探测 MSVC（VS_BUILD_TOOLS / VSINSTALLDIR / 标准安装目录）
+        msvc = _find_msvc_cl()
         if not msvc:
             return False
     return True

@@ -2,13 +2,18 @@
 """
 测试 vools 和 actus 之间的交互
 """
+# 仓库根（由本测试文件位置推导，可移植；原为绝对路径硬编码）
+import os
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 import sys
+
 import os
 
 # 确保使用本地代码
-sys.path.insert(0, r'E:\IDEProjects\AI\vools\actus\vools')
-sys.path.insert(0, r'E:\IDEProjects\AI\vools\bridges')
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'actus', 'vools'))
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'bridges'))
 
 print("="*60)
 print("测试 vools 和 actus 之间的交互")
@@ -67,7 +72,7 @@ try:
     print(f"   ✓ vools.bridge.md 可用")
     
     # 测试解析 md 文件
-    test_md = r'E:\IDEProjects\AI\vools\actions\convert-file-to-markdown.actus.schema.md'
+    test_md = os.path.join(_REPO_ROOT, 'actions', 'convert-file-to-markdown.actus.schema.md')
     if os.path.exists(test_md):
         parsed = parse_md(test_md)
         print(f"   ✓ MD 解析成功: {len(parsed.blocks)} 个块")
@@ -115,6 +120,7 @@ try:
         body='''
 ```python #!run tag=main
 import vools
+
 result = vools.functional.curry(lambda x, y: x + y, 10)(5)
 print(f"Result: {result}")
 ```

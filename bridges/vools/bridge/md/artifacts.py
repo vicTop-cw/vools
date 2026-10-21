@@ -103,6 +103,7 @@ def register_artifact(
     path: str,
     block_idx: int,
     tag: Optional[str] = None,
+    type_hint: Optional[str] = None,
 ) -> None:
     """
     注册产物到共享产物表。
@@ -113,6 +114,8 @@ def register_artifact(
         path: 产物文件路径
         block_idx: 来源块序号
         tag: 来源块 tag
+        type_hint: 产物类型（text/image/svg/html/json/binary）；
+            缺省按扩展名推断（计划 D5 类型感知）。
     """
     if not os.path.exists(path):
         return
@@ -121,6 +124,7 @@ def register_artifact(
         "name": name,
         "path": path,
         "hash": compute_artifact_hash(path),
+        "type": type_hint or guess_type(path),
         "source_block": block_idx,
         "source_tag": tag,
     }
@@ -164,13 +168,25 @@ def clean_build(
             if block.get("artifact") and os.path.exists(block["artifact"]):
                 valid_paths.add(block["artifact"])
 
-        # 清理 artifacts/ 下的孤儿文件
+        # 清理 artifacts/ 下的孤儿文件（含 rich/ 等子目录，递归）
         artifacts_dir = os.path.join(build_dir, "artifacts")
         if os.path.exists(artifacts_dir):
-            for fname in os.listdir(artifacts_dir):
-                fpath = os.path.join(artifacts_dir, fname)
-                if fpath not in valid_paths:
-                    os.unlink(fpath)
+            valid = {os.path.normpath(p) for p in valid_paths}
+            dirs_to_prune = []
+            for dirpath, _dirnames, filenames in os.walk(artifacts_dir, topdown=False):
+                dirs_to_prune.append(dirpath)
+                for fname in filenames:
+                    fpath = os.path.join(dirpath, fname)
+                    if os.path.normpath(fpath) not in valid:
+                        os.unlink(fpath)
+            # 逆序删除腾空的子目录（保留顶层 artifacts/ 本身）
+            for d in dirs_to_prune:
+                if d == artifacts_dir:
+                    continue
+                try:
+                    os.rmdir(d)
+                except OSError:
+                    pass
 
     # 清理 tmp/
     tmp_dir = os.path.join(build_dir, "tmp")

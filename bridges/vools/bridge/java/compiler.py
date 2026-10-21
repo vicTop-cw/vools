@@ -29,6 +29,7 @@ import subprocess
 import logging
 from typing import Optional, List, Any
 
+from ..probe import _run_cmd_timeout
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
 
@@ -78,13 +79,11 @@ def get_java_version() -> Optional[str]:
         return None
 
     try:
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             ['java', '-version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             timeout=10,
         )
-        return result.stderr.split('\n')[0]
+        return result.stderr.decode('utf-8', errors='replace').split('\n')[0]
     except Exception:
         return None
 
@@ -148,10 +147,8 @@ def compile_java(
                         cmd.append(os.path.join(root, f))
 
         logger.info(f"Compiling with javac: {' '.join(cmd)}")
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             timeout=120,
         )
 
@@ -206,10 +203,8 @@ def create_jar(
         cmd.append('.')
 
         logger.info(f"Creating JAR: {' '.join(cmd)}")
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             cwd=class_dir,
             timeout=60,
         )
@@ -461,17 +456,15 @@ class JavaBridge(LangBridge):
             java_file,
         ]
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             compile_cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             cwd=cache_dir,
             timeout=120,
         )
 
         if result.returncode != 0:
             raise RuntimeError(
-                f'Java compilation failed:\n{result.stderr}\n{result.stdout}'
+                f'Java compilation failed:\n{result.stderr.decode("utf-8", errors="replace")}\n{result.stdout.decode("utf-8", errors="replace")}'
             )
 
         jar_result = create_jar(class_dir, jar_path, main_class=class_name)
@@ -522,10 +515,8 @@ class JavaBridge(LangBridge):
             '-d', class_dir,
         ] + java_files
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             compile_cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             cwd=output_dir,
             timeout=180,
         )
@@ -533,8 +524,8 @@ class JavaBridge(LangBridge):
         if result.returncode != 0:
             raise RuntimeError(
                 f'Java project compilation failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}\n'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
                 f'files: {java_files}'
             )
 
@@ -571,22 +562,20 @@ class JavaBridge(LangBridge):
         ]
 
         try:
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 cmd,
-                input=input_line,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
+                input_data=input_line,
                 timeout=60,
             )
 
             if result.returncode != 0:
                 raise RuntimeError(
                     f'Java execution failed (code {result.returncode}):\n'
-                    f'stderr: {result.stderr}\n'
-                    f'stdout: {result.stdout}'
+                    f'stderr: {result.stderr.decode("utf-8", errors="replace")}\n'
+                    f'stdout: {result.stdout.decode("utf-8", errors="replace")}'
                 )
 
-            output = result.stdout.strip()
+            output = result.stdout.decode('utf-8', errors='replace').strip()
             if not output:
                 return None
 

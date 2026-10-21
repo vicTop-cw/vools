@@ -14,7 +14,6 @@ import json
 import time
 import logging
 import hashlib
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from vools.core.dataclass_compat import dataclass, field

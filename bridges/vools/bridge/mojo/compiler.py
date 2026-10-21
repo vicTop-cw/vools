@@ -78,6 +78,7 @@ from typing import Any, List, Tuple
 
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 from .types import (
     PY_TO_MOJO_TYPE,
     get_mojo_type,
@@ -123,10 +124,7 @@ def _is_wsl_available():
     if not _IS_WINDOWS:
         return False
     try:
-        result = subprocess.run(
-            ['wsl', '--status'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5,
-        )
+        result = _run_cmd_timeout(['wsl', '--status'], timeout=5)
         return result.returncode == 0
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return False
@@ -150,13 +148,10 @@ def _wsl_run(cmd_args, timeout=120, cwd=None):
         wsl_cwd = _windows_to_wsl_path(cwd)
         wsl_cmd.extend(['--cd', wsl_cwd])
     wsl_cmd.extend(cmd_args)
-    result = subprocess.run(
-        wsl_cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding='utf-8', errors='replace',
-        timeout=timeout,
-    )
-    return result.returncode, result.stdout, result.stderr
+    result = _run_cmd_timeout(wsl_cmd, timeout=timeout)
+    return (result.returncode,
+            result.stdout.decode('utf-8', errors='replace'),
+            result.stderr.decode('utf-8', errors='replace'))
 
 
 # ---------------------------------------------------------------------------
@@ -196,9 +191,7 @@ _MOJO_PATH = _setup_mojo_env()
 def _check_mojo_version(cmd):
     """执行 mojo --version 并返回是否成功。"""
     try:
-        result = subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5,
-        )
+        result = _run_cmd_timeout(cmd, timeout=5)
         return result.returncode == 0
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return False
@@ -309,10 +302,7 @@ def _compile_mojo_source(src_path: str, out_so_path: str, force: bool = False) -
         else:
             cmd = mojo_cmd_prefix + [t.format(src=src_abs, out=out_abs) for t in tmpl]
             try:
-                result = subprocess.run(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True, timeout=60,
-                )
+                result = _run_cmd_timeout(cmd, timeout=60)
             except FileNotFoundError as e:
                 last_err = 'FileNotFoundError: {} (cmd={})'.format(e, cmd)
                 continue
@@ -329,7 +319,8 @@ def _compile_mojo_source(src_path: str, out_so_path: str, force: bool = False) -
             last_err = (
                 'cmd={}\nreturncode={}\nstdout={}\nstderr={}'.format(
                     cmd, result.returncode,
-                    result.stdout[:500], result.stderr[:500]
+                    result.stdout[:500].decode('utf-8', errors='replace') if isinstance(result.stdout, bytes) else str(result.stdout)[:500],
+                    result.stderr[:500].decode('utf-8', errors='replace') if isinstance(result.stderr, bytes) else str(result.stderr)[:500],
                 )
             )
         continue
@@ -810,17 +801,18 @@ class MojoBridge(LangBridge):
                 )
         else:
             compile_cmd = mojo_cmd_prefix + ['build'] + build_flag + ['-o', output_path] + mojo_files
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 compile_cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
-                cwd=output_dir
+                cwd=output_dir,
+                timeout=300,
             )
             if result.returncode != 0:
                 raise RuntimeError(
                     'Mojo project compilation failed:\n'
                     'stderr:\n{}\nstdout:\n{}\nfiles: {}'.format(
-                        result.stderr, result.stdout, mojo_files)
+                        result.stderr.decode('utf-8', errors='replace'),
+                        result.stdout.decode('utf-8', errors='replace'),
+                        mojo_files)
                 )
 
         return output_path

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vools-rhop"
+version = "0.1.0"
+authors = [
+    { name = "Victor", email = "victortop921129@gmail.com" },
+]
+description = "vools-rhop - 双方对等镜像任务中继协议（MVP：抽象密钥 + shared path 传输 + vools-rx 触发器监控）"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.6"
+dependencies = [
+    "cryptography>=3.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["vools.rhop*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

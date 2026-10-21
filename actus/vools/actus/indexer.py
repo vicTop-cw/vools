@@ -241,8 +241,12 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
             brief['asset_pool'] = 'included'
 
         # 2) trust↔测试绑定：verified / unverified / n-a
-        if kind in ('demo', 'template', 'alias', 'doc', 'link'):
+        trust = str(action.meta.get('trust') or '').lower()
+        if kind in ('demo', 'template', 'alias', 'doc', 'link') or trust == 'sandbox':
+            # sandbox 信任级动作（演示性/隔离性）不要求测试绑定
             brief['verification'] = 'n-a'
+            if trust == 'sandbox':
+                brief['verification_reason'] = 'trust=sandbox 豁免测试绑定'
         else:
             bound, refs = resolve_test_binding(action)
             brief['verification'] = 'verified' if bound else 'unverified'

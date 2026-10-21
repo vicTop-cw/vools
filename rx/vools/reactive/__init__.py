@@ -111,7 +111,9 @@ try:
         from_mouse, write_to_mouse,
     )
     MONITORING_AVAILABLE = True
-except ImportError:
+except Exception:
+    # 监控能力为可选：平台缺失（如非 Windows 下 ctypes.wintypes 在 py3.6
+    # 导入崩溃）或依赖缺失时，monitoring 子模块整体不可用，其余 rx 功能不受影响。
     pass
 
 __all__ = [

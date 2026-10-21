@@ -591,7 +591,9 @@ def _fill_version(status: 'LanguageStatus', lang: str, path: str,
 
 
 def _run_cmd_timeout(cmd: List[str], timeout: float = 5,
-                     env: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
+                     env: Optional[Dict[str, str]] = None,
+                     cwd: Optional[str] = None,
+                     input_data: Optional[str] = None) -> subprocess.CompletedProcess:
     """执行子进程并保证超时后杀掉整棵进程树。
 
     `subprocess.run(timeout=N)` 在 Windows 上只杀直接子进程：如果命令是
@@ -601,6 +603,10 @@ def _run_cmd_timeout(cmd: List[str], timeout: float = 5,
     远超 timeout=5。这里改用 `Popen` + `communicate(timeout=N)`，
     超时后 kill 进程组（Unix setsid / Windows CREATE_NEW_PROCESS_GROUP）
     并 `taskkill /F /T` 兜底，保证按时返回。
+
+    `cwd` 传入时作为子进程工作目录（兼容各语言编译模块原本传 cwd= 的调用方）。
+    `input_data` 传入时作为 stdin 内容（UTF-8 编码），
+    兼容 `subprocess.run(..., input=...)` 的调用方（如 java `call_func`）。
     """
     kwargs: Dict[str, Any] = {}
     if _IS_WINDOWS:
@@ -610,10 +616,14 @@ def _run_cmd_timeout(cmd: List[str], timeout: float = 5,
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        env=env, **kwargs,
+        stdin=subprocess.PIPE if input_data is not None else None,
+        env=env, cwd=cwd, **kwargs,
     )
     try:
-        stdout, stderr = proc.communicate(timeout=timeout)
+        stdout, stderr = proc.communicate(
+            input=input_data.encode('utf-8') if input_data is not None else None,
+            timeout=timeout,
+        )
         return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc)
@@ -628,9 +638,9 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
     """杀掉 proc 及其整棵子进程树。"""
     try:
         if _IS_WINDOWS:
-            subprocess.run(
+            _run_cmd_timeout(
                 ['taskkill', '/F', '/T', '/PID', str(proc.pid)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5,
             )
         else:
             os.killpg(os.getpgid(proc.pid), 9)
@@ -1079,14 +1089,21 @@ def _probe_one_wsl(lang: str, config: Dict[str, Any], dist: str) -> LanguageStat
                             timeout=5,
                         )
                     # WSL 输出可能是 GBK 编码，统一容错处理
-                    for enc in ('utf-8', 'gbk', 'latin-1'):
+                    # 注意：循环内 decode 必须用 strict（不传 errors）——
+                    # 传 errors='ignore' 会让 decode 永不抛 UnicodeDecodeError，
+                    # 于是第一个编码（utf-8）恒"成功"且产出乱码，GBK/cp936
+                    # 分支全是死代码（BUG-13.24）。先 strict 试各编码，全失败
+                    # 才 fallback 到 errors='ignore' 兜底。
+                    for enc in ('utf-8', 'gbk', 'cp936', 'latin-1'):
                         try:
-                            output = result.stdout.decode(enc, errors='ignore') + result.stderr.decode(enc, errors='ignore')
+                            output = (result.stdout or b'').decode(enc) \
+                                + (result.stderr or b'').decode(enc)
                             break
-                        except Exception:
+                        except (UnicodeDecodeError, LookupError):
                             continue
                     else:
-                        output = (result.stdout or b'').decode('utf-8', errors='ignore') + (result.stderr or b'').decode('utf-8', errors='ignore')
+                        output = (result.stdout or b'').decode('utf-8', errors='ignore') \
+                            + (result.stderr or b'').decode('utf-8', errors='ignore')
                     if output:
                         import re
                         pat = config.get('version_pattern', r'(\d+\.\d+(?:\.\d+)?)')

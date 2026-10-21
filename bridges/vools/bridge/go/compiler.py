@@ -42,6 +42,7 @@ from typing import Any, List, Tuple
 
 from ..core.types import CTypeMapper, infer_arg_types, infer_ret_type, convert_args, LangType
 from ..manager import get_helper
+from ..probe import _run_cmd_timeout
 from .._base import LangBridge, FunctionSpec, FunctionParser
 
 # ----------------------------------------------------------------------------
@@ -374,10 +375,8 @@ def _compile_go_code(code: str, func_name: str, cache_dir: str = None,
     # 构建包含 C 编译器的子进程环境
     build_env = _build_env_with_cc()
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         compile_cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
         timeout=60,
         env=build_env,
         cwd=cache_dir,
@@ -386,8 +385,8 @@ def _compile_go_code(code: str, func_name: str, cache_dir: str = None,
     if result.returncode != 0 or not os.path.exists(so_path):
         raise RuntimeError(
             f'Go 编译失败:\n'
-            f'stderr:\n{result.stderr}\n'
-            f'stdout:\n{result.stdout}\n'
+            f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+            f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
             f'代码:\n{code}'
         )
 
@@ -904,19 +903,18 @@ func {spec.name}({params_str}){ret_signature} {{{indented_body}}}'''
             output_path = os.path.join(output_dir, f'{project_name}{ext}')
             compile_cmd = [_GO_PATH, 'build', '-buildmode=c-shared', '-o', output_path, './...']
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             compile_cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             cwd=project_dir,
             env=_build_env_with_cc(),
+            timeout=180,
         )
 
         if result.returncode != 0 or not os.path.exists(output_path):
             raise RuntimeError(
                 f'Go project compilation failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}\n'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
                 f'files: {go_files}'
             )
 

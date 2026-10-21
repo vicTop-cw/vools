@@ -2,12 +2,18 @@
 """
 实际测试 WebView2 渲染 - 弹出窗口
 """
+# 仓库根（由本测试文件位置推导，可移植；原为绝对路径硬编码）
+import os
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 
 import sys
+
 import os
 
+
 # 添加 bridges 目录到路径
-bridges_dir = r'E:\IDEProjects\AI\vools\bridges'
+bridges_dir = os.path.join(_REPO_ROOT, 'bridges')
 sys.path.insert(0, bridges_dir)
 
 from vools.bridge.md import webview2

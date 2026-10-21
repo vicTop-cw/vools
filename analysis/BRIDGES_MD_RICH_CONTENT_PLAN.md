@@ -14,7 +14,7 @@ AIGC:
 - 文档版本：v0.1（评审稿）
 - 角色：架构设计者（仅计划，不实现）
 - 日期：2026-10-16
-- 适用代码库：`E:\IDEProjects\AI\vools\bridges\vools\bridge\md`
+- 适用代码库：`bridges/vools/bridge/md`
 - 宿主假定：内置 WebView2（Chromium）的桌面应用（与 `webview2.py` 现有 native 模式一致）
 - 许可约束：Apache-2.0 兼容，不引入 GPL 传染依赖
 

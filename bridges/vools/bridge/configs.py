@@ -25,8 +25,8 @@ vools.bridge.configs - 跨语言编译器位置统一声明与持久化
 
     from vools.bridge.configs import resolve_compiler, set_project_root, save_user_config
 
-    # 运行时告诉它 Pentad 工程在哪
-    set_project_root('pentad', r'D:\\MyTools\\Pentad')
+    # 运行时告诉它 Pentad 工程在哪（示例：占位符，请替换为你的实际项目根目录）
+    set_project_root('pentad', r'<path-to-pentad-project-root>')
     save_user_config()                       # 落盘到 ~/.vools/bridge_config.json
 
     # 取编译器

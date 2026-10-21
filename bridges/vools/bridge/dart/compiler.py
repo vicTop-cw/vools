@@ -35,6 +35,7 @@ from typing import Optional, List, Any
 
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -97,13 +98,13 @@ def get_dart_version() -> Optional[str]:
         return None
 
     try:
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             ['dart', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             timeout=10,
         )
-        return result.stdout.strip() or result.stderr.strip()
+        stdout = result.stdout.decode('utf-8', errors='replace').strip()
+        stderr = result.stderr.decode('utf-8', errors='replace').strip()
+        return stdout or stderr
     except Exception:
         return None
 
@@ -415,9 +416,8 @@ def _compile_dart_code(code: str, func_name: str, cache_dir: str = None,
             src_path,
         ]
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         compile_cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         timeout=120,
     )
 
@@ -475,17 +475,15 @@ def _call_dart_executable(exe_path: str, func_name: str, args: tuple,
     try:
         if _USE_WSL:
             wsl_exe = _to_wsl_path(exe_path)
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 ['wsl', wsl_exe],
-                input=input_data.encode('utf-8'),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                input_data=input_data,
                 timeout=60,
             )
         else:
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 [exe_path],
-                input=input_data.encode('utf-8'),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                input_data=input_data,
                 timeout=60,
             )
 
@@ -724,10 +722,8 @@ class DartBridge(LangBridge):
         else:
             raise RuntimeError('Dart project compilation only supports entry="main" for now')
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             compile_cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             cwd=project_dir,
             timeout=180,
         )
@@ -735,8 +731,8 @@ class DartBridge(LangBridge):
         if result.returncode != 0 or not os.path.exists(output_path):
             raise RuntimeError(
                 f'Dart project compilation failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}\n'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
                 f'files: {dart_files}'
             )
 

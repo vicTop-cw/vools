@@ -59,7 +59,15 @@ def guard_write(path: str, root: str = None) -> str:
             return os.path.abspath(path)
     root_abs = os.path.realpath(root)
     target = os.path.realpath(path)
-    if os.path.commonpath([target, root_abs]) != root_abs:
+    try:
+        same_scope = os.path.commonpath([target, root_abs]) == root_abs
+    except ValueError:
+        # Windows 跨盘符（如沙箱根在 C:，写目标在 D:）时 commonpath 抛
+        # ValueError（"Paths don't have the same drive"），不是 PermissionError
+        # —— 违反本函数「越界写抛 PermissionError」的契约。这里归一为
+        # PermissionError，调用方的 except 分支才拦得住（BUG-13.25）。
+        same_scope = False
+    if not same_scope:
         raise PermissionError(
             f'sandbox 越界写被拒绝: {target} 不在沙箱根 {root_abs} 内（docs/07 §5）')
     return target

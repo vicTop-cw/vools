@@ -14,13 +14,19 @@ from .parser import (
     parse, parse_to_dict,
     Document, Heading, Paragraph, CodeBlock,
     BlockQuote, MdList, ListItem, Divider, InlineText,
+    ConfigBlock, LangBlock,
 )
 from .generator import generate, generate_to_file
 from .html import to_html, to_html_file
 from .utils import (
-    extract_metadata, generate_toc, generate_toc_markdown,
-    extract_code_blocks, count_words, strip_markdown, find_headings,
+    extract_metadata, extract_frontmatter, generate_toc, generate_toc_markdown,
+    extract_code_blocks, extract_configs, extract_config_blocks, extract_lang_blocks,
+    render_config, count_words, strip_markdown, find_headings,
     to_json, to_org_mode, to_plain_text,
+)
+from .config_parser import (
+    parse_config_block, parse_json, parse_toml, parse_yaml,
+    execute_lua, validate_config, ConfigParseError,
 )
 from .advanced import (
     get_theme, list_themes, render_html_with_theme, export_html_theme,
@@ -44,15 +50,22 @@ __all__ = [
     'parse', 'parse_to_dict',
     'Document', 'Heading', 'Paragraph', 'CodeBlock',
     'BlockQuote', 'MdList', 'ListItem', 'Divider', 'InlineText',
+    'ConfigBlock', 'LangBlock',
     # 生成器
     'generate', 'generate_to_file',
     # HTML
     'to_html', 'to_html_file',
     # 工具函数
-    'extract_metadata', 'generate_toc', 'generate_toc_markdown',
-    'extract_code_blocks', 'count_words', 'strip_markdown', 'find_headings',
+    'extract_metadata', 'extract_frontmatter',
+    'generate_toc', 'generate_toc_markdown',
+    'extract_code_blocks', 'extract_configs',
+    'extract_config_blocks', 'extract_lang_blocks',
+    'render_config', 'count_words', 'strip_markdown', 'find_headings',
     # 多格式转换
     'to_json', 'to_org_mode', 'to_plain_text',
+    # 配置解析器
+    'parse_config_block', 'parse_json', 'parse_toml', 'parse_yaml',
+    'execute_lua', 'validate_config', 'ConfigParseError',
     # 高级功能
     'get_theme', 'list_themes', 'render_html_with_theme', 'export_html_theme',
     'ast_to_tree', 'ast_to_mermaid',

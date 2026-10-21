@@ -31,6 +31,7 @@ from typing import Any, Optional
 
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 
 
 # ----------------------------------------------------------------------------
@@ -95,9 +96,9 @@ _PS_PATH = _setup_ps_env()
 def powershell_compiler_available() -> bool:
     """检查 PowerShell 解释器是否可用（执行 `$PSVersionTable`）"""
     try:
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             [_PS_PATH, '-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=10,
+            timeout=10,
         )
         return result.returncode == 0
     except (FileNotFoundError, OSError):
@@ -323,34 +324,30 @@ def _execute_ps_code(code: str, func_name: str, cache_dir: str = None,
     src_path = os.path.join(cache_dir, f'{base_name}.ps1')
 
     if not force and os.path.exists(src_path):
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             [_PS_PATH, '-NoProfile', '-File', src_path],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            universal_newlines=True,
             timeout=60,
         )
         if result.returncode == 0:
-            return result.stdout.strip()
+            return result.stdout.decode('utf-8', errors='replace').strip()
 
     with open(src_path, 'w', encoding='utf-8') as f:
         f.write(code)
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         [_PS_PATH, '-NoProfile', '-File', src_path],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        universal_newlines=True,
         timeout=60,
     )
 
     if result.returncode != 0:
         raise RuntimeError(
             f'PowerShell 执行失败:\n'
-            f'stderr:\n{result.stderr}\n'
-            f'stdout:\n{result.stdout}\n'
+            f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+            f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
             f'代码:\n{code}'
         )
 
-    return result.stdout.strip()
+    return result.stdout.decode('utf-8', errors='replace').strip()
 
 
 def _parse_ps_output(output: str, ret_type: str):
@@ -550,16 +547,14 @@ if ($null -eq $result) {{
             with open(tmp_script, 'w', encoding='utf-8') as f:
                 f.write(full_code)
             
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 ['powershell', '-NoProfile', '-File', tmp_script],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                universal_newlines=True,
                 timeout=30,
             )
             if result.returncode != 0:
-                raise RuntimeError("Execution failed: " + result.stderr)
+                raise RuntimeError("Execution failed: " + result.stderr.decode('utf-8', errors='replace'))
             
-            return _parse_ps_output(result.stdout.strip(), ps_ret_type)
+            return _parse_ps_output(result.stdout.decode('utf-8', errors='replace').strip(), ps_ret_type)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -831,13 +826,13 @@ if ($null -eq $result) {{
                     raise RuntimeError(f'No .ps1 files found in project directory: {project_dir}')
                 main_ps = ps_files[0]
 
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 [_PS_PATH, '-NoProfile', '-File', main_ps] + list(args),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                universal_newlines=True,
                 timeout=60,
             )
-            return (result.returncode, result.stdout, result.stderr)
+            return (result.returncode,
+                    result.stdout.decode('utf-8', errors='replace'),
+                    result.stderr.decode('utf-8', errors='replace'))
         else:
             artifact_path = self.compile_project(project_dir, entry, cache_dir)
             return self.call_func(artifact_path, entry, args)

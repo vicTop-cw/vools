@@ -113,8 +113,8 @@ ProbeReport = {
         # Windows 特有
         "program_files": "C:\\Program Files",
         "program_files_x86": "C:\\Program Files (x86)",
-        "local_app_data": "C:\\Users\\victo\\AppData\\Local",
-        "app_data": "C:\\Users\\victo\\AppData\\Roaming",
+        "local_app_data": "C:\\Users\\<user>\\AppData\\Local",
+        "app_data": "C:\\Users\\<user>\\AppData\\Roaming",
         "program_data": "C:\\ProgramData",
         # Linux 特有
         "linux_distro": {"id": "ubuntu", "name": "Ubuntu", "version": "22.04"},
@@ -129,7 +129,7 @@ ProbeReport = {
     # ── 权限与身份 ──
     "permissions": {
         "user": {
-            "name": "victo",              # 当前用户名
+            "name": "<user>",              # 当前用户名
             "uid": 1001,                  # Unix UID（Windows 为 None）
             "gid": 545,                   # Unix GID（Windows 为 None）
             "groups": ["users", "developers"],  # 补充组
@@ -138,8 +138,8 @@ ProbeReport = {
         "is_elevated": true,              # 是否已提权（UAC 已同意）
         "elevation_possible": true,       # 能否提权（管理员账号 + UAC 开启）
         "effective_permissions": {        # 关键目录的读写权限
-            "home": {"path": "C:\\Users\\victo", "read": true, "write": true, "exec": true},
-            "temp": {"path": "C:\\Users\\victo\\AppData\\Local\\Temp", "read": true, "write": true, "exec": true},
+            "home": {"path": "C:\\Users\\<user>", "read": true, "write": true, "exec": true},
+            "temp": {"path": "C:\\Users\\<user>\\AppData\\Local\\Temp", "read": true, "write": true, "exec": true},
             "system": {"path": "C:\\Windows\\System32", "read": true, "write": false, "exec": true},
             "program_files": {"path": "C:\\Program Files", "read": true, "write": false, "exec": true},
         },
@@ -161,10 +161,10 @@ ProbeReport = {
             "C:\\Program Files\\nodejs\\node.exe": true,
         },
         "env_vars": {                     # 关键环境变量（脱敏后）
-            "HOME": "C:\\Users\\victo",
-            "USERPROFILE": "C:\\Users\\victo",
-            "APPDATA": "C:\\Users\\victo\\AppData\\Roaming",
-            "TEMP": "C:\\Users\\victo\\AppData\\Local\\Temp",
+            "HOME": "C:\\Users\\<user>",
+            "USERPROFILE": "C:\\Users\\<user>",
+            "APPDATA": "C:\\Users\\<user>\\AppData\\Roaming",
+            "TEMP": "C:\\Users\\<user>\\AppData\\Local\\Temp",
             "SYSTEMROOT": "C:\\Windows",
             "PATH": "[REDACTED:42 items]",   # PATH 太长，只记数量
             "HTTPS_PROXY": "http://proxy:8080",  # 如有代理
@@ -180,7 +180,7 @@ ProbeReport = {
         "virtual_env": {                  # 虚拟环境信息
             "active": true,
             "name": "venv",
-            "python_path": "C:\\Users\\victo\\project\\venv\\Scripts\\python.exe",
+            "python_path": "C:\\Users\\<user>\\project\\venv\\Scripts\\python.exe",
             "base_python": "C:\\Python313\\python.exe",
         },
         "conda_env": {                    # conda 环境（如有）
@@ -206,7 +206,7 @@ ProbeReport = {
             "total_gb": 512,
             "free_gb": 256,
             "free_percent": 50.0,
-            "mount_points": ["C:\\", "D:\\"],
+            "mount_points": ["<mount_point>", "<mount_point>"],
         },
         "network": {
             "interfaces": ["WLAN", "Ethernet"],

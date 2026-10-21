@@ -2,15 +2,21 @@
 """
 实际测试 WebView2 渲染 - 弹出窗口（直接导入）
 """
+# 仓库根（由本测试文件位置推导，可移植；原为绝对路径硬编码）
+import os
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 
 import sys
+
 import os
 import importlib.util
+
 
 # 直接导入 webview2.py
 spec = importlib.util.spec_from_file_location(
     "webview2",
-    r'E:\IDEProjects\AI\vools\bridges\vools\bridge\md\webview2.py'
+    os.path.join(_REPO_ROOT, 'bridges', 'vools', 'bridge', 'md', 'webview2.py')
 )
 webview2_module = importlib.util.module_from_spec(spec)
 
@@ -18,7 +24,7 @@ webview2_module = importlib.util.module_from_spec(spec)
 # 1. 导入 directives
 spec_dirs = importlib.util.spec_from_file_location(
     "directives",
-    r'E:\IDEProjects\AI\vools\bridges\vools\bridge\md\directives.py'
+    os.path.join(_REPO_ROOT, 'bridges', 'vools', 'bridge', 'md', 'directives.py')
 )
 directories_module = importlib.util.module_from_spec(spec_dirs)
 spec_dirs.loader.exec_module(directories_module)
@@ -27,7 +33,7 @@ sys.modules['vools.bridge.md.directives'] = directories_module
 # 2. 导入 config
 spec_config = importlib.util.spec_from_file_location(
     "config",
-    r'E:\IDEProjects\AI\vools\bridges\vools\bridge\md\config.py'
+    os.path.join(_REPO_ROOT, 'bridges', 'vools', 'bridge', 'md', 'config.py')
 )
 config_module = importlib.util.module_from_spec(spec_config)
 spec_config.loader.exec_module(config_module)

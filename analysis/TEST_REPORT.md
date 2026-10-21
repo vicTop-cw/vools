@@ -218,7 +218,7 @@ assert time_with_4_workers < time_with_1_worker * 0.8
 2. 添加 `evaluate` 和 `evaluateEx` 方法
 3. 修复链式锁定逻辑（调用 `otherwise` 后自动锁定链式调用）
 
-**修改文件**: [vools/functional/iif.py](file:///e:/IDEProjects/AI/vools/vools/functional/iif.py)
+**修改文件**: [vools/functional/iif.py](../vools/functional/iif.py)
 
 #### P002: WorkerPool 并发性能问题
 
@@ -305,4 +305,4 @@ list(result)  # [2, 4, 6]
 
 **测试时间**: 2026-06-13  
 **测试环境**: Python 3.13.14, pytest 9.0.2  
-**测试文件**: [tests/test_curried.py](file:///e:/IDEProjects/AI/vools/tests/test_curried.py)
+**测试文件**: [tests/test_curried.py](../tests/test_curried.py)

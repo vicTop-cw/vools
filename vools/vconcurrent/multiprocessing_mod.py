@@ -387,13 +387,26 @@ class SharedValue:
         self._value: Any = multiprocessing.Value(typecode, default, lock=lock)
 
     def get(self) -> Any:
-        """获取当前值（加锁）。"""
-        with self._value.get_lock():
+        """获取当前值（有内部锁则加锁）。
+
+        BUG-238: ``lock=False`` 时 multiprocessing.Value 返回裸 ctypes 对象
+        （无 ``get_lock``），原实现无条件 ``with self._value.get_lock()``
+        必抛 AttributeError——``lock`` 构造参数一用即废。现按底层形态分支：
+        无锁语义即"调用方自管同步"，与 multiprocessing.Value(lock=False) 本义一致。
+        """
+        lock = getattr(self._value, 'get_lock', None)
+        if lock is None:
+            return self._value.value
+        with lock():
             return self._value.value
 
     def set(self, value: Any) -> None:
-        """设置值（加锁）。"""
-        with self._value.get_lock():
+        """设置值（有内部锁则加锁）。"""
+        lock = getattr(self._value, 'get_lock', None)
+        if lock is None:
+            self._value.value = value
+            return
+        with lock():
             self._value.value = value
 
     @property

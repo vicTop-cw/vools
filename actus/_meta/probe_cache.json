@@ -1,6 +1,6 @@
 {
-  "timestamp": 1792246248.404683,
-  "elapsed_ms": 25660.8,
+  "timestamp": 1792561373.3386598,
+  "elapsed_ms": 24841.3,
   "platform": {
     "os": "Windows",
     "os_release": "10",
@@ -1356,7 +1356,6 @@
       "LiveCaptions.exe",
       "LiveKernelReports",
       "LnvHelp64.20260609143603.dll",
-      "LnvHelp64.dll",
       "LocationApi.dll",
       "LocationFramework.dll",
       "LocationFrameworkInternalPS.dll",
@@ -3317,6 +3316,9 @@
       "coredpussvr.exe",
       "coreglobconfig.dll",
       "correngine.dll",
+      "coverage-3.11.exe",
+      "coverage.exe",
+      "coverage3.exe",
       "cppwinrt.exe",
       "credprovhost.dll",
       "credprovs.dll",
@@ -3464,10 +3466,12 @@
       "dhcpcsvc.dll",
       "dhcpcsvc6.dll",
       "dhcpsapi.dll",
+      "diagerr.xml",
       "diagnosticdataquery.dll",
       "diagnostics",
       "diagperf.dll",
       "diagtrack.dll",
+      "diagwrn.xml",
       "dialclient.dll",
       "dialer.exe",
       "dialserver.dll",
@@ -4660,6 +4664,7 @@
       "moon_cove.wasm",
       "moon_cove_report.exe",
       "moonbit-windows-x86_64.sha256",
+      "moonc-prove.exe",
       "moonc.exe",
       "mooncake.exe",
       "moondoc.exe",
@@ -5089,6 +5094,8 @@
       "openfiles.exe",
       "opengl32.dll",
       "or-IN",
+      "orca-administrator-restart.exe",
+      "orca-agent-hook.exe",
       "orca.cmd",
       "orca.exe",
       "osbaseln.dll",
@@ -5597,6 +5604,7 @@
       "setspn.exe",
       "settings.dat",
       "setup",
+      "setupact.log",
       "setupapi.dll",
       "setupapi.mof",
       "setupcl.dll",
@@ -6611,11 +6619,9 @@
     },
     "secret_keys_found": {
       "ATOMGIT_TOKEN": true,
-      "DEEPSEEK_API_KEY": true,
       "FIST_GITHUB_TOKEN": true,
       "GITCODE_TOKEN": true,
       "GITHUB_TOKEN": true,
-      "GROQ_API_KEY": true,
       "IMODEL_API_KEY": true,
       "KIMI_API_KEY": true,
       "LONGCAT_API_KEY": true,
@@ -6628,7 +6634,9 @@
       "TIKTOKEN_CACHE_DIR": true,
       "TOKENROUTER_API_KEY": true,
       "TURBAO_API_KEY": true,
-      "ZAI_API_KEY": true
+      "ZAI_API_KEY": true,
+      "GROQ_API_KEY": true,
+      "DEEPSEEK_API_KEY": true
     },
     "virtual_env": {
       "active": false
@@ -6645,8 +6653,8 @@
     },
     "memory": {
       "total_mb": 16176,
-      "available_mb": 554,
-      "used_percent": 97
+      "available_mb": 1165,
+      "used_percent": 93
     },
     "disk": [
       {
@@ -6654,24 +6662,24 @@
         "mountpoint": "C:\\",
         "fstype": "NTFS",
         "total_mb": 204801,
-        "free_mb": 29700,
-        "used_percent": 86
+        "free_mb": 23857,
+        "used_percent": 88
       },
       {
         "device": "D:\\",
         "mountpoint": "D:\\",
         "fstype": "NTFS",
         "total_mb": 281308,
-        "free_mb": 28983,
-        "used_percent": 90
+        "free_mb": 13361,
+        "used_percent": 95
       },
       {
         "device": "E:\\",
         "mountpoint": "E:\\",
         "fstype": "NTFS",
         "total_mb": 976745,
-        "free_mb": 543333,
-        "used_percent": 44
+        "free_mb": 562701,
+        "used_percent": 42
       }
     ],
     "network": {
@@ -6724,25 +6732,11 @@
         },
         {
           "family": "2",
-          "address": "192.168.1.9"
+          "address": "10.65.148.49"
         },
         {
           "family": "23",
           "address": "fe80::d39d:8e8f:a66c:c9df"
-        }
-      ],
-      "vEthernet (WSL (Hyper-V firewall))": [
-        {
-          "family": "-1",
-          "address": "00-15-5D-74-9F-8D"
-        },
-        {
-          "family": "2",
-          "address": "172.27.80.1"
-        },
-        {
-          "family": "23",
-          "address": "fe80::643d:8db:d463:b079"
         }
       ],
       "Loopback Pseudo-Interface 1": [
@@ -6801,7 +6795,7 @@
     },
     "key_tools": {
       "cl": {
-        "version": "Microsoft (R) Incremental Linker Version 14.44.35219.0",
+        "version": "鐢ㄦ硶: cl [ 閫夐」... ] 鏂囦欢鍚�... [ /link 閾炬帴閫夐」... ]",
         "path": "E:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.EXE"
       },
       "rustc": {
@@ -6997,7 +6991,7 @@
         "app_data": "C:\\Users\\victo\\AppData\\Roaming",
         "program_data": "C:\\ProgramData"
       },
-      "elapsed_ms": 0.0
+      "elapsed_ms": 1.4
     },
     {
       "name": "permissions",
@@ -7047,7 +7041,7 @@
         "can_install_system_wide": true,
         "can_create_startups": true
       },
-      "elapsed_ms": 7.7
+      "elapsed_ms": 15.8
     },
     {
       "name": "environment",
@@ -8264,7 +8258,6 @@
           "LiveCaptions.exe",
           "LiveKernelReports",
           "LnvHelp64.20260609143603.dll",
-          "LnvHelp64.dll",
           "LocationApi.dll",
           "LocationFramework.dll",
           "LocationFrameworkInternalPS.dll",
@@ -10225,6 +10218,9 @@
           "coredpussvr.exe",
           "coreglobconfig.dll",
           "correngine.dll",
+          "coverage-3.11.exe",
+          "coverage.exe",
+          "coverage3.exe",
           "cppwinrt.exe",
           "credprovhost.dll",
           "credprovs.dll",
@@ -10372,10 +10368,12 @@
           "dhcpcsvc.dll",
           "dhcpcsvc6.dll",
           "dhcpsapi.dll",
+          "diagerr.xml",
           "diagnosticdataquery.dll",
           "diagnostics",
           "diagperf.dll",
           "diagtrack.dll",
+          "diagwrn.xml",
           "dialclient.dll",
           "dialer.exe",
           "dialserver.dll",
@@ -11568,6 +11566,7 @@
           "moon_cove.wasm",
           "moon_cove_report.exe",
           "moonbit-windows-x86_64.sha256",
+          "moonc-prove.exe",
           "moonc.exe",
           "mooncake.exe",
           "moondoc.exe",
@@ -11997,6 +11996,8 @@
           "openfiles.exe",
           "opengl32.dll",
           "or-IN",
+          "orca-administrator-restart.exe",
+          "orca-agent-hook.exe",
           "orca.cmd",
           "orca.exe",
           "osbaseln.dll",
@@ -12505,6 +12506,7 @@
           "setspn.exe",
           "settings.dat",
           "setup",
+          "setupact.log",
           "setupapi.dll",
           "setupapi.mof",
           "setupcl.dll",
@@ -13519,11 +13521,9 @@
         },
         "secret_keys_found": {
           "ATOMGIT_TOKEN": true,
-          "DEEPSEEK_API_KEY": true,
           "FIST_GITHUB_TOKEN": true,
           "GITCODE_TOKEN": true,
           "GITHUB_TOKEN": true,
-          "GROQ_API_KEY": true,
           "IMODEL_API_KEY": true,
           "KIMI_API_KEY": true,
           "LONGCAT_API_KEY": true,
@@ -13536,7 +13536,9 @@
           "TIKTOKEN_CACHE_DIR": true,
           "TOKENROUTER_API_KEY": true,
           "TURBAO_API_KEY": true,
-          "ZAI_API_KEY": true
+          "ZAI_API_KEY": true,
+          "GROQ_API_KEY": true,
+          "DEEPSEEK_API_KEY": true
         },
         "virtual_env": {
           "active": false
@@ -13545,7 +13547,7 @@
           "active": false
         }
       },
-      "elapsed_ms": 4848.1
+      "elapsed_ms": 4610.4
     },
     {
       "name": "resources",
@@ -13561,8 +13563,8 @@
         },
         "memory": {
           "total_mb": 16176,
-          "available_mb": 606,
-          "used_percent": 96
+          "available_mb": 1254,
+          "used_percent": 92
         },
         "disk": [
           {
@@ -13570,24 +13572,24 @@
             "mountpoint": "C:\\",
             "fstype": "NTFS",
             "total_mb": 204801,
-            "free_mb": 29707,
-            "used_percent": 86
+            "free_mb": 23858,
+            "used_percent": 88
           },
           {
             "device": "D:\\",
             "mountpoint": "D:\\",
             "fstype": "NTFS",
             "total_mb": 281308,
-            "free_mb": 28983,
-            "used_percent": 90
+            "free_mb": 13361,
+            "used_percent": 95
           },
           {
             "device": "E:\\",
             "mountpoint": "E:\\",
             "fstype": "NTFS",
             "total_mb": 976745,
-            "free_mb": 543333,
-            "used_percent": 44
+            "free_mb": 562704,
+            "used_percent": 42
           }
         ],
         "network": {
@@ -13640,25 +13642,11 @@
             },
             {
               "family": "2",
-              "address": "192.168.1.9"
+              "address": "10.65.148.49"
             },
             {
               "family": "23",
               "address": "fe80::d39d:8e8f:a66c:c9df"
-            }
-          ],
-          "vEthernet (WSL (Hyper-V firewall))": [
-            {
-              "family": "-1",
-              "address": "00-15-5D-74-9F-8D"
-            },
-            {
-              "family": "2",
-              "address": "172.27.80.1"
-            },
-            {
-              "family": "23",
-              "address": "fe80::643d:8db:d463:b079"
             }
           ],
           "Loopback Pseudo-Interface 1": [
@@ -13673,7 +13661,7 @@
           ]
         }
       },
-      "elapsed_ms": 470.4
+      "elapsed_ms": 484.1
     },
     {
       "name": "gcc",
@@ -13682,7 +13670,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "g++",
@@ -13691,7 +13679,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "clang",
@@ -13700,15 +13688,15 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "cl",
       "category": "system_tools",
       "available": true,
       "path": "E:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.EXE",
-      "version": "Microsoft (R) Incremental Linker Version 14.44.35219.0",
-      "elapsed_ms": 13210.9
+      "version": "鐢ㄦ硶: cl [ 閫夐」... ] 鏂囦欢鍚�... [ /link 閾炬帴閫夐」... ]",
+      "elapsed_ms": 12356.1
     },
     {
       "name": "rustc",
@@ -13716,7 +13704,7 @@
       "available": true,
       "path": "C:\\Users\\victo\\.cargo\\bin\\rustc.EXE",
       "version": "rustc 1.96.0 (ac68faa20 2026-05-25)",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "nim",
@@ -13724,7 +13712,7 @@
       "available": true,
       "path": "E:\\Dowloads\\nim-2.2.10_x64\\nim-2.2.10\\bin\\nim.EXE",
       "version": "Nim Compiler Version 2.2.10 [Windows: amd64]",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "zig",
@@ -13732,7 +13720,7 @@
       "available": true,
       "path": "C:\\Tools\\zig\\zig-x86_64-windows-0.16.0\\zig.EXE",
       "version": "0.16.0",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "javac",
@@ -13740,7 +13728,7 @@
       "available": true,
       "path": "E:\\Java\\jdk17.0.17_10\\bin\\javac.EXE",
       "version": "javac 17.0.17",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "python",
@@ -13748,7 +13736,7 @@
       "available": true,
       "path": "E:\\Program Files\\Tencent\\Marvis\\MarvisAgent\\1.60.2900.698\\runtime\\python311\\python.EXE",
       "version": "Python 3.11.8",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "node",
@@ -13756,7 +13744,7 @@
       "available": true,
       "path": "C:\\Program Files\\nodejs\\node.EXE",
       "version": "v25.2.1",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "ruby",
@@ -13765,7 +13753,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "php",
@@ -13774,7 +13762,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "go",
@@ -13782,7 +13770,7 @@
       "available": true,
       "path": "C:\\Go\\bin\\go.EXE",
       "version": "go version go1.26.5 windows/amd64",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "pip",
@@ -13790,7 +13778,7 @@
       "available": true,
       "path": "E:\\Program Files\\Tencent\\Marvis\\MarvisAgent\\1.60.2900.698\\runtime\\python311\\Scripts\\pip.EXE",
       "version": "pip 24.0 from E:\\Program Files\\Tencent\\Marvis\\MarvisAgent\\1.60.2900.698\\runtime\\python311\\Lib\\site-packages\\pip (python 3.11)",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "npm",
@@ -13798,7 +13786,7 @@
       "available": true,
       "path": "C:\\Program Files\\nodejs\\npm.CMD",
       "version": "11.21.0",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "yarn",
@@ -13807,7 +13795,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "pnpm",
@@ -13815,7 +13803,7 @@
       "available": true,
       "path": "C:\\Users\\victo\\AppData\\Roaming\\npm\\pnpm.CMD",
       "version": "11.6.0",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "cargo",
@@ -13823,7 +13811,7 @@
       "available": true,
       "path": "C:\\Users\\victo\\.cargo\\bin\\cargo.EXE",
       "version": "cargo 1.96.0 (30a34c682 2026-05-25)",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "brew",
@@ -13832,7 +13820,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "apt",
@@ -13841,7 +13829,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "dnf",
@@ -13850,7 +13838,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "pacman",
@@ -13859,7 +13847,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "git",
@@ -13867,7 +13855,7 @@
       "available": true,
       "path": "D:\\Program Files\\Git\\cmd\\git.EXE",
       "version": "git version 2.55.0.windows.2",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "svn",
@@ -13876,7 +13864,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "make",
@@ -13885,7 +13873,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "cmake",
@@ -13894,7 +13882,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "ninja",
@@ -13903,7 +13891,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "msbuild",
@@ -13912,7 +13900,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "nuget",
@@ -13921,7 +13909,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "jq",
@@ -13930,7 +13918,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "yq",
@@ -13939,7 +13927,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "sed",
@@ -13948,7 +13936,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "awk",
@@ -13957,7 +13945,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "grep",
@@ -13966,7 +13954,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "ripgrep",
@@ -13975,7 +13963,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "zip",
@@ -13984,7 +13972,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "unzip",
@@ -13993,7 +13981,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "tar",
@@ -14001,7 +13989,7 @@
       "available": true,
       "path": "C:\\Windows\\system32\\tar.EXE",
       "version": "bsdtar 3.8.8 - libarchive 3.8.8 zlib/1.2.13.1-motley liblzma/5.8.1 bz2lib/1.0.8 libzstd/1.5.7 cng/2.0 libb2/bundled",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "7z",
@@ -14010,7 +13998,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "curl",
@@ -14018,7 +14006,7 @@
       "available": true,
       "path": "C:\\Windows\\system32\\curl.EXE",
       "version": "curl 8.21.0 (Windows) libcurl/8.21.0 Schannel zlib/1.3.2 WinIDN WinLDAP",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "wget",
@@ -14027,7 +14015,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "ssh",
@@ -14035,7 +14023,7 @@
       "available": true,
       "path": "C:\\Windows\\System32\\OpenSSH\\ssh.EXE",
       "version": "OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "scp",
@@ -14043,7 +14031,7 @@
       "available": true,
       "path": "C:\\Windows\\System32\\OpenSSH\\scp.EXE",
       "version": "C:\\Windows\\System32\\OpenSSH\\scp.EXE: unknown option -- V",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "sftp",
@@ -14051,7 +14039,7 @@
       "available": true,
       "path": "C:\\Windows\\System32\\OpenSSH\\sftp.EXE",
       "version": "unknown option -- V",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "psql",
@@ -14060,7 +14048,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "sqlite3",
@@ -14069,7 +14057,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "mysql",
@@ -14078,7 +14066,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "mongo",
@@ -14087,7 +14075,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "docker",
@@ -14096,7 +14084,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "podman",
@@ -14105,7 +14093,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "kubectl",
@@ -14114,7 +14102,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "helm",
@@ -14123,7 +14111,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "ollama",
@@ -14132,7 +14120,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "whisper",
@@ -14141,7 +14129,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 13210.9
+      "elapsed_ms": 12356.1
     },
     {
       "name": "python",
@@ -14155,7 +14143,7 @@
           "python3"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "python",
@@ -14169,7 +14157,7 @@
           "python3"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "python",
@@ -14183,7 +14171,7 @@
           "python3"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "shell",
@@ -14200,7 +14188,7 @@
           "cmd"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "shell",
@@ -14217,7 +14205,7 @@
           "cmd"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "shell",
@@ -14234,7 +14222,7 @@
           "cmd"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "shell",
@@ -14251,7 +14239,7 @@
           "cmd"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "shell",
@@ -14268,7 +14256,7 @@
           "cmd"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "shell",
@@ -14285,7 +14273,7 @@
           "cmd"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "node",
@@ -14300,7 +14288,7 @@
           "javascript"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "node",
@@ -14315,7 +14303,7 @@
           "javascript"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "node",
@@ -14330,7 +14318,7 @@
           "javascript"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "node",
@@ -14345,7 +14333,7 @@
           "javascript"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "go",
@@ -14358,7 +14346,7 @@
           "golang"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "go",
@@ -14371,7 +14359,7 @@
           "golang"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "rust",
@@ -14384,7 +14372,7 @@
           "rs"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "rust",
@@ -14397,7 +14385,7 @@
           "rs"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "ruby",
@@ -14410,7 +14398,7 @@
           "rb"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "ruby",
@@ -14423,7 +14411,7 @@
           "rb"
         ]
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "php",
@@ -14434,7 +14422,7 @@
       "extra": {
         "aliases": []
       },
-      "elapsed_ms": 4464.7
+      "elapsed_ms": 4061.8
     },
     {
       "name": "gcc",
@@ -14443,7 +14431,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 2140.5
+      "elapsed_ms": 2079.7
     },
     {
       "name": "g++",
@@ -14452,7 +14440,7 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 2140.5
+      "elapsed_ms": 2079.7
     },
     {
       "name": "clang",
@@ -14461,15 +14449,15 @@
       "path": null,
       "version": null,
       "error": "not found",
-      "elapsed_ms": 2140.5
+      "elapsed_ms": 2079.7
     },
     {
       "name": "cl",
       "category": "compilers",
       "available": true,
       "path": "E:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.EXE",
-      "version": "Microsoft (R) Incremental Linker Version 14.44.35219.0",
-      "elapsed_ms": 2140.5
+      "version": "鐢ㄦ硶: cl [ 閫夐」... ] 鏂囦欢鍚�... [ /link 閾炬帴閫夐」... ]",
+      "elapsed_ms": 2079.7
     },
     {
       "name": "rustc",
@@ -14477,7 +14465,7 @@
       "available": true,
       "path": "C:\\Users\\victo\\.cargo\\bin\\rustc.EXE",
       "version": "rustc 1.96.0 (ac68faa20 2026-05-25)",
-      "elapsed_ms": 2140.5
+      "elapsed_ms": 2079.7
     },
     {
       "name": "cargo",
@@ -14485,7 +14473,7 @@
       "available": true,
       "path": "C:\\Users\\victo\\.cargo\\bin\\cargo.EXE",
       "version": "cargo 1.96.0 (30a34c682 2026-05-25)",
-      "elapsed_ms": 2140.5
+      "elapsed_ms": 2079.7
     },
     {
       "name": "nim",
@@ -14493,7 +14481,7 @@
       "available": true,
       "path": "E:\\Dowloads\\nim-2.2.10_x64\\nim-2.2.10\\bin\\nim.EXE",
       "version": "Nim Compiler Version 2.2.10 [Windows: amd64]",
-      "elapsed_ms": 2140.5
+      "elapsed_ms": 2079.7
     },
     {
       "name": "zig",
@@ -14501,7 +14489,7 @@
       "available": true,
       "path": "C:\\Tools\\zig\\zig-x86_64-windows-0.16.0\\zig.EXE",
       "version": "0.16.0",
-      "elapsed_ms": 2140.5
+      "elapsed_ms": 2079.7
     },
     {
       "name": "go",
@@ -14509,7 +14497,7 @@
       "available": true,
       "path": "C:\\Go\\bin\\go.EXE",
       "version": "go version go1.26.5 windows/amd64",
-      "elapsed_ms": 2140.5
+      "elapsed_ms": 2079.7
     },
     {
       "name": "javac",
@@ -14517,7 +14505,7 @@
       "available": true,
       "path": "E:\\Java\\jdk17.0.17_10\\bin\\javac.EXE",
       "version": "javac 17.0.17",
-      "elapsed_ms": 2140.5
+      "elapsed_ms": 2079.7
     },
     {
       "name": "java",
@@ -14525,7 +14513,7 @@
       "available": true,
       "path": "E:\\Java\\jdk17.0.17_10\\bin\\java.EXE",
       "version": "openjdk version \"17.0.17\" 2025-10-21 LTS",
-      "elapsed_ms": 2140.5
+      "elapsed_ms": 2079.7
     },
     {
       "name": "pandas",
@@ -14536,7 +14524,7 @@
       "extra": {
         "is_optional": false
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "numpy",
@@ -14547,7 +14535,7 @@
       "extra": {
         "is_optional": false
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "polars",
@@ -14558,7 +14546,7 @@
       "extra": {
         "is_optional": false
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "openpyxl",
@@ -14569,7 +14557,7 @@
       "extra": {
         "is_optional": false
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "Pillow",
@@ -14580,7 +14568,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "matplotlib",
@@ -14591,7 +14579,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "seaborn",
@@ -14602,7 +14590,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "scipy",
@@ -14613,7 +14601,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "sympy",
@@ -14624,7 +14612,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "networkx",
@@ -14635,7 +14623,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "requests",
@@ -14646,7 +14634,7 @@
       "extra": {
         "is_optional": false
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "httpx",
@@ -14657,7 +14645,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "aiohttp",
@@ -14668,7 +14656,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "psycopg2",
@@ -14679,7 +14667,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "mysql-connector-python",
@@ -14690,7 +14678,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "pymongo",
@@ -14701,7 +14689,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "paramiko",
@@ -14712,7 +14700,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "pytesseract",
@@ -14723,7 +14711,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "openai",
@@ -14734,7 +14722,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "anthropic",
@@ -14745,7 +14733,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "ollama",
@@ -14756,7 +14744,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "transformers",
@@ -14767,7 +14755,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "torch",
@@ -14778,7 +14766,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "tensorflow",
@@ -14789,7 +14777,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "pytest",
@@ -14800,7 +14788,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "playwright",
@@ -14811,7 +14799,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "selenium",
@@ -14822,7 +14810,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "psutil",
@@ -14833,7 +14821,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "pywin32",
@@ -14844,7 +14832,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "platformdirs",
@@ -14855,7 +14843,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "distro",
@@ -14866,7 +14854,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "pydantic",
@@ -14877,7 +14865,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "click",
@@ -14888,7 +14876,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "typer",
@@ -14899,7 +14887,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "rich",
@@ -14910,7 +14898,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "jinja2",
@@ -14921,7 +14909,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "pyyaml",
@@ -14932,7 +14920,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "tomli",
@@ -14943,7 +14931,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "click",
@@ -14954,7 +14942,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "httpx",
@@ -14965,7 +14953,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "websockets",
@@ -14976,7 +14964,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "starlette",
@@ -14987,7 +14975,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "fastapi",
@@ -14998,7 +14986,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "uvicorn",
@@ -15009,7 +14997,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "flask",
@@ -15020,7 +15008,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "django",
@@ -15031,7 +15019,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "sqlalchemy",
@@ -15042,7 +15030,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "alembic",
@@ -15053,7 +15041,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "redis",
@@ -15064,7 +15052,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "celery",
@@ -15075,7 +15063,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "boto3",
@@ -15086,7 +15074,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "google-cloud-storage",
@@ -15097,7 +15085,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "azure-storage-blob",
@@ -15108,7 +15096,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "minio",
@@ -15119,7 +15107,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "duckdb",
@@ -15130,7 +15118,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "pyarrow",
@@ -15141,7 +15129,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "scikit-learn",
@@ -15152,7 +15140,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "xgboost",
@@ -15163,7 +15151,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "lightgbm",
@@ -15174,7 +15162,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "catboost",
@@ -15185,7 +15173,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "plotly",
@@ -15196,7 +15184,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "bokeh",
@@ -15207,7 +15195,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "altair",
@@ -15218,7 +15206,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "dash",
@@ -15229,7 +15217,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "streamlit",
@@ -15240,7 +15228,7 @@
       "extra": {
         "is_optional": true
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "_summary",
@@ -15253,7 +15241,7 @@
         "installed": 19,
         "not_installed": 46
       },
-      "elapsed_ms": 511.3
+      "elapsed_ms": 1227.3
     },
     {
       "name": "actions",
@@ -15266,20 +15254,20 @@
         "action_count": 3,
         "actions": [
           {
-            "id": "foo.actus.md",
+            "id": "actus.test.foo",
             "path": "E:\\IDEProjects\\AI\\vools\\actus\\actions\\foo.actus.md"
           },
           {
-            "id": "zh.actus.md",
+            "id": "actus.generated.zh",
             "path": "E:\\IDEProjects\\AI\\vools\\actus\\actions\\zh.actus.md"
           },
           {
-            "id": "zhzh.actus.md",
+            "id": "actus.generated.zhzh",
             "path": "E:\\IDEProjects\\AI\\vools\\actus\\actions\\zhzh.actus.md"
           }
         ]
       },
-      "elapsed_ms": 5.5
+      "elapsed_ms": 4.6
     },
     {
       "name": "action_dependencies",
@@ -15406,7 +15394,7 @@
           "packages": []
         }
       },
-      "elapsed_ms": 5.5
+      "elapsed_ms": 4.6
     }
   ]
 }

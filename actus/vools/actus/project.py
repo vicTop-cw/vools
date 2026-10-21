@@ -12,13 +12,13 @@
 import json
 import os
 import re
-import subprocess
 import time
 from vools.core.dataclass_compat import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from . import records as _records
 from .workflow import DAGScheduler, WorkflowExecutor
+from ._proc import run_cmd_safe
 
 
 # ── 数据结构 ──
@@ -34,7 +34,7 @@ class ModuleConfig:
     deploy_cmd: str = ""
     lint_cmd: str = ""
     outputs: List[str] = field(default_factory=list)
-    env: Dict[str, str] = field(default_factory=list) if False else field(default_factory=dict)
+    env: Dict[str, str] = field(default_factory=dict)
     deps: List[str] = field(default_factory=list)
     timeout: int = 300
     retries: int = 0
@@ -514,18 +514,14 @@ class ProjectOrchestrator:
         merged_env.update(env)
 
         try:
-            proc = subprocess.run(
+            proc = run_cmd_safe(
                 cmd,
                 shell=True,
                 cwd=work_path,
                 env=merged_env,
-                capture_output=True,
-                text=True,
                 timeout=timeout,
             )
-            return proc.returncode, proc.stdout, proc.stderr
-        except subprocess.TimeoutExpired:
-            return -1, "", f"Command timed out after {timeout}s"
+            return proc.returncode, proc.stdout or "", proc.stderr or ""
         except Exception as e:
             return -1, "", str(e)
 

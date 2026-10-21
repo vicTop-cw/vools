@@ -29,7 +29,6 @@ __all__ = [
 import io
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -37,6 +36,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple
 
 from .process_state import PROCESS_STATE_LOCK
+from ._proc import run_cmd_safe
 
 # 进程级全局（os.environ / sys.stdout / sys.stderr / sys.stdin / sys.argv）的改写窗口
 # 必须整段互斥：PythonRuntime 是**进程内 exec**，两个节点并行时各自的注入会互相看见，
@@ -174,19 +174,17 @@ class ShellRuntime(RuntimeBackend):
 
         stdin_data = context.get('stdin')
         try:
-            proc = subprocess.run(
+            timeout = context.get('timeout', 60)
+            proc = run_cmd_safe(
                 cmd,
-                shell=False,
                 cwd=workdir,
-                capture_output=True,
-                text=True,
-                timeout=context.get('timeout', 60),
+                timeout=timeout,
                 env=env,
                 input=stdin_data if stdin_data else None,
             )
+            if proc.returncode == -9:
+                return '', f'超时 ({timeout}s)', 124
             return proc.stdout, proc.stderr, proc.returncode
-        except subprocess.TimeoutExpired:
-            return '', f'超时 ({context.get("timeout", 60)}s)', 124
         except Exception as e:
             return '', str(e), 1
 
@@ -228,19 +226,17 @@ class NodeRuntime(RuntimeBackend):
                 cmd.extend(args.split() if isinstance(args, str) else args)
 
             stdin_data = context.get('stdin')
-            proc = subprocess.run(
+            timeout = context.get('timeout', 60)
+            proc = run_cmd_safe(
                 cmd,
-                shell=False,
                 cwd=workdir,
-                capture_output=True,
-                text=True,
-                timeout=context.get('timeout', 60),
+                timeout=timeout,
                 env=env,
                 input=stdin_data if stdin_data else None,
             )
+            if proc.returncode == -9:
+                return '', f'超时 ({timeout}s)', 124
             return proc.stdout, proc.stderr, proc.returncode
-        except subprocess.TimeoutExpired:
-            return '', f'超时 ({context.get("timeout", 60)}s)', 124
         except Exception as e:
             return '', str(e), 1
         finally:
@@ -277,11 +273,9 @@ class GoRuntime(RuntimeBackend):
             if sys.platform == 'win32':
                 binary += '.exe'
 
-            build_proc = subprocess.run(
+            build_proc = run_cmd_safe(
                 ['go', 'build', '-o', binary, go_file],
                 cwd=tmp_dir,
-                capture_output=True,
-                text=True,
                 timeout=120,
                 env=env,
             )
@@ -295,19 +289,17 @@ class GoRuntime(RuntimeBackend):
                 cmd.extend(args.split() if isinstance(args, str) else args)
 
             stdin_data = context.get('stdin')
-            proc = subprocess.run(
+            timeout = context.get('timeout', 60)
+            proc = run_cmd_safe(
                 cmd,
-                shell=False,
                 cwd=workdir,
-                capture_output=True,
-                text=True,
-                timeout=context.get('timeout', 60),
+                timeout=timeout,
                 env=env,
                 input=stdin_data if stdin_data else None,
             )
+            if proc.returncode == -9:
+                return '', f'超时 ({timeout}s)', 124
             return proc.stdout, proc.stderr, proc.returncode
-        except subprocess.TimeoutExpired:
-            return '', f'超时 ({context.get("timeout", 60)}s)', 124
         except Exception as e:
             return '', str(e), 1
         finally:
@@ -327,8 +319,7 @@ class RustRuntime(RuntimeBackend):
         # rustup shim 在 PATH 但未配置默认工具链时（rustup could not choose a
         # version of rustc to run），which 命中但编译必败——试运行验证工具链真实可用。
         try:
-            probe = subprocess.run(['rustc', '--version'], capture_output=True,
-                                   text=True, timeout=15)
+            probe = run_cmd_safe(['rustc', '--version'], timeout=15)
             return probe.returncode == 0
         except Exception:
             return False
@@ -350,11 +341,9 @@ class RustRuntime(RuntimeBackend):
             if sys.platform == 'win32':
                 binary += '.exe'
 
-            build_proc = subprocess.run(
+            build_proc = run_cmd_safe(
                 ['rustc', '-O', '-o', binary, rs_file],
                 cwd=tmp_dir,
-                capture_output=True,
-                text=True,
                 timeout=120,
                 env=env,
             )
@@ -368,19 +357,17 @@ class RustRuntime(RuntimeBackend):
                 cmd.extend(args.split() if isinstance(args, str) else args)
 
             stdin_data = context.get('stdin')
-            proc = subprocess.run(
+            timeout = context.get('timeout', 60)
+            proc = run_cmd_safe(
                 cmd,
-                shell=False,
                 cwd=workdir,
-                capture_output=True,
-                text=True,
-                timeout=context.get('timeout', 60),
+                timeout=timeout,
                 env=env,
                 input=stdin_data if stdin_data else None,
             )
+            if proc.returncode == -9:
+                return '', f'超时 ({timeout}s)', 124
             return proc.stdout, proc.stderr, proc.returncode
-        except subprocess.TimeoutExpired:
-            return '', f'超时 ({context.get("timeout", 60)}s)', 124
         except Exception as e:
             return '', str(e), 1
         finally:
@@ -414,19 +401,17 @@ class RubyRuntime(RuntimeBackend):
                 cmd.extend(args.split() if isinstance(args, str) else args)
 
             stdin_data = context.get('stdin')
-            proc = subprocess.run(
+            timeout = context.get('timeout', 60)
+            proc = run_cmd_safe(
                 cmd,
-                shell=False,
                 cwd=workdir,
-                capture_output=True,
-                text=True,
-                timeout=context.get('timeout', 60),
+                timeout=timeout,
                 env=env,
                 input=stdin_data if stdin_data else None,
             )
+            if proc.returncode == -9:
+                return '', f'超时 ({timeout}s)', 124
             return proc.stdout, proc.stderr, proc.returncode
-        except subprocess.TimeoutExpired:
-            return '', f'超时 ({context.get("timeout", 60)}s)', 124
         except Exception as e:
             return '', str(e), 1
         finally:
@@ -462,19 +447,17 @@ class PHPRuntime(RuntimeBackend):
                 cmd.extend(args.split() if isinstance(args, str) else args)
 
             stdin_data = context.get('stdin')
-            proc = subprocess.run(
+            timeout = context.get('timeout', 60)
+            proc = run_cmd_safe(
                 cmd,
-                shell=False,
                 cwd=workdir,
-                capture_output=True,
-                text=True,
-                timeout=context.get('timeout', 60),
+                timeout=timeout,
                 env=env,
                 input=stdin_data if stdin_data else None,
             )
+            if proc.returncode == -9:
+                return '', f'超时 ({timeout}s)', 124
             return proc.stdout, proc.stderr, proc.returncode
-        except subprocess.TimeoutExpired:
-            return '', f'超时 ({context.get("timeout", 60)}s)', 124
         except Exception as e:
             return '', str(e), 1
         finally:

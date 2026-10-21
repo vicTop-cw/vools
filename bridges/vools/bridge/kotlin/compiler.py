@@ -1,92 +1,112 @@
-"""
-vools.bridge.kotlin.compiler - Kotlin 编译支持
+"""Kotlin 语言桥接模块
 
-使用 kotlinc 编译 Kotlin 源码为 JAR，通过 kotlin 命令运行。
-支持 WSL 环境（Windows 上通过 wsl 命令调用）。
+通过 kotlinc 编译 Kotlin 代码为 JAR，再通过 kotlin 命令运行。
+Windows 上 kotlin 命令不在 PATH 时自动改用 WSL。
 """
-
-import os
-import sys
-import json
-import tempfile
+import asyncio
 import hashlib
-import platform
+import os
+import shutil
 import subprocess
 import textwrap
-import logging
-import asyncio
-import functools
-from typing import Optional, List, Any, Callable
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, List, Optional
 
-from .._base import LangBridge, FunctionSpec
-from ..core.types import LangType
-
-logger = logging.getLogger(__name__)
-
-_IS_WINDOWS = platform.system() == 'Windows'
-_IS_LINUX = platform.system() == 'Linux'
-_IS_MACOS = platform.system() == 'Darwin'
-
-_KOTLIN_CACHE_DIR = os.path.join(tempfile.gettempdir(), 'vools_kotlin_cache')
+from .types import FunctionSpec, LangBridge, LangType
 
 
 def _check_wsl() -> bool:
-    """检查是否可以使用 WSL（走 core.wsl 冷启动容错 + 进程级缓存）"""
-    from ..core import wsl as _wsl
-    return _wsl.is_wsl_available()
+    """检查 WSL 是否可用"""
+    try:
+        r = subprocess.run(['wsl', '--status'], capture_output=True, timeout=10)
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
 def _check_wsl_kotlin() -> bool:
-    """检查 WSL 中是否有 kotlinc 和 kotlin（走 core.wsl，冷启动超时退避重试）"""
-    from ..core import wsl as _wsl
-    return _wsl.probe_wsl_cmd(
-        ['bash', '-c', 'source ~/.sdkman/bin/sdkman-init.sh 2>/dev/null; which kotlinc && which kotlin'],
-        per_try_timeout=15,
-    )
+    """检查 WSL 内 kotlin 是否可用"""
+    try:
+        from ..probe import probe_wsl_cmd
+        return probe_wsl_cmd(['bash', '-c', 'command -v kotlin >/dev/null && kotlin -version >/dev/null 2>&1'])
+    except Exception:
+        return False
 
 
 def _check_local_kotlinc() -> bool:
-    """检查本地是否有 kotlinc"""
-    import shutil
+    """检查本地 kotlinc 是否可用"""
     return shutil.which('kotlinc') is not None
 
 
 def _check_local_kotlin() -> bool:
-    """检查本地是否有 kotlin"""
-    import shutil
+    """检查本地 kotlin 是否可用"""
     return shutil.which('kotlin') is not None
 
 
-# 惰性求值闸门：导入期冻结成常量会把 WSL 冷启动瞬间的 False 永久固化，
-# 整会话假 skip（见 core.wsl.WSLGate 说明）。
 def _wsl_kotlin_usable() -> bool:
-    return bool(not _check_local_kotlinc() and _check_wsl() and _check_wsl_kotlin())
+    """检查 WSL kotlin 是否可用"""
+    return _check_wsl() and _check_wsl_kotlin()
 
 
-from ..core.wsl import WSLGate
-_USE_WSL = WSLGate(_wsl_kotlin_usable) if _IS_WINDOWS else False
+class WSLGate:
+    """WSL 可用性门控，避免重复探测"""
+
+    _cache: Optional[bool] = None
+    _cache_time: Optional[float] = None
+
+    @staticmethod
+    def check() -> bool:
+        import time
+        now = time.time()
+        if WSLGate._cache is not None and (now - WSLGate._cache_time) < 60:
+            return WSLGate._cache
+        ok = _wsl_kotlin_usable()
+        WSLGate._cache = ok
+        WSLGate._cache_time = now
+        return ok
 
 
-def _to_wsl_path(windows_path: str) -> str:
+_USE_WSL = WSLGate.check()
+_KOTLIN_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '_cache', 'kotlin')
+
+
+def _to_wsl_path(p: str) -> str:
     """将 Windows 路径转换为 WSL 路径"""
-    if not os.path.isabs(windows_path):
-        windows_path = os.path.abspath(windows_path)
-    drive = windows_path[0].lower()
-    rest = windows_path[2:].replace('\\', '/')
-    return f'/mnt/{drive}{rest}'
+    p = os.path.abspath(p)
+    drive, rest = os.path.splitdrive(p)
+    if drive:
+        drive_letter = drive[0].lower()
+        return f'/mnt/{drive_letter}{rest.replace(os.sep, "/")}'
+    return p.replace(os.sep, '/')
 
 
-def _wsl_run(cmd: List[str], **kwargs) -> subprocess.CompletedProcess:
-    """通过 WSL 运行命令，自动加载 sdkman 环境"""
-    wsl_cmd = ['wsl', 'bash', '-c',
-               f'source ~/.sdkman/bin/sdkman-init.sh 2>/dev/null; {" ".join(cmd)}']
-    return subprocess.run(wsl_cmd, **kwargs)
+def _sh_quote(s: str) -> str:
+    """POSIX 单引号转义：把 s 变成 bash 单引号字面量。
+
+    替换内部 `'` 为 `'\''` 并整体包裹单引号。这样任何用户输入
+    （含 `"`、`$(...)`、反引号、`;`、`|`、`&`）在 bash 中只作字面量，
+    不会被当作命令或重定向。
+    """
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+
+def _wsl_run(cmd: List[str], timeout: float = 60) -> subprocess.CompletedProcess:
+    """通过 WSL 运行命令，自动加载 sdkman 环境。
+
+    使用 `_run_cmd_timeout`：WSL 冷启动本身就很慢，若子命令挂起
+    `subprocess.run(timeout=N)` 只杀直接子进程，wsl.exe 会 spawn
+    WSL VM 里的孙进程继续跑，调用方却被阻塞到孙进程退出为止。
+    每个 cmd 元素经 `_sh_quote` 单引号转义，杜绝 shell 注入。
+    """
+    sdkman = 'source ~/.sdkman/bin/sdkman-init.sh 2>/dev/null; '
+    quoted = ' '.join(_sh_quote(c) for c in cmd)
+    wsl_cmd = ['wsl', 'bash', '-c', sdkman + quoted]
+    from ..probe import _run_cmd_timeout
+    return _run_cmd_timeout(wsl_cmd, timeout=timeout)
 
 
 def _find_kotlinc() -> Optional[str]:
     """查找 kotlinc 命令路径"""
-    import shutil
     path = shutil.which('kotlinc')
     if path:
         return path
@@ -97,7 +117,6 @@ def _find_kotlinc() -> Optional[str]:
 
 def _find_kotlin() -> Optional[str]:
     """查找 kotlin 命令路径"""
-    import shutil
     path = shutil.which('kotlin')
     if path:
         return path
@@ -129,11 +148,11 @@ def get_kotlin_version() -> Optional[str]:
 
     try:
         if _USE_WSL:
-            result = _wsl_run(['kotlinc', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+            result = _wsl_run(['kotlinc', '-version'], timeout=10)
         else:
-            result = subprocess.run(
+            from ..probe import _run_cmd_timeout
+            result = _run_cmd_timeout(
                 ['kotlinc', '-version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=10,
             )
         return result.stderr.decode('utf-8', errors='replace').split('\n')[0]
@@ -342,7 +361,6 @@ class KotlinBridge(LangBridge):
             wsl_jar = _to_wsl_path(jar_path)
             result = _wsl_run(
                 ['kotlinc', '-include-runtime', '-d', wsl_jar, wsl_src],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=180,
             )
         else:
@@ -352,9 +370,9 @@ class KotlinBridge(LangBridge):
                 '-d', jar_path,
                 kt_file,
             ]
-            result = subprocess.run(
+            from ..probe import _run_cmd_timeout
+            result = _run_cmd_timeout(
                 compile_cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=180,
             )
 
@@ -400,14 +418,13 @@ class KotlinBridge(LangBridge):
             wsl_files = [_to_wsl_path(f) for f in kt_files]
             result = _wsl_run(
                 ['kotlinc', '-include-runtime', '-d', wsl_jar] + wsl_files,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=180,
             )
         else:
             compile_cmd = ['kotlinc', '-include-runtime', '-d', jar_path] + kt_files
-            result = subprocess.run(
+            from ..probe import _run_cmd_timeout
+            result = _run_cmd_timeout(
                 compile_cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=180,
             )
 
@@ -438,9 +455,10 @@ class KotlinBridge(LangBridge):
 
         if _USE_WSL:
             wsl_jar = _to_wsl_path(lib_path)
+            # `_wsl_run` 已对每个 arg 做单引号转义，这里不要再手动包双引号，
+            # 否则用户参数里的 `"` 会突破单引号注入任意命令。
             result = _wsl_run(
-                ['kotlin', '-classpath', wsl_jar, class_name, f'"{input_arg}"'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                ['kotlin', '-classpath', wsl_jar, class_name, input_arg],
                 timeout=60,
             )
         else:
@@ -450,9 +468,9 @@ class KotlinBridge(LangBridge):
                 class_name,
                 input_arg,
             ]
-            result = subprocess.run(
+            from ..probe import _run_cmd_timeout
+            result = _run_cmd_timeout(
                 cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=60,
             )
 

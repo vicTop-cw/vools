@@ -46,7 +46,8 @@ vools.bridge.erlang - Erlang 语言桥接模块
 
 前置条件:
 - 安装 Erlang (>= 25)，并将 erl/erlc 加入 PATH
-- Windows 推荐: D:\\Erlang
+- Windows 推荐: 设置 ERLANG_HOME 指向 Erlang 安装目录（如 C:\\Erlang），
+  或在 vools.bridge.manager 的 erlang_paths 中加入实际安装路径
 - 参考: https://www.erlang.org/
 """
 

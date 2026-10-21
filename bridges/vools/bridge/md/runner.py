@@ -1986,7 +1986,8 @@ def _execute_shell(
     安全加固（M1 修复）：不用 shell=True 拼接（避免命令注入），
     显式定位 bash/sh 并用 argv 数组传 `-c`。
     """
-    env = dict(context.get("env", {}))
+    env = dict(os.environ)
+    env.update(context.get("env", {}))
     stdin_data = context.get("stdin")
 
     # 定位 shell 二进制
@@ -1996,15 +1997,18 @@ def _execute_shell(
 
     full_cmd = content if not args else f"{content}\n{args}"
 
-    proc = subprocess.run(
-        [shell_bin, "-c", full_cmd],
-        cwd=workdir,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=env,
-        input=stdin_data if stdin_data else None,
-    )
+    try:
+        proc = subprocess.run(
+            [shell_bin, "-c", full_cmd],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+            input=stdin_data if stdin_data else None,
+        )
+    except subprocess.TimeoutExpired:
+        return "", f"shell 执行超时 ({timeout}s)", 124
     return proc.stdout, proc.stderr, proc.returncode
 
 
@@ -2269,6 +2273,35 @@ def _execute_rich_block(
                 fold_label=getattr(block, "fold_label", "") or "\u70b9\u51fb\u5c55\u5f00",
             )
             audit: List[str] = []
+        elif block.language == "svg":
+            # P2：SVG 专用路由 —— SVG 白名单净化后落 block_{index}.svg，卡片内 <img> 引用；
+            # 净化失败/超限降级为源码展示（卡片内无脚本）
+            from .rich.sanitize import sanitize_svg
+
+            safe_svg, svg_audit = sanitize_svg(block.content)
+            if not safe_svg:
+                card_html = render_source_card(
+                    block_id=f"block_{index}",
+                    language="svg",
+                    source=block.content,
+                    level=4,
+                    foldable=bool(getattr(block, "foldable", False)),
+                    collapsed=bool(getattr(block, "collapsed", False)),
+                    fold_label=getattr(block, "fold_label", "") or "\u70b9\u51fb\u5c55\u5f00",
+                )
+                audit = [f"svg-rejected:{','.join(svg_audit[:5]) or 'empty'}"]
+            else:
+                out_svg = os.path.join(rich_dir, f"block_{index}.svg")
+                write_text(out_svg, safe_svg)
+                body_html = f'<img src="block_{index}.svg" alt="svg block {index}" data-rich-svg-block="{index}">'
+                card_html = render_card(
+                    block_id=f"block_{index}",
+                    kind="svg",
+                    title=title,
+                    body_html=body_html,
+                    level=level if level in (1, 2, 3) else 1,
+                )
+                audit = [f"svg 剥离 {len(svg_audit)} 项: {', '.join(svg_audit[:10])}"] if svg_audit else []
         else:
             safe_html, audit = sanitize_html_fragment(
                 block.content,

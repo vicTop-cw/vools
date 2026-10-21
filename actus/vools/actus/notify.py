@@ -17,11 +17,12 @@
 import json
 import os
 import logging
-import subprocess
 from typing import Dict, List, Optional, Callable
 from vools.core.dataclass_compat import dataclass, field
 from datetime import datetime
 from enum import Enum
+
+from ._proc import run_cmd_safe
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ class SystemSender:
                 f"$toast = [Windows.UI.Notifications.ToastNotification]::new($template);"
                 f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Actus').Show($toast)"
             ]
-            subprocess.run(cmd, capture_output=True, timeout=10)
+            run_cmd_safe(cmd, timeout=10)
 
     def _send_macos(self, msg: NotifyMessage):
         """macOS 系统通知。"""
@@ -135,12 +136,12 @@ class SystemSender:
             "osascript", "-e",
             f'display notification "{msg.body}" with title "{msg.title}"'
         ]
-        subprocess.run(cmd, capture_output=True, timeout=10)
+        run_cmd_safe(cmd, timeout=10)
 
     def _send_linux(self, msg: NotifyMessage):
         """Linux 系统通知。"""
         cmd = ["notify-send", msg.title, msg.body]
-        subprocess.run(cmd, capture_output=True, timeout=10)
+        run_cmd_safe(cmd, timeout=10)
 
 
 class WebhookSender:

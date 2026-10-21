@@ -6,7 +6,7 @@ Markdown 生成器
 
 from .parser import (
     Document, Heading, Paragraph, CodeBlock, BlockQuote,
-    MdList, ListItem, Divider, InlineText
+    MdList, ListItem, Divider, InlineText, ConfigBlock, LangBlock
 )
 from ..encoding import write_text
 
@@ -72,6 +72,16 @@ def _node_to_md(node, indent: int = 0) -> str:
 
     elif isinstance(node, Divider):
         return f'{prefix}---'
+
+    elif isinstance(node, ConfigBlock):
+        fence = '```'
+        lang_line = f'{fence}#!config {node.config_type}\n'
+        return f'{prefix}{lang_line}{node.content}\n{prefix}{fence}'
+
+    elif isinstance(node, LangBlock):
+        fence = '```'
+        lang_line = f'{fence}#!lang {node.language}\n'
+        return f'{prefix}{lang_line}{node.content}\n{prefix}{fence}'
 
     return f'{prefix}{node}'
 

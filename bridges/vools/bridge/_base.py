@@ -1586,24 +1586,28 @@ class LangBridge(abc.ABC):
             )
         )
 
-    def _run_executable(self, exe_path: str, args: tuple) -> tuple:
+    def _run_executable(self, exe_path: str, args: tuple, timeout: float = 300) -> tuple:
         """运行可执行文件并返回执行结果。
+
+        用 `probe._run_cmd_timeout`：Windows 上裸 `subprocess.run(timeout=N)`
+        只杀直接子进程，用户项目产出的可执行文件若 spawn 孙进程（例如 shell
+        脚本、批处理）会泄漏孤儿进程，且超时后调用方被阻塞到孙进程退出。
+        这里保证 kill 整棵进程树并按时返回 rc=-9。
 
         Args:
             exe_path: 可执行文件路径。
             args: 传递给可执行文件的命令行参数元组。
+            timeout: 超时秒数（默认 300）。
 
         Returns:
             tuple: 三元组 (returncode, stdout, stderr)，分别为
                 退出码、标准输出、标准错误输出。
         """
-        import subprocess
-        result = subprocess.run(
-            [exe_path] + list(args),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True
-        )
-        return (result.returncode, result.stdout, result.stderr)
+        from .probe import _run_cmd_timeout
+        result = _run_cmd_timeout([exe_path] + list(args), timeout=timeout)
+        stdout = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
+        stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
+        return (result.returncode, stdout, stderr)
 
 
 # ============================================================================

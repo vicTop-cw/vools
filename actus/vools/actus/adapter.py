@@ -17,13 +17,14 @@ import time
 import shlex
 import shutil
 import logging
-import subprocess
 import urllib.request
 import urllib.error
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from vools.core.dataclass_compat import dataclass, field
 from enum import Enum
+
+from ._proc import run_cmd_safe
 
 logger = logging.getLogger(__name__)
 
@@ -230,8 +231,7 @@ class CLIAdapter:
         if self.spec.check:
             cmd, use_shell = self._check_command()
             try:
-                result = subprocess.run(cmd, shell=use_shell, capture_output=True,
-                                        timeout=10)
+                result = run_cmd_safe(cmd, shell=use_shell, timeout=10)
                 return result.returncode == 0, ""
             except Exception as e:
                 return False, str(e)
@@ -298,11 +298,9 @@ class CLIAdapter:
         logger.info(f"CLI 适配器执行: {full_cmd}")
 
         try:
-            result = subprocess.run(
+            result = run_cmd_safe(
                 full_cmd,
                 shell=use_shell,
-                capture_output=True,
-                text=True,
                 cwd=cwd or os.getcwd(),
                 timeout=self.spec.timeout,
             )
@@ -346,8 +344,6 @@ class CLIAdapter:
                 artifact_path=output_path,
             )
 
-        except subprocess.TimeoutExpired:
-            return AdapterResult(False, stderr=f"执行超时 ({self.spec.timeout}s)", returncode=-1)
         except Exception as e:
             return AdapterResult(False, stderr=str(e), returncode=-1)
 
@@ -390,10 +386,8 @@ class QuickerAdapter:
             cmd = ["QuickerStarter.exe", "runaction", action_id, param_str]
 
         try:
-            result = subprocess.run(
+            result = run_cmd_safe(
                 cmd,
-                capture_output=True,
-                text=True,
                 cwd=cwd or os.getcwd(),
                 timeout=self.spec.timeout,
             )
@@ -415,8 +409,6 @@ class QuickerAdapter:
                 duration=time.time() - start,
             )
 
-        except subprocess.TimeoutExpired:
-            return AdapterResult(False, stderr=f"执行超时 ({self.spec.timeout}s)", returncode=-1)
         except Exception as e:
             return AdapterResult(False, stderr=str(e), returncode=-1)
 

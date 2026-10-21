@@ -25,11 +25,12 @@ import os
 import re
 import hashlib
 import shutil
-import subprocess
 import tempfile
 import logging
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
+
+from ._proc import run_cmd_safe
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +121,12 @@ class RustCompiler(CompilerBackend):
             str(source_path),
         ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = run_cmd_safe(cmd, timeout=120)
             if result.returncode == 0:
                 return True, ""
-            return False, result.stderr
-        except subprocess.TimeoutExpired:
-            return False, "编译超时 (120s)"
+            if result.returncode == -9:
+                return False, "编译超时 (120s)"
+            return False, result.stderr or ""
         except Exception as e:
             return False, str(e)
 
@@ -150,10 +151,12 @@ class CCompiler(CompilerBackend):
             cmd = ["cl.exe", "/LD", str(source_path), f"/Fe:{output_path}"]
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = run_cmd_safe(cmd, timeout=60)
             if result.returncode == 0:
                 return True, ""
-            return False, result.stderr
+            if result.returncode == -9:
+                return False, "编译超时 (60s)"
+            return False, result.stderr or ""
         except Exception as e:
             return False, str(e)
 
