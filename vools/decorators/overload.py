@@ -34,10 +34,29 @@ import inspect
 import types
 import pickle
 from functools import wraps
-from typing import Any, Callable, Optional, List, Tuple, Union, Dict
+from typing import Any, Callable, Optional, List, Tuple, Union, Dict, get_type_hints
 from enum import IntFlag
 
 from ..cache.sigcache import get_signature
+
+
+def _resolve_annotations(func: Callable) -> Dict[str, Any]:
+    """解析函数注解，兼容 PEP 563 字符串注解（BUG-273）。
+
+    原实现在 _create_strict_check / strict 装饰器里直接读
+    ``func.__annotations__``——``from __future__ import annotations`` 下注解是
+    字符串，``isinstance(value, 'int')`` 抛
+    ``TypeError: isinstance() arg 2 must be a type``，使 @overload 的 Strict
+    模式与 @strict 的每次调用都崩溃。
+
+    优先 ``typing.get_type_hints`` 解析；失败回退原始注解，并剔除仍为字符串
+    的项（前向引用/未定义名）——无法校验的类型按「不限制」降级而非崩溃。
+    """
+    try:
+        hints = get_type_hints(func)
+    except Exception:
+        hints = dict(getattr(func, '__annotations__', None) or {})
+    return {k: v for k, v in hints.items() if not isinstance(v, str)}
 
 try:
     from .curry_core import is_curried, Curried
@@ -160,7 +179,9 @@ def _create_strict_check(func: Callable) -> Callable:
         func = func.func
 
     sig = get_signature(func)
-    annotations = func.__annotations__
+    # BUG-273: 原直接读 func.__annotations__，PEP 563 字符串注解下
+    # isinstance(value, 'int') 抛 TypeError，Strict 分派每次调用都崩溃。
+    annotations = _resolve_annotations(func)
     params = sig.parameters
 
     def strict_check(args, kwargs):
@@ -558,7 +579,9 @@ def strict(func: Optional[Callable] = None, *, enabled: bool = True) -> Callable
     """
     def _wrap(f: Callable) -> Callable:
         sig = get_signature(f)
-        annotations = f.__annotations__
+        # BUG-273: 同 _create_strict_check，PEP 563 字符串注解下 isinstance
+        # 会抛 TypeError；改用注解解析助手。
+        annotations = _resolve_annotations(f)
 
         @wraps(f)
         def wrapper(*args, **kwargs):
