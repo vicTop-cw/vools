@@ -46,3 +46,13 @@ from .stats_operators import (
     drop_none, fill_none, abs_op, clamp,
     explode, flatten,
 )
+
+from .rdd_operators import (
+    map_partitions, map_partitions_with_index, glom,
+    coalesce, repartition,
+    group_by_key, reduce_by_key, aggregate_by_key,
+    sort_by, sort_by_key,
+    join, left_outer_join, right_outer_join, full_outer_join, cogroup,
+    intersection, subtract as rdd_subtract, cartesian,
+    zip_with_index, zip_with_unique_id,
+)
