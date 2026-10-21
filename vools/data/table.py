@@ -535,23 +535,25 @@ class Table(Seq):
         with open(filepath, 'r', encoding=encoding) as f:
             reader = csv.reader(f, delimiter=delimiter)
             for i, row in enumerate(reader):
-                if rows and i >= rows:
+                if rows is not None and i >= rows:
                     break
                 if i == 0:
                     columns = [str(c) if c else f'col_{j}' for j, c in enumerate(row)]
-                    if cols:
+                    if cols is not None:
                         row = [row[j] if j < len(row) else '' for j in cols]
                     else:
                         row = row
                 else:
-                    if cols:
+                    if cols is not None:
                         row = [row[j] if j < len(row) else '' for j in cols]
                     else:
                         row = row
                 data.append(row)
         
         # 处理列
-        if columns and cols:
+        # BUG-268: 原 `if columns and cols:` 是假值陷阱——cols=[] 时表头
+        # 不过滤而数据行已取空列，得到 3 列名 + 空数据行的畸形表。
+        if columns and cols is not None:
             columns = [columns[j] if j < len(columns) else f'col_{j}' for j in cols]
         
         return cls(data, columns=columns, name=name)
