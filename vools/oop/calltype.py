@@ -7,6 +7,51 @@ from ..cache.sigcache import get_signature
 __all__ = ['CallableType','get_callable_type','create_fake']
 
 
+def _resolve_staticmethod_owner(obj):
+    """确定性解析普通函数是否为某个类的 staticmethod（BUG-274）。
+
+    `A.make`（staticmethod 通过类访问）在 Python 里就是一个普通函数，只能靠
+    归属信息反查。原实现扫描**调用栈**寻找同名类，跨模块（类不在当前帧作用域）
+    时必然失败。本函数改用函数对象自带的确定性信息：
+    ``obj.__qualname__``（类路径）+ ``obj.__globals__``（模块命名空间）逐级
+    解析出类，再检查 ``cls.__dict__[name]`` 是否为 staticmethod。
+
+    Args:
+        obj: 待判断对象。
+
+    Returns:
+        命中的类对象；不是 staticmethod（或无法确定性解析，如 <locals> 局部类）
+        时返回 None，由调用方回退到原有栈扫描逻辑。
+    """
+    qualname = getattr(obj, '__qualname__', '')
+    parts = qualname.split('.')
+    if len(parts) < 2:
+        return None
+    scope = getattr(obj, '__globals__', None)
+    if not scope:
+        return None
+
+    current = scope
+    for part in parts[:-1]:
+        if part == '<locals>':
+            return None  # 局部类：无法用 globals 确定，交给栈兜底
+        if inspect.isclass(current):
+            return None
+        if isinstance(current, dict):
+            if part not in current:
+                return None
+            current = current[part]
+        elif hasattr(current, part):
+            current = getattr(current, part)
+        else:
+            return None
+
+    if not inspect.isclass(current):
+        return None
+    attr = current.__dict__.get(parts[-1])
+    return current if isinstance(attr, staticmethod) else None
+
+
 
 
 class CallableType(enum.Enum):
@@ -53,6 +98,11 @@ def get_callable_type(obj):
     # 检查通过类访问的静态方法（函数形式）
     try:
         if inspect.isfunction(obj):
+            # BUG-274: 先用 __qualname__ + __globals__ 做**确定性**归属解析
+            # （跨模块类也能命中），栈扫描仅作 <locals> 局部类的兜底。
+            if _resolve_staticmethod_owner(obj) is not None:
+                return CallableType.CALLABLE_STATICMETHOD
+
             # 检查函数的__qualname__是否包含类名
             qualname_parts = obj.__qualname__.split('.')
             if len(qualname_parts) >= 2:
@@ -71,14 +121,11 @@ def get_callable_type(obj):
                                 # 检查这个类是否有对应的静态方法
                                 class_attr = value.__dict__.get(method_name)
                                 if isinstance(class_attr, staticmethod):
-                                    # 验证方法名是否匹配
-                                    if hasattr(class_attr, '__func__'):
-                                        if class_attr.__func__.__name__ == method_name:
-                                            return CallableType.CALLABLE_STATICMETHOD
-                                    else:
-                                        # 直接比较函数对象
-                                        if value.__dict__.get(method_name).__func__ is obj:
-                                            return CallableType.CALLABLE_STATICMETHOD
+                                    # BUG-274: 必须做**对象身份**校验——原实现
+                                    # 只比较 __name__，帧内同名静态方法的不同类
+                                    # 会把普通函数误判为 STATICMETHOD。
+                                    if class_attr.__func__ is obj:
+                                        return CallableType.CALLABLE_STATICMETHOD
                     except Exception:
                         break
                 
