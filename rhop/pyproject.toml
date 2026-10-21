@@ -4,17 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vools-rhop"
-version = "0.1.0"
+version = "0.2.0"
 authors = [
     { name = "Victor", email = "victortop921129@gmail.com" },
 ]
-description = "vools-rhop - 双方对等镜像任务中继协议（MVP：抽象密钥 + shared path 传输 + vools-rx 触发器监控）"
+description = "vools-rhop - 双方对等镜像任务中继协议（密钥抽象 + 传输 + A/B/C 三角 + 通用任务队列：A 加密 JSON 指令 → B 解密执行，SQLite 管理依赖与状态）"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.6"
 dependencies = [
     "cryptography>=3.4",
+    # envelope.py 在导入期就用 attr.s（Py3.6 基线不引入 dataclasses），此前漏声明
+    "attrs>=17.0",
 ]
+
+[project.scripts]
+rhop-task = "vools.rhop.task.cli:main"
+rhop-secret = "vools.rhop.secret:main"
 
 [tool.setuptools.packages.find]
 include = ["vools.rhop*"]

@@ -37,10 +37,28 @@ from .transport import (
 
 
 def _key_from_cfg(key_cfg):
-    """从配置的 key 字段解析密钥文本（明文 / path / env）。"""
+    """从配置的 key 字段解析密钥文本（明文 / 密文 / path / env）。
+
+    兼容写法：
+    - 字符串：直接作为密钥文本（明文，调用方负责告警）；
+    - 字典 ``{"path": ...}`` / ``{"env": ...}``：从文件或环境变量取密钥；
+    - 字典 ``{"plain": "..."}``：明文字段（task 层会打明文告警）；
+    - 字典 ``{"cipher": "RHOP-ENC:...", "env"|"path": ...}``：加密的主密钥，
+      用 env/path 提供的外层密钥解开（避免"自己解自己"的循环）。
+    """
     if key_cfg is None:
-        raise ValueError("配置缺少 key（明文、key.path 或 key.env 三者其一）")
+        raise ValueError("配置缺少 key（明文、key.cipher、key.path 或 key.env 三者其一）")
     if isinstance(key_cfg, dict):
+        plain = key_cfg.get("plain")
+        if plain not in (None, ""):
+            return str(plain)
+        cipher = key_cfg.get("cipher")
+        if cipher not in (None, ""):
+            from .crypto import RhopCrypto
+            unlock = load_key(source=key_cfg.get("source"),
+                              path=key_cfg.get("path"),
+                              env_name=key_cfg.get("env") or "RHOP_KEY")
+            return RhopCrypto(unlock).decrypt_secret(str(cipher))
         path = key_cfg.get("path")
         env = key_cfg.get("env")
         source = key_cfg.get("source")
@@ -158,9 +176,10 @@ class RhopConfig(object):
         read_spec = self.shared.get("read")
         if not write_spec:
             raise ValueError("shared 配置缺少 write/spec 字段")
-        if read_spec:
-            return make_shared_path(write_spec, read_spec)
-        return LocalSharedPath(write_spec)
+        # 统一走 make_shared_path：单 spec 时读端=写端，语义与旧 LocalSharedPath 一致；
+        # 关键是把 http(s):// 形态正确解析为 HttpEndpoint，而不是误当本地目录
+        # （旧实现只在 read_spec 存在时才走解析，http:// 写端会被 abspath 成本地路径）。
+        return make_shared_path(write_spec, read_spec)
 
     def build_relay(self):
         if not self.relay:
