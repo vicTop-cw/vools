@@ -62,6 +62,14 @@ class ListLikeMeta(type):
 class VList(Seq, metaclass=ListLikeMeta):
     """链式列表类，继承自 Seq，提供丰富的列表处理方法"""
 
+    # BUG-221: pop/shift 的 docstring 明写「列表为空则返回 None」，但 @rself
+    # 的链式兜底把方法返回值 None 转成 self——VList([]).pop() 返回整条空列表
+    # 本身，`is None` 空弹判断永假，调用方把空列表当弹出的元素消费。
+    # 走 _rself_exclude 官方逃生门（先例：VDate._rself_exclude={'date'}
+    # BUG-200、VText=('regexp_substr',) BUG-220），弹出语义对齐内置 list：
+    # 空列表返回 None、非空返回原始元素。
+    _rself_exclude = ('pop', 'shift')
+
     def __init__(self, *origins: Any) -> None:
         """初始化 VList。
 
