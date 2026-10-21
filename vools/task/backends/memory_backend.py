@@ -16,7 +16,14 @@ from . import _dag
 
 
 class MemoryTaskBackend:
-    """内存任务队列后端（线程内使用，无锁）。"""
+    """内存任务队列后端（线程内使用，无锁）。
+
+    Args:
+        max_retries: 单任务最大重试次数（``fail`` 路径按此上限转 FAILED）。
+        retry_delay_min: **当前仅为 API 兼容占位，不影响重试时序**——失败任务
+            转 RETRY_PENDING 后立即可被再次领取，无退避等待（BUG-231，真实
+            退避留作后续独立任务）。
+    """
 
     def __init__(self, max_retries: int = 3, retry_delay_min: int = 5):
         self.max_retries = max_retries
