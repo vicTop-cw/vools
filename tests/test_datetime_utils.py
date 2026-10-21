@@ -105,11 +105,11 @@ class TestGetWeek:
         assert result == "2024-01-01"
 
     def test_bad_weekday(self):
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError):
             get_week("2024-01-10", weekday=0)
 
     def test_bad_weekday_high(self):
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError):
             get_week("2024-01-10", weekday=8)
 
     def test_weekday_7(self):
