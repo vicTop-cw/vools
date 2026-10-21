@@ -7,7 +7,7 @@ vools.sql.core.builder - SQL 构建器抽象与基础实现
 
 import abc
 import re
-from typing import Tuple, List, Any
+from typing import Tuple, List, Any, Callable, Optional
 
 
 class SqlBuilder(abc.ABC):
@@ -360,6 +360,54 @@ class BaseSqlBuilder(SqlBuilder):
         else:
             return '%s'
 
+    @staticmethod
+    def _split_by_quotes(condition: str) -> List[Tuple[bool, str]]:
+        """把条件串切成 [(是否引号内, 片段), ...]。
+
+        BUG-232: 占位符替换必须避开字符串字面量——否则 "'what?'"、
+        "'12:30:00'"、LIKE 模式等字面量文本被误改写成占位符，SQL 文本静默
+        损坏（带参数时还会令参数索引整体错位）。单引号字面量按 SQL 标准
+        ``''`` 转义处理；双引号标识符同样视为字面量原样保留。
+        """
+        parts: List[Tuple[bool, str]] = []
+        buf: List[str] = []
+        quote: Optional[str] = None
+        i, n = 0, len(condition)
+        while i < n:
+            ch = condition[i]
+            if quote is None:
+                if ch in ("'", '"'):
+                    if buf:
+                        parts.append((False, ''.join(buf)))
+                        buf = []
+                    quote = ch
+                    buf.append(ch)
+                else:
+                    buf.append(ch)
+            else:
+                buf.append(ch)
+                if ch == quote:
+                    # '' / "" 转义：连续同引号是字面量内容
+                    if i + 1 < n and condition[i + 1] == quote:
+                        buf.append(condition[i + 1])
+                        i += 2
+                        continue
+                    parts.append((True, ''.join(buf)))
+                    buf = []
+                    quote = None
+            i += 1
+        if buf:
+            parts.append((quote is not None, ''.join(buf)))
+        return parts
+
+    def _sub_placeholders(self, condition: str, repl: Callable[[Any], str]) -> str:
+        """仅在引号外片段做占位符替换（BUG-232）。"""
+        out: List[str] = []
+        for is_quoted, text in self._split_by_quotes(condition):
+            out.append(text if is_quoted
+                       else self._PLACEHOLDER_PATTERN.sub(repl, text))
+        return ''.join(out)
+
     def _normalize_condition(self, condition: str, params: tuple) -> Tuple[str, tuple]:
         """
         标准化条件表达式中的占位符
@@ -382,7 +430,8 @@ class BaseSqlBuilder(SqlBuilder):
             param_idx += 1
             return placeholder
 
-        normalized = self._PLACEHOLDER_PATTERN.sub(replace_placeholder, condition)
+        # BUG-232: 只替换引号外的占位符，字面量文本原样保留
+        normalized = self._sub_placeholders(condition, replace_placeholder)
         return normalized, params
 
     def select(self, *columns: str) -> 'BaseSqlBuilder':
@@ -698,7 +747,8 @@ class BaseSqlBuilder(SqlBuilder):
                 param_offset += 1
                 return placeholder
 
-            reindexed_cond = self._PLACEHOLDER_PATTERN.sub(replace_placeholder, cond)
+            # BUG-232: 只重编号引号外的占位符，字面量文本原样保留
+            reindexed_cond = self._sub_placeholders(cond, replace_placeholder)
             condition_strs.append(reindexed_cond)
             all_params.extend(params)
 
