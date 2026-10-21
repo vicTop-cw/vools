@@ -186,7 +186,10 @@ class PgTaskBackend:
         states 指定可领取状态；默认 ['PENDING', 'READY', 'RETRY_PENDING']。
         返回任务 dict（含 id/payload/...），无任务返回 None。
         """
-        states = states or ["READY", "RETRY_PENDING"]
+        # BUG-255: 原 `states or [...]` 是假值陷阱——显式空列表（不领取任何
+        # 状态）被替换为默认状态，会领走调用方明确排除的任务。
+        if states is None:
+            states = ["READY", "RETRY_PENDING"]
         cur = self._cursor()
         # 只领 READY / RETRY_PENDING；PENDING 表示依赖未满足，不能抢跑
         order = ("CASE WHEN status='READY' THEN 0 WHEN status='RETRY_PENDING' THEN 1"

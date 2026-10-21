@@ -108,7 +108,10 @@ class MemoryTaskBackend:
     def acquire(self, worker_id: str, timeout_min: int = 5,
                 states: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
         # 依赖满足的任务在提交时即 READY；RETRY_PENDING 可被再次领取
-        states = states or ["READY", "RETRY_PENDING"]
+        # BUG-255: 原 `states or [...]` 是假值陷阱——显式空列表（不领取任何
+        # 状态）被替换为默认状态，会领走调用方明确排除的任务。
+        if states is None:
+            states = ["READY", "RETRY_PENDING"]
         now = datetime.utcnow()
         rank = {"READY": 0, "RETRY_PENDING": 1, "PENDING": 2}
         cands = sorted(
