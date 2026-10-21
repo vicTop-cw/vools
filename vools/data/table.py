@@ -1347,7 +1347,26 @@ class Table(Seq):
         示例::
 
             table.query(where='age > 25', order_by='age', desc=True, limit=5)
+            table.query("where=age>25&limit=5")
         """
+        # BUG-224: sql_like 位置参数原声明且 docstring 给出用法示例，函数体
+        # 却完全不消费——按文档传串的用户静默拿到全量数据（以为已过滤）。
+        # 现解析 "k=v&k=v" 与 kwargs 合并：显式 kwargs 优先，sql_like 只补缺。
+        if sql_like:
+            for part in str(sql_like).split('&'):
+                if not part:
+                    continue
+                if '=' not in part:
+                    raise ValueError(
+                        f"Invalid sql_like segment {part!r}: expect 'key=value'"
+                    )
+                key, value = part.split('=', 1)
+                key, value = key.strip(), value.strip()
+                if key in ('limit', 'offset'):
+                    value = int(value)
+                elif key == 'desc':
+                    value = value.lower() in ('true', '1', 'yes')
+                kwargs.setdefault(key, value)
         result = self
         if 'select' in kwargs:
             cols = kwargs['select']
