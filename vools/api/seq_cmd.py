@@ -48,7 +48,9 @@ def from_range(
     if map_expr:
         seq = seq.map(parse_lambda(map_expr))
     
-    if limit:
+    # BUG-223: falsy 判断把显式 --limit 0 当"未指定"静默忽略（期望 0 条
+    # 实得全量）。typer Optional 的未指定是 None，须按 is not None 判定。
+    if limit is not None:
         seq = seq.take(limit)
     
     if collect:
