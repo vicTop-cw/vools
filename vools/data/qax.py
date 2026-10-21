@@ -26,6 +26,11 @@ __all__ = ['Qax']
 
 @rself
 class Qax(Table):
+    # BUG-252: QAXMax/QAXMin 在无匹配数据时应返回 None，与 Table.max/min 一致。
+    # 继承自 Table 的 _rself_exclude=('max','min') 只覆盖底层方法名；
+    # Qax 子类需显式列出 PascalCase 包装名。
+    _rself_exclude = ('max', 'min', 'QAXMax', 'QAXMin')
+
     """SqlCel QAX 风格的表格数据结构
 
     提供 PascalCase 命名的 API，行列索引从 1 开始。
