@@ -499,7 +499,7 @@ for emp in employees:
 
 ## SqlCel 函数映射 (vools.xl + vools.data Table)
 
-[SqlCel](D:\SqlCel) 提供了丰富的 Excel 自定义函数库 (D_FIND/D_VLOOKUP/D_SUMIF 等)。本节给出 SqlCel UDF 与 vools.xl + vools.data Table 方法的映射，便于从 Excel 公式迁移到 Python。
+[SqlCel](<SqlCel安装路径>) 提供了丰富的 Excel 自定义函数库 (D_FIND/D_VLOOKUP/D_SUMIF 等)。本节给出 SqlCel UDF 与 vools.xl + vools.data Table 方法的映射，便于从 Excel 公式迁移到 Python。
 
 | SqlCel UDF | 描述 | Python 等价 |
 |------------|------|-------------|

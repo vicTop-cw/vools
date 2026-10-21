@@ -32,10 +32,13 @@ import os
 import subprocess
 import tempfile
 import logging
+import platform
+import time
 from typing import Optional, List, Any
 import shutil
 import inspect
 
+from ..probe import _run_cmd_timeout
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
 
@@ -105,20 +108,16 @@ def get_scala_version() -> Optional[str]:
 
     try:
         if 'scala-cli' in compiler:
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 [compiler, 'version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=10,
             )
         else:
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 [compiler, '-version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=10,
             )
-        return result.stdout + result.stderr
+        return result.stdout.decode('utf-8', errors='replace') + result.stderr.decode('utf-8', errors='replace')
     except Exception:
         return None
 
@@ -197,10 +196,8 @@ def compile_scala(
                 cmd.extend(extra_args)
 
             logger.info(f"Compiling with scala-cli: {' '.join(cmd)}")
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=120,
             )
 
@@ -229,10 +226,8 @@ def compile_scala(
                             cmd.append(os.path.join(root, f))
 
             logger.info(f"Compiling with scalac: {' '.join(cmd)}")
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=120,
             )
 
@@ -243,10 +238,8 @@ def compile_scala(
                     logger.error("jar command not found for JAR packaging")
                     return None
                 jar_cmd = [jar_exe, '-cf', jar_path, '-C', class_dir, '.']
-                jar_result = subprocess.run(
+                jar_result = _run_cmd_timeout(
                     jar_cmd,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True,
                     timeout=60,
                 )
                 if jar_result.returncode != 0:
@@ -343,6 +336,40 @@ class Py4jApplication {{
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """尽可能杀掉 proc 及其子孙进程（幂等）。
+
+    JVM 常通过 spawn 起孙进程，Popen.terminate() 只杀直接子进程，
+    孙进程会变成孤儿继续占端口。这里按平台分别处理：
+    Windows 用 taskkill /T（整树），Unix 用 os.killpg（进程组）。
+    """
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        if platform.system() == 'Windows':
+            subprocess.run(
+                ['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                capture_output=True,
+                timeout=5,
+            )
+        else:
+            try:
+                os.killpg(os.getpgid(proc.pid), 9)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=3)
+    except Exception:
+        pass
+
+
 def run_scala_app(
     source_or_jar: str,
     port: int = 25333,
@@ -396,15 +423,23 @@ def run_scala_app(
 
     logger.info(f"Starting Scala app: {' '.join(cmd)}")
 
+    # JVM 是常驻进程（Py4J Gateway），必须与调用方进程组隔离，
+    # 否则超时回收 `_kill_process_tree` 会连调用方一起杀掉。
+    popen_kwargs = {}
+    if platform.system() == 'Windows':
+        popen_kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs['start_new_session'] = True
+
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        **popen_kwargs,
     )
 
     # 等待 Gateway 就绪
     if wait_for_gateway:
-        import time
         start_time = time.time()
         while time.time() - start_time < timeout:
             if proc.poll() is not None:
@@ -428,7 +463,9 @@ def run_scala_app(
             except Exception:
                 time.sleep(0.5)
 
-        logger.warning("Timeout waiting for Scala app to be ready")
+        # 超时：进程仍在运行，回收整棵树，避免留下孤儿 JVM 占端口。
+        logger.warning("Timeout waiting for Scala app to be ready; killing process tree")
+        _kill_process_tree(proc)
 
     return proc
 
@@ -627,12 +664,10 @@ class ScalaBridge(LangBridge):
 
             cmd = [compiler, '-d', class_dir] + scala_files
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            cwd=output_dir,
             timeout=300,
+            cwd=output_dir,
         )
 
         if result.returncode != 0:
@@ -651,12 +686,10 @@ class ScalaBridge(LangBridge):
                 raise RuntimeError('jar command not found')
 
             jar_cmd = [jar_exe, '-cf', jar_path, '-C', class_dir, '.']
-            jar_result = subprocess.run(
+            jar_result = _run_cmd_timeout(
                 jar_cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
-                cwd=output_dir,
                 timeout=60,
+                cwd=output_dir,
             )
             if jar_result.returncode != 0:
                 raise RuntimeError(
@@ -697,21 +730,19 @@ class ScalaBridge(LangBridge):
         expr = f'{object_name}.{func_name}({", ".join(scala_args)})'
         scala_expr = f'println({expr})'
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             [scala_cmd, '-cp', lib_path, '-e', scala_expr],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             timeout=60,
         )
 
         if result.returncode != 0:
             raise RuntimeError(
                 f'Scala execution failed for {func_name}:\n'
-                f'stderr: {result.stderr}\n'
-                f'stdout: {result.stdout}'
+                f'stderr: {result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout: {result.stdout.decode("utf-8", errors="replace")}'
             )
 
-        output = result.stdout.strip()
+        output = result.stdout.decode('utf-8', errors='replace').strip()
 
         # 类型转换
         if ret_type is not None:
@@ -730,4 +761,3 @@ class ScalaBridge(LangBridge):
 # 全局 ScalaBridge 实例
 _scala_bridge = ScalaBridge()
 scala_bridge = _scala_bridge
-

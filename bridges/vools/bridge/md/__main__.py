@@ -18,6 +18,7 @@ __all__ = [
 import argparse
 import os
 import sys
+from typing import Optional
 
 
 def main():
@@ -60,6 +61,8 @@ def main():
     rich_parser.add_argument("--no-open", dest="open_", action="store_false", help="渲染后不自动打开浏览器")
     rich_parser.add_argument("--serve", nargs="?", const="8765", metavar="PORT", help="启动本地 HTTP 预览服务（默认端口 8765）")
     rich_parser.add_argument("--hot-reload", dest="hot_reload", choices=("l1", "l2"), default="l1", help="热更新档位（默认 l1 全文替换）")
+    rich_parser.add_argument("--viewer", action="store_true", help="使用内置 WebView2 查看器打开富内容预览（P6）")
+    rich_parser.add_argument("--watch", action="store_true", help="监听 md 变化自动热更新（隐含 --serve，默认端口 8765）")
 
     args = parser.parse_args()
 
@@ -229,19 +232,78 @@ def _cmd_rich(args):
     print(f"[rich] 预览: {out_path}")
     print(f"[rich] 富内容: 内联 SVG {len(doc.inline_svgs)} / 内嵌 HTML {len(doc.inline_htmls)} / 文件链接 {len(doc.file_links)} / 产物 {len(doc.artifacts)}")
 
+    if args.viewer:
+        # P6 内置 WebView2 查看器（open_preview + hot_reload 挂钩）
+        from .rich import RichPreviewHost
+
+        md_dir = os.path.dirname(os.path.abspath(args.md_path))
+        host = RichPreviewHost()
+        session = host.open(
+            args.md_path,
+            build_dir=build_dir,
+            config=config,
+            hot_reload=config.hot_reload,
+            rich_open_root=md_dir,
+        )
+        print(f"[rich] viewer: 已打开（block_id={session.block_id}，{config.hot_reload} 热更新就绪）")
+        print("[rich] 按 Ctrl+C 退出")
+        try:
+            import time as _t
+
+            while True:
+                _t.sleep(1)
+        except KeyboardInterrupt:
+            session.close()
+            return
+        return
+
+    # P6 --watch：隐含 --serve（热更新由 _serve_rich 在 md_path 提供时自动启用）
+    if args.watch and not args.serve:
+        args.serve = "8765"
+        config.allow_remote = True
+
     if args.open_ and not args.serve:
         import webbrowser
 
         webbrowser.open(f"file:///{out_path.replace(os.sep, '/')}")
 
     if args.serve:
-        _serve_rich(build_dir, args.serve, out_path)
+        _serve_rich(
+            build_dir=build_dir,
+            port_str=args.serve,
+            preview_path=out_path,
+            md_path=args.md_path,
+            hot_reload=config.hot_reload,
+            rich_config=config,
+        )
 
 
-def _serve_rich(build_dir: str, port_str: str, preview_path: str) -> None:
-    """启动本地 HTTP 预览服务（线程化，Ctrl+C 退出）。"""
+def _serve_rich(
+    build_dir: str,
+    port_str: str,
+    preview_path: str,
+    *,
+    md_path: Optional[str] = None,
+    hot_reload: str = "l1",
+    rich_config=None,
+) -> None:
+    """启动本地 HTTP 预览服务（线程化，Ctrl+C 退出；P6 支持热更新推送）。
+
+    热更新机制（仅 md_path 提供时启用）：
+    - 后台 watcher 每 0.5s 检查 md 文件 mtime，变化后重新 scan_rich + render；
+    - L1：生成全文补丁（build_l1_patch 替换预览 iframe 的 srcdoc）；
+    - L2：提取 data-rich-l2 受控区域，HotReloadManager 按哈希 diff 只推送
+      有变化的区域（build_l2_patch + replaceChildren）；
+    - 预览页响应时注入 build_hot_reload_client 轮询脚本，轮询
+      /__hot_reload__/poll 端点取补丁并执行。
+    """
     import http.server
+    import json as _json
     import threading
+    import time as _time
+
+    from .rich import HotReloadManager, scan_rich, render
+    from .rich.hotreload import build_hot_reload_client, extract_l2_regions
 
     try:
         port = int(port_str)
@@ -251,13 +313,107 @@ def _serve_rich(build_dir: str, port_str: str, preview_path: str) -> None:
     preview_name = os.path.basename(preview_path)
     build_dir_abs = os.path.abspath(build_dir)
 
+    # ── P6 热更新状态：版本号 + 当前补丁（watcher 写，handler 读）──
+    state = {
+        "version": 0,
+        "patch": "",
+        "lock": threading.Lock(),
+    }
+    hr_manager = HotReloadManager(mode=hot_reload)
+
+    if md_path:
+        md_abs = os.path.abspath(md_path)
+
+        def _reload_doc() -> None:
+            """重新扫描渲染 md，按档位生成补丁并推进版本。"""
+            try:
+                doc = scan_rich(md_abs, build_dir=build_dir_abs, config=rich_config)
+                if hot_reload == "l2":
+                    # L2：纯内层文档（frag 带 data-rich-l2），按区域 diff 推送
+                    inner = render(doc, interactive=False, hot_reload="l2").html
+                    updates = extract_l2_regions(inner)
+                    patch = hr_manager.patch(new_contents=updates)
+                else:
+                    # L1：纯内层文档全文替换（预览页 iframe srcdoc）
+                    inner = render(doc, interactive=False, hot_reload="l1").html
+                    patch = hr_manager.patch(full_html=inner)
+                with state["lock"]:
+                    if patch:
+                        state["version"] += 1
+                        state["patch"] = patch
+            except Exception as e:  # noqa: BLE001 渲染失败不中断服务
+                print(f"[rich] hot-reload 失败: {e}")
+
+        def _watch_loop() -> None:
+            try:
+                last_mtime = os.path.getmtime(md_abs)
+            except OSError:
+                last_mtime = 0.0
+            _reload_doc()  # 启动即推一版基线补丁（避免首轮差异）
+            while True:
+                _time.sleep(0.5)
+                try:
+                    mt = os.path.getmtime(md_abs)
+                except OSError:
+                    continue
+                if mt == last_mtime:
+                    continue
+                last_mtime = mt
+                _reload_doc()
+
+        watcher = threading.Thread(target=_watch_loop, daemon=True, name="rich-hot-reload")
+        watcher.start()
+        print(f"[rich] hot-reload: {hot_reload} 已启用（监听 {md_abs}）")
+
     class RichHandler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *hargs, **hkwargs):
             super().__init__(*hargs, directory=build_dir_abs, **hkwargs)
 
+        def _handle_poll(self) -> bool:
+            """/__hot_reload__/poll?v=N → {"version","mode","patch"}"""
+            try:
+                client_v = int(self.path.split("v=")[-1].split("&")[0])
+            except Exception:
+                client_v = 0
+            with state["lock"]:
+                ver = state["version"]
+                patch = state["patch"] if ver != client_v else ""
+            body = _json.dumps(
+                {"version": ver, "mode": hot_reload, "patch": patch},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+
         def do_GET(self):
+            if self.path.startswith("/__hot_reload__/poll"):
+                self._handle_poll()
+                return
             if self.path in ("/", "/index.html"):
                 self.path = "/" + preview_name
+            if self.path == "/" + preview_name:
+                # 注入热更新客户端脚本（运行时增强，不落盘）
+                try:
+                    with open(os.path.join(build_dir_abs, preview_name), "r", encoding="utf-8") as f:
+                        html = f.read()
+                    client = build_hot_reload_client(hot_reload)
+                    if "</body>" in html:
+                        html = html.replace("</body>", "<script>" + client + "</script></body>")
+                    else:
+                        html += "<script>" + client + "</script>"
+                    data = html.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                except OSError:
+                    pass
             return super().do_GET()
 
         def log_message(self, fmt, *hargs):

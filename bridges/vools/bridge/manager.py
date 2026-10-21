@@ -1333,12 +1333,14 @@ def _register_builtin_languages():
     # Erlang
     erlang_paths = []
     if _IS_WINDOWS:
+        _erlang_home = os.environ.get('ERLANG_HOME')
         erlang_paths = [
-            r'D:\Erlang\bin',
+            os.path.join(_erlang_home, 'bin') if _erlang_home else None,
             r'C:\Program Files\Erlang OTP\bin',
             r'C:\Program Files (x86)\Erlang OTP\bin',
             os.path.expanduser(r'~\AppData\Local\Programs\Erlang\bin'),
         ]
+        erlang_paths = [p for p in erlang_paths if p]
     else:
         erlang_paths = [
             '/usr/lib/erlang/bin',
@@ -1360,12 +1362,14 @@ def _register_builtin_languages():
     # Elixir
     elixir_paths = []
     if _IS_WINDOWS:
+        _elixir_home = os.environ.get('ELIXIR_HOME')
         elixir_paths = [
-            r'D:\Elixir\bin',
+            os.path.join(_elixir_home, 'bin') if _elixir_home else None,
             r'C:\Program Files\Elixir\bin',
             r'C:\Program Files (x86)\Elixir\bin',
             os.path.expanduser(r'~\AppData\Local\Programs\Elixir\bin'),
         ]
+        elixir_paths = [p for p in elixir_paths if p]
     else:
         elixir_paths = [
             '/usr/local/elixir/bin',
@@ -1386,12 +1390,14 @@ def _register_builtin_languages():
     # Haskell
     haskell_paths = []
     if _IS_WINDOWS:
+        _ghc_home = os.environ.get('GHC_HOME')
         haskell_paths = [
-            r'D:\GHC\bin',
+            os.path.join(_ghc_home, 'bin') if _ghc_home else None,
             r'C:\Program Files\Haskell Platform\8.6.5\bin',
             r'C:\Program Files\Haskell\bin',
             os.path.expanduser(r'~\AppData\Local\Programs\ghc\bin'),
         ]
+        haskell_paths = [p for p in haskell_paths if p]
     else:
         haskell_paths = [
             '/usr/lib/ghc/bin',
@@ -1643,19 +1649,29 @@ class LanguageCompilerHelper:
             timeout: 超时时间（秒）
 
         返回：
-            subprocess.CompletedProcess 对象
+            subprocess.CompletedProcess 对象（stdout/stderr 为 str，兼容 text=True）
+
+        异常：
+            subprocess.TimeoutExpired: 命令超时（进程树已杀）
+            FileNotFoundError: 编译器可执行文件不存在（由 Popen 抛出）
         """
         compiler_path = self.get_compiler_path()
         if not compiler_path:
             raise RuntimeError(f"Compiler for '{self.name}' not available")
 
         cmd = [compiler_path] + args
-        return subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout
-        )
+        # 用 probe._run_cmd_timeout：裸 `subprocess.run(timeout=N)` 在 Windows 上
+        # 只杀直接子进程，`.BAT`/`.CMD` 会再 spawn 慢启动的孙进程，超时后孙进程
+        # 继续跑、调用方被阻塞到孙进程退出。这里保证 kill 整棵进程树并按时返回。
+        # 注意：_run_cmd_timeout 返回 bytes 输出，这里解码为 str 兼容旧 `text=True` 语义。
+        from .probe import _run_cmd_timeout
+        result = _run_cmd_timeout(cmd, timeout=timeout)
+        result.stdout = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
+        result.stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
+        if result.returncode == -9:
+            # _run_cmd_timeout 超时已杀整棵进程树，按旧语义抛 TimeoutExpired
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return result
 
     def run_and_check(self, args: List[str], timeout: int = 60) -> subprocess.CompletedProcess:
         """

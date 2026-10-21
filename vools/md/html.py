@@ -6,7 +6,7 @@ MD → HTML 转换器
 
 from .parser import (
     Document, Heading, Paragraph, CodeBlock, BlockQuote,
-    MdList, ListItem, Divider, InlineText, parse
+    MdList, ListItem, Divider, InlineText, ConfigBlock, LangBlock, parse
 )
 from ..encoding import write_text
 
@@ -79,6 +79,16 @@ def _node_to_html(node, indent: int = 0) -> str:
 
     elif isinstance(node, Divider):
         return '<hr />'
+
+    elif isinstance(node, ConfigBlock):
+        lang_class = f' class="language-config-{_escape(node.config_type)}"'
+        return (f'<pre><code{lang_class}>'
+                f'{_escape(node.content)}</code></pre>')
+
+    elif isinstance(node, LangBlock):
+        lang_class = f' class="language-{_escape(node.language)}"'
+        return (f'<pre><code{lang_class}>'
+                f'{_escape(node.content)}</code></pre>')
 
     return f'<!-- unknown node: {type(node).__name__} -->'
 

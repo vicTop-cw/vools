@@ -31,6 +31,7 @@ import shutil
 from typing import Any
 
 from ..manager import get_helper
+from ..probe import _run_cmd_timeout
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
 from .types import get_cs_type, get_cs_ctype, infer_cs_argtypes, PY_TO_CS_TYPE, CS_TO_CTYPES
@@ -163,15 +164,14 @@ def _compile_csharp_code(cs_code, func_name, cache_dir=None):
                     except OSError:
                         pass
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             ['dotnet', 'publish', '-c', 'Release', '-o', cache_dir],
             cwd=project_dir,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True
+            timeout=300,
         )
 
         if result.returncode != 0:
-            raise RuntimeError(f'C# 编译失败:\n{result.stderr}\n{result.stdout}')
+            raise RuntimeError(f'C# 编译失败:\n{result.stderr.decode("utf-8", errors="replace")}\n{result.stdout.decode("utf-8", errors="replace")}')
 
     # 验证产物齐全。_call_csharp_func 实际跑的是【同目录同名的 apphost/exe】
     # （见下方 line 184 的调用期检查），而 dotnet publish 偶发只产出 .dll 不产出
@@ -224,22 +224,19 @@ def _call_csharp_func(dll_path, func_name, args, ret_type=None):
 
     payload = json.dumps({'func': func_name, 'args': list(args)}, ensure_ascii=False)
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         [exe_path],
-        input=payload + '\n',
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        errors='replace',
+        input_data=payload + '\n',
+        timeout=60,
     )
 
     if result.returncode != 0:
         raise RuntimeError(
             f'C# 进程调用失败 (exit {result.returncode}):\n'
-            f'stdout: {result.stdout}\nstderr: {result.stderr}'
+            f'stdout: {result.stdout.decode("utf-8", errors="replace")}\nstderr: {result.stderr.decode("utf-8", errors="replace")}'
         )
 
-    output = result.stdout.strip()
+    output = result.stdout.decode('utf-8', errors='replace').strip()
     if not output:
         return None
 
@@ -413,18 +410,17 @@ class CSharpBridge(LangBridge):
         project_dir = os.path.dirname(csproj_file)
 
         # 编译（使用 NativeAOT 发布）
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             ['dotnet', 'publish', '-c', 'Release', '-o', output_dir],
             cwd=project_dir,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True
+            timeout=300,
         )
 
         if result.returncode != 0:
             raise RuntimeError(
                 f'C# project compilation failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}'
             )
 
         # 查找生成的产物

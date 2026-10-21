@@ -46,7 +46,8 @@ vools.bridge.elixir - Elixir 语言桥接模块
 
 前置条件:
 - 安装 Elixir (>= 1.14)，并将 elixir/elixirc 加入 PATH
-- Windows 推荐: D:\\Elixir
+- Windows 推荐: 设置 ELIXIR_HOME 指向 Elixir 安装目录（如 C:\\Elixir），
+  或在 vools.bridge.manager 的 elixir_paths 中加入实际安装路径
 - 参考: https://elixir-lang.org/
 """
 

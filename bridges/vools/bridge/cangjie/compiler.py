@@ -55,7 +55,6 @@ import ctypes
 import shutil
 import threading
 import asyncio
-import subprocess
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
 
@@ -144,7 +143,8 @@ def cjc_compiler_available():
     return _cangjie_helper.is_available()
 
 
-def _compile_cj_code(code: str, func_name: str, cache_dir: str = None) -> str:
+def _compile_cj_code(code: str, func_name: str, cache_dir: str = None,
+                     timeout: float = 300) -> str:
     """
     编译仓颉代码并返回 DLL 路径
 
@@ -152,6 +152,7 @@ def _compile_cj_code(code: str, func_name: str, cache_dir: str = None) -> str:
         code: 完整仓颉源代码
         func_name: 函数名(用于生成文件名)
         cache_dir: 缓存目录,None 则使用 _CJ_CACHE_DIR
+        timeout: 编译超时秒数（默认 300）
 
     返回:
         编译后的 DLL 路径
@@ -186,16 +187,21 @@ def _compile_cj_code(code: str, func_name: str, cache_dir: str = None) -> str:
     cjc_path = _get_cjc_path()
     compile_cmd = [cjc_path, '--output-type=dylib', cj_path]
 
-    result = subprocess.run(
-        compile_cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
-        cwd=cache_dir
-    )
+    # 用 `_run_cmd_timeout`：Windows 上裸 `subprocess.run(timeout=N)` 只杀直接子进程，
+    # cjc 若 spawn 孙进程会泄漏孤儿进程；且编译挂起时无超时会永久阻塞调用方。
+    # 惰性 import 避免 cangjie/compiler ↔ probe 循环依赖风险。
+    from ..probe import _run_cmd_timeout
+    try:
+        result = _run_cmd_timeout(compile_cmd, timeout=timeout)
+    except (FileNotFoundError, OSError) as e:
+        raise RuntimeError(f'仓颉编译器 (cjc) 未找到或无法启动: {e}')
+
+    stdout = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
+    stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
 
     if result.returncode != 0:
         raise RuntimeError(
-            f'仓颉编译失败:\nstderr:\n{result.stderr}\nstdout:\n{result.stdout}\n代码:\n{code}'
+            f'仓颉编译失败:\nstderr:\n{stderr}\nstdout:\n{stdout}\n代码:\n{code}'
         )
 
     # 仓颉编译器生成的 DLL 名称可能不同,需要查找
@@ -281,7 +287,8 @@ def _call_cj_func(dll_path: str, func_name: str, args: tuple, ret_type: str = 'I
     return convert_result(result, ret_type)
 
 
-def _compile_cj_exe(code: str, func_name: str, cache_dir: str = None) -> str:
+def _compile_cj_exe(code: str, func_name: str, cache_dir: str = None,
+                    timeout: float = 300) -> str:
     """
     编译仓颉代码为可执行文件
 
@@ -289,6 +296,7 @@ def _compile_cj_exe(code: str, func_name: str, cache_dir: str = None) -> str:
         code: 完整仓颉源代码（包含 main 函数）
         func_name: 函数名(用于生成文件名)
         cache_dir: 缓存目录
+        timeout: 编译超时秒数（默认 300）
 
     返回:
         编译后的可执行文件路径
@@ -322,16 +330,20 @@ def _compile_cj_exe(code: str, func_name: str, cache_dir: str = None) -> str:
     cjc_path = _get_cjc_path()
     compile_cmd = [cjc_path, '--output-type=exe', '-o', exe_path, cj_path]
 
-    result = subprocess.run(
-        compile_cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
-        cwd=cache_dir
-    )
+    # 用 `_run_cmd_timeout`：编译挂起时无超时会永久阻塞调用方，且 Windows 上
+    # 裸 `subprocess.run(timeout=N)` 只杀直接子进程，cjc spawn 孙进程会泄漏孤儿进程。
+    from ..probe import _run_cmd_timeout
+    try:
+        result = _run_cmd_timeout(compile_cmd, timeout=timeout)
+    except (FileNotFoundError, OSError) as e:
+        raise RuntimeError(f'仓颉编译器 (cjc) 未找到或无法启动: {e}')
+
+    stdout = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
+    stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
 
     if result.returncode != 0:
         raise RuntimeError(
-            f'仓颉编译失败:\nstderr:\n{result.stderr}\nstdout:\n{result.stdout}\n代码:\n{code}'
+            f'仓颉编译失败:\nstderr:\n{stderr}\nstdout:\n{stdout}\n代码:\n{code}'
         )
 
     if not os.path.exists(exe_path):
@@ -340,24 +352,28 @@ def _compile_cj_exe(code: str, func_name: str, cache_dir: str = None) -> str:
     return exe_path
 
 
-def _run_cj_exe(exe_path: str, args: tuple = ()) -> str:
+def _run_cj_exe(exe_path: str, args: tuple = (), timeout: float = 30) -> str:
     """
     运行仓颉可执行文件并捕获输出
 
     参数:
         exe_path: 可执行文件路径
         args: 命令行参数
+        timeout: 超时秒数（默认 30）
 
     返回:
         标准输出（去除末尾换行）
     """
-    result = subprocess.run(
-        [exe_path] + [str(a) for a in args],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
-        timeout=30
-    )
-    return result.stdout.strip()
+    # 用 `_run_cmd_timeout`：Windows 上裸 `subprocess.run(timeout=N)` 只杀直接子进程，
+    # 可执行文件若 spawn 孙进程会泄漏孤儿进程；且进程树必须整棵被杀，
+    # 否则 cj exe 挂住会永久占用 CPU 并阻塞后续编译。
+    from ..probe import _run_cmd_timeout
+    try:
+        result = _run_cmd_timeout([exe_path] + [str(a) for a in args], timeout=timeout)
+    except (FileNotFoundError, OSError) as e:
+        raise RuntimeError(f'仓颉可执行文件未找到或无法启动: {e}')
+    stdout = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
+    return stdout.strip()
 
 
 def _call_cj_exe(cj_code: str, func_name: str, args: tuple,
@@ -595,7 +611,8 @@ func {spec.name}({params_str}): {ret_type} {{
             _dll_cache[func_name] = (code, dll_path)
         return dll_path
 
-    def compile_project(self, project_dir: str, entry: str, output_dir: str = None) -> str:
+    def compile_project(self, project_dir: str, entry: str, output_dir: str = None,
+                        timeout: float = 300) -> str:
         """
         编译仓颉项目
 
@@ -632,18 +649,22 @@ func {spec.name}({params_str}): {ret_type} {{
                 output_path = os.path.join(output_dir, f'lib{project_name}.so')
             compile_cmd = [cjc_path, '--output-type=dylib', '-o', output_path] + cj_files
 
-        result = subprocess.run(
-            compile_cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            cwd=output_dir
-        )
+        # 用 `_run_cmd_timeout`（cwd 透传）：Windows 上裸 `subprocess.run(timeout=N)`
+        # 只杀直接子进程，cjc spawn 孙进程会泄漏孤儿进程。
+        from ..probe import _run_cmd_timeout
+        try:
+            result = _run_cmd_timeout(compile_cmd, timeout=timeout, cwd=output_dir)
+        except (FileNotFoundError, OSError) as e:
+            raise RuntimeError(f'仓颉编译器 (cjc) 未找到或无法启动: {e}')
+
+        stdout = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
+        stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
 
         if result.returncode != 0:
             raise RuntimeError(
                 f'仓颉项目编译失败:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}\n'
+                f'stderr:\n{stderr}\n'
+                f'stdout:\n{stdout}\n'
                 f'files: {cj_files}'
             )
 

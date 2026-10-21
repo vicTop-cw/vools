@@ -37,6 +37,7 @@ from ..core.compat.dataclass_compat import dataclass
 
 from .._base import LangBridge, FunctionSpec, FunctionParser
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 
 # 平台判断
 _IS_WINDOWS = platform.system() == 'Windows'
@@ -101,13 +102,8 @@ def get_node_version() -> Optional[str]:
     if not node:
         return None
     try:
-        result = subprocess.run(
-            [node, '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=5,
-        )
-        return result.stdout.strip() or None
+        result = _run_cmd_timeout([node, '--version'], timeout=5)
+        return result.stdout.decode('utf-8', errors='replace').strip() or None
     except Exception:
         return None
 
@@ -118,13 +114,8 @@ def get_tsc_version() -> Optional[str]:
     if not tsc:
         return None
     try:
-        result = subprocess.run(
-            [tsc, '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=5,
-        )
-        return result.stdout.strip() or None
+        result = _run_cmd_timeout([tsc, '--version'], timeout=5)
+        return result.stdout.decode('utf-8', errors='replace').strip() or None
     except Exception:
         return None
 
@@ -264,17 +255,13 @@ def _call_ts_function(js_file: Path, args: List[Any]) -> Any:
     payload = json.dumps({'args': args}, ensure_ascii=False)
 
     try:
-        result = subprocess.run(
-            [node, str(js_file)],
-            input=payload,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=30,
-        )
+        result = _run_cmd_timeout([node, str(js_file)], timeout=30, input_data=payload)
 
-        output = result.stdout.strip()
+        output = result.stdout.decode('utf-8', errors='replace').strip()
         if not output:
-            raise RuntimeError(f'Node.js 无输出: stderr={result.stderr}')
+            raise RuntimeError(
+                f'Node.js 无输出: stderr={result.stderr.decode("utf-8", errors="replace")}'
+            )
 
         data = json.loads(output)
         if not data.get('ok'):

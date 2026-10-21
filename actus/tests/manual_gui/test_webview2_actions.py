@@ -2,13 +2,19 @@
 """
 测试 WebView2 动作 - 使用 md runner
 """
+# 仓库根（由本测试文件位置推导，可移植；原为绝对路径硬编码）
+import os
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 
 import sys
+
 import os
 import json
 
+
 # 添加 bridges 目录到路径
-bridges_dir = r'E:\IDEProjects\AI\vools\bridges'
+bridges_dir = os.path.join(_REPO_ROOT, 'bridges')
 sys.path.insert(0, bridges_dir)
 
 # 导入 md runner
@@ -19,7 +25,7 @@ print("="*60)
 print("测试 Calculator 动作")
 print("="*60)
 
-calculator_md = r'E:\IDEProjects\AI\vools\actus\vools\actus\actions\basics\calculator.actus.schema.md'
+calculator_md = os.path.join(_REPO_ROOT, 'actus', 'vools', 'actus', 'actions', 'basics', 'calculator.actus.schema.md')
 
 if os.path.exists(calculator_md):
     print(f"✓ 动作文件存在: {calculator_md}")
@@ -49,7 +55,7 @@ print("\n" + "="*60)
 print("测试 Todo List 动作")
 print("="*60)
 
-todo_md = r'E:\IDEProjects\AI\vools\actus\vools\actus\actions\basics\todo-list.actus.schema.md'
+todo_md = os.path.join(_REPO_ROOT, 'actus', 'vools', 'actus', 'actions', 'basics', 'todo-list.actus.schema.md')
 
 if os.path.exists(todo_md):
     print(f"✓ 动作文件存在: {todo_md}")

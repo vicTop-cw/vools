@@ -2,13 +2,19 @@
 """
 测试 WebView2 动作 - 只运行 WebView2 块
 """
+# 仓库根（由本测试文件位置推导，可移植；原为绝对路径硬编码）
+import os
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 
 import sys
+
 import os
 import time
 
+
 # 添加 bridges 目录到路径
-bridges_dir = r'E:\IDEProjects\AI\vools\bridges'
+bridges_dir = os.path.join(_REPO_ROOT, 'bridges')
 sys.path.insert(0, bridges_dir)
 
 from vools.bridge.md import parse_md
@@ -49,10 +55,10 @@ def test_webview2_rendering():
     print("="*60)
     
     actions = [
-        (r'E:\IDEProjects\AI\vools\actus\vools\actus\actions\basics\calculator.actus.schema.md', 'Calculator'),
-        (r'E:\IDEProjects\AI\vools\actus\vools\actus\actions\basics\todo-list.actus.schema.md', 'Todo List'),
-        (r'E:\IDEProjects\AI\vools\actus\vools\actus\actions\basics\text-editor.actus.schema.md', 'Text Editor'),
-        (r'E:\IDEProjects\AI\vools\actus\vools\actus\actions\basics\image-viewer.actus.schema.md', 'Image Viewer'),
+        (os.path.join(_REPO_ROOT, 'actus', 'vools', 'actus', 'actions', 'basics', 'calculator.actus.schema.md'), 'Calculator'),
+        (os.path.join(_REPO_ROOT, 'actus', 'vools', 'actus', 'actions', 'basics', 'todo-list.actus.schema.md'), 'Todo List'),
+        (os.path.join(_REPO_ROOT, 'actus', 'vools', 'actus', 'actions', 'basics', 'text-editor.actus.schema.md'), 'Text Editor'),
+        (os.path.join(_REPO_ROOT, 'actus', 'vools', 'actus', 'actions', 'basics', 'image-viewer.actus.schema.md'), 'Image Viewer'),
     ]
     
     results = {}

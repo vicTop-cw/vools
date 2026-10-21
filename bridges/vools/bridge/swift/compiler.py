@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 from .types import PY_TO_SWIFT_TYPE, get_swift_type
 
 _IS_WINDOWS = os.name == 'nt'
@@ -24,11 +25,7 @@ _IS_WINDOWS = os.name == 'nt'
 def _check_local_swift() -> bool:
     """检查本地是否有 swift 命令"""
     try:
-        result = subprocess.run(
-            ['swift', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=5
-        )
+        result = _run_cmd_timeout(['swift', '--version'], timeout=5)
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -77,19 +74,9 @@ def _run_swift(swift_file: str, timeout: int = 60) -> subprocess.CompletedProces
     """运行 Swift 脚本，自动处理 WSL"""
     if _USE_WSL:
         wsl_path = _to_wsl_path(swift_file)
-        return subprocess.run(
-            ['wsl', 'swift', wsl_path],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout
-        )
+        return _run_cmd_timeout(['wsl', 'swift', wsl_path], timeout=timeout)
     else:
-        return subprocess.run(
-            ['swift', swift_file],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout
-        )
+        return _run_cmd_timeout(['swift', swift_file], timeout=timeout)
 
 
 def _compile_swift(swift_file: str, output_path: str, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -97,19 +84,9 @@ def _compile_swift(swift_file: str, output_path: str, timeout: int = 120) -> sub
     if _USE_WSL:
         wsl_src = _to_wsl_path(swift_file)
         wsl_out = _to_wsl_path(output_path)
-        return subprocess.run(
-            ['wsl', 'swiftc', '-o', wsl_out, wsl_src],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout
-        )
+        return _run_cmd_timeout(['wsl', 'swiftc', '-o', wsl_out, wsl_src], timeout=timeout)
     else:
-        return subprocess.run(
-            ['swiftc', '-o', output_path, swift_file],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout
-        )
+        return _run_cmd_timeout(['swiftc', '-o', output_path, swift_file], timeout=timeout)
 
 
 class SwiftFuture:
@@ -365,32 +342,26 @@ if let line = readLineStdin() {{
         try:
             if _USE_WSL:
                 wsl_path = _to_wsl_path(lib_path)
-                proc = subprocess.Popen(
+                result = _run_cmd_timeout(
                     ['wsl', 'swift', wsl_path],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
+                    timeout=60,
+                    input_data=input_data + '\n',
                 )
             else:
-                proc = subprocess.Popen(
+                result = _run_cmd_timeout(
                     ['swift', lib_path],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
+                    timeout=60,
+                    input_data=input_data + '\n',
                 )
 
-            stdout, stderr = proc.communicate(input=input_data + '\n', timeout=60)
-
-            if proc.returncode != 0:
+            if result.returncode != 0:
                 raise RuntimeError(
-                    f'Swift execution failed (code {proc.returncode}):\n'
-                    f'stderr: {stderr}\n'
-                    f'stdout: {stdout}'
+                    f'Swift execution failed (code {result.returncode}):\n'
+                    f'stderr: {result.stderr.decode("utf-8", errors="replace")}\n'
+                    f'stdout: {result.stdout.decode("utf-8", errors="replace")}'
                 )
 
-            output = stdout.strip()
+            output = result.stdout.decode('utf-8', errors='replace').strip()
             if not output:
                 return None
 

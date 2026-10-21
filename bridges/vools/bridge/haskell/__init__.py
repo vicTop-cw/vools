@@ -43,7 +43,8 @@ vools.bridge.haskell - Haskell 语言桥接模块
 
 前置条件:
 - 安装 GHC (>= 9.0)，并将 ghc 加入 PATH
-- Windows 推荐: D:\\GHC
+- Windows 推荐: 设置 GHC_HOME 指向 GHC 安装目录（如 C:\\GHC），
+  或在 vools.bridge.manager 的 haskell_paths 中加入实际安装路径
 - 参考: https://www.haskell.org/ghc/
 """
 

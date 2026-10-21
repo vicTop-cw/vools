@@ -149,3 +149,20 @@ __rust__/cache/
 _b3test_*.log
 _b3test_*.err
 
+
+# Runtime scratch / generated (2026-10-21 batch commit)
+metastore_db/
+spark-warehouse/
+__persist__/
+*.lock
+erl_crash.dump
+*.err
+.workspace_tmp_err.txt
+default.cjo
+backup/
+dll32/_wheels/
+_meta/
+actus/_meta/
+actus/artifacts/
+rhop/.pytest_cache/
+rhop/err.txt

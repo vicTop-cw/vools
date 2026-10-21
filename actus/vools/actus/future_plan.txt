@@ -1,0 +1,99 @@
+# actus 演进计划（2026-10-19 修订版：存量资产迁移主线 · 薄而厚实定位）
+
+> 修订说明：本版在 2026-10-17 初版（备份于 `future_plan.bak.txt`）基础上重构主线。
+> 初版把「动作包分发 CLI」当产品形态、把「个人复用」压缩为阶段 1 的验证项；
+> 本版确认：**第一价值是把本机已有的已验证工具资产化为可复用动作**，分发是资产池成型后的可选阶段。
+
+## 0. 定位修订（本次核心变更）
+
+- **第一价值**：把本机已有的已验证工具（jump、git.ops、vault、dll32、各类脚本）资产化为可复用动作，
+  供**个人 CLI / Agent 调度 / 团队**三方复用。动作不急着"造"，急着"迁"。
+- **薄**：动作文件规范与安全治理格式**不搞自创**。MCP / SKILL 官方统一安全治理规范成型后，
+  规范层直接兼容采用——`.actus.md` 只保留最小执行契约，退化为薄封装层。
+  在官方规范成型前，用最小字段集顶着，不铺开自创治理体系。
+- **厚**：自身的**验证与可信任分发机制不是空壳**：
+  - trust 分级必须有配套验证（`audit` 必须带测试、`trusted` 必须本地回归可复跑）；
+  - 凭据必须走 Vault 注入，动作代码禁止出现明文密码；
+  - 跨动作执行必须有 Ω-gate 容错契约（内层 `data.status==ok` 即成功）；
+  - 分发必须有来源追溯（git remote + commit）与 inspect 风险提示，不靠"信我"。
+- 一句话：**格式向主流看齐（薄），机制自己做实（厚）**。
+
+## 1. 产品定义（修订）
+
+| 项 | 定义 |
+|---|---|
+| 形态 | 动作库 CLI/引擎（本地优先，单 pip 包） |
+| 核心对象 | 动作资产（`.actus.md` / `.actus` 目录包）+ 可选动作包（`.actuspack`） |
+| 核心命令 | `scan / list / validate / run / pack / inspect / install / ledger` |
+| 价值闭环 | 盘点 → 薄封装 → 治理 → 回归 → 目录（见 §2） |
+| 分发 | 资产池成型（≥ 十几个动作）后的可选阶段，先个人多机/团队内，后跨团队 |
+| 不是 | 动作市场、在线 registry、MCP server、可视化编辑器、工作流引擎、Cloud |
+
+## 2. 主线：本机存量资产迁移闭环（阶段 0—1 的核心工作）
+
+```
+盘点   → 登记本机已验证工具清单（核心逻辑位置 + 既有测试路径）
+薄封装 → .actus.md 只做 params→函数签名映射，复用核心模块，禁止复制/重写
+治理   → trust / permissions / platform 必填；敏感参数一律 secrets 声明走 Vault；
+         动作自包含（main 不得依赖文件外辅助函数，堵 env_config 同类坑）
+回归   → 每个动作绑定验收测试（既有测试即验收，样板 tests/test_sftp_live.py），
+         索引生成时校验测试存在
+目录   → actions.index.json 自动登记，Agent 可发现、可调度、可复用
+```
+
+迁移对象清单（首批候选，按"已验证程度 × 复用频次"排序）：
+jump push/pull/sync（paramiko，已实测）、git.ops 建仓、vault 凭据治理、
+dll32 rc6plus 测试链、env_config（需先修自包含问题）等，盘点后落 `docs/assets-inventory.md`。
+
+## 3. 动作规范问题清单（2026-10-19 审查，2026-10-19 修订落地）
+
+| # | 问题 | 修正方向 | 落地状态 |
+|---|---|---|---|
+| 1 | **platform 字段缺失**：规范最小字段集没有 platform，而动作必须声明可用平台（本机/Windows/WSL/Android） | 必填项加入 `platform` | ✅ validate 必填+枚举校验；schema required 含 platform；docs/47 §3.1 |
+| 2 | **动作自包含无强制校验**：env_config 动作 main 引用文件外辅助函数导致块执行失败；文档 trust:audit 与 cfg 实际 trusted 不一致 | `validate` 强制校验 main 块自包含 + cfg trust 与文档声明一致 | ✅ check_self_contained（相对导入打回，stdlib/已装包/vools/actuscore 豁免）；docs/47 §3.2 |
+| 3 | **trust 分级无验证绑定**：trusted/audit 没有"必须带测试/必须可复跑回归"的硬约束 | trust 与测试绑定：audit 必须有测试，trusted 必须有本地回归记录 | ✅ check_trust_tests（audit/trusted 无绑定打回，sandbox/非执行 kind 豁免）；索引 verification 标注；docs/47 §4 |
+| 4 | **secrets 声明缺强制**：敏感参数可被写成普通入参或硬编码 | 规范强制：凡 password/token/key 类参数必须走 secrets 声明（provider/env 由引擎注入），validate 静态扫描 main 禁止明文凭据 | ✅ check_secrets_hardcode（硬编码凭据打回；敏感 env 未声明打回；ACTUS_* 豁免）；docs/47 §6 |
+| 5 | **跨动作返回契约未写进规范**：Ω-gate 容错解包只存在于实现约定 | 把 `{"status","data"}` 返回形态与 Ω-gate 解包写进规范，编排动作强制遵守 | ✅ check_omega_gate（kind=bundle 强制 contract/解包，普通 deps 警告）；docs/47 §5 |
+| 6 | **动作 id 命名无约束**：现有 actus.test.foo / actus.generated.zh 随意 | 定义命名空间规则（如 `jump.push`、`git.ops`），禁止测试味 id 进资产池 | ✅ check_id_namespace（两段点分小写）；indexer asset_pool 排除测试味 id（kind=demo 等豁免）；docs/47 §3.4 |
+| 7 | **deps 语义不明确**：编排动作依赖哪些原子动作、如何声明 | 明确 deps = 动作间依赖（execute 目标），薄编排动作必须列出 deps 并含验收 | 🔶 语义写入 docs/47 §5；引擎层依赖图校验沿用 analyze_graph，编排验收未强制 |
+| 8 | **usage 无执行性校验**：usage 写的是说明文字，不可直接执行验证 | usage 提供可执行调用示例（含返回样例），validate 可解析 | ✅ check_usage_executable（纯描述打回，缺失警告）；docs/47 §3.5 |
+| 9 | **验收测试绑定缺失**：索引生成不校验动作是否有测试 | 索引生成时检查动作对应 tests/ 文件存在，缺失标 `unverified` | ✅ build_index verification=verified/unverified/n-a + test_refs；docs/47 §7 |
+| 10 | **字段冗余风险**：industry/purpose/pricing 等对执行无意义 | MVP 砍掉（保留原不做清单），分类字段后置不阻塞 | 🔶 分类体系 v2.0 保留（docs/03 §2.6 反向索引）；执行核心不依赖，不做清单已记录 |
+
+## 4. 演进阶段（修订）
+
+| 阶段 | 周期 | 目标 | 出口条件（全部满足） |
+|---|---|---|---|
+| 0 | 第 1 周 | 格式最小集冻结 + 存量资产盘点 + 规范问题修订 | 格式文档 + 不做清单 + `docs/assets-inventory.md` 盘点 ≥ 10 项；规范问题清单逐条修订完成 |
+| 1 | 第 2—6 周 | **存量资产迁移闭环** | 迁移 ≥ 8 个真实动作进资产池；连续 2 周 Agent/CLI 实际复用零回归；凭据全部入 Vault 且动作代码无明文凭据；`scan/validate/run` 全链路可用 |
+| 2 | 第 7—12 周 | 可信任分发做实（pack/inspect/install 本机多目录/多机跑通，inspect 输出人类可读的信任/权限/成本提示） | 干净环境 pack→inspect→install→run 跑通 ≥ 3 次；1 个真实小团队用 3 周有反馈 |
+| 3 | 第 13—20 周 | 跨团队复用验证（可选） | ≥ 1 次跨团队安装并执行成功 |
+| 4 | 第 21—24 周 | 决策点（同初版：加 Cloud / 定位团队工具 / 停） | 见初版 §阶段 4 |
+
+- 若阶段 1 出口条件不满足（迁不动存量工具）：说明资产化方向对当前用户不成立，**停做并复盘**，不靠加功能挽救。
+- **薄的后置承诺**：每周花 ≤ 0.5 小时跟踪 MCP / SKILL 官方安全治理规范进展；
+  一旦官方统一规范成型，`validate` 的治理字段层直接兼容/改用，`.actus.md` 仅保留执行契约（薄封装层），
+  不正面竞争格式。
+
+## 5. 不做清单（更新）
+
+初版清单全部保留，另增两条：
+
+- 不做与 MCP / SKILL 官方统一安全治理规范重复的格式或治理体系（薄的后置承诺，跟踪到就兼容）。
+- 不为"凑动作数"造动作；动作只来自存量已验证工具的薄封装。
+
+保留项：不做动作市场/在线 registry/评分/下载量；不做 MCP server（别人的 MCP server 是供给源）；
+不做 Quicker 桥接；不自建沙箱（路由 E2B/CubeSandbox）；不做可视化编辑器；不做 workflow DAG；
+不做 Cloud/多租户/SSO；不做 LLM 调用封装（动作自己调，Actus 不碰模型）；不做分类体系（MVP 不实现）。
+
+## 6. 止损规则
+
+初版三条保留（超时 50% 未达出口 → 砍范围；团队反馈"挺好但没必要" → 停；
+MCP/SKILL 官方格式成型 → 立即评估转兼容）。增补一条：
+
+- 阶段 0 盘点后无可动作化资产（< 8 项）→ 资产化方向对当前用户不成立，停并复盘。
+
+---
+
+*本计划由 AI 起草，需人工确认后生效。*
+（内容由AI生成，仅供参考）

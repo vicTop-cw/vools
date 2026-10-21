@@ -2,7 +2,7 @@
 
 ## 1. 项目分析
 
-通过分析 `D:\work_for_ai\dataquest\source\pys` 目录下的文件，发现以下需要实现的组件：
+通过分析 `<work_dir>\dataquest\source\pys` 目录下的文件（占位符：替换为实际数据源目录），发现以下需要实现的组件：
 
 ### 1.1 缺失的日期相关组件
 - **myDate.py**: 包含 vDate 函数和各种日期相关的 Spark UDF

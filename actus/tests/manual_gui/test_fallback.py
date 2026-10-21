@@ -2,24 +2,30 @@
 """
 测试浏览器 fallback 功能
 """
+# 仓库根（由本测试文件位置推导，可移植；原为绝对路径硬编码）
+import os
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 
 import sys
+
 import importlib.util
 import os
 
 # 导入 webview2
 spec = importlib.util.spec_from_file_location(
     'webview2',
-    r'E:\IDEProjects\AI\vools\bridges\vools\bridge\md\webview2.py'
+    os.path.join(_REPO_ROOT, 'bridges', 'vools', 'bridge', 'md', 'webview2.py')
 )
 
 import importlib.util as iu
 
-spec_dirs = iu.spec_from_file_location('directives', r'E:\IDEProjects\AI\vools\bridges\vools\bridge\md\directives.py')
+
+spec_dirs = iu.spec_from_file_location('directives', os.path.join(_REPO_ROOT, 'bridges', 'vools', 'bridge', 'md', 'directives.py'))
 dirs_mod = iu.module_from_spec(spec_dirs)
 spec_dirs.loader.exec_module(dirs_mod)
 
-spec_cfg = iu.spec_from_file_location('config', r'E:\IDEProjects\AI\vools\bridges\vools\bridge\md\config.py')
+spec_cfg = iu.spec_from_file_location('config', os.path.join(_REPO_ROOT, 'bridges', 'vools', 'bridge', 'md', 'config.py'))
 cfg_mod = iu.module_from_spec(spec_cfg)
 spec_cfg.loader.exec_module(cfg_mod)
 

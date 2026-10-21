@@ -30,6 +30,7 @@ from typing import Any, Optional
 
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 from .types import get_shell_type
 
 _IS_WINDOWS = platform.system() == 'Windows'
@@ -93,10 +94,9 @@ _WSL_AVAILABLE = WSLGate(_wsl_available) if _IS_WINDOWS else False
 def shell_compiler_available() -> bool:
     if not _IS_WINDOWS:
         try:
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 [_SHELL_PATH, '--version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                universal_newlines=True, timeout=5,
+                timeout=5,
             )
             return result.returncode == 0
         except (FileNotFoundError, OSError):
@@ -106,10 +106,9 @@ def shell_compiler_available() -> bool:
     else:
         if shutil.which(_SHELL_COMPILER):
             try:
-                result = subprocess.run(
+                result = _run_cmd_timeout(
                     [_SHELL_PATH, '--version'],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    universal_newlines=True, timeout=5,
+                    timeout=5,
                 )
                 return result.returncode == 0
             except Exception:
@@ -163,6 +162,16 @@ def _preprocess_shell_body(body: str) -> str:
     return '\n'.join(indented_lines)
 
 
+def _sh_single_quote(s: str) -> str:
+    """POSIX 单引号转义：把 s 变成 bash 单引号字面量。
+
+    替换内部 `'` 为 `'\''` 并整体包裹单引号。这样任何用户输入
+    （含 `"`、`$(...)`、反引号、`;`、`|`、`&`）在 bash 中只作字面量，
+    不会被当作命令或重定向。
+    """
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+
 def _generate_shell_source(
     func_name: str,
     arg_names: list,
@@ -178,23 +187,29 @@ def _generate_shell_source(
     else:
         indented_body = '\n'
 
-    if auto_signature:
-        assign_lines = []
-        for i, arg in enumerate(arg_names):
-            assign_lines.append(f'    local {arg}="${arg_values[i]}"')
+    # args_json 走单引号转义，避免 `'`、`$(...)`、`"` 突破 bash 字面量边界。
+    # 两分支都要用，故置于 if 之前。
+    safe_json = _sh_single_quote(args_json) if args_json is not None else "''"
 
-        assign_code = '\n'.join(assign_lines) if assign_lines else ''
+    if auto_signature:
+        # 用 printf -v 按名赋值（安全），替代 `eval "ARG_$i=$(...)"`（命令注入面）。
+        # python3 输出可能含换行，逐行读并剥离前后空白后经 %q 安全落盘。
+        # 展开参数时显式列出每个 "$ARG_i"，避免 word-splitting 错切分。
+        arg_expands = ' '.join(f'"$ARG_{i}"' for i in range(len(arg_names)))
 
         code = f'''#!/usr/bin/env bash
 set -euo pipefail
 
-ARGS_JSON='{args_json}'
+ARGS_JSON={safe_json}
 
 parse_args() {{
     local json="$1"
-    local count=$(echo "$json" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
-    for i in $(seq 0 $((count - 1))); do
-        eval "ARG_$i=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin)[$i])" 2>/dev/null || echo '')"
+    local count
+    count=$(printf '%s' "$json" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+    local i=0
+    while [ "$i" -lt "$count" ]; do
+        printf -v "ARG_$i" '%s' "$(printf '%s' "$json" | python3 -c "import sys,json; print(json.load(sys.stdin)[{i}])" 2>/dev/null || true)"
+        i=$((i + 1))
     done
 }}
 
@@ -202,7 +217,7 @@ parse_args() {{
 
 parse_args "$ARGS_JSON"
 
-RESULT=$({func_name} $(for i in $(seq 0 $(( {len(arg_names)} - 1 ))); do echo -n "\"$ARG_$i\" "; done))
+RESULT=$({func_name} {arg_expands})
 
 echo "$RESULT"
 '''
@@ -210,7 +225,7 @@ echo "$RESULT"
         code = f'''#!/usr/bin/env bash
 set -euo pipefail
 
-ARGS_JSON='{args_json}'
+ARGS_JSON={safe_json}
 
 {body}
 '''
@@ -283,19 +298,17 @@ def _run_shell_script(script_path: str, args: list) -> Optional[str]:
         else:
             cmd = [_SHELL_PATH, script_path] + args
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            universal_newlines=True,
             timeout=60,
         )
         if result.returncode == 0:
-            return result.stdout
+            return result.stdout.decode('utf-8', errors='replace')
         else:
             raise RuntimeError(
                 f'Shell 脚本执行失败 (exit code {result.returncode}):\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}'
             )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f'Shell 脚本执行超时: {script_path}')
@@ -519,7 +532,24 @@ class ShellBridge(LangBridge):
 
         return src_path
 
-    def compile_project(self, project_dir: str, entry: str, output_dir: str = None) -> str:
+    def compile_project(self, project_dir: str, entry: str, output_dir: Optional[str] = None) -> str:
+        """编译（处理）Shell 项目。
+
+        Shell 是解释型语言，project 模式的含义是：
+        - 扫描 project_dir 下所有 .sh 文件；
+        - entry='main' 时：返回主文件路径（project_dir/main.sh，缺省取第一个
+          .sh 文件），后续由调用方执行；
+        - entry!='main' 时：把所有 .sh 文件打包成一个可执行的 bundle，
+          在文件末尾调用入口函数并回显结果。
+
+        Args:
+            project_dir: 项目目录路径。
+            entry: 入口函数名，'main' 表示执行主文件。
+            output_dir: 输出目录；缺省使用 _SHELL_CACHE_DIR。
+
+        Returns:
+            str: 产物路径（主文件路径或打包后的 bundle 路径）。
+        """
         output_dir = output_dir or _SHELL_CACHE_DIR
         os.makedirs(output_dir, exist_ok=True)
 
@@ -533,7 +563,6 @@ class ShellBridge(LangBridge):
             raise RuntimeError(f'No .sh files found in project directory: {project_dir}')
 
         sh_files.sort()
-
         project_name = os.path.basename(os.path.abspath(project_dir))
 
         if entry == 'main':
@@ -541,63 +570,55 @@ class ShellBridge(LangBridge):
             if not os.path.exists(main_sh):
                 main_sh = sh_files[0]
             return main_sh
-        else:
-            project_hash = self._get_project_hash(project_dir)[:12]
-            output_path = os.path.join(output_dir, f'shell_proj_{project_name}_{entry}_{project_hash}.sh')
 
-            if os.path.exists(output_path):
-                return output_path
+        project_hash = hashlib.md5(project_dir.encode('utf-8')).hexdigest()[:12]
+        output_path = os.path.join(output_dir, f'sh_proj_{project_name}_{entry}_{project_hash}.sh')
 
-            all_code = []
-            all_code.append('#!/usr/bin/env bash')
-            all_code.append(f'# Auto-generated from project: {project_name}')
-            all_code.append('set -euo pipefail')
-            all_code.append('')
-
-            for sh_file in sh_files:
-                rel_path = os.path.relpath(sh_file, project_dir)
-                all_code.append(f'# --- {rel_path} ---')
-                with open(sh_file, 'r', encoding='utf-8') as f:
-                    all_code.append(f.read())
-                all_code.append('')
-
-            all_code.append('# Entry point call')
-            all_code.append(f'{entry} "$@"')
-
-            final_code = '\n'.join(all_code)
-
-            with open(output_path, 'w', encoding='utf-8', newline='\n') as f:
-                f.write(final_code)
-
-            if not _IS_WINDOWS:
-                try:
-                    os.chmod(output_path, 0o755)
-                except Exception:
-                    pass
-
+        if os.path.exists(output_path):
             return output_path
 
-    def call_func(self, src_path: str, func_name: str,
-                  args: tuple, ret_type=None) -> Any:
+        bundle = []
+        bundle.append('#!/usr/bin/env bash')
+        bundle.append(f'# Auto-generated Shell project bundle')
+        bundle.append(f'# Project: {project_name}')
+        bundle.append(f'# Entry: {entry}')
+        bundle.append('set -euo pipefail')
+        bundle.append('')
+
+        for sh_file in sh_files:
+            rel_path = os.path.relpath(sh_file, project_dir)
+            bundle.append(f'# --- {rel_path} ---')
+            with open(sh_file, 'r', encoding='utf-8') as f:
+                bundle.append(f.read())
+            bundle.append('')
+
+        bundle.append('# Entry point call')
+        bundle.append(f'result="$({entry} "$@")"')
+        bundle.append('printf "%s\\n" "$result"')
+
+        with open(output_path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write('\n'.join(bundle))
+
+        if not _IS_WINDOWS:
+            try:
+                os.chmod(output_path, 0o755)
+            except Exception:
+                pass
+        return output_path
+
+    def call_func(self, lib_path: str, func_name: str,
+                  args: tuple, ret_type=None):
         shell_ret_type = get_shell_type(ret_type) if ret_type else 'auto'
-
-        with open(src_path, 'r', encoding='utf-8') as f:
-            code = f.read()
-
         arg_list = [str(a) for a in args]
 
-        full_code = f'''#!/usr/bin/env bash
-set -euo pipefail
+        with open(lib_path, 'r', encoding='utf-8') as f:
+            code = f.read()
 
-{code}
-
-{func_name} "$@"
-'''
-
+        full_code = _generate_callable_shell_code(code, func_name, args)
+        cache_dir = os.path.dirname(lib_path)
         code_hash = hashlib.md5(full_code.encode('utf-8')).hexdigest()[:12]
-        base_name = f'shell_call_{func_name}_{code_hash}'
-        cache_dir = _SHELL_CACHE_DIR
-        os.makedirs(cache_dir, exist_ok=True)
+        base_name = f'shell_{func_name}_{code_hash}_call'
+
         call_path = os.path.join(cache_dir, f'{base_name}.sh')
 
         with open(call_path, 'w', encoding='utf-8', newline='\n') as f:
@@ -627,4 +648,3 @@ def compile_and_run(code: str, func_name: str = 'main',
 shell = _shell_bridge.decorator
 sh = shell
 bash = shell
-

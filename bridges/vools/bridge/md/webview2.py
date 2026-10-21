@@ -159,6 +159,7 @@ class WebView2Config:
     context_menu: bool = True  # 是否启用右键菜单
     user_data_dir: Optional[str] = None  # 用户数据目录
     csp_policy: str = "l1"  # 内容安全策略档位：off=不注入 / l1=L1 基线（计划 §5，决策 3）
+    rich_open_root: Optional[str] = None  # P4 open_file 协议：允许打开的文件根目录（md 目录）；None 时不启用文件链接跳转
 
 
 @dataclass
@@ -194,6 +195,48 @@ class WebView2Message:
     data: Any
     target: str = "all"  # all, js, python
     timestamp: float = field(default_factory=time.time)
+
+
+# ═══════════════════════════════════════════════════════
+# P4 open_file 协议：宿主侧打开 + 导航兜底（计划 §4.3）
+# ═══════════════════════════════════════════════════════
+
+
+def _is_allowed_navigation(uri: str) -> bool:
+    """导航白名单：仅放行本地 file / 预览服务本地地址 / about:。
+
+    作为 NavigationStarting 兜底拦截：非白名单 URL 一律拒绝导航，防止
+    富内容文档中的外链把宿主带到不可信站点（统一只走 open_file 协议）。
+    """
+    low = (uri or "").lower()
+    if low.startswith("about:"):
+        return True
+    if low.startswith("file:"):
+        return True
+    if low.startswith(
+        ("http://127.0.0.1", "http://localhost", "https://127.0.0.1", "https://localhost")
+    ):
+        return True
+    return False
+
+
+def _handle_open_file(data: Dict, config: WebView2Config) -> "RichStatus":
+    """宿主处理 open_file 消息：二次解析 + 平台打开 + 错误分类。
+
+    - 未启用 rich_open_root：一律拒绝（安全默认，不因宿主未配置而放行）；
+    - 白名单/越权由 RichOpener 内的 RichPathResolver 校验（.. 越权、绝对路径
+      未 opt-in、扩展名白名单外、符号链接逃逸均拒绝）；
+    - 返回 RichStatus，调用方负责回传 open_result 给页面刷新徽标。
+    """
+    from .rich import RichOpener, error_status
+
+    if not config.rich_open_root:
+        return error_status("E_ACCESS_DENIED", "open_file 协议未启用（rich_open_root 为空）")
+    target = (data.get("data") or {}).get("target", "")
+    if not isinstance(target, str) or not target.strip():
+        return error_status("E_PATH_NOT_FOUND", "打开目标为空")
+    opener = RichOpener(root=config.rich_open_root, build_dir=config.rich_open_root)
+    return opener.open(target)
 
 
 # ═══════════════════════════════════════════════════════
@@ -392,6 +435,41 @@ class WebView2Manager:
         if config.devtools:
             devtools_init = "window.chrome.webview.openDevTools();"
 
+        # P4 open_file 协议（仅 rich_open_root 启用时注入）：
+        # 统一拦截 data-rich-open 链接点击 → postMessage 发 open_file；
+        # 收到 open_result 后按链接索引刷新徽标（ok/err 文案与样式）。
+        rich_open_js = ""
+        if config.rich_open_root:
+            rich_open_js = """
+    // ── P4 open_file：文件链接跳转协议 ──
+    let openSeq = 0;
+    window.openRichFile = function(index, target) {
+        const reqId = 'open_' + Date.now() + '_' + (++openSeq);
+        sendToPython('open_file', { index: index, target: target, request_id: reqId });
+    };
+    document.addEventListener('click', function(e) {
+        const a = e.target && e.target.closest ? e.target.closest('a[data-rich-open]') : null;
+        if (!a) return;
+        e.preventDefault();
+        const idx = a.getAttribute('data-rich-open');
+        const tgt = a.getAttribute('data-rich-target') || a.getAttribute('href');
+        if (tgt) window.openRichFile(idx, tgt);
+    }, true);
+    window.addEventListener('pythonMessage', function(e) {
+        const msg = e.detail || {};
+        if (msg.type !== 'open_result') return;
+        const d = msg.data || {};
+        const st = d.status || {};
+        const idx = d.index;
+        if (idx === undefined || idx === null) return;
+        const el = document.querySelector('[data-rich-open-status="' + idx + '"]');
+        if (!el) return;
+        el.hidden = false;
+        el.textContent = st.message || st.code || '';
+        el.className = 'md-rich-open-status ' + (st.ok ? 'md-rich-open-ok' : 'md-rich-open-err');
+    });
+"""
+
         return f"""
 // WebView2 (Chromium) 通信脚本 v2.0
 // 支持完整的双向通信
@@ -545,6 +623,8 @@ class WebView2Manager:
         }}
     }};
     
+    {rich_open_js}
+    
     // 开发者工具
     {devtools_init}
     
@@ -586,6 +666,84 @@ class WebView2Manager:
         result.duration_ms = (time.perf_counter() - start_time) * 1000
         return result
 
+    # ═══════════════════════════════════════════════════════
+    # P6 富内容内置查看器（open_preview / refresh_preview）
+    # ═══════════════════════════════════════════════════════
+
+    def _prepare_preview_config(
+        self,
+        html_content: str,
+        config: Optional[WebView2Config],
+        block_id: str,
+        *,
+        rich_open_root: Optional[str] = None,
+        user_data_dir: Optional[str] = None,
+        width: int = 960,
+        height: int = 720,
+        title: str = "vools rich preview",
+        csp_policy: Optional[str] = None,
+    ) -> Tuple[WebView2Config, str]:
+        """准备富内容预览配置（纯逻辑，可单测；不打开任何窗口）。
+
+        P6 分层安全模型：
+        - 容器层默认不注入 CSP（csp_policy=None → "off"）：容器仅承载宿主
+          通信脚本 / open_file 拦截 / 热更新推送，用户内容全在 renderer
+          产出的内层文档（自带 L1 CSP：script-src 'none'）；
+        - 显式传 csp_policy="l1" 时保留最严容器（此时 open_file / 热更新
+          JS 会被 CSP 禁用，仅适合纯静态预览）；
+        - 独立 user_data_dir 隔离：未显式传入时自动分配临时目录，
+          不共享主 WebView2 环境数据；
+        - rich_open_root 透传启用 open_file 文件链接协议（白名单外拒绝）。
+        """
+        if config is None:
+            config = WebView2Config(title=title, width=width, height=height)
+        if not block_id:
+            block_id = f"rich_preview_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        config.blocking = False  # 内置查看器一律非阻塞，便于热更新推送
+        if rich_open_root is not None:
+            config.rich_open_root = rich_open_root
+        if csp_policy is not None:
+            config.csp_policy = csp_policy
+        elif not config.csp_policy or config.csp_policy == "l1":
+            # 默认容器模式：不注入 CSP（内层富内容自带 L1 CSP）
+            config.csp_policy = "off"
+        if user_data_dir:
+            config.user_data_dir = user_data_dir
+        elif not config.user_data_dir:
+            config.user_data_dir = os.path.join(
+                tempfile.gettempdir(),
+                "vools_md_preview",
+                f"env_{uuid.uuid4().hex[:8]}",
+            )
+        return config, block_id
+
+    def open_preview(
+        self,
+        html_content: str,
+        config: Optional[WebView2Config] = None,
+        block_id: str = "",
+        **kwargs,
+    ) -> WebView2Result:
+        """富内容内置查看器：非阻塞打开 + 独立隔离环境（P6 宿主集成）。
+
+        kwargs 透传 _prepare_preview_config 的命名参数
+        （rich_open_root / user_data_dir / width / height / title / csp_policy）。
+        """
+        config, block_id = self._prepare_preview_config(
+            html_content, config, block_id, **kwargs
+        )
+        return self.run_webview2(html_content, config, block_id=block_id)
+
+    def refresh_preview(self, block_id: str, patch: str) -> bool:
+        """向预览窗口推送热更新补丁（L1/L2 JS，由 hotreload 模块生成）。
+
+        - patch 为空串视为无更新，直接返回 False；
+        - 底层走 execute_script（CoreWebView2.ExecuteScriptAsync）。
+        """
+        if not patch:
+            return False
+        return self.execute_script(block_id, patch)
+
     def _run_native_webview2(
         self, html_path: str, config: WebView2Config, block_id: str, timeout: int, context: Optional[Dict]
     ) -> WebView2Result:
@@ -612,7 +770,42 @@ class WebView2Manager:
             # 创建 WebView2 控件
             webview = WinFormsWebView2()
             webview.Dock = 5  # Fill
+
+            # P6 隔离：显式 user_data_dir 时使用独立 CoreWebView2 环境
+            # （CreationProperties 在控件初始化前设置，不共享主环境数据；
+            #  独立环境不可用时静默回退默认环境，不阻塞预览）
+            if config.user_data_dir:
+                try:
+                    os.makedirs(config.user_data_dir, exist_ok=True)
+                    from Microsoft.Web.WebView2.WinForms import (
+                        CoreWebView2CreationProperties,
+                    )
+
+                    props = CoreWebView2CreationProperties()
+                    props.UserDataFolder = config.user_data_dir
+                    webview.CreationProperties = props
+                except Exception:
+                    pass
+
             webview.Source = Uri(f"file:///{html_path.replace(os.sep, '/')}")
+
+            # P4 导航兜底：NavigationStarting 拦截非白名单 URL
+            # （file:// / 本地预览服务 / about: 之外一律拒绝，仅走 open_file 协议）
+            if config.rich_open_root:
+                try:
+
+                    def on_navigation_starting(sender, args):
+                        uri = str(getattr(args, "Uri", "") or "")
+                        if not _is_allowed_navigation(uri):
+                            try:
+                                args.Cancel = True
+                            except Exception:
+                                pass
+
+                    webview.NavigationStarting += on_navigation_starting
+                except Exception:
+                    # pythonnet 事件绑定失败不阻塞启动（JS 层拦截仍是兜底）
+                    pass
 
             # 消息存储
             events = []
@@ -640,6 +833,28 @@ class WebView2Manager:
                         elif data.get("type") == "error":
                             if config.on_error:
                                 config.on_error(data)
+                        elif data.get("type") == "open_file":
+                            # P4 open_file 协议：宿主二次解析 + 打开 + 回传结果
+                            try:
+                                status = _handle_open_file(data, config)
+                                core = webview.CoreWebView2
+                                if core:
+                                    core.PostWebMessageAsJson(
+                                        json.dumps(
+                                            {
+                                                "type": "open_result",
+                                                "request_id": data.get("request_id"),
+                                                "data": {
+                                                    "index": (data.get("data") or {}).get("index"),
+                                                    "status": status.to_dict(),
+                                                },
+                                            },
+                                            ensure_ascii=False,
+                                        )
+                                    )
+                            except Exception as e:
+                                if config.on_error:
+                                    config.on_error({"error": f"open_file: {e}"})
 
                         # 调用通用回调
                         if config.on_message:

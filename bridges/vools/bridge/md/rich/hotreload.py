@@ -167,3 +167,58 @@ class HotReloadManager:
         if self.mode == "l1":
             return build_l1_patch(full_html, frame_id=frame_id) if full_html is not None else ""
         return build_l2_patch(self.diff_updates(new_contents or {}))
+
+
+# ═══════════════════════════════════════════════════════
+# L2 受控区域提取 + 预览页热更新客户端（计划 P6 宿主集成）
+# ═══════════════════════════════════════════════════════
+
+
+def extract_l2_regions(inner_html: str) -> Dict[str, str]:
+    """从 L2 渲染的内层文档提取受控区域 {selector: new_html}。
+
+    selector 形如 `[data-rich-l2="frag-0"]`，供 HotReloadManager.diff_updates
+    对比哈希后生成 build_l2_patch 的 updates 参数（宿主 serve 的 reload 使用）。
+    """
+    import re
+
+    regions: Dict[str, str] = {}
+    for m in re.finditer(
+        r'<section\s+data-rich-l2="([^"]+)"[^>]*>.*?</section>',
+        inner_html,
+        re.DOTALL,
+    ):
+        selector = f'[data-rich-l2="{m.group(1)}"]'
+        regions[selector] = m.group(0)
+    return regions
+
+
+def build_hot_reload_client(mode: str, poll_path: str = "/__hot_reload__/poll") -> str:
+    """预览页热更新客户端脚本（宿主 serve 时注入，绝不内联到用户 HTML）。
+
+    - 每 1s 轮询 poll_path（带当前版本号 ?v=N），响应为
+      {"version": int, "mode": "l1"|"l2", "patch": str}
+    - patch 非空时更新本地版本并 eval 执行（L1 替换 iframe srcdoc /
+      L2 replaceChildren 受控区域）
+    - 依赖零、纯字符串 JS，可在浏览器或 WebView2 容器中运行
+    """
+    mode = parse_hot_reload_mode(mode)
+    path_json = json.dumps(poll_path, ensure_ascii=False)
+    return (
+        "(function(){"
+        "var v=0,t=setInterval(function(){"
+        "var x=new XMLHttpRequest();"
+        "x.open('GET'," + path_json + "+'?v='+v,true);"
+        "x.onreadystatechange=function(){"
+        "if(x.readyState===4&&x.status===200){"
+        "var r;try{r=JSON.parse(x.responseText);}catch(e){return;}"
+        "if(r&&typeof r.patch==='string'&&r.patch){"
+        "v=r.version;"
+        "try{(0,eval)(r.patch);}catch(e){}"
+        "}"
+        "}"
+        "};"
+        "x.send();"
+        "},1000);"
+        "})();"
+    )

@@ -114,6 +114,14 @@ nav:
     - 概述: sql/index.md
     - SQLite: sql/sqlite.md
     - Spark: sql/spark.md
+  - rhop 协议子项目:
+    - 概述: rhop/index.md
+    - SftpChannel 使用说明: rhop/sftp-channel.md
+  - actus 动作引擎:
+    - 概述: actus/index.md
+  - rx 响应式扩展:
+    - 概述: rx/index.md
+    - 系统监控: rx/reactive-monitoring.md
   - 附录:
     - 更新日志: appendix/changelog.md
     - 常见问题: appendix/faq.md

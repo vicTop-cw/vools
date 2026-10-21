@@ -47,11 +47,11 @@ vools/lib/
 
 所有 5 个包已通过 `pip install -e` 以 editable 模式安装:
 ```
-vools           0.7.2  (核心，路径: e:\IDEProjects\AI\vools)
-vools-bridges   0.7.2  (路径: e:\IDEProjects\AI\vools\bridges)
-vools-rx        0.7.2  (路径: e:\IDEProjects\AI\vools\rx)
-vools-dll32     0.7.2  (路径: e:\IDEProjects\AI\vools\dll32)
-vools-xl        0.7.2  (路径: e:\IDEProjects\AI\vools\xl)
+vools           0.7.2  (核心，路径: <repo_root>)
+vools-bridges   0.7.2  (路径: <repo_root>/bridges)
+vools-rx        0.7.2  (路径: <repo_root>/rx)
+vools-dll32     0.7.2  (路径: <repo_root>/dll32)
+vools-xl        0.7.2  (路径: <repo_root>/xl)
 ```
 
 注意: 当前 Python 环境的 pip 升级到了 26.2.1，需要 `--no-build-isolation` 才能用 editable 模式安装 (因为隔离环境无法导入 `setuptools.build_meta`)。
@@ -259,8 +259,8 @@ pip install vools[all]      → vools + 全部 4 个子包
 ## 五、环境信息
 
 - OS: Windows
-- Python: 3.10.11 (路径: `C:\Users\victo\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\python\python.exe`)
+- Python: 3.10.11 (路径: `%APPDATA%\TRAE SOLO CN\ModularData\ai-agent\vm\tools\python\python.exe`)
 - pip: 26.2.1 (注意: 安装 editable 包需要 `--no-build-isolation`)
-- 项目路径: `e:\IDEProjects\AI\vools`
+- 项目路径: `<repo_root>`
 - 当前分支: 需要 `git status` 确认
 - PyPI: 已配置 Trusted Publishing (OIDC)，GitHub Actions 可自动发布

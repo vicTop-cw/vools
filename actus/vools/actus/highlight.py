@@ -8,9 +8,10 @@
 """
 
 import os
-import subprocess
 import sys
 from typing import Optional
+
+from ._proc import run_cmd_safe
 
 
 # ── 配置 ──
@@ -83,15 +84,13 @@ def _resolve_lang(lang: str) -> str:
 def check_shiki_available() -> bool:
     """检查 Shiki 是否可用。"""
     try:
-        result = subprocess.run(
+        result = run_cmd_safe(
             ["node", SHIKI_SCRIPT, "python", "github-dark", "terminal"],
             input="print('test')",
-            capture_output=True,
-            text=True,
             timeout=10,
         )
         return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except Exception:
         return False
 
 
@@ -111,17 +110,15 @@ def highlight_code(code: str, lang: str = "python",
     """
     shiki_lang = _resolve_lang(lang)
     try:
-        result = subprocess.run(
+        result = run_cmd_safe(
             ["node", SHIKI_SCRIPT, shiki_lang, theme, mode],
             input=code,
-            capture_output=True,
-            text=True,
             timeout=30,
         )
         if result.returncode != 0:
             return code  # 失败时返回原代码
-        return result.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return result.stdout or ""
+    except Exception:
         return code
 
 

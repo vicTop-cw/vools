@@ -1,112 +1,241 @@
 {
-  "schema_version": "1.0.0",
-  "generated_at": "2026-10-17T15:07:50+08:00",
+  "schema_version": "2.0.0",
+  "classification_version": "2.0",
+  "generated_at": "2026-10-20T23:45:17+08:00",
   "actions": {
-    "actus.test.foo": {
-      "id": "actus.test.foo",
-      "name": "Foo",
+    "actus.basics.calculator": {
+      "id": "actus.basics.calculator",
+      "name": "Calculator",
       "version": "1.0.0",
-      "trust": "trusted",
+      "trust": "sandbox",
       "entry": "main",
-      "platform": null,
-      "description": "测试动作",
-      "usage": "调用示例: actus_test_foo({\"param\": \"value\"});\n返回: {\"status\": \"ok\"}",
-      "author": "ai-scaffold",
-      "permissions": [
-        "files:read"
-      ],
-      "args": {
-        "type": "object",
-        "properties": {
-          "param": {
-            "type": "string",
-            "description": "参数说明"
-          }
-        },
-        "required": [
-          "param"
-        ]
-      },
+      "platform": "desktop",
+      "description": "A beautiful calculator with modern UI",
+      "usage": null,
+      "author": "vools",
+      "permissions": null,
+      "args": null,
       "deprecated": false,
-      "max_instances": 0,
-      "tags": [],
+      "max_instances": 1,
+      "tags": [
+        "calculator",
+        "gui",
+        "webview2",
+        "utility"
+      ],
       "deps": [],
-      "path": "E:/IDEProjects/AI/vools/actus/actions/foo.actus.md",
-      "sha256": "77bf4539c289b2862e0f61de5e252d3f274f08edbb7ff844fc6623414ee38b97",
+      "path": "E:/IDEProjects/AI/vools/actus/vools/actus/actions/basics/calculator.actus.schema.md",
+      "sha256": "febf68d1abeda3f598320ae78d2e163790f638782c4753d3f9e57ab17928cd8c",
       "cached_artifacts": [],
-      "status": "valid"
+      "kind": "exec",
+      "purpose": [
+        "compute",
+        "control"
+      ],
+      "industry": [
+        "general"
+      ],
+      "trigger_decl": [
+        "manual"
+      ],
+      "context_applies": [],
+      "license": "mit",
+      "pricing": "free",
+      "declared_features": [
+        "ui-automation"
+      ],
+      "demo": "calculator.demo.actus.md",
+      "status": "valid",
+      "asset_pool": "included",
+      "verification": "n-a",
+      "verification_reason": "trust=sandbox 豁免测试绑定",
+      "notices": [
+        "info: 缺 usage 字段——建议补一行可执行调用示例（docs/47 §3.5）"
+      ]
     },
-    "actus.generated.zh": {
-      "id": "actus.generated.zh",
-      "name": "Zh",
+    "actus.basics.image_viewer": {
+      "id": "actus.basics.image_viewer",
+      "name": "Image Viewer",
       "version": "1.0.0",
-      "trust": "trusted",
+      "trust": "sandbox",
       "entry": "main",
-      "platform": null,
-      "description": "监控日志文件变化",
-      "usage": "调用示例: actus_generated_zh({\"param\": \"value\"});\n返回: {\"status\": \"ok\"}",
-      "author": "ai-scaffold",
-      "permissions": [
-        "files:read"
-      ],
-      "args": {
-        "type": "object",
-        "properties": {
-          "watch_path": {
-            "type": "string",
-            "description": "要监控的文件夹路径"
-          },
-          "on_change_action": {
-            "type": "string",
-            "description": "变化时触发的动作 id"
-          }
-        },
-        "required": [
-          "watch_path"
-        ]
-      },
+      "platform": "desktop",
+      "description": "A beautiful image viewer with modern UI",
+      "usage": null,
+      "author": "vools",
+      "permissions": null,
+      "args": null,
       "deprecated": false,
-      "max_instances": 0,
-      "tags": [],
+      "max_instances": 1,
+      "tags": [
+        "image",
+        "viewer",
+        "gui",
+        "webview2"
+      ],
       "deps": [],
-      "path": "E:/IDEProjects/AI/vools/actus/actions/zh.actus.md",
-      "sha256": "b95e8b6bcd177c9fb1306b64c897c152c5bd5da665eacee64ed5eb83de574402",
+      "path": "E:/IDEProjects/AI/vools/actus/vools/actus/actions/basics/image-viewer.actus.schema.md",
+      "sha256": "e890dc1672b52481a9c88be2ae44ba3b1bc96f516d3a51b72aed5239f50714a2",
       "cached_artifacts": [],
-      "status": "valid"
+      "kind": "exec",
+      "purpose": [
+        "source"
+      ],
+      "industry": [
+        "general"
+      ],
+      "trigger_decl": [
+        "manual"
+      ],
+      "context_applies": [],
+      "license": "mit",
+      "pricing": "free",
+      "declared_features": [
+        "ui-automation"
+      ],
+      "demo": "image-viewer.demo.actus.md",
+      "status": "valid",
+      "asset_pool": "included",
+      "verification": "n-a",
+      "verification_reason": "trust=sandbox 豁免测试绑定",
+      "notices": [
+        "info: 缺 usage 字段——建议补一行可执行调用示例（docs/47 §3.5）"
+      ]
     },
-    "actus.generated.zhzh": {
-      "id": "actus.generated.zhzh",
-      "name": "Zhzh",
+    "actus.basics.text_editor": {
+      "id": "actus.basics.text_editor",
+      "name": "Text Editor",
       "version": "1.0.0",
-      "trust": "audit",
+      "trust": "sandbox",
       "entry": "main",
-      "platform": null,
-      "description": "测试动作：处理文本数据",
-      "usage": "调用示例: actus_generated_zhzh({\"param\": \"value\"});\n返回: {\"status\": \"ok\"}",
-      "author": "ai-scaffold",
-      "permissions": [
-        "files:read"
-      ],
-      "args": {
-        "type": "object",
-        "properties": {
-          "param": {
-            "type": "string",
-            "description": "参数说明"
-          }
-        },
-        "required": [
-          "param"
-        ]
-      },
+      "platform": "desktop",
+      "description": "A beautiful text editor with modern UI",
+      "usage": null,
+      "author": "vools",
+      "permissions": null,
+      "args": null,
       "deprecated": false,
-      "max_instances": 0,
-      "tags": [],
+      "max_instances": 1,
+      "tags": [
+        "editor",
+        "gui",
+        "webview2",
+        "productivity"
+      ],
       "deps": [],
-      "path": "E:/IDEProjects/AI/vools/actus/actions/zhzh.actus.md",
-      "sha256": "d89ce71f8f653bf52b3764f16489c2b506b49b7d7ca39a24faabe6c1057c9f8d",
+      "path": "E:/IDEProjects/AI/vools/actus/vools/actus/actions/basics/text-editor.actus.schema.md",
+      "sha256": "360c1bcfdcd30cfe98f72c88646eace812fbed357e0c71a85eabeb252ecea93c",
       "cached_artifacts": [],
-      "status": "valid"
+      "kind": "exec",
+      "purpose": [
+        "control",
+        "data-store"
+      ],
+      "industry": [
+        "general"
+      ],
+      "trigger_decl": [
+        "manual"
+      ],
+      "context_applies": [],
+      "license": "mit",
+      "pricing": "free",
+      "declared_features": [
+        "ui-automation",
+        "file-write"
+      ],
+      "demo": "text-editor.demo.actus.md",
+      "status": "valid",
+      "asset_pool": "included",
+      "verification": "n-a",
+      "verification_reason": "trust=sandbox 豁免测试绑定",
+      "notices": [
+        "info: 缺 usage 字段——建议补一行可执行调用示例（docs/47 §3.5）"
+      ]
+    },
+    "actus.basics.todo_list": {
+      "id": "actus.basics.todo_list",
+      "name": "Todo List",
+      "version": "1.0.0",
+      "trust": "sandbox",
+      "entry": "main",
+      "platform": "desktop",
+      "description": "A beautiful todo list application with modern UI",
+      "usage": null,
+      "author": "vools",
+      "permissions": null,
+      "args": null,
+      "deprecated": false,
+      "max_instances": 1,
+      "tags": [
+        "todo",
+        "gui",
+        "webview2",
+        "productivity"
+      ],
+      "deps": [],
+      "path": "E:/IDEProjects/AI/vools/actus/vools/actus/actions/basics/todo-list.actus.schema.md",
+      "sha256": "8c34fe5a3561b809c996430e9b929d8b6647d80991a3ce5d30985b4ed9f01471",
+      "cached_artifacts": [],
+      "kind": "exec",
+      "purpose": [
+        "control",
+        "data-store"
+      ],
+      "industry": [
+        "general"
+      ],
+      "trigger_decl": [
+        "manual"
+      ],
+      "context_applies": [],
+      "license": "mit",
+      "pricing": "free",
+      "declared_features": [
+        "ui-automation",
+        "state-persist"
+      ],
+      "demo": "todo-list.demo.actus.md",
+      "status": "valid",
+      "asset_pool": "included",
+      "verification": "n-a",
+      "verification_reason": "trust=sandbox 豁免测试绑定",
+      "notices": [
+        "info: 缺 usage 字段——建议补一行可执行调用示例（docs/47 §3.5）"
+      ]
     }
+  },
+  "by_kind": {
+    "exec": [
+      "actus.basics.calculator",
+      "actus.basics.image_viewer",
+      "actus.basics.text_editor",
+      "actus.basics.todo_list"
+    ]
+  },
+  "by_purpose": {
+    "compute": [
+      "actus.basics.calculator"
+    ],
+    "control": [
+      "actus.basics.calculator",
+      "actus.basics.text_editor",
+      "actus.basics.todo_list"
+    ],
+    "data-store": [
+      "actus.basics.text_editor",
+      "actus.basics.todo_list"
+    ],
+    "source": [
+      "actus.basics.image_viewer"
+    ]
+  },
+  "by_industry": {
+    "general": [
+      "actus.basics.calculator",
+      "actus.basics.image_viewer",
+      "actus.basics.text_editor",
+      "actus.basics.todo_list"
+    ]
   }
 }

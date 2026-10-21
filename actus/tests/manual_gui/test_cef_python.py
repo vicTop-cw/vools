@@ -2,12 +2,18 @@
 """
 使用 CEF Python 渲染 GUI
 """
+# 仓库根（由本测试文件位置推导，可移植；原为绝对路径硬编码）
+import os
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 
 import sys
+
 import os
 
+
 # 添加路径
-sys.path.insert(0, r'E:\IDEProjects\AI\vools\bridges')
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'bridges'))
 
 from cefpython3 import cefpython as cef
 

@@ -38,6 +38,7 @@ from ..core.types import CTypeMapper
 from ..manager import manager, setup_runtime as _setup_lang_runtime
 from .._base import LangBridge, FunctionSpec, FunctionParser
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 
 
 # 查找系统上可用的完整 MinGW GCC（供 Nim 后端使用）
@@ -178,10 +179,9 @@ def _compile_nim_code(code: str, func_name: str, cache_dir: str = None) -> str:
         if gcc_dir and os.path.isfile(gcc_path):
             env['PATH'] = gcc_dir + os.pathsep + env.get('PATH', '')
             env['CC'] = gcc_path
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         compile_cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
+        timeout=300,
         cwd=cache_dir,
         env=env,
     )
@@ -192,7 +192,11 @@ def _compile_nim_code(code: str, func_name: str, cache_dir: str = None) -> str:
         if os.path.exists(dll_path):
             pass  # DLL 已生成，忽略非致命错误
         else:
-            raise RuntimeError(f'Nim 编译失败:\n{result.stderr}\n{result.stdout}')
+            raise RuntimeError(
+                f'Nim 编译失败:\n'
+                f'{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'{result.stdout.decode("utf-8", errors="replace")}'
+            )
 
     # 清理临时 .nim 文件
     try:
@@ -541,18 +545,17 @@ class NimBridge(LangBridge):
                 main_file
             ]
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             compile_cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
+            timeout=300,
             cwd=output_dir
         )
 
         if result.returncode != 0:
             raise RuntimeError(
                 f'Nim project compilation failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}\n'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
                 f'files: {nim_files}\n'
                 f'main: {main_file}'
             )

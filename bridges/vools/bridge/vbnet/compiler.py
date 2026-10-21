@@ -32,6 +32,7 @@ from typing import Any, Optional
 from ..manager import get_helper
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 from .types import get_vb_type, PY_TO_VB_TYPE
 from .templates import generate_vb_method, generate_vb_class, generate_vbproj
 
@@ -113,15 +114,19 @@ def _compile_vbnet_code(vb_code, func_name, cache_dir=None):
     with open(vbproj_file, 'w', encoding='utf-8') as f:
         f.write(generate_vbproj())
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         ['dotnet', 'build', '-c', 'Release'],
         cwd=project_dir,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, errors='replace'
+        timeout=300,
     )
 
     if result.returncode != 0:
-        raise RuntimeError('VB.NET 编译失败:\n{0}\n{1}'.format(result.stderr, result.stdout))
+        raise RuntimeError(
+            'VB.NET 编译失败:\n{0}\n{1}'.format(
+                result.stderr.decode('utf-8', errors='replace'),
+                result.stdout.decode('utf-8', errors='replace'),
+            )
+        )
 
     # dotnet build 默认输出到 bin/Release/net9.0/
     # 将所有输出文件复制到项目目录（EXE 需要 DLL 在同一目录）
@@ -158,20 +163,17 @@ def _call_vbnet_func(exe_path, func_name, args, ret_type=None):
         else:
             str_args.append(str(arg))
 
-    result = subprocess.run(
-        [exe_path] + str_args,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, errors='replace'
-    )
+    result = _run_cmd_timeout([exe_path] + str_args, timeout=60)
 
     if result.returncode != 0:
         raise RuntimeError(
             'VB.NET 函数调用失败 (exit code {0}):\n{1}'.format(
-                result.returncode, result.stderr
+                result.returncode,
+                result.stderr.decode('utf-8', errors='replace'),
             )
         )
 
-    output = result.stdout.strip()
+    output = result.stdout.decode('utf-8', errors='replace').strip()
 
     # 根据返回类型转换结果
     if ret_type is None or ret_type is type(None):
@@ -363,18 +365,20 @@ class VBNetBridge(LangBridge):
         vbproj_file = vbproj_files[0]
         project_dir = os.path.dirname(vbproj_file)
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             ['dotnet', 'build', '-c', 'Release', '-o', output_dir],
             cwd=project_dir,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True
+            timeout=300,
         )
 
         if result.returncode != 0:
             raise RuntimeError(
                 'VB.NET project compilation failed:\n'
                 'stderr:\n{0}\n'
-                'stdout:\n{1}'.format(result.stderr, result.stdout)
+                'stdout:\n{1}'.format(
+                    result.stderr.decode('utf-8', errors='replace'),
+                    result.stdout.decode('utf-8', errors='replace'),
+                )
             )
 
         project_name = os.path.splitext(os.path.basename(vbproj_file))[0]

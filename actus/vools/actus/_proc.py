@@ -20,9 +20,33 @@ import os
 import subprocess
 from typing import Any, Optional, Sequence, Union
 
-__all__ = ['run_cmd_safe']
+__all__ = ['run_cmd_safe', 'kill_tree']
 
 CmdType = Union[str, Sequence[str]]
+
+
+def kill_tree(proc: subprocess.Popen) -> None:
+    """杀掉 proc 及其整棵进程树（Windows taskkill /T；POSIX killpg）。
+
+    供 run_cmd_safe 内部与 Popen 管线（如 jump.py 的 tar|ssh）共用。
+    静默吞掉一切异常 —— 清理路径不许再抛。
+    """
+    try:
+        if os.name == 'nt':
+            subprocess.Popen(
+                ['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ).wait(timeout=5)
+        else:
+            try:
+                os.killpg(os.getpgid(proc.pid), 15)
+            except Exception:  # noqa: BLE001
+                proc.kill()
+    except Exception:  # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def run_cmd_safe(
@@ -67,23 +91,7 @@ def run_cmd_safe(
         )
     except subprocess.TimeoutExpired:
         # 超时：杀整棵进程树
-        try:
-            if is_win:
-                subprocess.Popen(
-                    ['taskkill', '/F', '/T', '/PID', str(proc.pid)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                ).wait(timeout=5)
-            else:
-                try:
-                    os.killpg(os.getpgid(proc.pid), 15)
-                except Exception:  # noqa: BLE001
-                    proc.kill()
-        except Exception:  # noqa: BLE001
-            try:
-                proc.kill()
-            except Exception:  # noqa: BLE001
-                pass
+        kill_tree(proc)
         try:
             stdout, stderr = proc.communicate(timeout=5)
         except Exception:  # noqa: BLE001

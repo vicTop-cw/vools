@@ -11,6 +11,7 @@ vools.bridge.md.rich.renderer — 内嵌卡片渲染抽象
 """
 
 import html as _html
+import re
 from typing import Optional
 
 from ..errors import MDRichRenderError
@@ -40,6 +41,22 @@ _CARD_STYLE = (
     ".md-rich-card .md-rich-btn{font-size:12px;padding:3px 10px;"
     "border:1px solid #d0d7de;border-radius:6px;background:#fff;color:#24292f;"
     "cursor:pointer;}"
+    ".md-rich-link{color:#0969da;text-decoration:none;"
+    "border-bottom:1px dashed #0969da;cursor:pointer;}"
+    ".md-rich-link:hover{color:#0550ae;text-decoration:underline;}"
+    ".md-rich-open-badge{font-size:11px;color:#57606a;background:#eaeef2;"
+    "padding:0 6px;border-radius:8px;margin-right:4px;vertical-align:1px;}"
+    ".md-rich-open-status{font-size:11px;margin-left:6px;padding:0 6px;"
+    "border-radius:8px;display:inline-block;}"
+    ".md-rich-open-status.md-rich-open-ok{color:#1a7f37;background:#dafbe1;}"
+    ".md-rich-open-status.md-rich-open-err{color:#cf222e;background:#ffebe9;}"
+    ".md-rich-artifacts{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));"
+    "gap:8px;margin:8px 0;}"
+    ".md-rich-art{border:1px solid #d0d7de;border-radius:8px;padding:8px 12px;"
+    "background:#fff;}"
+    ".md-rich-art .md-rich-art-thumb{max-width:100%;max-height:120px;object-fit:contain;"
+    "margin-top:6px;border-radius:4px;border:1px solid #eaeef2;}"
+    ".md-rich-art-meta{display:block;font-size:12px;color:#57606a;margin-top:2px;}"
     "</style>"
 )
 
@@ -186,11 +203,12 @@ def render_source_card(
         if collapsed:
             source_attr = ' data-rich-collapsed="true"'
 
+    collapse_attr = ' data-rich-collapsed="true"' if (foldable and collapsed) else ""
     return (
         f"{style_part}"
         f'<div class="md-rich-card md-rich-l4" '
         f'data-rich-block="{block_attr}" data-rich-kind="source"'
-        f'{" data-rich-collapsed=\"true\"" if (foldable and collapsed) else ""}>'
+        f"{collapse_attr}>"
         f'<div class="md-rich-card-head">'
         f'<span class="md-rich-card-title">源码</span>'
         f'<span class="md-rich-card-tag">{lang_attr}</span>'
@@ -227,14 +245,164 @@ class RenderResult:
     links: _List[FileLink] = field(default_factory=list)  # 文件链接（含状态）
     open_requests: _List[FileLink] = field(default_factory=list)  # 需要宿主打开的链接
     inline_count: int = 0  # 内联富内容数（svg+html）
+    artifacts: "_List[ArtifactRef]" = field(default_factory=list)  # 产物引用（P5）
     hot_reload_patch: str = ""  # 由 hotreload 模块生成，宿主执行
+
+
+_LINK_BADGE_RE = re.compile(
+    r'<a href="([^"]*)" data-rich-link="(\d+)"[^>]*>(.*?)</a>', re.DOTALL
+)
+
+#: 链接类型 → 徽标文案（kind 见 scanner.FileLink）
+_LINK_BADGE_TEXT = {
+    "document": "文件",
+    "image": "图片",
+    "svg": "图片",
+    "html": "页面",
+    "json": "数据",
+    "archive": "压缩包",
+    "video": "视频",
+    "audio": "音频",
+    "text": "文本",
+}
+
+
+def _inject_link_badges(body_html: str, links: "_List[FileLink]") -> str:
+    """P4 徽标注入：把正文 `<a data-rich-link=i>` 升级为 open_file 链接。
+
+    升级后的链接暴露给宿主（webview2 统一拦截脚本 / CLI 文本提示）：
+    - `data-rich-open`：链接索引（对应 doc.file_links[i]）；
+    - `data-rich-target`：原始引用目标（宿主重新解析，不信任链接自身）；
+    - `.md-rich-open-badge`：类型徽标（文件/图片/页面…）；
+    - `.md-rich-open-status`：状态徽标占位（隐藏，宿主收到 open_result 后
+      按 request_id 回填文案与 ok/err 样式）。
+
+    仅处理扫描期已标记的本地文件链接；远程拒绝项（span）与纯文本不触碰。
+    """
+    if not body_html or not links:
+        return body_html
+
+    def repl(m: "re.Match") -> str:
+        href = m.group(1)
+        idx = int(m.group(2))
+        inner = m.group(3)
+        if not (0 <= idx < len(links)):
+            return m.group(0)
+        link = links[idx]
+        target = link.target or href
+        badge = _LINK_BADGE_TEXT.get(link.kind, "文件")
+        return (
+            f'<a href="{href}" data-rich-open="{idx}" '
+            f'data-rich-target="{_safe_attr(target)}" class="md-rich-link">'
+            f'<span class="md-rich-open-badge">{badge}</span>{inner}'
+            f'<span class="md-rich-open-status" data-rich-open-status="{idx}" hidden>'
+            f"</span></a>"
+        )
+
+    return _LINK_BADGE_RE.sub(repl, body_html)
+
+
+# ═══════════════════════════════════════════════════════
+# P5 产物引用渲染
+# ═══════════════════════════════════════════════════════
+
+#: 产物类型 → 徽标文案（kind 见 scanner.ArtifactRef）
+_ARTIFACT_BADGE_TEXT = {
+    "text": "文本",
+    "image": "图片",
+    "svg": "图片",
+    "html": "页面",
+    "json": "数据",
+    "binary": "文件",
+}
+
+#: 图片类产物缩略图内联大小上限（超过只显示链接与元信息）
+_ARTIFACT_THUMB_MAX_BYTES = 200 * 1024
+
+#: 扩展名 → MIME（缩略图 data URI 用）
+_ARTIFACT_MIME_BY_EXT = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+    ".ico": "image/x-icon",
+    ".svg": "image/svg+xml",
+}
+
+
+def _human_size(n: int) -> str:
+    if n >= 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MB"
+    if n >= 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n} B"
+
+
+def _fmt_mtime(ts: float) -> str:
+    import datetime
+
+    return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+
+
+def _render_artifact_card(art, idx: int) -> str:
+    """P5 产物卡片：类型徽标 + 元信息 + open_file 链接。
+
+    - 链接目标统一用 `@artifacts/<name>`（RichPathResolver 产物引用，
+      宿主二次解析不信任卡片自身路径）；
+    - 图片类产物（≤200KB）内联 base64 缩略图（img 标签，L1 无脚本，
+      SVG 也经 img 渲染，不直接注入可执行标记）；
+    - 其余类型仅展示徽标/文件名/大小/时间，点击走 open_file 协议。
+    """
+    import os as _os
+    import base64 as _b64
+    from .resolver import ARTIFACTS_REF_PREFIX
+
+    name = _safe_attr(art.name)
+    target = f"{ARTIFACTS_REF_PREFIX}/{art.name}"
+    badge = _ARTIFACT_BADGE_TEXT.get(art.kind, "产物")
+
+    meta_bits = []
+    if art.size:
+        meta_bits.append(_human_size(art.size))
+    if art.mtime:
+        meta_bits.append(_fmt_mtime(art.mtime))
+    meta = _safe_attr(" · ".join(meta_bits))
+
+    thumb = ""
+    if art.kind in ("image", "svg") and 0 < art.size <= _ARTIFACT_THUMB_MAX_BYTES:
+        try:
+            with open(art.path, "rb") as fh:
+                data = fh.read()
+            mime = _ARTIFACT_MIME_BY_EXT.get(
+                _os.path.splitext(art.path)[1].lower(), "application/octet-stream"
+            )
+            b64 = _b64.b64encode(data).decode("ascii")
+            thumb = (
+                f'<img class="md-rich-art-thumb" src="data:{mime};base64,{b64}" '
+                f'alt="{name}" loading="lazy">'
+            )
+        except OSError:
+            thumb = ""
+
+    return (
+        f'<div class="md-rich-art" data-rich-artifact="{name}">'
+        f'<a href="{target}" data-rich-open="art-{idx}" '
+        f'data-rich-target="{target}" class="md-rich-link">'
+        f'<span class="md-rich-open-badge">{badge}</span>{name}</a>'
+        f'<span class="md-rich-art-meta">{meta}</span>'
+        f'<span class="md-rich-open-status" data-rich-open-status="art-{idx}" hidden>'
+        f"</span>{thumb}</div>"
+    )
 
 
 def _render_body(doc: RichDoc, hot_reload: str) -> str:
     """组装正文 + 内联富内容。"""
     parts: _List[str] = []
     if doc.body_html:
-        parts.append(doc.body_html)
+        parts.append(_inject_link_badges(doc.body_html, doc.file_links))
 
     for svg in doc.inline_svgs:
         if svg.safe:
@@ -253,6 +421,16 @@ def _render_body(doc: RichDoc, hot_reload: str) -> str:
         else:
             parts.append(f'<section class="md-rich-frag">{frag.safe}</section>')
 
+    if doc.artifacts:
+        cards = [
+            _render_artifact_card(art, i) for i, art in enumerate(doc.artifacts)
+        ]
+        parts.append(
+            '<section class="md-rich-artifacts" data-rich-artifacts="1">'
+            + "\n".join(cards)
+            + "</section>"
+        )
+
     return "\n".join(parts)
 
 
@@ -262,7 +440,8 @@ def build_preview_page(inner_html: str, *, frame_id: str = "__md_rich_preview__"
     return (
         "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n"
         "</head>\n<body>\n"
-        f'<iframe id="{frame_id}" data-rich-l1 style="width:100%;height:96vh;'
+        '<iframe id="' + frame_id + '" data-rich-l1 loading="lazy" '
+        'style="width:100%;max-width:100%;height:96vh;'
         'border:0;" srcdoc="' + srcdoc + '"></iframe>\n'
         "</body>\n</html>"
     )
@@ -320,4 +499,5 @@ def render(
         links=list(doc.file_links),
         open_requests=[l for l in doc.file_links if l.resolved_path],
         inline_count=inline_count,
+        artifacts=list(doc.artifacts),
     )

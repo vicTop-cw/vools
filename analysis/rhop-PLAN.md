@@ -1,9 +1,100 @@
+---
+AIGC:
+    Label: "1"
+    ContentProducer: 001191440300708461136T1XGW3
+    ProduceID: 9f2a11add43fbf12a546606fb2b962ab_1a5c310ccca111f1898e525400248c00
+    ReservedCode1: Jn4L6521BciVGIIfCGTnMRDyHvcDLnkdcQq7JuhdYvMcZYA2T5lZRJ4/EoRXNYcLuXQPJr+GBdAchUS9NTY6JaYmtovud4masyT5K8mryHwpgVfX5JKFYHJ00N7ph83FGOYZF0hJTAtaWFGNt8G/vlB75hpY8XHXMQTQxLreeGa1D0tn3xp6uTvxEto=
+    ContentPropagator: 001191440300708461136T1XGW3
+    PropagateID: 9f2a11add43fbf12a546606fb2b962ab_1a5c310ccca111f1898e525400248c00
+    ReservedCode2: Jn4L6521BciVGIIfCGTnMRDyHvcDLnkdcQq7JuhdYvMcZYA2T5lZRJ4/EoRXNYcLuXQPJr+GBdAchUS9NTY6JaYmtovud4masyT5K8mryHwpgVfX5JKFYHJ00N7ph83FGOYZF0hJTAtaWFGNt8G/vlB75hpY8XHXMQTQxLreeGa1D0tn3xp6uTvxEto=
+---
+
 # vools-rhop — 双方对等镜像任务中继协议
 
 > **设计规划文档 v2** (2026-10-15，按需求重新设计)
-> 前置阅读: `c:\users\victo\tmp\temp.txt`
+> 前置阅读: `<user_home>/tmp/temp.txt`
 > 核心约束: **只有两方**（需求端 / 任务端），不是多跳；双方各跑常驻 daemon；Py3.6 基线
-> 状态: 设计评审中，未开始编码
+> 状态: **MVP-1/2 已实现并通过全部出口判据（2026-10-18，18/18 测试通过）**；**MVP-3 双方自建临时服务器中转已规划（异步机器，待确认实施）**；v2 完整设计（镜像 DB / 状态机 / 业务 API）仍未编码，见「〇、MVP 范围」
+> **地基规划（2026-10-18 追加；Step 1 已编码并验证，Step 2-4 未编码）**: SftpChannel 升级为 paramiko 优先 + 注入回退；actus jump 改装为 rhop 公开动作；拓扑统一为 A[发送端]/B[接收端]/C[中转] 三角，无 p0..pN 跳板链；后续仅配置+动作即可交互。详见文末「附录 C」。
+
+---
+
+## 〇、MVP 范围（2026-10-18 确认）
+
+> 由用户亲口定义的最小可行版本。MVP 只做两件事，其余 v2 设计（镜像 DB、完整状态机、业务 API 等）均不在 MVP 范围内。
+
+### MVP-1：抽象密钥函数
+
+- 输入：本地固定密钥（配置侧管理，信封不含密钥）
+- 处理：对 JSON 文本加密，输出加密 JSON 文本
+- 验证：用本地固定密钥解密后比对内容，判断是否验证通过
+- 目的：确认 A → B 传输的内容可信、未被篡改
+- 落点：`vools/rhop/crypto.py`（密钥加载 + 加密 + 解密验证一体抽象）
+
+### MVP-2：shared path 传输 + 监控收
+
+- **shared path 抽象**：发送方写到"它能写的地方"，且该地方是接收方"它能读的地方"；本质是双方共同可达的介质，不限定具体技术
+- 候选介质（任意平台均可用）：SFTP / URL / Git 仓库 / 同机器异进程 / 异机器 / 中间方 C
+  - 中间方场景：A 连不上 B、B 也连不上 A，但 C 可同时连 A 与 B → A 写 C 可达处，B 从 C 读取
+- **多端视图抽象（MVP-2 打磨，2026-10-18）**：同一介质的**地址形态在各方可能不同**，如 A 侧是本地目录 `<share_dir>`，B 侧看到的是 URL（file:// 或本地/局域网 HTTP 服务）或挂载盘符 / UNC / 网络盘符。shared path 不再假设"同一路径字符串"，而是由**写端视图 + 读端视图**共同描述同一物理介质：
+  - 本地目录 / UNC / 网络盘符（`<share_dir>`、`\\NAS\share`、`Z:\share`）→ 统一按本地路径处理
+  - `file:///<share_dir>` → 解析为本地路径视图（仍是本地介质，不联网）
+  - `http(s)://...` → HTTP URL 视图（可能是本地/局域网文件服务；**URL 形态 ≠ 联网**，它仍是 shared path 兜底层，不参与"在线优先"判定）
+  - 在线优先判定只针对 OnlineChannel（Git/SFTP/自建中转）；URL 形态的 shared path 依旧是离线回退层
+- **通道选择**：不论对方是否有网络，**有网时优先在线通道，否则回退 shared path**
+- **收发模式**：一方发、一方监控收；监控方使用 **vools-rx 触发器 API**（如触发器监听 shared path 变化）而非自建轮询
+- 落点：`vools/rhop/transport/`（shared path 抽象 + 在线优先/离线回退选择）、`vools/rhop/watch.py`（vools-rx 触发器接入）
+
+### MVP 出口判据
+
+1. 本地固定密钥能对 JSON 加密，且解密验证通过 / 失败可明确区分
+2. 同一机器两进程（A/B 模拟）通过 shared path 收发一包加密 JSON 成功
+3. 有网介质（Git/SFTP）可用时优先走在线通道，不可用时自动回退 shared path
+4. 接收方用 vools-rx 触发器监控到新文件并成功解密验证
+
+**打磨判据（多端视图，2026-10-18）**：
+
+8. A 以本地目录写入，B 以 `file://` URL（指向同一介质）读取成功——URL 形态但属本地介质，不联网
+9. A 以本地目录写入，B 以 HTTP URL（本地/局域网文件服务）读取成功——URL 形态仍是 shared path 兜底层，不参与"在线优先"判定
+10. 挂载盘符 / UNC 形态正确解析；单 spec 兼容旧用法（写读同视图）；在线通道不可用时 URL 形态 shared path 照常回退
+
+### MVP-3：双方自建临时服务器中转（异步机器升级）
+
+> **状态**：已实现，判据 5/6/7 全部通过（2026-10-18）。仅在双方都有网、且为**异步机器**（一方在线、另一方择机投递/取回，无需同时在线）的场景生效；同步实时交互不在本升级范围。地址与 token 由**配置告知**对端（用户 2026-10-18 确认，不做 shared path 发现）。
+
+**动机**：MVP-2 在线通道仅有 Git / SFTP 两个候选，均依赖第三方仓库或账号。双方都有网时，可由任一方**临时自建中转服务器**完成交互：更直接、无第三方依赖、内容只在双方机器间流动。
+
+**角色与流程**：
+
+```
+┌────────────────┐          HTTP           ┌────────────────┐
+│  RelayHost (A) │◄────────────────────────┤  RelayClient (B)│
+│  临时中转服务器 │   B 投递加密 JSON 包     │  择机投递即走    │
+│  收包暂存+TTL   │                         │                │
+└────────────────┘                         └────────────────┘
+```
+
+- **RelayHost（中转方）**：临时启动本地 HTTP 中转服务，监听动态端口，收包暂存（内存优先，超阈值落临时文件），TTL 过期自动关闭
+- **RelayClient（投递方）**：通过配置/元信息获得中转地址与 token，把加密 JSON 包 PUT/POST 过去，投完即走（异步语义与 shared path 一致）
+
+**升级后的通道选择链**：
+
+1. 双方自建中转（中转方在线、地址可达）→ **优先**
+2. Git / SFTP 在线通道 → 次选
+3. shared path → 最终回退
+
+**安全**（复用 MVP-1 保证 + 新增）：
+- 信封不含密钥：中转方即使拿到密文也无法解密（MVP-1 已保证）
+- 中转服务器只暂存密文包、不落明文；TTL 过期清理
+- 可选共享 token（配置侧注入），防止第三方投毒 / 冒领包
+
+**落点**：`vools/rhop/transport/relay.py`（RelayServer + RelayChannel），作为 `OnlineChannel` 新实现接入现有 `select_transport`，复用 MVP-2 抽象，增量实现
+
+**出口判据（规划）**：
+
+5. 双方都有网：A 自建临时中转服务器，B 投递加密 JSON 包，A 取回并解密验证 OK
+6. 中转方不在线 / 地址不可达：自动回退 Git/SFTP，再回退 shared path，链路不中断
+7. 中转 TTL 过期自动关闭；包被取走后中转不留明文残留（临时文件已清理）
 
 ---
 
@@ -1267,3 +1358,70 @@ def test_inject_partial_transfer():
 | 监控新文件 | daemon 轮询 inbox/ + transport.pull() |
 | Py3.6 基线 | attrs + stdlib + subprocess，零现代 Python 特性 |
 | 通用性 | 传输层抽象，后端可插拔 |
+
+---
+
+## 附录 C：地基规划 — 配置驱动 A/B/C 三角交互（2026-10-18）
+
+> **动机**：vq/sparksql-exe 后续将依赖 vools-rhop（内置 paramiko 用法）；本机 actus jump 系列已验证动作将升级为 rhop 公开动作。地基目标一句话：**后续只提供配置信息 + 指定动作方式，即可完成任意双方交互**。拓扑约束：**不要 p0, p1, ..., pN 跳板链**；任何交互都可演化为 A[发送端]、B[接收端]、C[中转] 三角，A/B 反向传递只需调换身份复用同一套机制。
+
+### C.1 目标形态
+
+```
+rhop 地基 = 传输介质（可插拔） + 公开动作（可验证） + 三角拓扑（可互换）
+
+交互入口:
+    rhop.interact(cfg, action="jump.push", payload={...})
+    # cfg: 密钥 + 本端角色(A/B/C) + 介质配置(在线通道列表 + shared path 视图) + 对端/中转地址
+    # 自动完成: 选通道 → 加密 → 传输 → 解密验证 → 执行动作 → 回传结果
+```
+
+- 发送端 A、接收端 B 只是**一次会话的角色标签**，同一份配置可互换复用（反向传递时交换角色即可）
+- 中转 C 是 A/B 不可直连时的暂存/转交角色（复用 MVP-3 RelayServer 能力，扩展为通用中转）
+- 通信图只有两种形态：`A → B` 直连、`A → C → B` 中转；**不存在多跳链**
+
+### C.2 改造项
+
+| # | 改造项 | 现状 | 目标 | 落点 |
+|---|---|---|---|---|
+| C2.1 | SftpChannel paramiko 优先 | 仅 TCP 探测 + reader/writer 注入，读写未实现 | paramiko 可用时走 paramiko（put/get/listdir/mkdirs/exists/read_text/write_text），导入失败或连接失败回退注入式 reader/writer；探测升级为「TCP 探测 + paramiko 真实连接（可选）」 | `vools/rhop/transport/online.py`（或拆 `sftp.py`） |
+| C2.2 | actus jump 改装公开动作 | actus/jump.py 已验证（test_jump_* 全绿），但仅为 actus 内部动作 | 升级为 rhop 公开动作集：`jump.probe / jump.push / jump.pull / jump.sync`，统一入参/出参/状态 schema；跨动作 execute 保留 Ω-gate 容错解包（内层 `data.status==ok` 即成功） | 新建 `vools/rhop/actions/`（包装 actus jump 或独立实现） |
+| C2.3 | A/B/C 三角拓扑 | 隐含两端对等，RelayServer 仅单向投递 | 显式角色模型 `Role = SEND | RECV | RELAY`；同一方多角色；反向传递=互换角色；配置里声明本端角色、对端/中转 endpoint | 新建 `vools/rhop/session.py` + 配置抽象 |
+| C2.4 | 配置驱动入口 | 配置零散（configs.py / 注入函数） | 一份配置（JSON/dict）描述密钥、角色、介质、动作集；`rhop.interact()` 一键交互；vq/sparksql-exe 只需提供配置+指定动作 | 新建 `vools/rhop/config.py` + `interact.py` |
+
+### C.3 通道选择链（升级后）
+
+```
+1. A → C → B 中转（C 在线、地址可达）→ 优先
+2. Git / SFTP（paramiko 优先，否则回退注入）→ 次选
+3. shared path（多端视图）→ 最终回退
+```
+
+### C.4 落地顺序与出口判据
+
+**Step 1 — SftpChannel paramiko 优先（先做，vq 依赖前提）**
+- [x] paramiko 存在：SftpChannel 内建 paramiko 后端，真实 put/get/listdir 跑通（2026-10-18 本地 paramiko SFTPServer 实测：BACKEND_OK / PROBE_OK / ROUNDTRIP_OK / FS_OK 全通过）
+- [x] paramiko 缺失/导入失败：回退注入式 reader/writer，行为不变（TestSftpChannelParamikoMissing 单测覆盖）
+- [x] 判据：`select_transport` 中 SftpChannel 可用性判定正确（52/52 测试通过）；paramiko 后端真实一包往返成功（本地 SFTPServer 实测；外网 test@47.93.7.122:10022 当前 TCP 超时不可达，属外部环境问题，非代码缺陷）
+
+**Step 2 — 公开动作集（actus jump 升级）**
+- [x] `rhop.actions` 提供 `jump.probe/push/pull/sync`，复用 actus 已验证逻辑，schema 公开（2026-10-20 完成：`vools/rhop/actions/jump.py` 独立 paramiko 实现，对齐 actus 语义；`actions/__init__.py` 聚合 ACTIONS + `run_action` + `omega_unwrap`）
+- [x] 跨动作调用带 Ω-gate 容错解包（内层 `data.status==ok` 即成功，gate error 挂 `omega_gate` 字段）
+- [x] 判据：动作集测试全绿（test_actions.py 14 用例，含本地 SFTPServer 真实 push/pull 往返一致、sync 增量同步、Ω-gate 解包）；本机配置下 `jump.push` 一文件 + `jump.pull` 拉回验证通过
+
+**Step 3 — A/B/C 三角与身份互换**
+- [x] `session.py`：角色声明（Role=SEND/RECV/RELAY）+ 对端/中转 endpoint；A→B 直连、A→C→B 中转两条路径（2026-10-20 完成）
+- [x] 反向传递：B→A 互换角色复用同一份配置/介质，不需新增代码（`reverse()` 复用介质）
+- [x] 判据：A→B 往返、A→C→B 往返、B→A 反向往返三条测试通过（test_session.py 12 用例全绿）
+
+**Step 4 — 配置驱动 + vq 迁移**
+- [x] `config.py` + `interact()`：仅配置+动作名完成交互（2026-10-20 完成：RhopConfig 描述密钥/角色/介质/动作集；`interact()` execute/request/roundtrip 三模式；`handle_request()` 接收侧闭环回传；test_interact.py 16 用例全绿）
+- [x] vq/sparksql-exe 侧：configs.py 的 ROLE p0..p3 废弃/映射到 A/B/C；utils/sftp.py 桥接退化为 SftpChannel 回退实现（2026-10-21：configs 增 RHOP_ROLE A/B/C 映射 + build_rhop_cfg()；sftp.py 增 backend="rhop" 切换，auto 默认保持 vic_relay 不破坏线上）
+- [x] 判据：vq/sparksql-exe 用 rhop 配置（不改业务代码）完成一次推仓/拉取（2026-10-21 真机 test@47.93.7.122:10022 联调：listdir 根目录 16 项正常；put/get 往返 rhop_link_<ts>.txt 内容一致；exists 确认；联调文件留于远端 Victor/ 根，可手动清理）
+
+### C.5 兼容与保留
+
+- 现有公开 API 全部保留（`LocalSharedPath`、`select_transport`、`RelayServer/RelayChannel`、`parse_endpoint`、`make_shared_path` 等）
+- Py3.6 基线继续遵守；paramiko 为**可选依赖**（缺失自动回退）
+- 明文凭据仍由配置侧管理（如 `~/.sftp_creds.json`、configs.py），rhop 只读配置、不落盘凭据
+*（内容由AI生成，仅供参考）*

@@ -22,162 +22,162 @@
 
 | 操作符 | 状态 | 实现位置 |
 |--------|------|---------|
-| Observable.from_iterable() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L345) |
-| Observable.from_range() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L522) |
-| Observable.from_callable() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L558) |
-| Observable.from_future() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L580) |
-| Observable.just() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L365) |
-| Observable.of() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L369) |
-| Observable.empty() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L377) |
-| Observable.never() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L384) |
-| Observable.throw() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L397) |
-| Observable.interval() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L401) |
-| Observable.timer() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L433) |
-| Observable.defer() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L472) |
-| Observable.repeat() | ✅ | [observable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/observable.py#L494) |
+| Observable.from_iterable() | ✅ | [observable.py](../../../vools/reactive/observable.py#L345) |
+| Observable.from_range() | ✅ | [observable.py](../../../vools/reactive/observable.py#L522) |
+| Observable.from_callable() | ✅ | [observable.py](../../../vools/reactive/observable.py#L558) |
+| Observable.from_future() | ✅ | [observable.py](../../../vools/reactive/observable.py#L580) |
+| Observable.just() | ✅ | [observable.py](../../../vools/reactive/observable.py#L365) |
+| Observable.of() | ✅ | [observable.py](../../../vools/reactive/observable.py#L369) |
+| Observable.empty() | ✅ | [observable.py](../../../vools/reactive/observable.py#L377) |
+| Observable.never() | ✅ | [observable.py](../../../vools/reactive/observable.py#L384) |
+| Observable.throw() | ✅ | [observable.py](../../../vools/reactive/observable.py#L397) |
+| Observable.interval() | ✅ | [observable.py](../../../vools/reactive/observable.py#L401) |
+| Observable.timer() | ✅ | [observable.py](../../../vools/reactive/observable.py#L433) |
+| Observable.defer() | ✅ | [observable.py](../../../vools/reactive/observable.py#L472) |
+| Observable.repeat() | ✅ | [observable.py](../../../vools/reactive/observable.py#L494) |
 
 ### 1.2 Filtering (过滤操作符) - 15/15
 
 | 操作符 | 状态 | 实现位置 |
 |--------|------|---------|
-| filter | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L35) |
-| take | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L500) |
-| skip | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L560) |
-| take_while | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L800) |
-| skip_while | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L850) |
-| take_until | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L726) |
-| skip_until | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1653) |
-| distinct | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L654) |
-| distinct_until_changed | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L900) |
-| first | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L575) |
-| last | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L622) |
-| element_at | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L681) |
-| skip_last | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2170) |
-| take_last | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2210) |
-| ignore_elements | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2260) |
+| filter | ✅ | [operators.py](../../../vools/reactive/operators.py#L35) |
+| take | ✅ | [operators.py](../../../vools/reactive/operators.py#L500) |
+| skip | ✅ | [operators.py](../../../vools/reactive/operators.py#L560) |
+| take_while | ✅ | [operators.py](../../../vools/reactive/operators.py#L800) |
+| skip_while | ✅ | [operators.py](../../../vools/reactive/operators.py#L850) |
+| take_until | ✅ | [operators.py](../../../vools/reactive/operators.py#L726) |
+| skip_until | ✅ | [operators.py](../../../vools/reactive/operators.py#L1653) |
+| distinct | ✅ | [operators.py](../../../vools/reactive/operators.py#L654) |
+| distinct_until_changed | ✅ | [operators.py](../../../vools/reactive/operators.py#L900) |
+| first | ✅ | [operators.py](../../../vools/reactive/operators.py#L575) |
+| last | ✅ | [operators.py](../../../vools/reactive/operators.py#L622) |
+| element_at | ✅ | [operators.py](../../../vools/reactive/operators.py#L681) |
+| skip_last | ✅ | [operators.py](../../../vools/reactive/operators.py#L2170) |
+| take_last | ✅ | [operators.py](../../../vools/reactive/operators.py#L2210) |
+| ignore_elements | ✅ | [operators.py](../../../vools/reactive/operators.py#L2260) |
 
 ### 1.3 Transforming (转换操作符) - 10/10
 
 | 操作符 | 状态 | 实现位置 |
 |--------|------|---------|
-| map | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L15) |
-| flat_map | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L105) |
-| concat_map | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L157) |
-| switch_map | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L227) |
-| flat_map_latest | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2620) |
-| scan | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1100) |
-| buffer | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1200) |
-| group_by | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1300) |
-| to_list | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1150) |
-| window | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2660) |
+| map | ✅ | [operators.py](../../../vools/reactive/operators.py#L15) |
+| flat_map | ✅ | [operators.py](../../../vools/reactive/operators.py#L105) |
+| concat_map | ✅ | [operators.py](../../../vools/reactive/operators.py#L157) |
+| switch_map | ✅ | [operators.py](../../../vools/reactive/operators.py#L227) |
+| flat_map_latest | ✅ | [operators.py](../../../vools/reactive/operators.py#L2620) |
+| scan | ✅ | [operators.py](../../../vools/reactive/operators.py#L1100) |
+| buffer | ✅ | [operators.py](../../../vools/reactive/operators.py#L1200) |
+| group_by | ✅ | [operators.py](../../../vools/reactive/operators.py#L1300) |
+| to_list | ✅ | [operators.py](../../../vools/reactive/operators.py#L1150) |
+| window | ✅ | [operators.py](../../../vools/reactive/operators.py#L2660) |
 
 ### 1.4 Combining (组合操作符) - 11/11
 
 | 操作符 | 状态 | 实现位置 |
 |--------|------|---------|
-| zip | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L300) |
-| combine_latest | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L400) |
-| with_latest_from | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L490) |
-| merge | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L200) |
-| concat | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L180) |
-| start_with | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1520) |
-| end_with | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1535) |
-| amb | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2700) |
-| switch | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2750) |
+| zip | ✅ | [operators.py](../../../vools/reactive/operators.py#L300) |
+| combine_latest | ✅ | [operators.py](../../../vools/reactive/operators.py#L400) |
+| with_latest_from | ✅ | [operators.py](../../../vools/reactive/operators.py#L490) |
+| merge | ✅ | [operators.py](../../../vools/reactive/operators.py#L200) |
+| concat | ✅ | [operators.py](../../../vools/reactive/operators.py#L180) |
+| start_with | ✅ | [operators.py](../../../vools/reactive/operators.py#L1520) |
+| end_with | ✅ | [operators.py](../../../vools/reactive/operators.py#L1535) |
+| amb | ✅ | [operators.py](../../../vools/reactive/operators.py#L2700) |
+| switch | ✅ | [operators.py](../../../vools/reactive/operators.py#L2750) |
 
 ### 1.5 MathematicalAggregate (数学聚合) - 11/11
 
 | 操作符 | 状态 | 实现位置 |
 |--------|------|---------|
-| reduce | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1070) |
-| count | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1050) |
-| sum | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L950) |
-| average | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L980) |
-| minimum | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1000) |
-| maximum | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1020) |
-| to_map | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2310) |
-| to_set | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2350) |
+| reduce | ✅ | [operators.py](../../../vools/reactive/operators.py#L1070) |
+| count | ✅ | [operators.py](../../../vools/reactive/operators.py#L1050) |
+| sum | ✅ | [operators.py](../../../vools/reactive/operators.py#L950) |
+| average | ✅ | [operators.py](../../../vools/reactive/operators.py#L980) |
+| minimum | ✅ | [operators.py](../../../vools/reactive/operators.py#L1000) |
+| maximum | ✅ | [operators.py](../../../vools/reactive/operators.py#L1020) |
+| to_map | ✅ | [operators.py](../../../vools/reactive/operators.py#L2310) |
+| to_set | ✅ | [operators.py](../../../vools/reactive/operators.py#L2350) |
 
 ### 1.6 ConditionalBoolean (条件布尔) - 12/12
 
 | 操作符 | 状态 | 实现位置 |
 |--------|------|---------|
-| all | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L900) |
-| any | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L920) |
-| contains | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L940) |
-| is_empty | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L960) |
-| default_if_empty | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1689) |
-| sequence_equal | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1716) |
-| iif | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1990) |
+| all | ✅ | [operators.py](../../../vools/reactive/operators.py#L900) |
+| any | ✅ | [operators.py](../../../vools/reactive/operators.py#L920) |
+| contains | ✅ | [operators.py](../../../vools/reactive/operators.py#L940) |
+| is_empty | ✅ | [operators.py](../../../vools/reactive/operators.py#L960) |
+| default_if_empty | ✅ | [operators.py](../../../vools/reactive/operators.py#L1689) |
+| sequence_equal | ✅ | [operators.py](../../../vools/reactive/operators.py#L1716) |
+| iif | ✅ | [operators.py](../../../vools/reactive/operators.py#L1990) |
 
 ### 1.7 ErrorHandling (错误处理) - 6/6
 
 | 操作符 | 状态 | 实现位置 |
 |--------|------|---------|
-| catch | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L700) |
-| retry | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L750) |
-| on_error_return | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L820) |
-| on_error_resume_next | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L870) |
-| retry_when | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L930) |
+| catch | ✅ | [operators.py](../../../vools/reactive/operators.py#L700) |
+| retry | ✅ | [operators.py](../../../vools/reactive/operators.py#L750) |
+| on_error_return | ✅ | [operators.py](../../../vools/reactive/operators.py#L820) |
+| on_error_resume_next | ✅ | [operators.py](../../../vools/reactive/operators.py#L870) |
+| retry_when | ✅ | [operators.py](../../../vools/reactive/operators.py#L930) |
 
 ### 1.8 Utility (工具操作符) - 16/16
 
 | 操作符 | 状态 | 实现位置 |
 |--------|------|---------|
-| tap | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1480) |
-| delay | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1560) |
-| timeout | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1572) |
-| timestamp | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1635) |
-| debounce | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1400) |
-| throttle_first | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L1450) |
-| throttle_latest | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2130) |
-| sample | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2290) |
-| do_on_next | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2390) |
-| do_on_error | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2430) |
-| do_on_completed | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2470) |
-| observe_on | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2510) |
-| subscribe_on | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2550) |
-| time_interval | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2590) |
+| tap | ✅ | [operators.py](../../../vools/reactive/operators.py#L1480) |
+| delay | ✅ | [operators.py](../../../vools/reactive/operators.py#L1560) |
+| timeout | ✅ | [operators.py](../../../vools/reactive/operators.py#L1572) |
+| timestamp | ✅ | [operators.py](../../../vools/reactive/operators.py#L1635) |
+| debounce | ✅ | [operators.py](../../../vools/reactive/operators.py#L1400) |
+| throttle_first | ✅ | [operators.py](../../../vools/reactive/operators.py#L1450) |
+| throttle_latest | ✅ | [operators.py](../../../vools/reactive/operators.py#L2130) |
+| sample | ✅ | [operators.py](../../../vools/reactive/operators.py#L2290) |
+| do_on_next | ✅ | [operators.py](../../../vools/reactive/operators.py#L2390) |
+| do_on_error | ✅ | [operators.py](../../../vools/reactive/operators.py#L2430) |
+| do_on_completed | ✅ | [operators.py](../../../vools/reactive/operators.py#L2470) |
+| observe_on | ✅ | [operators.py](../../../vools/reactive/operators.py#L2510) |
+| subscribe_on | ✅ | [operators.py](../../../vools/reactive/operators.py#L2550) |
+| time_interval | ✅ | [operators.py](../../../vools/reactive/operators.py#L2590) |
 
 ### 1.9 Subjects - 5/5 (100%)
 
 | Subject | 状态 | 实现位置 |
 |---------|------|---------|
-| Subject | ✅ | [subject.py](file:///e:/IDEProjects/AI/vools/vools/reactive/subject.py#L1) |
-| BehaviorSubject | ✅ | [subject.py](file:///e:/IDEProjects/AI/vools/vools/reactive/subject.py#L80) |
-| ReplaySubject | ✅ | [subject.py](file:///e:/IDEProjects/AI/vools/vools/reactive/subject.py#L120) |
-| AsyncSubject | ✅ | [subject.py](file:///e:/IDEProjects/AI/vools/vools/reactive/subject.py#L159) |
-| PublishSubject | ✅ | [subject.py](file:///e:/IDEProjects/AI/vools/vools/reactive/subject.py#L50) |
+| Subject | ✅ | [subject.py](../../../vools/reactive/subject.py#L1) |
+| BehaviorSubject | ✅ | [subject.py](../../../vools/reactive/subject.py#L80) |
+| ReplaySubject | ✅ | [subject.py](../../../vools/reactive/subject.py#L120) |
+| AsyncSubject | ✅ | [subject.py](../../../vools/reactive/subject.py#L159) |
+| PublishSubject | ✅ | [subject.py](../../../vools/reactive/subject.py#L50) |
 
 ### 1.10 Schedulers - 5/5 (100%)
 
 | Scheduler | 状态 | 实现位置 |
 |-----------|------|---------|
-| ImmediateScheduler | ✅ | [schedulers.py](file:///e:/IDEProjects/AI/vools/vools/reactive/schedulers.py) |
-| CurrentThreadScheduler | ✅ | [schedulers.py](file:///e:/IDEProjects/AI/vools/vools/reactive/schedulers.py) |
-| AsyncIOScheduler | ✅ | [schedulers.py](file:///e:/IDEProjects/AI/vools/vools/reactive/schedulers.py) |
-| ThreadPoolScheduler | ✅ | [schedulers.py](file:///e:/IDEProjects/AI/vools/vools/reactive/schedulers.py) |
-| NewThreadScheduler | ✅ | [schedulers.py](file:///e:/IDEProjects/AI/vools/vools/reactive/schedulers.py) |
+| ImmediateScheduler | ✅ | [schedulers.py](../../../vools/reactive/schedulers.py) |
+| CurrentThreadScheduler | ✅ | [schedulers.py](../../../vools/reactive/schedulers.py) |
+| AsyncIOScheduler | ✅ | [schedulers.py](../../../vools/reactive/schedulers.py) |
+| ThreadPoolScheduler | ✅ | [schedulers.py](../../../vools/reactive/schedulers.py) |
+| NewThreadScheduler | ✅ | [schedulers.py](../../../vools/reactive/schedulers.py) |
 
 ### 1.11 Connectable Observable - 6/6 (100%)
 
 | 操作符 | 状态 | 实现位置 |
 |--------|------|---------|
-| publish | ✅ | [connectable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/connectable.py) |
-| share | ✅ | [connectable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/connectable.py) |
-| replay | ✅ | [connectable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/connectable.py) |
-| publish_replay | ✅ | [connectable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/connectable.py) |
-| ref_count | ✅ | [connectable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/connectable.py) |
-| auto_connect | ✅ | [connectable.py](file:///e:/IDEProjects/AI/vools/vools/reactive/connectable.py) |
+| publish | ✅ | [connectable.py](../../../vools/reactive/connectable.py) |
+| share | ✅ | [connectable.py](../../../vools/reactive/connectable.py) |
+| replay | ✅ | [connectable.py](../../../vools/reactive/connectable.py) |
+| publish_replay | ✅ | [connectable.py](../../../vools/reactive/connectable.py) |
+| ref_count | ✅ | [connectable.py](../../../vools/reactive/connectable.py) |
+| auto_connect | ✅ | [connectable.py](../../../vools/reactive/connectable.py) |
 
 ### 1.12 Backpressure - 4/4 (100%)
 
 | 操作符 | 状态 | 实现位置 |
 |--------|------|---------|
-| backpressure_buffer | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2800) |
-| backpressure_drop | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2850) |
-| backpressure_error | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2870) |
-| backpressure_latest | ✅ | [operators.py](file:///e:/IDEProjects/AI/vools/vools/reactive/operators.py#L2900) |
+| backpressure_buffer | ✅ | [operators.py](../../../vools/reactive/operators.py#L2800) |
+| backpressure_drop | ✅ | [operators.py](../../../vools/reactive/operators.py#L2850) |
+| backpressure_error | ✅ | [operators.py](../../../vools/reactive/operators.py#L2870) |
+| backpressure_latest | ✅ | [operators.py](../../../vools/reactive/operators.py#L2900) |
 
 ---
 

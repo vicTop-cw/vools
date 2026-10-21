@@ -91,6 +91,22 @@ class Divider:
 
 
 @dataclass
+class ConfigBlock:
+    """#!config json 块 — Actus 引擎自身配置"""
+    content: str          # JSON 原文
+    config_type: str = "json"  # "json"
+    children: List[Any] = field(default_factory=list)  # 解析后的嵌套结构
+
+
+@dataclass
+class LangBlock:
+    """#!lang toml/yaml/lua 块 — 嵌套语言配置"""
+    language: str         # "toml" / "yaml" / "lua" / ...
+    content: str          # 块内容原文
+    children: List[Any] = field(default_factory=list)  # 解析后的嵌套结构
+
+
+@dataclass
 class Document:
     """文档根节点"""
     children: List[Any] = field(default_factory=list)
@@ -222,7 +238,13 @@ def _parse_inline(text: str) -> List[InlineText]:
 # ─── 块级解析 ───
 
 def _parse_fenced_code(lines: List[str], start: int) -> tuple:
-    """解析 fenced code block (``` 或 ~~~)"""
+    """解析 fenced code block (``` 或 ~~~)
+
+    识别特殊语言标识：
+      - #!config json → ConfigBlock（Actus 引擎自身配置）
+      - #!lang toml/yaml/lua → LangBlock（嵌套语言配置）
+      - 其他 → 普通 CodeBlock
+    """
     fence_line = lines[start].strip()
     fence_char = fence_line[0] if fence_line else '`'
 
@@ -247,7 +269,22 @@ def _parse_fenced_code(lines: List[str], start: int) -> tuple:
         code_lines.append(lines[i])
         i += 1
 
-    return CodeBlock(code='\n'.join(code_lines), language=language), i + 1
+    content = '\n'.join(code_lines)
+
+    # 检测 #!config 前缀
+    if language.startswith('#!config'):
+        parts = language.split(None, 1)  # ["#!config", "json"]
+        config_type = parts[1].strip() if len(parts) > 1 else 'json'
+        return ConfigBlock(content=content, config_type=config_type), i + 1
+
+    # 检测 #!lang 前缀
+    if language.startswith('#!lang'):
+        parts = language.split(None, 1)  # ["#!lang", "toml"]
+        lang = parts[1].strip() if len(parts) > 1 else ''
+        return LangBlock(language=lang, content=content), i + 1
+
+    # 普通代码块
+    return CodeBlock(code=content, language=language), i + 1
 
 
 def _parse_heading(line: str) -> Optional[Heading]:
@@ -481,6 +518,12 @@ def parse_to_dict(markdown_text: str) -> dict:
                     'items': [_list_item_to_dict(it) for it in node.items]}
         elif isinstance(node, Divider):
             return {'type': 'divider'}
+        elif isinstance(node, ConfigBlock):
+            return {'type': 'config_block', 'config_type': node.config_type,
+                    'content': node.content}
+        elif isinstance(node, LangBlock):
+            return {'type': 'lang_block', 'language': node.language,
+                    'content': node.content}
         return {'type': 'unknown'}
 
     def _inline_to_dict(node):
@@ -514,6 +557,8 @@ __all__ = [
     'ListItem',
     'MdList',
     'Paragraph',
+    'ConfigBlock',
+    'LangBlock',
     'parse',
     'parse_to_dict'
 ]

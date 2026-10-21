@@ -63,6 +63,7 @@ from .types import (
     deserialize_result,
 )
 from .templates import RCodeGenerator, generate_from_python_func
+from ..probe import _run_cmd_timeout
 
 
 _IS_WINDOWS = platform.system() == 'Windows'
@@ -95,11 +96,10 @@ def _safe_subprocess_run(cmd, input_data=None, timeout=120):
     使用二进制模式读取输出，然后用 replace 模式解码，
     避免 WSL 非 UTF-8 输出导致的 UnicodeDecodeError。
     """
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         cmd,
-        input=input_data.encode('utf-8') if input_data else None,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        timeout=timeout
+        timeout=timeout,
+        input_data=input_data,
     )
 
     stdout = result.stdout.decode('utf-8', errors='replace')

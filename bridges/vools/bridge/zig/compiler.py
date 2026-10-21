@@ -27,18 +27,14 @@ from typing import Optional, Any, Dict, List
 from .._base import LangBridge, FunctionSpec
 from ..core.compat.asyncio_compat import run as asyncio_run
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 from .types import PY_TO_ZIG_TYPE, ZIG_TO_CTYPES, get_zig_type, get_zig_ctype
 
 
 def zig_compiler_available() -> bool:
     """检查 Zig 编译器是否可用"""
     try:
-        result = subprocess.run(
-            ['zig', 'version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            timeout=10
-        )
+        result = _run_cmd_timeout(['zig', 'version'], timeout=10)
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
@@ -284,16 +280,15 @@ class ZigBridge(LangBridge):
                 src_path
             ]
 
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 cwd=tmpdir,
                 timeout=120
             )
 
             if result.returncode != 0:
-                return (None, result.stderr or result.stdout)
+                err_text = (result.stderr or result.stdout).decode('utf-8', errors='replace')
+                return (None, err_text)
 
             if not os.path.exists(output_lib):
                 return (None, 'Library not generated at %s' % output_lib)
@@ -341,10 +336,8 @@ class ZigBridge(LangBridge):
                 raise RuntimeError(f'build.zig not found in project directory: {project_dir}')
             cmd = [self._zig_executable, 'build-lib', '-dynamic']
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             cwd=project_dir,
             timeout=300
         )
@@ -352,8 +345,8 @@ class ZigBridge(LangBridge):
         if result.returncode != 0:
             raise RuntimeError(
                 f'Zig build failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}'
             )
 
         # 查找编译产物

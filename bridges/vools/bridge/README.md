@@ -552,6 +552,20 @@ if is_available("rust"):
 | `save_config()` | 函数 | 保存配置到文件 |
 | `load_config()` | 函数 | 从文件加载配置 |
 
+### 编译器路径与环境变量配置
+
+各语言的编译器/运行时目录按以下优先级自动探测（Windows 不再内置机器特定绝对路径）：
+
+1. **环境变量**（最优先，推荐）：
+   - `ERLANG_HOME` → Erlang 安装根目录（如 `C:\Erlang`），自动追加 `bin`
+   - `ELIXIR_HOME` → Elixir 安装根目录（如 `C:\Elixir`），自动追加 `bin`
+   - `GHC_HOME` → GHC 安装根目录（如 `C:\GHC`），自动追加 `bin`
+   - `VS_BUILD_TOOLS` / `VSINSTALLDIR` → MSVC BuildTools / Visual Studio 根目录，用于探测 `cl.exe`（cypy 完整执行链路）
+2. **标准安装目录自动探测**：`C:\Program Files\...`、`C:\Program Files (x86)\...` 及用户级 `%LOCALAPPDATA%\Programs\...`
+3. **PATH 搜索**：`shutil.which` 查找编译器可执行文件（`erlc` / `elixirc` / `ghc` / `cl` 等）
+
+此外仍可通过编程方式覆盖：`set_compiler_path()` / `add_compiler_path()` 手动指定任意目录。
+
 ### 各语言模块统一接口
 
 每个语言模块都提供一致的装饰器接口：

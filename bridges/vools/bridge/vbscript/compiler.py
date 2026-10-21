@@ -30,6 +30,7 @@ from typing import Any, Optional, List
 
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 
 
 _IS_WINDOWS = platform.system() == 'Windows'
@@ -80,11 +81,11 @@ def vbscript_compiler_available() -> bool:
     if not _IS_WINDOWS:
         return False
     try:
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             [_CSCRIPT_PATH, '//Nologo', '//E:vbscript', '//?'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5,
+            timeout=5,
         )
-        return result.returncode == 0 or 'Microsoft' in result.stdout or 'Microsoft' in result.stderr
+        return result.returncode == 0 or 'Microsoft' in result.stdout.decode('utf-8', errors='replace') or 'Microsoft' in result.stderr.decode('utf-8', errors='replace')
     except (FileNotFoundError, OSError):
         return False
     except Exception:
@@ -415,34 +416,30 @@ def _execute_vbs_code(code: str, func_name: str, cache_dir: str = None,
     src_path = os.path.join(cache_dir, f'{base_name}.vbs')
 
     if not force and os.path.exists(src_path):
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             [_CSCRIPT_PATH, '//Nologo', '//E:vbscript', src_path],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             timeout=60,
         )
         if result.returncode == 0:
-            return result.stdout.strip()
+            return result.stdout.decode('utf-8', errors='replace').strip()
 
     with open(src_path, 'w', encoding='utf-8') as f:
         f.write(code)
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         [_CSCRIPT_PATH, '//Nologo', '//E:vbscript', src_path],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
         timeout=60,
     )
 
     if result.returncode != 0:
         raise RuntimeError(
             f'VBScript 执行失败:\n'
-            f'stderr:\n{result.stderr}\n'
-            f'stdout:\n{result.stdout}\n'
+            f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+            f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
             f'代码:\n{code}'
         )
 
-    return result.stdout.strip()
+    return result.stdout.decode('utf-8', errors='replace').strip()
 
 
 def _parse_vbs_output(output: str, ret_type: str):
@@ -599,20 +596,21 @@ class VBScriptBridge(LangBridge):
             with open(exec_path, 'w', encoding='utf-8') as f:
                 f.write(full_code)
             
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 [_CSCRIPT_PATH, '//Nologo', '//E:vbscript', exec_path],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=60,
             )
             if result.returncode != 0:
                 raise RuntimeError(
                     'VBScript execution failed:\n'
                     'stderr:\n{}\n'
-                    'stdout:\n{}'.format(result.stderr, result.stdout)
+                    'stdout:\n{}'.format(
+                        result.stderr.decode('utf-8', errors='replace'),
+                        result.stdout.decode('utf-8', errors='replace')
+                    )
                 )
             
-            return _parse_vbs_output(result.stdout.strip(), vbs_ret_type)
+            return _parse_vbs_output(result.stdout.decode('utf-8', errors='replace').strip(), vbs_ret_type)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -847,13 +845,13 @@ class VBScriptBridge(LangBridge):
                     raise RuntimeError(f'No .vbs files found in project directory: {project_dir}')
                 main_vbs = vbs_files[0]
 
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 [_CSCRIPT_PATH, '//Nologo', '//E:vbscript', main_vbs] + list(args),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=60,
             )
-            return (result.returncode, result.stdout, result.stderr)
+            return (result.returncode,
+                    result.stdout.decode('utf-8', errors='replace'),
+                    result.stderr.decode('utf-8', errors='replace'))
         else:
             artifact_path = self.compile_project(project_dir, entry, cache_dir)
             return self.call_func(artifact_path, entry, args)

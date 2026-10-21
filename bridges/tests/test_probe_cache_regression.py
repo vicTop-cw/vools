@@ -113,7 +113,7 @@ def test_which_in_env_parallel_path_restored():
     results = []
 
     def _call(i):
-        results.append(worker(envs[i]))
+        results.append(worker(envs[i]['PATH']))
 
     threads = [threading.Thread(target=_call, args=(i,)) for i in range(len(envs))]
     for t in threads:

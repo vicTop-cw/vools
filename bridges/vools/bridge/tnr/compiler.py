@@ -39,6 +39,7 @@ from typing import Any, Optional, List
 from .._base import LangBridge, FunctionSpec, FunctionParser
 from ..core.types import LangType
 from ..core.wsl import resolve_command
+from ..probe import _run_cmd_timeout
 
 # ----------------------------------------------------------------------------
 # 平台判断
@@ -78,11 +79,7 @@ def _resolve_tnr_command() -> tuple:
     cmd_prefix, path_converter, use_wsl = resolve_command('tnr')
     # 验证可用性
     try:
-        result = subprocess.run(
-            cmd_prefix + ['version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors='replace', timeout=10,
-        )
+        result = _run_cmd_timeout(cmd_prefix + ['version'], timeout=10)
         if result.returncode == 0:
             return cmd_prefix, path_converter, use_wsl
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
@@ -104,11 +101,7 @@ _tnr_exec_lock = threading.Lock()
 def tnr_compiler_available() -> bool:
     """检查 Tnr 工具链是否可用（执行 tnr version）。"""
     try:
-        result = subprocess.run(
-            _TNR_CMD + ['version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors='replace', timeout=10,
-        )
+        result = _run_cmd_timeout(_TNR_CMD + ['version'], timeout=10)
         return result.returncode == 0
     except (FileNotFoundError, OSError):
         return False
@@ -119,13 +112,9 @@ def tnr_compiler_available() -> bool:
 def get_tnr_version() -> str:
     """获取 Tnr 版本号（不可用时返回空字符串）。"""
     try:
-        result = subprocess.run(
-            _TNR_CMD + ['version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors='replace', timeout=10,
-        )
+        result = _run_cmd_timeout(_TNR_CMD + ['version'], timeout=10)
         if result.returncode == 0:
-            return (result.stdout or result.stderr).strip()
+            return (result.stdout or result.stderr).decode('utf-8', errors='replace').strip()
     except Exception:
         pass
     return ''
@@ -377,10 +366,9 @@ def _execute_tnr_code(code: str, func_name: str, cache_dir: Optional[str] = None
         with open(src_path, 'w', encoding='utf-8') as f:
             f.write(code)
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             _TNR_CMD + ['run', _PATH_CONVERTER(src_path)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            # Tnr 输出为 UTF-8；用 text=True 会按系统本地编码（如 GBK）解码导致乱码
+            # Tnr 输出为 UTF-8；以 bytes 手动按 UTF-8 解码，避免按系统本地编码（如 GBK）解码导致乱码
             timeout=timeout,
         )
 
@@ -654,9 +642,8 @@ class TnrBridge(LangBridge):
         """
         if entry == 'main':
             main_tnr = self.compile_project(project_dir, 'main', cache_dir)
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 _TNR_CMD + ['run', _PATH_CONVERTER(main_tnr)] + list(args),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=60,
             )
             out = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
@@ -727,9 +714,8 @@ def run_tnr_file(tnr_file: str, args: tuple = ()) -> tuple:
     Returns:
         (returncode, stdout, stderr) 三元组。
     """
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         _TNR_CMD + ['run', _PATH_CONVERTER(tnr_file)] + list(args),
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         timeout=60,
     )
     out = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''

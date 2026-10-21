@@ -40,6 +40,7 @@ from typing import Any
 from ..core.loader import load_from_path, SharedLibrary
 from ..core.types import CTypeMapper, LangType
 from ..manager import manager, setup_runtime as _setup_lang_runtime
+from ..probe import _run_cmd_timeout
 from .._base import LangBridge, FunctionSpec, FunctionParser
 
 # 平台判断
@@ -94,13 +95,12 @@ def _get_cpp_compiler():
     else:
         # Linux/macOS 上可能是 GCC 或 Clang
         try:
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 [compiler_path, '--version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
-                timeout=5
+                timeout=5,
             )
-            if 'clang' in result.stdout.lower():
+            stdout = result.stdout.decode('utf-8', errors='replace')
+            if 'clang' in stdout.lower():
                 compiler_type = 'clang'
         except Exception:
             pass
@@ -302,16 +302,15 @@ def _compile_cpp_code(code: str, func_name: str, cache_dir: str = None) -> str:
             ]
 
     # 执行编译
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         compile_cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
-        cwd=cache_dir
+        cwd=cache_dir,
+        timeout=300,
     )
 
     if result.returncode != 0:
         raise RuntimeError(
-            f'C++ compilation failed:\n{result.stderr}\n{result.stdout}'
+            f'C++ compilation failed:\n{result.stderr.decode("utf-8", errors="replace")}\n{result.stdout.decode("utf-8", errors="replace")}'
         )
 
     # 清理临时文件
@@ -762,18 +761,17 @@ class CppBridge(LangBridge):
                 output_path = os.path.join(output_dir, f'lib{project_name}.so')
                 compile_cmd = [compiler_path, '-shared', '-fPIC', '-O2', '-o', output_path] + src_files
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             compile_cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
-            cwd=output_dir
+            cwd=output_dir,
+            timeout=300,
         )
 
         if result.returncode != 0:
             raise RuntimeError(
                 f'C++ project compilation failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}\n'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
                 f'files: {src_files}'
             )
 

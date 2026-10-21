@@ -161,6 +161,18 @@ print(sha256("test"))  # 9f86d081884c7d659a2feaa0c55ad015... ✅ 测试通过
 
 ---
 
+## 子项目
+
+vools 近期新增三个独立子项目，均有独立的文档页：
+
+| 子项目 | 定位 | 文档 |
+|--------|------|------|
+| **rhop** | 协议传输层：paramiko 优先的 SftpChannel、传输选择、加密封装、文件监控 | [rhop 概述](rhop/index.md) / [SftpChannel 使用说明](rhop/sftp-channel.md) |
+| **actus** | 工作流自动化与动作编排引擎：动作模型、执行器、工作流、注册表、密钥、信任、安全、沙箱、跳板机传输 | [actus 概述](actus/index.md) |
+| **rx** | 响应式扩展：Observable/Subject 与键盘/鼠标/剪贴板/文件/窗口/进程系统监控 | [rx 概述](rx/index.md) / [系统监控](rx/reactive-monitoring.md) |
+
+---
+
 ## 快速开始
 
 ### 安装
@@ -262,3 +274,6 @@ vools/
 - [核心功能](core/index.md) - 核心功能模块
 - [函数式编程](functional/index.md) - 函数式编程详解
 - [响应式编程](reactive/index.md) - 响应式编程详解
+- [rhop 协议子项目](rhop/index.md) - SftpChannel 与传输层
+- [actus 动作引擎](actus/index.md) - 工作流自动化
+- [rx 响应式扩展](rx/index.md) - 系统监控流

@@ -286,7 +286,7 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 - 容器：python:3.6-slim-buster 基础镜像 + pyspark 2.4.3。
 - 原容器 Java 11 与 Spark 2.4.3 不兼容（`Unsupported class file major version 55`），
   已安装 Temurin JDK 8 (jdk8u504-b01) 到 /opt/jdk8u504-b01，写入 /etc/profile.d/java8.sh。
-- vools.pth 指向 /vools（挂载源 E:\IDEProjects\AI\vools），Python 3.6 可 import vools 0.7.8。
+- vools.pth 指向 /vools（挂载源 <repo_root>），Python 3.6 可 import vools 0.7.8。
 - JDBC 驱动下载自 Maven Central postgresql-42.5.0.jar 到 /opt/jars/。
 - PG 11 本地服务 + 测试库 lookupon_test / lookupon_test2 已就绪。
 
@@ -791,3 +791,3182 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
 
 ### FIXED(2026-10-17T13:53:49Z / BUG-84)
 - evidence: 真源修复：vools/md/advanced.py 的 benchmark_parse 与 benchmark_generate 函数入口各加 `if iterations <= 0: raise ValueError("iterations must be positive")`。回归锁 tests/md/test_advanced.py 新增 TestBenchmarkZeroIterations 3 条。RED-GREEN：去掉 guard 后 parse/generate 两条 FAIL（ZeroDivisionError），恢复后 PASS（31 passed）。提交 495d9ce，已推 gitcode main。
+## BUG-85 [2026-10-18T01:10:21Z] [medium] FIXED
+- summary: md.advanced.benchmark_to_html/full_pipeline + api.memoize_cmd.benchmark iterations=0 触发 ZeroDivisionError（与 BUG-84 同族）
+- detail: 现象：vools.md.advanced.benchmark_to_html 与 benchmark_full_pipeline 与 BUG-84 同族——传 iterations=0 时 times 列表为空，sum(times)/len(times) = 0/0 除零崩溃（ZeroDivisionError），min/max 也会对空列表抛 ValueError。另外 vools.api.memoize_cmd.benchmark 命令对 --iterations 0 无守卫，第 131 行 elapsed/iterations*1000 除零崩溃。修法：三个函数入口加 `if iterations <= 0: raise ValueError/BadParameter("iterations must be positive")`。
+- reported_by: polish-lead
+
+
+
+### FIXED(2026-10-18T01:10:43Z / BUG-85)
+- evidence: 真源修复（工作区静态已验证，shell 暂不可用待提交）：① vools/md/advanced.py benchmark_to_html 入口加 `if iterations <= 0: raise ValueError("iterations must be positive")`（L375-376）；② benchmark_full_pipeline 同样守卫（L395-396）；③ vools/api/memoize_cmd.py benchmark 命令入口加 `if iterations <= 0: raise typer.BadParameter("迭代次数必须为正数", param_hint="--iterations")`。回归锁：tests/md/test_advanced.py TestBenchmarkZeroIterations 新增 4 条（to_html/full_pipeline 各 2），tests/test_api_memoize_cmd.py 新增 TestBenchmarkZeroIterations 1 条。提交待 shell 恢复后执行。
+
+
+### FIXED(2026-10-18T04:21:35Z / BUG-85)
+- evidence: commit 573d0fb（2026-10-18T04:19Z 推送 gitcode main）。真源改动：①vools/md/advanced.py benchmark_to_html 入口 L375-376 加 `if iterations <= 0: raise ValueError("iterations must be positive")`；②benchmark_full_pipeline 入口 L395-396 同守卫；③benchmark_report L430 `iterations // 2` 改为 `max(iterations // 2, 1)` 防 iterations=1 时传入 0；④vools/api/memoize_cmd.py benchmark 命令入口 L98-99 加 `if iterations <= 0: raise typer.BadParameter("迭代次数必须为正数", param_hint="--iterations")`。回归锁：tests/md/test_advanced.py TestBenchmarkZeroIterations 新增 test_to_html_zero_iterations/test_full_pipeline_zero_iterations/test_to_html_normal/test_full_pipeline_normal 4 条；tests/test_api_memoize_cmd.py 新增 TestBenchmarkZeroIterations.test_iterations_zero_no_crash 1 条。测试路径：pytest tests/md/test_advanced.py tests/test_api_memoize_cmd.py tests/functional/test_pipe_ops.py -p no:cacheprovider -q → 72 passed。全量 pytest tests 已在跑。
+## BUG-86 [2026-10-18T04:27:56Z] [medium] FIXED
+- summary: md.utils.extract_metadata 改用 parse_yaml 后 date 值从字符串变为 datetime.date 对象，回归破坏 tests/test_md.py::test_metadata
+- detail: 现象：tests/test_md.py::test_metadata 断言 `meta["date"] == "2024-01-01"`，但实际返回 `datetime.date(2024, 1, 1)`。
+
+根因：vools/md/utils.py 的 extract_metadata 从简单的字符串解析改为调用 vools/md/config_parser.py 的 parse_yaml（PyYAML），而 PyYAML 自动把符合 ISO 8601 格式的日期字符串解析为 datetime.date 对象。旧实现 `meta[key.strip()] = value.strip()` 返回纯字符串。
+
+影响：任何调用 extract_metadata 的消费者（如 md 流水线的 front matter 处理）都可能得到 datetime.date 而非字符串，违反 Dict[str, str] 契约（旧签名）或 Dict[str, Any] 的隐含预期（新签名文档明确列出的类型为 str/int/float/bool/list/dict，未含 datetime.date）。
+
+修法：在 extract_metadata 返回前对 parse_yaml 的结果做递归后处理，把 datetime.date/datetime.datetime 值转为 ISO 字符串（`.isoformat()`）。这保留其他 agent 的 config_parser 能力（支持嵌套/类型推断），同时维护 extract_metadata 的向后兼容契约。
+
+
+
+### FIXED(2026-10-18T04:32:31Z / BUG-86)
+- evidence: commit 83fd468（2026-10-18T04:31Z 推送 gitcode main）。真源改动：①vools/md/utils.py 新增 `_normalize_metadata()` 递归函数：datetime.date/datetime.datetime → ISO 字符串（.isoformat()），dict/list 递归处理；②extract_metadata 返回前调用 `_normalize_metadata(parse_yaml(frontmatter_text))`。回归锁：tests/test_md.py 新增 `test_metadata_date_stays_string`（断言 meta['date'] 为 str 且等于 '2024-01-01'）和 `test_metadata_nested_datetime_normalized`（断言嵌套 dict/list 中的 datetime 也被归一化）。测试路径：pytest tests/test_md.py tests/md/ -p no:cacheprovider -q → 271 passed。注：本 commit 同时收录 config_parser.py（其他 agent WIP），因 utils.py 引用它需同批入库。
+## BUG-87 [2026-10-18T04:53:53Z] [medium] FIXED
+- summary: config_parser._yaml_parse_with_pyyaml 把 None 转成空字符串且空输入返回 None，违反 extract_metadata Dict 返回契约
+- detail: 现象（2026-10-18 实测，py3.11）：
+- `extract_metadata('---\n---\n# Body')` 返回 `None`，应为 `{}`
+- `extract_metadata('---\nkey: null\n---\n# Body')` 返回 `{'key': ''}`，应为 `{'key': None}`
+
+根因：vools/md/config_parser.py 的 `_yaml_parse_with_pyyaml`（L202-209）做了两处错误处理：
+1. L207-208: `result = {k: (v if v is not None else "") for k, v in result.items()}` — 把 None 值强制转成空字符串。PyYAML 原生返回 `{'key': None}`，注释说"与简单解析器保持一致"，但实际 `_yaml_parse_simple('key: null')` 返回 `{'key': None}`，两者相反，注释与行为不符。
+2. 空/注释-only 输入时 `yaml.safe_load('')` 返回 `None`，函数直接透传返回 `None`，违反 `Dict` 返回类型契约。
+
+影响：`extract_metadata` 的 docstring 明确写 "元数据字典（空字典如果没有 front matter）"，但实际返回 None。任何调用方做 `meta.get('key')` 会 AttributeError（None 没有 .get）。null 值语义丢失（'' 与 None 不可区分）。
+
+修法：
+1. `_yaml_parse_with_pyyaml` 移除 None→'' 转换，保持 PyYAML 原生语义；空结果返回 `{}`
+2. `parse_yaml` 对空/None 结果兜底返回 `{}`
+
+
+
+### FIXED(2026-10-18T04:55:16Z / BUG-87)
+- evidence: commit 410a66d（2026-10-18 推送 gitcode main）。真源改动：①vools/md/config_parser.py `_yaml_parse_with_pyyaml` L206-209：移除 `{k: (v if v is not None else "") ...}` 的 None→'' 转换（原注释声称"与简单解析器保持一致"但实际与 `_yaml_parse_simple` 行为相反）；新增 `if result is None: return {}` 和 `if not isinstance(result, dict): return {}` 兜底。②`parse_yaml` 入口新增 `if not text or not text.strip(): return {}`。回归锁：tests/test_md.py 新增 `test_metadata_empty_frontmatter_returns_dict`（空 front matter 断言 == {}）、`test_metadata_null_value_preserved`（断言 meta['key'] is None）、`test_parse_yaml_empty_returns_dict`（断言 parse_yaml('') 和 parse_yaml('# comment only') 均为 {}）。测试路径：pytest tests/test_md.py tests/md/ -p no:cacheprovider -q → 274 passed。
+## BUG-88 [2026-10-18T05:18:10Z] [high] FIXED
+- summary: [BUG-88] _safe_path 前缀检查路径遍历漏洞：startswith 未追加分隔符可绕过
+- detail: `vools/data/vtext.py::_safe_path` 用 `normalized.startswith(base_dir)` 做路径安全检查，但未追加路径分隔符。当 base_dir=/tmp/root 时，/tmp/root_sibling/x 也满足前缀匹配（startswith 返回 True），攻击者可构造 `../root_sibling/secret.txt` 绕过检查访问兄弟目录内容。
+
+实际利用：
+```python
+from vools.data.vtext import VText
+# base_dir=/tmp/xxx/root，攻击者传 '../root_sibling/secret.txt'
+path = VText._safe_path('../root_sibling/secret.txt', base_dir='/tmp/xxx/root')
+# 返回 /tmp/xxx/root_sibling/secret.txt —— 逃逸成功！
+```
+
+RED-GREEN 证明：回滚修复 → test_safe_path_sibling_traversal_blocked FAIL (DID NOT RAISE ValueError)；恢复修复 → 16/16 通过。
+
+修复：改用 `os.path.commonpath([normalized, base_dir])` 精确判断包含关系（commit 1d5661c）。
+
+
+
+### FIXED(2026-10-18T05:18:24Z / BUG-88)
+- evidence: commit 1d5661c 修复 vools/data/vtext.py::_safe_path (L114-121)。旧代码 `normalized.startswith(base_dir)` 未追加路径分隔符，允许 ../root_sibling/ 前缀匹配旁路（base_dir=/tmp/root 时 /tmp/root_sibling/x 满足 startswith）。改用 `os.path.commonpath([normalized, base_dir])` 精确判断包含关系：commonpath==base_dir 才放行；跨盘符（Windows）commonpath 抛 ValueError 拒绝。RED-GREEN 证明：回滚修复 → test_safe_path_sibling_traversal_blocked FAIL (DID NOT RAISE ValueError)；恢复修复 → 16/16 通过。新增 8 条回归测试锁住。
+## BUG-89 [2026-10-18T05:43:27Z] [high] FIXED
+- summary: vools_default 无法序列化 bytes 类型（JSON 序列化 TypeError）
+- detail: vools/serialize/codec.py 的 vools_default 作为 json/msgpack 的 default 回调，无法处理 bytes 类型。bytes 在 _NATIVE_BASE_TYPES 中但无自定义 __getstate__，type_registry 也无 bytes handler，导致任何包含 bytes 的对象（如 {'data': b'hello'}）调用 json.dumps 时抛出 TypeError: Object of type bytes is not serializable。
+
+修复（commit 011cbd7）：
+- vools_default 新增 bytes → {'__vools_bytes__': True, 'data': base64} 包装
+- vools_object_hook 新增 __vools_bytes__ → base64 解码回 bytes
+
+RED-GREEN 证明：还原修复 → 7/7 新增测试失败（TypeError）；恢复修复 → 18/18 全部通过。
+
+新增 tests/serialize/test_codec.py（18 条回归测试）。
+- reported_by: ai-lead-victortop
+
+
+
+### FIXED(2026-10-18T05:43:36Z / BUG-89)
+- evidence: commit 011cbd7 修复：vools/serialize/codec.py 的 vools_default 新增 bytes→base64 包装（'__vools_bytes__': True, data: b64），vools_object_hook 新增反向解码。RED-GREEN：还原后 7/7 新测试失败（TypeError: Object of type bytes is not serializable），恢复后 18/18 全绿。新增 tests/serialize/test_codec.py 18 条回归。已推送到 gitcode main (494b272)。
+## BUG-90 [2026-10-18T06:00:23Z] [high] FIXED
+- summary: arrow_func 使用原始 eval/exec 且暴露 __builtins__，任何表达式可 RCE
+- detail: arrow_func 使用原始 eval/exec 编译表达式，且默认 env 注入 __builtins__，任何表达式可调用 __import__('os').system('...') 实现任意代码执行（RCE）。同包 iif.py 已使用 safe_lambda 沙箱，但 arrow_func 无安全变体、无文档警告。
+
+修复（commit 9dade10）：
+- 新增 safe_arrow_func，基于 safe_lambda 沙箱编译 arrow 表达式
+- 白名单沙箱，__import__/eval/exec/open/__builtins__ 全部拦截
+- arrow_func 保持原行为（完整 Python 能力），文档说明"请勿用于不可信输入"
+
+新增 tests/functional/test_safe_arrow_func.py（12 条回归）。
+- reported_by: ai-lead-victortop
+
+## BUG-91 [2026-10-18T06:00:37Z] [high] FIXED
+- summary: safe_lambda 无法编译排序比较表达式（x > 3 等），导致 iif 条件静默错误
+- detail: safe_lambda 在编译期验证 AST 时，allowed_vars 用字符串占位符 f'_v_{i}'。当表达式含排序比较（x > 3, x < 3, x >= 3, x <= 3）时，'_v_0' > 3 抛 TypeError（str 与 int 不可排序比较），被 SafeEvalError 吞掉后编译失败。
+
+连带影响：vools/functional/iif.py 的 '->' 前缀与 supp 模式的字符串条件在含排序比较时静默回退到 bool(condition)（非空字符串恒 True），导致 iif("-> x < 3", "big", "small", data=5) 错误返回 "big"（应返回 "small"）。
+
+修复（commit 9dade10）：引入 _Placeholder 占位符类，所有比较/算术运算符恒返回 True/占位符，AST 验证只检查结构不执行真实运算。
+
+RED-GREEN：还原修复 → 4/4 排序比较测试失败（TypeError: not supported）；恢复 → 28/28 全绿。全 security+functional 套件 254 项无回归。
+
+新增 tests/security/test_safe_eval_comparison.py（16 条回归）。
+- reported_by: ai-lead-victortop
+
+
+
+### FIXED(2026-10-18T06:00:50Z / BUG-90, BUG-91)
+- evidence: commit 9dade10。BUG-91 修复：vools/security/safe_eval.py 新增 _Placeholder 占位符类，safe_lambda allowed_vars 用 _Placeholder() 替换字符串 f'_v_{i}'，排序比较（x > 3 等）编译通过。RED：还原后 4/4 排序比较测试失败（TypeError: not supported between str/int）。BUG-90 修复：vools/functional/arrow_func.py 新增 safe_arrow_func，基于 safe_lambda 沙箱编译 arrow 表达式，注入（__import__/eval/open/__builtins__/exec）全部拦截。新增 tests/security/test_safe_eval_comparison.py (16 条) 与 tests/functional/test_safe_arrow_func.py (12 条)。全 security+functional 254 项全绿无回归。已推送 gitcode main 9dade10。
+## BUG-92 [2026-10-18T06:25:31Z] [high] FIXED
+- summary: retry(logic='and') 异常被静默吞掉，返回 None 而非抛出
+- detail: retry 装饰器在 logic='and' 模式下，函数抛异常时：
+- retry_by_exception = True
+- retry_by_result = False（异常路径下 result=None）
+- should_retry = True and False = False
+- 直接 return result（此时是 None），异常被静默吞掉
+
+用户 @retry(tries=3, logic='and') 装饰的函数抛异常后得到 None 而非 ValueError。
+
+修复（commit 3e8bc29）：not should_retry 分支中检查 retry_by_exception 为 True 时 raise last_exception。
+
+RED-GREEN：还原 → 3/9 测试失败（DID NOT RAISE）；恢复 → 9/9 全绿。全 decorators 159 项无回归。
+
+新增 tests/decorators/test_retry_and_logic.py（9 条）。
+- reported_by: ai-lead-victortop
+
+
+
+### FIXED(2026-10-18T06:25:45Z / BUG-92)
+- evidence: commit 3e8bc29。修复 vools/decorators/control.py L397-398：not should_retry 分支中，若 retry_by_exception 为 True 则 raise last_exception，异常不再被吞。RED：还原修复后 3/9 测试失败（DID NOT RAISE ValueError）；GREEN：恢复后 9/9 全绿。新增 tests/decorators/test_retry_and_logic.py（9 条回归）。全 decorators 套件 159 项全绿无回归。已推送 gitcode main 3e8bc29。
+## BUG-93 [2026-10-18T06:37:50Z] [medium] FIXED
+- summary: repeat 装饰器位置参数误用静默损坏装饰，返回不可调用对象
+- detail: @repeat(3) 误用——位置参数 3 被赋给 func 而非 cnt。
+decorator(3) 用 @wraps(3) 创建 wrapper，int 无 __name__ 等属性，
+wraps 静默跳过，返回一个生成器函数。再用 @repeat(3) 装饰真实函数 f 时，
+f 被赋值为 wrapper(f)，而 wrapper 是生成器函数（含 yield），
+调用 wrapper(f) 返回生成器对象而非执行函数体，导致 f 变成
+「不可调用对象」（generator object is not callable）。
+
+修复（本地 commit）：repeat() 在 func 非 None 但不可调用时显式 raise TypeError，
+引导用户使用 @repeat(cnt=N) 关键字。
+
+RED-GREEN：还原 → 3/8 测试失败（DID NOT RAISE TypeError）；恢复 → 8/8 全绿。
+全 decorators 167 项无回归。新增 tests/decorators/test_repeat_positional.py（8 条）。
+
+注：git push 因网络失败未推送，commit 已在本地 main 上，稍后重试推送。
+- reported_by: ai-lead-victortop
+
+
+
+### FIXED(2026-10-18T06:37:57Z / BUG-93)
+- evidence: 本地 commit（vools/decorators/control.py）：repeat() 在 func 非 None 且不可调用时 raise TypeError("repeat() first positional arg must be callable; use @repeat(cnt=N) for repetition count")。RED：还原修复后 3/8 测试失败（DID NOT RAISE TypeError）；GREEN：恢复后 8/8 全绿。新增 tests/decorators/test_repeat_positional.py（8 条回归，3 条验证报错+5 条验证正确用法）。全 decorators 套件 167 项全绿无回归。注：git push 因网络失败未推送，commit 在本地 main 上，稍后重试推送 gitcode。
+## BUG-94 [2026-10-18T06:58:19Z] [critical] FIXED
+- summary: Table.where 表达式 eval RCE 沙箱绕过，可执行任意系统命令
+- detail: vools/data/table.py _parse_where_expr 用 ``eval(safe)``（默认 __builtins__），
+任何 ``__import__('os').system(...)`` 均可 RCE——直接 RCE 和列注入
+RCE 都实测成功（终端打印 PWNED）。
+
+修复（commit 2614cb7，已推 github+gitcode）：
+- AST 节点白名单校验（仅允许比较/布尔/算术运算和字面量）
+- 拒绝函数调用/属性访问/下标等危险节点
+- 以受限 builtins 求值（{'__builtins__': {}}）
+
+RED-GREEN：还原 → 2/10 测试失败（RCE 标记文件已创建）；恢复 → 10/10 全绿。
+全 data 套件 296 项无回归。新增 tests/data/test_table_where_safety.py（10 条）。
+- reported_by: ai-lead-victortop
+
+
+
+### FIXED(2026-10-18T06:58:31Z / BUG-94)
+- evidence: commit 2614cb7（已推 github+gitcode）：vools/data/table.py _parse_where_expr 改为 AST 节点白名单校验（ast.Expression/BoolOp/BinOp/UnaryOp/Compare/Constant/Eq/NotEq/Lt/LtE/Gt/GtE/And/Or/Not/In/NotIn/Is/IsNot/Add/Sub/Mult/Div/Mod/Tuple/List/Set/USub/UAdd）+ 受限 builtins 求值（{'__builtins__': {}}）。RED：还原修复后 2/10 测试失败（AssertionError: RCE should be blocked，RCE 标记文件已创建）；GREEN：恢复后 10/10 全绿。全 data 套件 296 项无回归。新增 tests/data/test_table_where_safety.py（10 条回归：4 条 RCE/列注入/eval/open 攻击均被拦截，6 条正常 where 表达式不受影响）。
+## BUG-95 [2026-10-18T07:12:46Z] [critical] FIXED
+- summary: clone() 类型注解 eval RCE，可执行任意系统命令
+- detail: vools/oop/extend.py _process_args 用 ``eval(tp.strip())`` 求值类型注解字符串，
+默认 __builtins__ 允许任意代码执行。实测
+``clone('name:__import__("os").system("echo PWNED > marker") => 1')``
+成功创建 marker 文件。
+
+修复（commit 20c0a69，已推 github+gitcode）：
+- 新增 _TYPE_NAME_WHITELIST 类型名查找表（str/int/float/bool/list/
+  dict/tuple/set/frozenset/bytes/bytearray/complex/object/type）
+- 新增 _lookup_type_name() 替代 eval；不在白名单时返回 None（不崩溃）
+
+RED-GREEN：还原 → 1/6 测试失败（RCE 标记文件已创建）；恢复 → 6/6 全绿。
+全 oop 套件 + 全量回归 exit 0 无回归。
+新增 tests/oop/test_extend_type_safety.py（6 条）。
+- reported_by: ai-lead-victortop
+
+
+
+### FIXED(2026-10-18T07:13:02Z / BUG-95)
+- evidence: commit 20c0a69（已推 github+gitcode）：vools/oop/extend.py 新增 _TYPE_NAME_WHITELIST（str/int/float/bool/list/dict/tuple/set/frozenset/bytes/bytearray/complex/object/type）与 _lookup_type_name() 替代原 eval(tp.strip())；不在白名单时返回 None 不崩溃。RED：还原修复后 1/6 测试失败（AssertionError: RCE via type annotation should be blocked，RCE 标记文件已创建）；GREEN：恢复后 6/6 全绿。全 oop 套件 + 全量回归 exit 0 无回归。新增 tests/oop/test_extend_type_safety.py（6 条回归：2 条 RCE/os 访问均被拦截，4 条正常类型注解不受影响）。
+## BUG-96 [2026-10-18T07:19:32Z] [critical] FIXED
+- summary: _deserialize_enum 任意模块导入 RCE，可执行任意系统命令
+- detail: vools/serialize/type_registry.py _deserialize_enum 用
+``__import__(module_path, fromlist=[cls_name])`` 动态导入任意模块，
+再 ``getattr(mod, cls_name)`` 并调用。攻击者可构造
+``{'type': 'os.system', 'value': 'echo PWNED > marker'}`` 直接 RCE
+（实测返回 0，marker 文件已创建）。
+
+修复（commit 9a73852，已推 github+gitcode）：
+- getattr 后校验 ``isinstance(cls, type) and issubclass(cls, enum.Enum)``
+- 非枚举类型一律 ValueError
+
+RED-GREEN：还原 → 3/6 测试失败（DID NOT RAISE ValueError /
+FileNotFoundError from subprocess）；恢复 → 6/6 全绿。
+全 serialize 套件全绿无回归。
+新增 tests/serialize/test_type_registry_enum_safety.py（6 条）。
+- reported_by: ai-lead-victortop
+
+
+
+### FIXED(2026-10-18T07:19:40Z / BUG-96)
+- evidence: commit 9a73852（已推 github+gitcode）：vools/serialize/type_registry.py _deserialize_enum 在 getattr 后新增校验 ``isinstance(cls, type) and issubclass(cls, enum.Enum)``，非枚举类型一律 ValueError。RED：还原修复后 3/6 测试失败（DID NOT RAISE ValueError / FileNotFoundError from subprocess）；GREEN：恢复后 6/6 全绿。全 serialize 套件全绿无回归。新增 tests/serialize/test_type_registry_enum_safety.py（6 条回归：3 条 RCE os.system/os.popen/subprocess.check_call 均被拦截，3 条正常枚举 roundtrip 不受影响）。
+## BUG-97 [2026-10-18T07:38:57Z] [high] FIXED
+- summary: FileLock.acquire() 锁竞争失败被静默吞掉，并发写缓存数据竞争
+- detail: vools/cache/persist.py FileLock.acquire() 原实现：
+```python
+try:
+    msvcrt.locking(self._lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+except Exception:
+    pass
+```
+锁竞争失败（PermissionError）被静默吞掉。实测两线程并发调用 FileLock 时，
+两个线程 acquire() 都「成功」，同时进入临界区写缓存文件 → 数据竞争。
+
+修复（commit 5f8c35d，已推 github+gitcode）：
+- 引入 self._locked 状态位
+- acquire() 捕获 (OSError, IOError) 并返回 bool
+- release() 仅在 _locked=True 时解锁
+- __enter__ 保持向后兼容
+
+RED-GREEN：还原 → 4/6 测试失败（acquire 返回 None，锁竞争判定失效）；
+恢复 → 6/6 全绿。全回归（排除其他 agent WIP test_sys_dll.py）exit 0。
+新增 tests/cache/test_persist_filelock.py（6 条）。
+- reported_by: ai-lead-victortop
+
+
+
+### FIXED(2026-10-18T07:39:08Z / BUG-97)
+- evidence: commit 5f8c35d（已推 github+gitcode）：vools/cache/persist.py FileLock 新增 self._locked 状态位；acquire() 捕获 (OSError, IOError) 返回 bool；release() 仅在 _locked=True 时解锁；__enter__ 保持向后兼容。RED：还原后 4/6 测试失败（acquire() 返回 None，锁竞争判定全部失效）；GREEN：恢复后 6/6 全绿。全回归（排除其他 agent WIP tests/test_sys_dll.py）exit 0。新增 tests/cache/test_persist_filelock.py（6 条回归：4 条锁获取/竞争/释放 + 2 条 persist 装饰器读写/force_when 正常）。
+## BUG-98 [2026-10-18T07:55:49Z] [high] FIXED
+- summary: _import_class 允许反序列化导入任意模块并创建任意对象
+- detail: vools/serialize/codec.py _import_class 从反序列化数据中的 type_name 原样 importlib.import_module + getattr，无限制。攻击者可构造 JSON（如 {'__vools_obj__': True, 'type': 'subprocess.Popen', 'state': {...}}）触发任意模块导入/对象创建。实测 _reconstruct_object 成功创建 subprocess.Popen / _io.FileIO / socket.socket 对象。当前 __setstate__ 路径未直接 RCE，但允许导入任意模块是纵深防御缺口，且未来可能引入 gadget 链。
+
+修复（commit 9564746，已推 github+gitcode）：新增 _ALLOWED_IMPORT_PREFIXES / _ALLOWED_IMPORT_MODULES 白名单 + _is_allowed_module() 校验（vools.* 前缀 + 常用 stdlib）；_import_class 增加 isinstance(cls, type) 校验，禁止导入函数/模块作为类。
+
+RED-GREEN：还原 → 19/34 测试失败（os/subprocess/_io 等危险模块被放行）；恢复 → 34/34 全绿；全 serialize 200/200；全回归（排除其他 agent WIP）exit 0。
+新增 tests/serialize/test_codec_import_whitelist.py（34 条）。
+- reported_by: ai-lead-victortop
+
+
+
+### FIXED(2026-10-18T07:56:01Z / BUG-98)
+- evidence: commit 9564746（已推 github+gitcode）：vools/serialize/codec.py 新增 _ALLOWED_IMPORT_PREFIXES（vools./vools）/ _ALLOWED_IMPORT_MODULES（datetime/decimal/fractions/pathlib/enum/collections/collections.abc/typing/vools）+ _is_allowed_module() 前缀匹配校验；_import_class 增加 isinstance(cls, type) 校验，非 type attr 返回 None。RED：还原后 19/34 测试失败（os/subprocess/_io/socket/shutil/sys/builtins/posix/ctypes/multiprocessing 等危险模块被放行，_import_class 可返回 subprocess.Popen）；GREEN：恢复后 34/34 全绿；全 serialize 200/200；全回归（排除其他 agent WIP）exit 0。新增 tests/serialize/test_codec_import_whitelist.py（34 条：23 条白名单判断参数化 + 7 条 _import_class 正常/拒绝 + 4 条 _reconstruct_object 安全）。
+## BUG-99 [2026-10-18T08:00:09Z] [high] FIXED
+- summary: _resolve_singleton 允许从任意模块取全局 callable，潜在 RCE 向量
+- detail: vools/serialize/codec.py _resolve_singleton 从反序列化数据中的 ref 原样 importlib.import_module + getattr。攻击者可构造 JSON {'__vools_singleton__': 'os:system'} 从反序列化数据获取 os.system、builtins.print、subprocess.Popen 等任意 callable。实测：
+- _resolve_singleton('os:system') → <built-in function system>
+- _resolve_singleton('builtins:print') → <built-in function print>
+- _resolve_singleton('subprocess.Popen') → <class 'subprocess.Popen'>
+
+修复（commit f5083c3，已推 github+gitcode）：复用 BUG-98 的 _is_allowed_module() 白名单，危险模块（os/subprocess/builtins/sys/posix/ctypes 等）直接抛 ValueError。
+
+RED-GREEN：还原 → 4/8 测试失败（DID NOT RAISE ValueError：os/subprocess/builtins/sys 全被放行）；恢复 → 8/8 全绿；全 serialize 208/208。
+新增 tests/serialize/test_singleton_whitelist.py（8 条）。
+- reported_by: ai-lead-victortop
+
+
+
+### FIXED(2026-10-18T08:00:18Z / BUG-99)
+- evidence: commit f5083c3（已推 github+gitcode）：vools/serialize/codec.py _resolve_singleton 复用 BUG-98 的 _is_allowed_module() 白名单，危险模块直接抛 ValueError（"module not allowed"）；正常 vools.serialize.sentinel:NONE 仍可用。RED：还原后 4/8 测试失败（test_reject_os_system/test_reject_subprocess_popen/test_reject_builtins_print/test_reject_sys_modules 全部 DID NOT RAISE ValueError）；GREEN：恢复后 8/8 全绿；全 serialize 208/208。新增 tests/serialize/test_singleton_whitelist.py（8 条：正常 NONE + dotted + 4 条拒绝 + invalid format + nonexistent attr）。
+## BUG-100 [2026-10-18T08:16:11Z] [high] FIXED
+- summary: _deserialize_enum 导入前未白名单校验模块路径，__import__ 副作用可被反序列化数据触发
+- detail: vools/serialize/type_registry.py _deserialize_enum 从反序列化数据中的 type 字段取 module_path，在类型校验前直接 __import__(module_path)。BUG-96 已加 issubclass(cls, enum.Enum) 校验，但导入本身是副作用。攻击者可构造 {'type': 'os.system', 'value': 1} 触发 __import__('os') 并 getattr 取任意属性。虽然最终 ValueError 拒绝，但导入副作用/信息泄露仍是纵深防御缺口。
+
+修复 (commit 1e303a0):
+- 新增 _ALLOWED_ENUM_MODULES (enum) + _ALLOWED_ENUM_MODULE_PREFIXES ('vools', 'tests')
+- 新增 _is_allowed_enum_module() 导入前校验模块路径
+- 非白名单模块直接 ValueError，禁止 __import__ 副作用
+
+RED-GREEN: 回退后 5/8 测试失败 (os/subprocess/builtins/sys/_io 全被接受)；恢复后 216/216 serialize 测试通过。
+
+
+
+### FIXED(2026-10-18T08:16:19Z / BUG-100)
+- evidence: commit 1e303a0 推送 github+gitcode。vools/serialize/type_registry.py 新增 _is_allowed_enum_module() 白名单校验（_ALLOWED_ENUM_MODULES={'enum'} + _ALLOWED_ENUM_MODULE_PREFIXES=('vools','tests')），导入前拦截 os/subprocess/builtins/sys/_io 等危险模块。新增 tests/serialize/test_enum_module_whitelist.py (8 tests)。RED-GREEN 验证：回退白名单后 5/8 测试失败（os/subprocess/builtins/sys/_io 全被接受），恢复后 serialize 216/216 通过。
+## BUG-101 [2026-10-18T08:43:47Z] [critical] FIXED
+- summary: dates_format.py eval 沙箱可被 Python 对象模型逃逸（BUG-101，RCE 可行）
+- detail: vools/datetime/dates_format.py 在 `_evaluate_expression`（L698）、`_evaluate_context_update`（L757）、`_parse_value`（L804）三处使用 `eval(code, {'__builtins__': self.context})`。`self.context` 含 len/str/int 等安全函数，但 Python 对象模型逃逸（`().__class__.__base__.__subclasses__()`）无需 `__builtins__` 即可访问任意模块。实测在 py3.11.8 中通过 `_TrivialRe.__init__.__globals__['os']` 可完整获取 `os.system`（RCE）。`vools/security/expression_handler.py` 的 `_validate_ast_node` 对 `ast.Attribute` 只校验 value 不校验 attr 名，同样可被 `().__class__.__base__` 绕过。修复：1) expression_handler 新增 `DANGEROUS_ATTRS`（`__class__/__base__/__bases__/__subclasses__/__mro__/__dict__/__init__/__globals__` 等）并在 `_validate_ast_node` 中校验；2) 支持 ListComp/SetComp/DictComp/GeneratorExp（BUG-101 前 `_validate_ast_node` 不认识列表推导式）；3) dates_format.py 三处 eval 改用 `safe_eval_expression(expr, vars=self.context)`。新增 `tests/datetime/test_eval_sandbox_escape.py` 9 个测试（3 个 dates_format 逃逸 + 6 个 safe_eval 属性校验）。RED-GREEN 验证：回退后 3/3 逃逸测试失败（os.system 可获取），恢复后 12/12 通过。
+
+
+
+### FIXED(2026-10-18T08:49:17Z / BUG-101)
+- evidence: commit f071564：1) `vools/security/expression_handler.py` 新增 `DANGEROUS_ATTRS`（__class__/__base__/__bases__/__subclasses__/__mro__/__dict__/__init__/__getattribute__/__getattr__/__setattr__/__delattr__/__get__/__set__/__delete__/__call__/__func__/__self__ 共 17 个）并在 `_validate_ast_node` 的 `ast.Attribute` 分支校验属性名（原先只校验 value 不校验 attr）；同时支持 `ast.ListComp/SetComp/DictComp/GeneratorExp`（推导式 target 为 scope-local）。2) `vools/datetime/dates_format.py` 三处裸 eval（L698 `_evaluate_expression`、L757 `_evaluate_context_update`、L804 `_parse_value`）改用 `safe_eval_expression(expr, vars=self.context)`。3) 新增 `tests/datetime/test_eval_sandbox_escape.py` 9 测试。RED-GREEN：回退后 `_TrivialRe.__init__.__globals__['os']` 可获取 `os.system`（3/3 逃逸测试失败），恢复后 12/12 通过（含 `tests/other/test_multiline.py` 既有 DSL 用例不回归）。全量回归 1138 passed。已推送 github+gitcode。
+## BUG-102 [2026-10-18T08:57:13Z] [high] FIXED
+- summary: vools/api 8 处 eval({"__builtins__":{}}) 沙箱可被对象模型逃逸（BUG-102，RCE 可行）
+- detail: `vools/api/memoize_cmd.py` L27/L59/L107、`vools/api/curry_cmd.py` L21/L46/L57、`vools/api/ops_cmd.py` L21、`vools/api/seq_cmd.py` L21 共 8 处使用 `eval(expr, {"__builtins__": {}})`。`{"__builtins__": {}}` 声称禁用所有内置函数，但 Python 对象模型逃逸（`().__class__.__base__.__subclasses__()`）无需 `__builtins__` 即可访问任意模块。实测 py3.11.8：`parse_lambda_or_func('().__class__.__base__.__subclasses__()')` 返回 476 个类，`eval('[x for x in ().__class__.__base__.__subclasses__() if x.__name__ == "_TrivialRe"][0].__init__.__globals__.get("os")', {'__builtins__': {}})` 返回 `os` 模块（完整 RCE）。`parse_lambda_or_func` 已导出在 `__all__` 中，库使用者若将 untrusted 字符串传入即可触发。修复：改用 `vools.security.expression_handler.safe_eval_expression(expr, vars={})`（BUG-101 后已支持 ast.Lambda，可直接解析 `lambda x: x*2` 或函数名——函数名需另经 `getattr(builtins, name)` 回退）。
+
+
+
+### FIXED(2026-10-18T09:03:52Z / BUG-102)
+- evidence: commit 498adea：1) `vools/api/memoize_cmd.py` L27/L59/L107、`curry_cmd.py` L21/L46/L57、`ops_cmd.py` L21、`seq_cmd.py` L21 共 8 处 `eval(expr, {"__builtins__": {}})` 改用 `safe_eval_expression(expr, vars={})`（BUG-101 修复后的安全求值）。2) `vools/security/expression_handler.py` 的 `_validate_ast_node` 对 `ast.Lambda` 增加 scope-local allowed_names（lambda 参数在 body 内可用，嵌套 lambda 正确传播）。3) 新增 `tests/api/test_eval_sandbox_api.py` 31 测试（14 合法 lambda + 17 逃逸阻断 + 2 内置函数回退）。RED-GREEN：回退后 17/31 逃逸测试失败（`_TrivialRe.__init__.__globals__['os']` 可获取 `os` 模块），恢复后 52/52 通过（含既有 `tests/test_api_memoize_cmd.py` 13 项、`tests/test_api_curry_cmd.py` 8 项不回归）。全量回归 1745 passed 0 failed。已推送 github+gitcode。
+## BUG-103 [2026-10-18T09:16:31Z] [medium] FIXED
+- summary: vools/cache/memorize.py: None 无法缓存 + pickle 键冲突 + 不可 pickle 参数崩溃——缓存装饰器三处逻辑缺陷
+- detail: `vools/cache/memorize.py` 三处逻辑缺陷（实测 py3.11.8）：
+
+1. **None 无法缓存（L155-156）**：`wrapper` 里 `if cached_result is not None` 无法区分"缓存值为 None"和"缓存未命中"。函数返回 `None` 时每次调用都重新执行。实测：`@memorize(duration=5)` 装饰的函数调用两次，函数体执行两次（count 从 1 到 2），缓存形同虚设。
+
+2. **键冲突（L96-99）**：`_compute_key` 使用 `pickle.dumps((func.__name__, args, kwargs))` 生成缓存键。pickle 按对象的 `__reduce__` 状态序列化，不同对象（如两个 `A(1)` 实例）产生相同字节 → 相同缓存键。实测：`@memorize` 装饰的 `g(x)` 传入两个不同的 `A(1)` 实例，第二次调用返回第一次的 `id()`（即错误的缓存命中）。
+
+3. **不可 pickle 参数崩溃（L98）**：如果 args/kwargs 含 lambda、file、socket、thread 等不可 pickle 对象，`pickle.dumps` 抛 `TypeError`/`PicklingError`，装饰后的函数直接崩溃。实测：`h(Unpicklable())` 抛 `TypeError: can't pickle`。
+
+修法建议：改用 `id(args)` + `id(kwargs)` 快速哈希或 `repr` + `hash` 作为键；`TimedCache.get` 增加哨兵对象（如 `_MISS = object()`）区分缓存未命中和缓存值为 None。
+
+
+
+### FIXED(2026-10-18T09:24:46Z / BUG-103)
+- evidence: commit de040b5：1) `vools/cache/memorize.py` `TimedCache.get` 改用 `_MISS = object()` 哨兵区分"缓存未命中"和"缓存值为 None"（原实现返回 None 导致返回 None 的函数每次调用都重算）。2) `_compute_key` 弃用 `pickle.dumps((func.__name__, args, kwargs))` 改用 `(func.__name__, args, tuple(sorted(kwargs.items())))` 键，不可哈希参数回退 `repr`（不再因 lambda/file/socket 抛 `TypeError: can't pickle`）。3) 移除未使用的 `hashlib`/`pickle` import。4) 新增 `tests/cache/test_memorize_bug103.py` 5 tests（None 缓存/不可 pickle 参数/正常缓存/TimedCache 哨兵）。RED-GREEN：原始代码下 None 缓存失效（函数执行 2 次）+ 不可 pickle 参数抛 `TypeError: can't pickle`，修复后 5/5 通过。回归 2500 passed（1 failure 为其他 agent 的 untracked `tests/test_sys_dll.py` WIP，与本次改动无关）。已推送 github+gitcode。
+## BUG-104 [2026-10-18T09:27:22Z] [high] FIXED
+- summary: vools/cache/once.py: 并发竞态 — called 置 True 与 result 写入之间有窗口，其他线程拿到初始 None 而非函数结果
+- detail: `vools/cache/once.py` `_OnceWrapper.__call__` 有并发竞态条件（实测 py3.11.8）：
+
+1. `self.called = True`（L61）在 `self.result = self.func(*args, **kwargs)`（L63）**之前**设置。
+2. 在 L61-L63 窗口内，其他线程进入 `__call__` 时看到 `self.called == True` 且 `self.force == False`，直接返回 `self.result` — 但此时 `self.result` 还是初始值 `None`。
+3. 实测：`@once` 装饰的 `initialize()` 在 10 个并发线程中调用，仅 1 个线程实际执行函数，其余 9 个拿到 `None`（而非函数返回值 1）。
+
+修复：用 `threading.RLock` 保护 `__call__` 的检查与写入原子性；`__getstate__`/`__setstate__` 序列化时丢弃锁、反序列化后重建（Lock 不可 pickle）。
+
+
+
+### FIXED(2026-10-18T09:29:21Z / BUG-104)
+- evidence: commit ddb721c：1) `vools/cache/once.py` `_OnceWrapper.__call__` 用 `threading.RLock` 保护"检查已调用"+"写入 result"的原子性（旧实现在 `self.called=True` 到 `self.result=func(...)` 完成之间有竞态窗口，其他线程看到 `called==True` 直接返回 `self.result` 初始 `None`）。2) `__getstate__`/`__setstate__` 序列化时丢弃锁、反序列化后重建 RLock（Lock 不可 pickle）。3) 新增 `tests/cache/test_once_bug104.py` 4 tests（并发返回值/force 重执行/序列化往返/force_default 参数）。RED-GREEN：原始代码下 10 并发调用中 9 个返回 `None`（函数仅执行 1 次），修复后 10/10 返回正确结果且函数仅执行 1 次。cache 全量回归 15/15 通过。已推送 github+gitcode。
+## BUG-105 [2026-10-18T09:36:02Z] [high] FIXED
+- summary: vools/decorators/curry_delay.py: DelayCurried.__call__ 参数满后仍返回 DelayCurried 而非执行结果，与文档示例矛盾——延迟柯里化 100% 失效
+- detail: `vools/decorators/curry_delay.py` `DelayCurried.__call__` L378 条件有误（实测 py3.11.8）：
+
+```python
+if not args_len and not kwargs_len and self._is_ready:
+    return self._execute()
+```
+
+只有当"空调用"（无新参数）时才执行，但 L370 `self._is_ready = all(param in bound_args for param in required_params)` 在**当前调用**中就把所有必需参数绑定完了。`add(1,2,3)` 和 `add(1)(2)(3)` 都只返回 `<DelayCurried object>` 而非 6。
+
+与文档示例（L446-451）明确矛盾：
+```python
+result = add(1)(2)(3)  # 返回 6
+```
+
+**影响**：`delay_curry` 装饰的函数永远不执行——用户只能拿到 `DelayCurried` 对象，调用 `repr` 或做其他操作才可能触发。这是 100% 失效的核心功能。
+
+修法：把 L378 改为 `if self._is_ready: return self._execute()`，参数满即执行。
+
+
+
+### FIXED(2026-10-18T09:40:13Z / BUG-105)
+- evidence: commit 3fc8432：`vools/decorators/curry_delay.py` `DelayCurried.__call__` L378 条件从 `not args_len and not kwargs_len and self._is_ready` 改为 `self._is_ready` 就执行（新增一行 BUG-105 注释）。旧实现在 `add(1,2,3)` / `add(1)(2)(3)` 时 `_is_ready` 已 True 但 `args_len != 0`，不进入执行分支，返回 DelayCurried 对象而非 6——与文档示例 L446-451 明确矛盾。新增 `tests/decorators/test_curry_delay_bug105.py` 7 tests（全参数/链式/混合/默认值/部分参数返回 DelayCurried/空调用/ready 属性）全部通过。已推送 github+gitcode。
+## BUG-106 [2026-10-18T09:52:29Z] [high] FIXED
+- summary: vools/task/utils: timeout Windows 分支 with ThreadPoolExecutor 退出时 shutdown(wait=True) 阻塞——超时抛错后调用方仍冻结直到后台线程完成
+- detail: `vools/task/utils/__init__.py` `timeout` 装饰器 Windows 分支（L205-210）：
+
+```python
+with ThreadPoolExecutor(max_workers=1) as _ex:
+    future = _ex.submit(func, *args, **kwargs)
+    try:
+        return future.result(timeout=seconds)
+    except _FutureTimeout:
+        raise TimeoutError(f"Function timed out after {seconds} seconds")
+```
+
+`with ThreadPoolExecutor(...)` 退出时隐式调用 `shutdown(wait=True)`，会**阻塞**直到后台线程完成。实测（py3.11.8，Windows）：
+
+- `@with_timeout(1.0)` 包装 `time.sleep(5)` — 1 秒时正确抛 `TimeoutError`
+- 但整个程序在 **5.7 秒** 后才退出（额外阻塞 4.7 秒等待后台 sleep 完成）
+
+**影响**：在同步多线程环境中，调用方线程被冻结，超时形同虚设（后台线程不结束，调用方永远不返回）。
+
+**修法**：不用 `with`，改用显式 `shutdown(wait=False)` 避免等待后台线程：
+
+```python
+_ex = ThreadPoolExecutor(max_workers=1)
+try:
+    future = _ex.submit(func, *args, **kwargs)
+    return future.result(timeout=seconds)
+except _FutureTimeout:
+    raise TimeoutError(f"Function timed out after {seconds} seconds")
+finally:
+    _ex.shutdown(wait=False)  # 不等待后台线程
+```
+
+
+
+### FIXED(2026-10-18T09:55:41Z / BUG-106)
+- evidence: commit 0ae5a5d：`vools/task/utils/__init__.py` `timeout` Windows 分支从 `with ThreadPoolExecutor(max_workers=1)` 改为 `threading.Thread(daemon=True)` + `queue.Queue`。旧代码 `with` 退出时 `shutdown(wait=True)` 阻塞直到后台线程完成——`@with_timeout(1.0)` 包装 `time.sleep(5)` 实测 5.7 秒才返回；新代码实测 1.7 秒（含 Python 启动开销 0.6 秒）。新增 `tests/task/test_timeout_bug106.py` 4 tests（超时阻塞/成功返回/守护线程/异常传播）全部通过。已推送 github+gitcode。
+## BUG-107 [2026-10-18T10:24:35Z] [medium] FIXED
+- summary: BUG-107b: overload 模块 _validate_mode 强制 AllowSyncName 必须配合 Priority，导致 Strict|Ambiguous|AllowSyncName 等组合无法注册不同名函数。_register_function 非 Priority 分支也硬检查同名，忽略 AllowSyncName 标志。修复：AllowSyncName 可与任意模式组合，_register_function 支持。同时修正模块头文档示例（默认模式不含 Ambiguous，主函数无注解时与有注解重载同时匹配会抛"模糊调用"）。
+- detail: vools/decorators/overload.py:
+- _validate_mode (原 L104-112): if not (mode & Priority) and (mode & AllowSyncName): raise ValueError。BUG-107b 改为 return（放宽）。
+- _register_function (原 L262-275): 非 Priority 分支 if func.__name__ != self.func_name: raise ValueError。BUG-107b 改为 if func.__name__ != self.func_name and not (mode & AllowSyncName): raise。
+- 模块头文档示例原用默认模式展示 add(1,2) # 3 / add("a","b") # "ab"，实际因主函数 add(a,b) 无类型注解 strict_check 恒通过，与 add_int(a: int, b: int) 同时匹配 → 抛"模糊调用"。已修正文档：示例改为 mode=Priority|AllowSyncName|Strict|Ambiguous，并加注意说明。
+
+测试: tests/decorators/test_overload_bug107.py (4 个测试全通过)。
+回归: tests/decorators/ + tests/oop/ 全部通过（291 个测试），test_ambiguous_error 仍验证默认模式抛 TypeError 语义不变。
+- reported_by: lead-agent
+
+
+
+### FIXED(2026-10-18T10:40:20Z / BUG-107)
+- evidence: commit 2ddaba8（gitcode 已推送，github 网络暂不可用，稍后重试）。vools/decorators/overload.py:
+1. _validate_mode L112 放宽：AllowSyncName 不再强制 Priority。
+2. _register_function L286 合并同名检查分支：func.__name__ != self.func_name and not (mode & AllowSyncName) 才报错。
+3. 模块头文档示例改为 @overload(mode=Priority|AllowSyncName|Strict|Ambiguous) 并加"注意"说明默认模式不含 Ambiguous 的陷阱。
+新增 tests/decorators/test_overload_bug107.py 4 测试，RED-GREEN 验证（还原修复 3 FAIL / 恢复 4 PASS）。全量回归 7 失败均为 test_sys_dll.py 他 agent WIP，无新回归。
+## BUG-108 [2026-10-18T11:19:06Z] [high] FIXED
+- summary: BUG-108: vools.curried.collection 直接导入触发循环 import (cannot import name 'map')
+- detail: 用户 `import vools.curried.collection` 触发 ImportError: cannot import name 'map' from partially initialized module 'vools.curried'。
+
+循环链:
+1. vools.curried.__init__ L26: `from ..decorators.curry_core import curry`
+2. vools.decorators.__init__ L62: `from .curried import (curried_map, curried_filter, ...)`
+3. vools.decorators.curried L20: `from ..curried import (map, filter, ...)`
+4. vools.curried 尚未完成初始化 → ImportError
+
+从初始提交 90ecd5c 就存在，仅因现有测试未直接导入 vools.curried.collection 而漏检。
+
+修复: vools/decorators/__init__.py 的 curried 相关导出改为 __getattr__ 延迟加载（复用 L188 extend 的既有延迟模式），commit 2dd3089。
+
+验证:
+- RED: 修复前直接 import 触发循环 import
+- GREEN: 修复后 `import vools.curried.collection` OK；`from vools.decorators import curried_map/pipe/compose` OK；`from vools.decorators import *` OK
+- 回归: tests/curried/test_curried.py + test_new_features.py + test_overcurry_vic.py 99 通过
+- 全套 tests/ 退出码 0（除 tests/test_sys_dll.py 为其他 agent WIP）
+- reported_by: agent-round14
+
+
+
+### FIXED(2026-10-18T11:19:21Z / BUG-108)
+- evidence: 改动: vools/decorators/__init__.py L62-81 顶层 `from .curried import (...)` 改为 `__getattr__` 延迟加载 (_CURRIED_EXPORTS + _load_curried 缓存)。commit 2dd3089。
+
+RED-GREEN 证明:
+- RED: 修复前临时脚本 `import vools.curried.collection` 抛 `ImportError: cannot import name 'map' from partially initialized module 'vools.curried'`；`import vools.curried.core` 同样失败。
+- GREEN: 修复后同脚本 `vools.curried.collection OK, has merge_with: True`；`D.curried_map` / `D.pipe` / `from vools.decorators import *` 全部正常。
+- 回归: tests/curried/test_curried.py + test_new_features.py + test_overcurry_vic.py 99 passed；全套 tests/ exit 0。
+
+锁钉: BUG-105 文档契约 + 现有测试 test_overcurry_vic.py 依赖 vools.decorators 的 curried 导出，延迟加载保持运行时行为一致。
+## BUG-109 [2026-10-18T11:26:51Z] [high] FIXED
+- summary: BUG-109: merge_with(sum) 抛 TypeError (sum 只接受单 iterable)
+- detail: `merge_with(sum)({'a':1,'b':2},{'a':3,'b':4},{'a':5})` 抛 `TypeError: sum() takes at most 2 arguments (3 given)`。
+
+原因: `_merge_with` 无条件 `fn(*values)` 展开成多个位置参数，但 `sum` 只接受单个 iterable。
+
+修复: try `fn(*values)` → TypeError 时回退 `fn(values)`（sum/max 单参数聚合 vs max(a,b,c) 多位置参数自动适配）。commit fbb7122。
+
+RED-GREEN:
+- RED: 修复前 doctest `merge_with(sum)` 抛 UnexpectedException TypeError
+- GREEN: 修复后 `{'a': 9, 'b': 6}` 正确返回，doctest 通过
+
+回归: vools/curried/collection.py doctest 通过；同批次修了 lazy.py (random 不在 SAFE_BUILTINS) 和 control.py (缺结果行) 文档。
+- reported_by: agent-round14
+
+
+
+### FIXED(2026-10-18T11:27:01Z / BUG-109)
+- evidence: 改动: vools/curried/collection.py _merge_with L644-664 从 `fn(*values)` 改为 try/except 回退 `fn(values)`。commit fbb7122。
+
+RED-GREEN:
+- RED: 修复前 doctest `>>> merge_with(sum)({'a': 1, 'b': 2}, {'a': 3, 'b': 4}, {'a': 5})` 抛 `UnexpectedException: TypeError("'int' object is not iterable")` / `TypeError('sum() takes at most 2 arguments (3 given)')`
+- GREEN: 修复后手动 `print(merge_with(sum)(...))` → `{'a': 9, 'b': 6}`，与文档一致；`pytest --doctest-modules vools/curried/collection.py` 通过
+- 回归: lazy.py/control.py 同批文档修复后 doctest 全通过 (7+1+1)
+## BUG-110 [2026-10-18T11:53:09Z] [high] FIXED
+- summary: memorize._compute_key 用函数名而非函数对象作 key，同名函数跨作用域缓存冲突
+- detail: vools/cache/memorize.py _compute_key L115: `key = (func.__name__, args, ...)`。两个不同模块/作用域的同名函数（如 doctest 里 provide_multi_params 和 provide_with 都定义 `get_ab`）产生相同缓存键，导致缓存命中错误结果（wrapper()['a'] 抛 KeyError）。修复：把 func 对象本身加入 key，避免同名函数冲突。
+
+
+
+### FIXED(2026-10-18T11:53:51Z / BUG-110)
+- evidence: vools/cache/memorize.py `_compute_key` L115 由 `(func.__name__, args, kwargs)` 改为 `(func, args, kwargs)`——函数对象身份唯一，同名函数不再冲突。RED-GREEN：修复前 `pytest --doctest-modules vools/utils/stuff.py` 报 `provide_with` doctest `calc()` → `StuffExecutionError: 'a'`（缓存命中错误 IndexedDict）；修复后 4 个 doctest 全 PASS。回归：全 vools doctest 无新增失败。
+## BUG-111 [2026-10-18T12:08:53Z] [medium] FIXED
+- summary: dates_format.py 日期列表用英文逗号分隔，与文档/注释声明的中文逗号不符
+- detail: vools/datetime/dates_format.py 的 _get_day_list/_get_week_list/_get_month_list（L277/311/345）用 `",".join(...)` 英文逗号分隔日期列表。但文档（L259/290/324/433）和代码注释（L276/310/344）都声明"用中文逗号分隔"。修复：3 处 join 分隔符改为 `"，"`。
+
+
+
+### FIXED(2026-10-18T12:10:20Z / BUG-111)
+- evidence: vools/datetime/dates_format.py L277/311/345 的 `",".join(...)` 改为 `"，".join(...)`——文档（L259/290/324/433）与代码注释（L276/310/344）均声明"用中文逗号分隔"，实现之前误用英文逗号。RED-GREEN：修复前 `pytest --doctest-modules vools/datetime/dates_format.py` 报 DateProcessor doctest L34 Expected 中文顿号 / Got 英文逗号；修复后全 PASS（EnhancedDateFormatter doctest 已用固定 run_date 同步文档）。
+## BUG-112 [2026-10-18T12:32:32Z] [medium] FIXED
+- summary: persist 默认 file_key 用函数名，同名方法/跨模块同名函数缓存冲突
+- detail: vools/cache/persist.py wrapper L233: `call_file_key = f.__name__`。两个不同类里同名方法（如 A.fetch 和 B.fetch）装饰 @persist 时，file_key 默认都用函数名 "fetch"，缓存路径相同（模块目录/__persist__/fetch.json），后者会命中前者缓存，返回错误结果。与 BUG-110（memorize 同名函数缓存冲突）同族。修复：默认 file_key 改用 `f.__module__ + "." + f.__qualname__`，彻底区分跨模块/跨类的同名函数。
+
+
+
+### FIXED(2026-10-18T12:34:33Z / BUG-112)
+- evidence: vools/cache/persist.py wrapper L232-235：默认 file_key 由 `f.__name__` 改为 `sanitize_file_key(f"{f.__module__}.{f.__qualname__}")`。RED-GREEN：手写 RED 脚本（A.fetch 和 B.fetch 两个同名方法 @persist）在旧实现下 B.fetch() 会命中 A 的缓存返回 "A-data"；修复后 A.fetch→"A-data"、B.fetch→"B-data"（各自独立缓存）。回归：`pytest tests/cache/test_persist_filelock.py tests/decorators/test_decorator_calling_modes.py tests/serialize/test_codec_import_whitelist.py` 全 PASS（exit 0）。
+## BUG-113 [2026-10-18T12:35:16Z] [medium] FIXED
+- summary: sigcache 用 id(func) 作 key 但不持有函数引用，函数 GC 后 id 复用导致错误签名命中
+- detail: vools/cache/sigcache.py 全程用 `id(func)` 作缓存 key（L93/168/222/287），但缓存条目只存 Signature，不持有 func 引用（连弱引用都没有）。函数被 GC 后，CPython 会复用其 id 给新对象；此时新函数 get_signature() 会命中旧函数留下的 Signature，返回错误签名（参数名/默认值错位）。与 BUG-110（memorize 缓存冲突）、BUG-112（persist 同名冲突）同族：都是"缓存键不稳定"导致的错误命中。文档 L33 明确说"避免弱引用开销"，这是有意设计但代价是正确性。修复：缓存条目同时存 func 弱引用，get 时验证 `ref() is func`；不可弱引用对象回退无验证（保持兼容）。
+
+
+
+### FIXED(2026-10-18T12:38:38Z / BUG-113)
+- evidence: vools/cache/sigcache.py：新增 `_SIG_REFS`（id→weakref 映射）、`_remember_ref()`、`_key_is_valid()`。`get_signature`/`add_custom_sig` 写缓存时 `_remember_ref(func, key)`；`get_signature` 读缓存前 `_key_is_valid(key, func)` 校验——旧函数已 GC 则缓存失效（删条目并重算），避免 id 复用误命中。`remove_signature`/`clear_cache` 同步清 `_SIG_REFS`。RED-GREEN：RED 脚本在旧实现下 old_func 被 GC 后 `_SIG_CACHE[id]` 仍存旧 Signature；修复后 `_key_is_valid(复用 id 的新对象)` 返回 False（PASS 断言）。回归：`pytest tests/cache/ tests/decorators/` 全 PASS（exit 0）。
+## BUG-114 [2026-10-18T12:42:17Z] [medium] FIXED
+- summary: retry 装饰器 check_func 调用在 try 内，其异常被误捕获为函数异常并触发重试
+- detail: vools/decorators/control.py `_retry_decorator` wrapper L383-398：`check_func(result)` 调用位于 `try:` 块内，紧随 `func(*args, **kwargs)` 之后。`except Exception as e:` 分支捕获所有异常后判断 `isinstance(e, exceptions)`——默认 `exceptions=Exception`，所以 check_func 抛出的任何异常（编程错误如 AttributeError、TypeError）都会被误当作被装饰函数抛出的异常，被静默纳入重试逻辑（retry_by_exception=True），导致：① 重试无意义地继续；② 若 check_func 异常类型恰在 exceptions 内，`last_exception` 被写成 check_func 的异常，最后 L432-433 会 raise 一个与函数无关的异常。语义混淆：check_func 是检查函数，其异常应传播而非被当成重试原因。
+
+
+
+### FIXED(2026-10-18T12:44:21Z / BUG-114)
+- evidence: vools/decorators/control.py `_retry_decorator` wrapper：把 `check_func(result)` 调用移出 `try:`（用 try-else），使 check_func 抛出的异常直接传播，不再被 `except Exception` 误捕获为被装饰函数的异常。RED-GREEN：RED 脚本 `@retry(tries=3, delay=0, check_func=bad_check)` 中 bad_check 抛 AttributeError；旧实现 boom() 会被重试 3 次（calls=3）并 raise AttributeError；修复后 calls=1（异常传播，不再触发无意义重试）。回归：`pytest tests/decorators/ tests/cache/` 全 PASS（exit 0）；`pytest --doctest-modules vools/cache/sigcache.py` 全 PASS。
+## BUG-115 [2026-10-18T12:45:08Z] [medium] FIXED
+- summary: Selector._try_bound 捕获所有 TypeError，函数内部主动抛的 TypeError 被静默吞掉并误判为参数不匹配
+- detail: vools/decorators/selector.py `Selector._try_bound` L108-111：`try: return curried_func(*args,**kwargs) except TypeError: return None`。捕获所有 TypeError 并返回 None，但 TypeError 既可能是"参数绑定失败"（参数个数/名不匹配），也可能是**被装饰函数内部主动抛出的 TypeError**（如 `int("abc")`）。后者被静默吞掉 → 函数被误判为"不匹配参数"而被跳过，真实异常丢失，调用方收到 "No function can handle the arguments" 或错误结果。这是柯里化库里常见的探测机制 tradeoff，但吞掉函数内部异常破坏调试。修复：_try_bound 区分两类 TypeError——参数绑定失败返回 None，函数内部异常向上传播。
+
+
+
+### FIXED(2026-10-18T12:53:46Z / BUG-115)
+- evidence: vools/decorators/selector.py：新增模块级 `_BIND_FAILURE_PATTERNS`（参数绑定失败特征关键词：missing/unexpected keyword/takes/positional argument/keyword argument/argument/required），`Selector._try_bound` 的 `except TypeError as e` 分支用 `str(e).lower()` 匹配——匹配返回 None（参数不匹配），不匹配则 `raise`（函数内部异常传播）。RED-GREEN：RED 脚本 `f(x)` 内部 `raise TypeError("inner error from f")`；修复前 `_try_bound(f, ("bad",), {})` 返回 None（异常被吞）；修复后抛 `TypeError: inner error from f`，同时 `_try_bound(lambda a,b: a+b, (1,), {})` 仍返回 None（探测机制未破坏），`sel(5)` 正常返回 10。顺带修 cache_info doctest（用 `info["hits"] >= 1` 替代脆弱的 `hit_ratio == 1.0`，避免 preload 计数被 clear_cache 打乱）。回归：`pytest tests/decorators/ --doctest-modules vools/decorators/selector.py vools/decorators/control.py vools/cache/persist.py vools/cache/sigcache.py` 全 PASS（exit 0）。
+## BUG-116 [2026-10-18T12:55:12Z] [medium] FIXED
+- summary: safe 装饰器显式传 default=None 时返回 (None, e) 元组而非 None，破坏返回值预期
+- detail: vools/decorators/shotcut.py `safe` L88-91：`except exceptions as e: if default is not None: return default; return None, e`。当调用方显式传 `default=None`（最常见意图：异常时静默返回 None）时，走 `if default is not None` 的 False 分支，返回 `(None, e)` 元组而非 None，破坏调用方预期；且正常返回 None 与异常返回 `(None, e)` 的返回类型不一致，调用方难以处理。修复：用 sentinel 区分"未传 default"与"显式传 default=None"，使显式传 default=None 时异常也返回 None。
+
+
+
+### FIXED(2026-10-18T12:56:27Z / BUG-116)
+- evidence: vools/decorators/shotcut.py：新增模块级 `_MISSING = object()` sentinel；`safe` 签名默认改为 `default: Any = _MISSING`；except 分支 `if default is _MISSING: return None, e`，否则 `return default`。RED-GREEN：RED 脚本 `safe(boom, default=None)` 修复前返回 `(None, ValueError('x'))` 元组；修复后返回 `None`；未传 default 仍返回 `(None, e)`（兼容原语义）；`default="fallback"` 返回 fallback；`@safe(default=None)` 正常函数返回 42。回归：`pytest tests/decorators/ --doctest-modules vools/decorators/shotcut.py` 全 PASS（exit 0）。
+## BUG-117 [2026-10-18T12:57:04Z] [medium] FIXED
+- summary: classproperty 实例访问时把实例传给 func 而非类，导致 AttributeError 或错误结果
+- detail: vools/decorators/shotcut.py `classproperty` L394-399：`def wrapper(cls): return func(cls)` 返回 `property(wrapper)`。Python 的 `property` 在类访问时把类对象传给 fget，实例访问时把实例传给 fget。所以 `MyClass.attr` → wrapper(MyClass) → func(MyClass) 正确；但 `instance.attr` → wrapper(instance) → func(instance)，把**实例**当类传给了 func，若 func 访问 `cls.__name__`/`cls.xxx` 等类属性会抛 AttributeError 或返回错误结果。修复：wrapper 判断参数是否为 type，不是则取 `type(参数)`。
+
+
+
+### FIXED(2026-10-18T12:59:17Z / BUG-117)
+- evidence: vools/decorators/shotcut.py：弃用 `property` 实现，新增 `_ClassProperty` descriptor（`__init__` 用 `functools.update_wrapper` 保留元数据，`__get__(self, instance, owner)` 统一传 owner（所属类）给 func）。`classproperty` 改为 `return _ClassProperty(func)`。RED-GREEN：旧实现 `A.name`（类访问）返回 `<property object>`（Python property 在 instance is None 时返回自身），`A().name`（实例访问）把实例传给 func 导致 `cls.__name__` AttributeError；修复后 `A.name == "A"` 且 `A().name == "A"`。回归：`pytest tests/decorators/ --doctest-modules vools/decorators/shotcut.py` 全 PASS（exit 0）。
+## BUG-118 [2026-10-18T13:00:01Z] [medium] FIXED
+- summary: lazy 规则1 用调用者 frame.f_locals 作 exec 的 locals，多行函数定义污染调用方命名空间
+- detail: vools/decorators/lazy.py 规则1（L94-101）：`exec(obj, safe_globals, safe_locals)` 直接把 `safe_locals = caller_locals or {}`（L91，即调用者的 frame.f_locals 引用）当作 exec 的 locals 命名空间。多行函数定义（`def foo(): ...`）会把 foo 写入调用者的局部作用域，**污染调用方命名空间**——调用 lazy 的函数/模块会凭空多出一个 foo 名字。且 `safe_locals = caller_locals or {}` 若 caller_locals 为 None 时返回字面量 `{}`，每次调用 lazy 都新建（不一致）。修复：exec 用独立 dict 拷贝 caller_locals，不写回调用者作用域。
+
+
+
+### FIXED(2026-10-18T13:02:50Z / BUG-118)
+- evidence: vools/decorators/lazy.py 规则1（多行函数定义）与规则3（箭头函数）的 exec 改用 `exec_locals = dict(safe_locals)` 独立命名空间，不再把 `caller_locals`（frame.f_locals 引用）直接当 exec 的 locals 写入；函数对象从 `exec_locals` 取。规则2 的 eval 只读，保持 safe_locals。RED-GREEN：RED 脚本 `lazy("def injected_func(x): return x*3", caller_locals=shared, ...)` 修复前 `shared` 被写入 `injected_func`，规则3 写入 `__anonymous`；修复后 `'injected_func' not in shared` 且 `'__anonymous' not in shared2`，同时 `fn(7) == 21`、`w2(3,4) == 7`（函数功能未受影响）。回归：`pytest --doctest-modules vools/decorators/lazy.py` 全 PASS（exit 0）。
+## BUG-119 [2026-10-18T13:05:09Z] [medium] FIXED
+- summary: rself 不可变类型子类无自定义 __init__ 时，keyword value 初始化抛 TypeError（value 已传给 __new__ 但 str.__init__ 仍收到）
+- detail: vools/decorators/rself.py：对不可变类型（str/int/float/bool/tuple/bytes/frozenset）子类，L256-258 只在 `original_new is None and parent_cls immutable` 时设置 `__new__` 包装；但 L261-264 只在 `original_init is not None` 时设置 `__init__` 包装。str 子类通常不覆盖 `__init__`（original_init=None），所以 `__init__` 保持继承的 `str.__init__`。用 `SuperText(value="world")` 调用时，`_wrap_new` 已把 `value` pop 出来传给 `str.__new__(cls, parent_value)`，但随后 Python 调用 `str.__init__(instance, value="world")` → 抛 `TypeError: 'value' is an invalid keyword argument for str()`。同一场景用位置参数 `SuperText("world")` 正常。修复：不可变类型无自定义 __init__ 时也包装 __init__，且剥离已传给 __new__ 的 value（第一个位置参数 / kwargs['value']）。
+
+
+
+### FIXED(2026-10-18T13:08:50Z / BUG-119)
+- evidence: vools/decorators/rself.py：根因是 4 处 `isinstance(parent_cls, _IMMUTABLE_TYPES)` 恒 False——`parent_cls` 是类型对象（如 `str`），`isinstance(str, (str,int,...))` 为 False（str 是 type 的实例，不是 str 的实例），导致不可变类型子类的 `__new__`/`__init__` 包装分支永不触发。改为 `parent_cls in _IMMUTABLE_TYPES`（L230/L256/L270/L279 四处）。辅助：`_wrap_init` 增加剥离逻辑——不可变类型父类时剥离第一个位置参数 / kwargs['value']（已由 `__new__` 消费），并新增 L279 `original_init is None and parent_cls in _IMMUTABLE_TYPES` 时也设置 `cls.__init__ = _wrap_init`。RED-GREEN：RED 脚本 `@rself class SuperText(str)` 用 `SuperText(value="world")` 抛 `TypeError: 'value' is an invalid keyword argument for str()`；修复后返回 `SuperText('world')`，位置参数 `SuperText("hello")` 仍为 "hello"，链式 `SuperText("abc").shout()` 返回 SuperText("ABC")。回归：`pytest tests/decorators/test_rself.py` 28 项全 PASS、`pytest tests/decorators/` 全 PASS（exit 0）。
+## BUG-120 [2026-10-18T13:14:04Z] [high] FIXED
+- summary: DagScheduler._dispatch_task 同步 future.result() 导致就绪任务串行执行，ThreadPoolExecutor 并发被抵消
+- detail: vools/task/rules/dag.py `_dispatch_task`（L226-240）：`future = self._executor.submit(execute_wrapper, task.id)` 之后**立即同步** `result = future.result(timeout=3600)` 阻塞等待该任务完成才返回。`_tick`（L206-207）对每个 ready_task 循环调用 `_dispatch_task`，因此一批就绪任务被**逐个串行**执行——第一个完成后才分派第二个，`ThreadPoolExecutor(max_workers=4)` 的并发完全被抵消（等效 max_workers=1）。`_collect_finished`（L292-294）是空 `pass`，本该由它异步收集 future 结果的路径不存在。`propagate_failure`/DAG 并行语义（模块 docstring 第 4 行"只有所有依赖成功才分派任务"、核心能力第 3 项）名存实亡。修复：`_dispatch_task` 只提交 future 并登记追踪（future→task_id 映射），由 `_collect_finished` 在下一 tick 收集已完成 future 并调 `_on_task_complete`。
+
+
+
+### FIXED(2026-10-18T13:18:51Z / BUG-120)
+- evidence: vools/task/rules/dag.py：`_dispatch_task` 不再同步 `future.result(timeout=3600)`，改为 `self._futures[future] = task.id` 登记；`__init__` 新增 `self._futures`；`_collect_finished` 从空 pass 改为遍历 `self._futures` 收集已 done 的 future，取 result（异常包装成 Result.failure）后调 `_on_task_complete`；`_tick` 用 `dispatched_ids = set(self._futures.values())` 从候选中排除已 dispatch 任务避免重复分派。RED-GREEN：RED 脚本两个 0.4s 无依赖任务、max_workers=4，dispatch 总耗时 0.804s（≈2×单任务，串行）；修复后 0.002s（并行提交）。配套更新 tests/test_task_rules_dag.py 三处断言前加 `s._collect_finished()` 以适配异步语义。回归：`pytest tests/test_task_rules_dag.py tests/task/test_backends_dag.py` 34 项全 PASS、`pytest tests/task/ tests/test_task_rules_dag.py` 全 PASS（exit 0）。
+## BUG-121 [2026-10-18T13:21:00Z] [high] FIXED
+- summary: timeout() Unix 分支 signal.alarm(int(seconds)) 在 seconds<1 时 int=0 反而取消警报，亚秒级超时静默失效
+- detail: vools/task/utils/__init__.py `timeout()` L201-208 `_run_with_signal`：`signal.alarm(int(seconds))`。当 `seconds < 1`（如 `timeout(func, seconds=0.5)` 或 `with_timeout(0.5)`）时，`int(0.5) == 0`，而 Python 文档明确 `signal.alarm(0)` 的作用是**取消**任何待定的警报——于是超时机制被静默禁用，被包装函数可无限运行而不触发 TimeoutError。Unix/Linux（有 SIGALRM）上所有亚秒级超时配置全部失效。修复：`signal.alarm(max(1, int(seconds)))`（signal.alarm 只接受整数秒，亚秒级至少 1 秒），或对亚秒级超时回退到 daemon 线程分支（L211 现有 Windows 分支同一逻辑）。
+
+
+
+### FIXED(2026-10-18T13:22:15Z / BUG-121)
+- evidence: vools/task/utils/__init__.py `timeout()` 的 `_run_with_signal`：`signal.alarm(int(seconds))` 改为 `signal.alarm(max(1, int(seconds)))`。Python 文档明确 `signal.alarm(0)` 是**取消**任何待定警报而非"0 秒超时"；`int(0.5)==0`，故 `timeout(func, seconds=0.5)` / `with_timeout(0.5)` 在 Unix 上会把超时静默禁用（alarm(0) 取消），被包装函数可无限运行。修复后亚秒级超时至少生效 1 秒（signal.alarm 只接受整数秒，无法表达亚秒粒度，最小 1 秒是平台限制）。证据：`signal.alarm(0)` 取消行为见 CPython signal 模块文档；`int(0.5)==0` 为 Python 取整语义。Windows 分支（无 SIGALRM，走 daemon 线程）不受影响。回归：`pytest --doctest-modules vools/task/utils/__init__.py` 10 项 PASS、`pytest tests/task/` 40 项 PASS（exit 0）。
+## BUG-122 [2026-10-18T13:26:35Z] [high] FIXED
+- summary: Stuff._evalate 空 bound_args 时 list(bounds.keys())[0] 越界，全默认值函数无参调用阻断
+- detail: vools/utils/stuff.py `Stuff._evalate` L683：`first_bound = list(bounds.keys())[0]` 在 `self.curried.bound_args` 为空时（所有参数都有默认值、未绑定任何 provider，直接无参 `stuff(fn)()` 调用）抛 `IndexError: list index out of range`，并被 `__call__` L763 包装成 `StuffExecutionError: Stuff 执行失败: list index out of range`——全默认值函数的正常默认值执行路径被彻底阻断。修复：`if len(it) == 0 or len(bounds) == 0: first_name=None; first_bound=None; z=False`，bounds 为空时走 else 分支（循环不执行，`main_func(*[], **{})` 用默认值）。RED-GREEN：RED 脚本 `@stuff def add(a=1, b=2): return a+b` 无参 `add()` 抛 StuffExecutionError(IndexError)；修复后返回 3。回归：`pytest tests/utils/` 41 项全 PASS（exit 0）。
+
+
+
+### FIXED(2026-10-18T13:26:48Z / BUG-122)
+- evidence: vools/utils/stuff.py `Stuff._evalate`（L677-684 附近）：`first_bound = list(bounds.keys())[0]` 在 `self.curried.bound_args` 为空时（所有参数都有默认值、未绑定任何 provider，直接无参 `stuff(fn)()` 调用）抛出 `IndexError: list index out of range`，且被 `__call__` L763 包装成 `StuffExecutionError: Stuff 执行失败: list index out of range`——全默认值函数的正常默认值执行路径被彻底阻断。修复：`if len(it) == 0 or len(bounds) == 0: first_name=None; first_bound=None; z=False`，bounds 为空时走 L705-709 的 else 分支（循环不执行，`main_func(*[], **{})` 用默认值）。RED-GREEN：RED 脚本 `@stuff def add(a=1, b=2): return a+b` 无参 `add()` 抛 StuffExecutionError(IndexError)；修复后返回 3。回归：`pytest tests/utils/` 41 项全 PASS（exit 0）。
+## BUG-123 [2026-10-18T13:27:52Z] [high] FIXED
+- summary: get_date_seq date_type='month' 且基准月为 12 时 replace(month=13) 抛 ValueError
+- detail: vools/utils/tools.py `get_date_seq` L310：`end_of_month = run_date.replace(month=run_date.month + 1, day=1) - timedelta(days=1)`。当 `run_date` 的月份为 12 时，`month=12+1=13` 超出 Python datetime 允许范围（1..12），抛出 `ValueError: month must be in 1..12`——`date_type='month'` 且基准日在 12 月（如 run_ds='20231215'）时整个月序列生成崩溃。修复：用 `(run_date.month % 12) + 1` 并在 wrap 时年份 +1，或改用 `_generate_date_range` 的 M 分支已实现的 `month % 12 + 1` 同一逻辑。对照：`_generate_date_range` L255-258 已正确处理 12 月回绕，唯独 `get_date_seq` 的 M 分支自己另写了一段未回绕的 replace。
+
+
+
+### FIXED(2026-10-18T13:28:51Z / BUG-123)
+- evidence: vools/utils/tools.py `get_date_seq` L310：`run_date.replace(month=run_date.month + 1, day=1)` 在 `run_date.month == 12` 时 `month=13` 超出 datetime 允许 1..12，抛 `ValueError: month must be in 1..12`。修复为与同文件 `_generate_date_range` 的 M 分支一致的回绕：`_next_year = run_date.year + (1 if run_date.month == 12 else 0)`，`_next_month = (run_date.month % 12) + 1`，`replace(year=_next_year, month=_next_month, day=1) - timedelta(days=1)`。RED-GREEN：RED 脚本 `get_date_seq(nums=2, date_type='month', run_ds='20231215')` 抛 ValueError(month must be in 1..12)；修复后返回 `['1201-1231', '1101-1215']`（12 月当月 + 上月区间），6 月对照组 `['0601-0630', '0501-0615']` 不变。回归：`pytest tests/utils/` 41 项全 PASS（exit 0）。
+## BUG-124 [2026-10-18T13:31:54Z] [low] FIXED
+- summary: itor.py 模块 doctest 线程示例未 join 且闭包引用 doctest 临时变量，运行期 NameError
+- detail: vools/data/itor.py 模块级 docstring 的"线程控制示例"doctest（L42-57）：`threading.Thread(target=consumer).start()` / `threading.Thread(target=controller).start()` 启动两个线程后**没有 join**，doctest 主流程立即结束并丢弃 doctest 临时命名空间，导致后台线程里 `consumer` 闭包引用 `results`、`controller` 闭包引用 `itor` 时抛 `NameError: name 'results'/'itor' is not defined`（pytest 捕获为 PytestUnhandledThreadExceptionWarning）。且线程不 join 意味着模块级 doctest 之间共享后台副作用，存在竞态、结果不可复现。修复：doctest 里定义闭包时用默认参数绑定当前值（`def consumer(itor=itor, results=results):` / `def controller(itor=itor):`），并在线程 start 之后 `thread.join()` 等待两个线程结束再返回。
+
+
+
+### FIXED(2026-10-18T13:34:15Z / BUG-124)
+- evidence: vools/data/itor.py 模块级 docstring "线程控制示例" doctest（原 L42-57）：`threading.Thread(target=consumer).start()` / `controller` 启动后不 join，doctest 主流程结束即丢弃临时命名空间，后台线程闭包引用 `results`/`itor` 抛 `NameError: name 'results'/'itor' is not defined`（pytest 报 PytestUnhandledThreadExceptionWarning）。修复两处：① 闭包用默认参数绑定当前值 `def consumer(itor=itor, results=results)` / `def controller(itor=itor)`，避免函数体运行时查已销毁的 doctest 命名空间；② 线程 start 后 `_t1.join(); _t2.join()` 等待结束，消除后台副作用泄漏与竞态。RED-GREEN：修复前 `pytest --doctest-modules vools/data/` 输出两条 UnhandledThreadExceptionWarning（NameError）；修复后 9 项 doctest 全 PASS、exit 0、无任何 NameError/UnhandledThreadException 警告。
+## BUG-125 [2026-10-18T13:35:15Z] [low] FIXED
+- summary: is_chinese_name 文档说 2-5 汉字，正则实际 {2,6} 允许 6 字，doc-vs-code 不一致
+- detail: vools/data/validator.py `is_chinese_name`：docstring 写"验证中文姓名格式（2-5个汉字）"，但 `_PATTERN_CHINESE_NAME = r'^[\u4E00-\u9FA5\uf900-\ufa2d]{2,6}$'`（L54）量词是 `{2,6}`（2-6 个汉字）。文档与实现不符：`is_chinese_name("欧阳夏夜明")`（6 个汉字）实际返回 True，而按文档应为 False。doc-vs-code 不一致（AI-DEVELOPMENT-STANDARD 一源四态基线）。修复：统一为 2-6 个汉字（正则 `{2,6}` 更贴合复姓+双字名的常见情况），把 docstring 改为"2-6个汉字"。
+
+
+
+### FIXED(2026-10-18T13:36:04Z / BUG-125)
+- evidence: vools/data/validator.py `is_chinese_name` docstring 原文"验证中文姓名格式（2-5个汉字）"，而 `_PATTERN_CHINESE_NAME = r'^[\u4E00-\u9FA5\uf900-\ufa2d]{2,6}$'`（L54）量词为 `{2,6}`。文档与实现不符：`is_chinese_name('欧阳夏夜明')`（6 个汉字）实测返回 True，按文档应为 False（doc-vs-code 不一致，违反 AI-DEVELOPMENT-STANDARD 一源四态基线）。修复：把 docstring 改为"验证中文姓名格式（2-6个汉字）"，与正则 `{2,6}` 对齐（复姓+双字名如"欧阳夏夜"、单姓+三字名如"司马相如"等 6 字场景在业务上合法）。RED-GREEN：RED 侧文档说 2-5 但实测 6 字返回 True 暴露矛盾；GREEN 侧文档已改为 2-6，实现与文档一致。`pytest --doctest-modules vools/data/validator.py` 无 `>>>` 示例（collect exit 5，无测试），无回归风险。
+## BUG-126 [2026-10-18T13:37:04Z] [high] FALSE_POSITIVE
+- summary: VText._safe_path 绝对路径无条件直通，绕过 base_dir 防路径遍历检查
+- detail: vools/data/vtext.py `VText._safe_path` L110-111：`if os.path.isabs(file_path): return os.path.normpath(file_path)` —— 对任何绝对路径无条件直通返回，完全跳过下方 L113-124 的 `os.path.commonpath([normalized, base_dir])` 目录约束检查。该函数 docstring 声称"防止路径遍历攻击"、"Raises ValueError: 当路径试图访问 base_dir 之外的文件时抛出"，但绝对路径分支使 base_dir 形同虚设：`VText._safe_path("C:\\Windows\\win.ini", base_dir="C:\\work")` 会直接返回 `C:\\Windows\\win.ini`，后续 `write()`/`read()` 用该返回值 `open()` 可读写 base_dir 之外的任意绝对路径文件。安全洞：`_safe_path` 的防护承诺被绝对路径绕过（同盘绝对路径也绕过——`C:\\Windows\\x` 与 `C:\\work` 同盘，commonpath 能算但代码根本没走到）。修复：删除绝对路径直通分支，让绝对路径也走 commonpath 约束检查（L120-122 已处理跨盘 ValueError，绝对路径在同盘会被正常约束）。
+
+
+- false_positive(2026-10-18T13:39:29Z): 复评：`VText._safe_path` 的绝对路径直通是有意设计（opt-in），非漏洞。证据：① `tests/data/test_vtext.py::test_safe_path_absolute_opt_in` 的 docstring 明确写"显式绝对路径直通（设计如此，不是漏洞）"并断言 `_safe_path(os.path.join(evil_dir,'secret.txt'))` 返回绝对路径；② `test_safe_path_file_uri` 依赖跨盘场景——`file://` 指向 tmp_path（C: 盘）而默认 base_dir=cwd（E: 盘），跨盘 commonpath 会抛 ValueError，若强制所有绝对路径走 commonpath 检查会误伤合法用例；③ 删除直通分支后实测两个测试立即 FAILED（ValueError），恢复后 16 项 vtext 测试全 PASS。base_dir 约束本意就是只防相对路径 `../` 遍历（`test_safe_path_parent_traversal_blocked`/`deep_traversal_blocked` 已验证仍拦截），绝对路径由调用方显式负责。判定 FALSE_POSITIVE，不修改代码（vools/data/vtext.py 已回退至原逻辑）。
+## BUG-127 [2026-10-18T13:40:28Z] [high] FIXED
+- summary: VList == list 因元类 instancecheck 误入 other._data 分支抛 AttributeError
+- detail: vools/data/vlist.py `VList.__eq__` L210-214：`if isinstance(other, VList): return self._data == other._data`。但 `ListLikeMeta.__instancecheck__`（L36-37）已把任何 `list` 实例判定为 `isinstance(x, VList) is True`，因此 `VList([1,2]) == [1,2]` 会落入 `other._data` 分支，而普通 `list` 没有 `_data` 属性，抛出 `AttributeError: 'list' object has no attribute '_data'`。即 VList 与原生 list 的相等比较（一个基本常用操作）直接崩溃。实测：`isinstance([1,2], VList)` 返回 True（元类生效），`VList([1,2]) == [1,2]` 抛 AttributeError，`VList([1,2]) == VList([1,2])` 正常返回 True。修复：`__eq__` 应先判 `isinstance(other, list)`（list 子类含 VList），用 `list(other)` 或 `other._data if isinstance(other, VList) else list(other)` 统一取值，避免元类 instancecheck 误伤。
+
+
+
+### FIXED(2026-10-18T13:43:31Z / BUG-127)
+- evidence: vools/data/vlist.py `VList.__eq__`（原 L210-214）：`if isinstance(other, VList): return self._data == other._data`。因 `ListLikeMeta.__instancecheck__`（L36-37）使任何原生 `list` 都被 `isinstance(x, VList)` 判为 True，`VList([1,2]) == [1,2]` 落入 `other._data` 分支，而 list 无 `_data`，抛 `AttributeError: 'list' object has no attribute '_data'`——VList 与原生 list 的相等比较（最常用操作）崩溃。修复：① 先判 `isinstance(other, VList) and hasattr(other, '_data')` 走 `_data` 分支（VList 不继承 list，须先命中）；② 原生 list 走 `list(other)` 取值；③ tuple 单独分支。RED-GREEN：RED 脚本 `VList([1,2]) == [1,2]` 抛 AttributeError，`VList([1,2]) == VList([1,2])` 正常 True；修复后 `v==[1,2]` True、`v==VList([1,2])` True。回归：`pytest tests/data/` 全 PASS（exit 0，含 test_vtext/test_vlist）。`vlist.py` 无 `>>>` doctest 示例（--collect-only exit 5），`pytest --doctest-modules vools/data/` 9 项全 PASS。
+## BUG-128 [2026-10-18T13:50:58Z] [medium] FIXED
+- summary: create_arrow_function 把赋值语句当表达式 return，生成 return x=1 触发 SyntaxError
+- detail: vools/functional/arrow_func.py `create_arrow_function` 函数体构建（L89-112）：多语句函数体把 `body.split(';')` 的最后一条语句无条件包装成 `return {last_stmt}`，单表达式分支同样 `func_body = f"    return {body}"`。若用户写的是赋值语句（`=> x = 1` 或 `=> a = 1; b = 2`），生成 `return x = 1` / `return b = 2`，Python 编译即抛 `SyntaxError: invalid syntax`（赋值不能出现在 return 表达式位置）。这在 arrow 表达式中是常见写法（用户想"先赋值再用最后值"），现直接崩溃且无友好提示。实测：`create_arrow_function([('','x')], 'x = 1', {})` 抛 SyntaxError；`'a = 1; b = 2'` 抛 SyntaxError；对照组 `'x + 1'` 正常返回 2。修复：多语句分支检测 last_stmt 是否为纯赋值（形如 `\w+\s*=` 且非 `==`/`!=`/`>=`/`<=` 等比较与 `+=` 等增强赋值、非 walrus `:=`），若是则改为 `return {左边变量名}`；单表达式若为赋值同样处理。
+
+
+
+### FIXED(2026-10-18T13:54:34Z / BUG-128)
+- evidence: vools/functional/arrow_func.py `create_arrow_function` 函数体构建：多语句分支把 `body.split(';')` 最后一条无条件 `return {last_stmt}`，单表达式分支同样 `return {body}`。用户写 `=> x = 1` 或 `=> a = 1; b = 2`（赋值语句）时生成 `return x = 1` / `return b = 2`，Python 编译抛 `SyntaxError: invalid syntax`（赋值不能作为 return 表达式）。RED 实测两例均 SyntaxError。修复：新增 `_assign_lhs()` 用 `_ASSIGN_RE = ^\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+)$` 识别纯赋值（`(?!=)` 排除 `==`；`=` 前不允许运算符从而排除 `+=`/`!=`/`>=` 等；`:` 非 `\s` 排除 walrus `:=`）；命中时改为"先赋值语句再 `return {变量名}`"。GREEN：`=> x = 1` 返回 1、`=> a = 1; b = 2` 返回 2、对照组 `=> x + 1` 仍返回 2。回归：`pytest tests/functional/` 全 PASS（exit 0）。
+## BUG-129 [2026-10-18T13:58:23Z] [medium] FIXED
+- summary: regexp_split 三处静默返回 None（多字符 rep / 非法 pattern / source 含 rep）不报错
+- detail: vools/utils/tools.py `regexp_split`（L759-787）：`if source_string.count(rep) == 0 and len(rep) == 1` 条件不满足时走 `else: return None`（L786-787），pattern 类型非法（非 str/list/tuple/set）也 `return None`（L784-785）。三种静默失败路径：① 多字符 rep（如 `rep='--'`）；② pattern 传非字符串类型（如 123）；③ source 已包含 rep 字符。这些均为配置错误，本应 raise ValueError 提示用户，实际静默返回 None。上游 `VText.regexp_split`（vools/data/vtext.py L158）直接透传该返回值，文档声明返回"分割替换后的 VText"，实际可能拿到 None 或 list，类型契约被打破。实测：`regexp_split(r'\d+', 'a1b2c3', rep='--')` 返回 None；`regexp_split(123, 'abc')` 返回 None；正常 case 返回 `['a','b','c','']`。修复：三种静默失败分支改为 `raise ValueError(f"regexp_split: rep 必须为单字符或 source 不包含 rep，当前 rep={rep!r}")` 之类，让配置错误可见。
+
+
+
+### FIXED(2026-10-18T13:59:11Z / BUG-129)
+- evidence: vools/utils/tools.py `regexp_split`（L771-787）原三处静默 `return None`：① `source_string.count(rep)==0 and len(rep)==1` 条件不满足（多字符 rep 或 source 已含 rep）走 `else: return None`；② pattern 非 str/list/tuple/set 走 `else: return None`。上游 `VText.regexp_split`（vools/data/vtext.py L158）直接透传该返回值，文档声明返回"分割替换后的 VText"，实际可能拿到 None，类型契约被打破且配置错误被掩盖。修复：两处 `return None` 改为 `raise ValueError`，报错信息含实际 rep 值/长度/出现次数或 pattern 类型。RED 实测 `regexp_split(r'\d+','a1b2c3',rep='--')` 返回 None、`regexp_split(123,'abc')` 返回 None。GREEN：同输入改抛 `ValueError: regexp_split: rep 必须为单字符且 source 不包含 rep，当前 rep='--'（长度 2），source 包含 rep 的次数=0`；正常 case 仍返回 `['a','b','c','']`。回归：`pytest tests/utils/` 全 PASS（exit 0）。
+## BUG-130 [2026-10-18T14:04:03Z] [medium] FIXED
+- summary: replace_run_date docstring 说 {run_date} 默认 yyyy-MM-dd，实际返回 YYYYMMDD
+- detail: vools/data/vtext.py `replace_run_date`（L791-834）docstring 与实现不一致：docstring L798-803 写明 "{run_date} → run_date (默认 yyyy-MM-dd)"，但 `_repl` L828-832 中 `std = bool(m.group(1))`，无 `_std` 时 `std=False`，`_offset(off, std=False)` 走 `strftime("%Y%m%d")` 返回 YYYYMMDD。实测 `VText("select * from t where dt={run_date} and dt2={run_date_std}").replace_run_date("2026-01-05")` 输出 `'... dt=20260105 ... dt2=2026-01-05'`——`{run_date}` 得 `20260105`（YYYYMMDD）而非文档声称的 `yyyy-MM-dd`。这是 SQL 占位符替换的核心入口，调用方按文档以为拿到 `yyyy-MM-dd`，实际拿到 `YYYYMMDD`，直接导致下游分区字段匹配/日期比较出错。修复：docstring 改为明确 `{run_date}` 默认返回 `YYYYMMDD`（`{run_date_std}` 返回 `yyyy-MM-dd`），与代码及 L828 行内注释一致；或在代码中让无 `_std` 默认返回 yyyy-MM-dd（需权衡 legacy 兼容性，推荐改文档）。
+
+
+
+### FIXED(2026-10-18T14:05:14Z / BUG-130)
+- evidence: vools/data/vtext.py `replace_run_date`（L791-834）docstring 声称 `{run_date} → run_date (默认 yyyy-MM-dd)`，但 `_repl` L828-832 `std = bool(m.group(1))`，无 `_std` 时 `std=False`，`_offset(off, std=False)` 走 `strftime("%Y%m%d")` 返回 YYYYMMDD。实测 `VText("select * from t where dt={run_date} and dt2={run_date_std}").replace_run_date("2026-01-05")` 输出 `'... dt=20260105 ... dt2=2026-01-05'`——`{run_date}` 得 `20260105` 而非文档声称的 `yyyy-MM-dd`，SQL 占位符替换的下游分区/日期比较会错。修复：只改 docstring 使其与代码及 L828 行内注释一致（`{run_date}` 默认 YYYYMMDD、`{run_date_std}` 默认 yyyy-MM-dd），并加 `- BUG-130: 旧 docstring 声称 {run_date} 默认 yyyy-MM-dd，与实现 (std=False → YYYYMMDD) 不符。` 说明。不动实现以保持 legacy vicSql 兼容。GREEN：`pytest --doctest-modules vools/data/` 9 项全 PASS（exit 0）；`pytest tests/data/` 全 PASS（exit 0）。
+## BUG-131 [2026-10-18T14:07:03Z] [high] FIXED
+- summary: vools_preprocess 用 type(obj)(generator) 重建 tuple，namedtuple 序列化崩溃 TypeError
+- detail: vools/serialize/codec.py `vools_preprocess` L77-78 容器递归分支 `if isinstance(obj, (list, tuple)): return type(obj)(vools_preprocess(item) for item in obj)` —— 对 `collections.namedtuple` 实例崩溃。namedtuple 的 `type(obj)` 是动态类 `P`，其 `__new__` 要求固定位置参数（如 `P(x, y)`），不接受生成器，于是抛 `TypeError: P.__new__() missing 1 required positional argument: 'y'`。实测：`Serializer(backend='json').dumps(P(1,2))` 抛同错（vools_preprocess 在编码前预遍历时命中）。namedtuple 是 Python 数据类常见形态（尤其 SQL/数据平台场景），直接让 json/msgpack 后端序列化崩溃。修复：容器分支对 tuple 一律用 `tuple(...)` 重建（丢失 namedtuple 类型但至少不崩），或对含 `_fields` 的 namedtuple 特判 `type(obj)(*[...])`；推荐前者（简单），如需保留 namedtuple 类型再走类型注册表。
+
+
+
+### FIXED(2026-10-18T14:07:56Z / BUG-131)
+- evidence: vools/serialize/codec.py `vools_preprocess` L74-78 容器递归分支原 `if isinstance(obj, (list, tuple)): return type(obj)(vools_preprocess(item) for item in obj)` —— namedtuple 实例 `P(1,2)` 的 `type(obj)` 是动态类 `P`，其 `__new__(x, y)` 要求固定位置参数，不接受生成器，抛 `TypeError: P.__new__() missing 1 required positional argument: 'y'`。实测 `Serializer(backend='json').dumps(P(1,2))` 同错。修复：拆分为 `list` 分支（原样）+ `tuple` 分支，tuple 内用 `hasattr(obj_type, '_fields')` 识别 namedtuple，命中则 `type(obj)(*(vools_preprocess(item) for item in obj))` 展开为位置参数重建（保留 namedtuple 类型），否则保持原 `type(obj)(generator)`。GREEN：`vools_preprocess(P(1,2))` 返回 `P(x=1, y=2)`；`Serializer('json').dumps(P(1,2))` 返回 `b'[1, 2]'`（json 后端 loads 回普通 list，类型丢失但不崩，符合 json 后端固有语义）。回归：`pytest tests/serialize/` 全 PASS（exit 0）。
+## BUG-132 [2026-10-18T14:14:11Z] [medium] FIXED
+- summary: VList.build/toDF 懒加载不存在的 vools/pyk 模块，调用必 ModuleNotFoundError
+- detail: vools/data/vlist.py 两个 public 方法懒加载了不存在的模块，任何调用必然 ModuleNotFoundError：
+- `build`（L1296-1307）L1306 `from ..pyk.text import vicQuery`，docstring 声称"返回 vicQuery 实例"；
+- `toDF`（L1402-1420）L1419 `from ..pyk.df import vDF`，docstring 声称"转成 pyspark DataFrame"。
+`vools/pyk/` 目录在整个 repo 中不存在（grep 全库仅 vlist.py L1306/L1419 两处引用 `..pyk`），实测：
+`VList(['a','b']).build("{item}")` → `ModuleNotFoundError: No module named 'vools.pyk'`
+`VList([['a',1],['b',2]]).toDF(cols=['n','v'])` → `ModuleNotFoundError: No module named 'vools.pyk'`
+这是 legacy `vicList.build/vicList.toDF` 迁移时的未完成引用：方法签名与文档都保留了，但目标 pyk 包未随迁移落地，调用方按文档调用即炸。修复方向：要么把 legacy pyk 的 vicQuery/vDF 迁进 vools（大动作），要么明确在 docstring 标注"需要 legacy vools.pyk 包，当前版本不可用"并抛清晰提示（推荐先做后者，避免下游静默拿 ModuleNotFoundError 难排查）。
+
+
+
+### FIXED(2026-10-18T14:15:41Z / BUG-132)
+- evidence: vools/data/vlist.py 两个 public 方法懒加载不存在的 pyk 包，任何调用抛 `ModuleNotFoundError: No module named 'vools.pyk'`（grep 全库仅 vlist.py L1306/L1419 两处引用 `..pyk`，vools/pyk 目录不存在）：`build` L1306 `from ..pyk.text import vicQuery`、`toDF` L1419 `from ..pyk.df import vDF`。实测 RED：`VList(['a','b']).build("{item}")` 与 `VList([['a',1],['b',2]]).toDF(cols=['n','v'])` 均 ModuleNotFoundError。修复：两处懒加载包上 `try/except ImportError`，捕获后抛 `RuntimeError`，消息明确"需要 legacy vools.pyk.text.vicQuery / vools.pyk.df.vDF，但 vools/pyk 子包不存在（未随迁移落地），请迁移 legacy vools.pyk 或改用 VList.join/str.format / pyspark.createDataFrame"，并从异常链 `from e` 保留原始 ImportError 便于排查。docstring 同步补 `Raises: RuntimeError` 说明。GREEN：两方法改抛 RuntimeError（含清晰中文提示），不再静默丢 ModuleNotFoundError 难排查。回归：`pytest tests/data/` 全 PASS（exit 0）。
+## BUG-133 [2026-10-18T14:22:07Z] [medium] FIXED
+- summary: Table.distinct 对含 list/dict 单元格的行崩溃 TypeError unhashable
+- detail: vools/data/table.py `Table.distinct`（L1122-1135）用 `tuple(row)` 作为去重 key 放入 `seen` 集合，当行内单元格含 unhashable 值（如 list/dict）时抛 `TypeError: unhashable type: 'list'`。实测：`Table([[1,[2,3]],[1,[2,3]]], columns=['a','b']).distinct()` → `TypeError: unhashable type: 'list'`。数据平台/Excel 表格里含嵌套 list/dict 的单元格很常见（例如把一组标签或 JSON 存进单元格），去重会直接崩。修复：把 key 从 `tuple(row)` 改为对每个单元格做 hashable 归一化——不可 hash 时用 `repr()` 兜底（或用 `json.dumps` 带 sort_keys 保证等价对象同 key），保证任意内容都可去重。也可在 `seen` 判断前 try/except TypeError 退回 repr 分支。
+
+
+
+### FIXED(2026-10-18T14:25:43Z / BUG-133)
+- evidence: vools/data/table.py `Table.distinct`（L1122-1135）原实现 `tuple(row)` 作为去重 key 放入 `seen` 集合，行内含 list/dict/set 等 unhashable 单元格时抛 `TypeError: unhashable type: 'list'`。实测 RED：`Table([[1,[2,3]],[1,[2,3]]], columns=['a','b']).distinct()` → `TypeError: unhashable type: 'list'`。修复：遍历每个单元格，`list/dict/set/bytearray` 用 `repr` 包装成 `('__repr__', repr(v))` 标记元组（保证等价对象同 key，同时不与非 repr 分支冲突）；剩余元素按原值拼 tuple；再加 try/except TypeError 兜底（极端情况整行 repr）。GREEN：`Table([[1,[2,3]],[1,[2,3]],[2,None]], columns=['a','b']).distinct()` → 2 行（重复的 `[1,[2,3]]` 去重成一行，`[2,None]` 保留）；常规 `Table([[1,'x'],[1,'x'],[2,'y']])` 去重 → 2 行不受影响。回归：`pytest tests/data/` 全 PASS（exit 0）。
+## BUG-134 [2026-10-18T14:27:47Z] [high] FIXED
+- summary: Table.merge 纵向合并列序不同时用 self 列索引取 other 行值，数据错位
+- detail: vools/data/table.py `Table.merge(other, vertical=True)`（L1480-1523）在"列名集合不同"分支里对齐 other 表的行时用**self 表的列索引**取 other 行的值，导致列序不同的表合并后数据错位。具体 L1511-1513：
+
+```
+if col in self._columns:
+    idx = self._columns.index(col)
+    aligned_row.append(row[idx] if idx < len(row) else None)
+elif col in other._columns:
+    idx = other._columns.index(col)
+    ...
+```
+
+`row` 来自 `for row in other._data`（L1506），但同名列会先命中 `col in self._columns` 分支并用 `self._columns.index(col)` 去索引 other 的行。当两表列序不同时（如 self=['a','b']，other=['b','a']），取值完全错位。实测：`Table([[1,2]], columns=['a','b']).merge(Table([[3,4]], columns=['b','a']), vertical=True)` → 结果列 `['a','b']` 数据 `[[1,2],[3,4]]`，但正确结果应为 `[[1,2],[4,3]]`（other 行的 b=3、a=4，映射到 new_columns 的 a/b 位置）。这是静默的数据错误，不会报错但结果错误。另 L1507 `new_row = [None] * len(self._columns) + row[:]` 计算后从未使用，是死代码。修复：other 行的对齐应只用 `other._columns.index(col)` 取索引（other 行只含 other 的列值），并删除死代码 `new_row`。
+
+
+
+### FIXED(2026-10-18T14:29:05Z / BUG-134)
+- evidence: vools/data/table.py `Table.merge(other, vertical=True)`（L1480-1523）在"列名集合不同"分支对齐 other 表的行时，L1511-1513 用 `self._columns.index(col)` 去索引 other 的行（row 来自 `for row in other._data`），同名列先命中 self 分支导致取值错位。实测 RED：`Table([[1,2]], columns=['a','b']).merge(Table([[3,4]], columns=['b','a']), vertical=True)` → 结果列 `['a','b']` 数据 `[[1,2],[3,4]]`，正确应为 `[[1,2],[4,3]]`（other 的 a=4、b=3）。修复：other 行对齐只用 `other._columns.index(col)`（other 行只含 other 列值），同名列也按 other 序取；同时删除死代码 `new_row = [None] * len(self._columns) + row[:]`。GREEN 三例：①列序不同 `['a','b']` → `[[1,2],[4,3]]` ✓；②同列序 `['a','b']` → `[[1,2],[3,4]]` ✓；③部分重叠 self=['a','b'] other=['a','c'] → 列 `['a','b','c']` 数据 `[[1,2,None],[3,None,4]]` ✓。回归：`pytest tests/data/` 全 PASS（exit 0）。
+## BUG-135 [2026-10-18T14:37:18Z] [high] FIXED
+- summary: memorize _compute_key 回退分支用 func.__name__ 致同名函数缓存键冲突
+- detail: vools/cache/memorize.py `_compute_key`（L106-122）回退分支仍用 `func.__name__` 作为 key 的一部分，导致跨作用域同名函数缓存冲突回归（BUG-110 只修了主分支）。当参数含 list/dict 等不可哈希对象时触发回退：`key = (func.__name__, repr(args), repr(kwargs))`。实测两个模块各自定义同名 `get_ab(x)` 并加 `@memorize(duration=60)`，都调用 `get_ab([1,2])`：第一个返回 'mod1'，第二个返回 **'mod1'**（错误命中 mod1 缓存，应返回 'mod2'）——COLLISION=True。主分支 `(func, args, ...)` 用函数对象身份唯一无此问题，但回退分支把 BUG-110 的修复漏掉了。修复：回退分支把 `func.__name__` 换成 `(func.__module__, func.__qualname__)` 做唯一标识，彻底避免同名冲突（函数模块+限定名组合唯一）。
+
+
+
+### FIXED(2026-10-18T14:38:05Z / BUG-135)
+- evidence: vools/cache/memorize.py `_compute_key`（L106-122）回退分支原为 `(func.__name__, repr(args), repr(kwargs))`，参数含不可哈希对象（list/dict）时触发，两个不同模块的同名函数 + 相同不可哈希参数会得到完全相同的 key，命中对方缓存。实测 RED：两个模块各自定义同名 `get_ab(x)` 加 `@memorize(duration=60)`，都调用 `get_ab([1,2])` → 第二个返回 `'mod1'`（错误命中 mod1，应返回 'mod2'），COLLISION=True。主分支 `(func, args, ...)` 用函数对象身份唯一无此问题（BUG-110 只修了主分支）。修复：回退分支改用 `(func.__module__, func.__qualname__, repr(args), repr(kwargs))`，模块+限定名组合唯一标识函数。GREEN：同样双模块同名函数 → mod1='mod1'、mod2='mod2'，COLLISION=False。回归：`pytest tests/ -k "cache or memorize"` 全 PASS（exit 0）。
+## BUG-136 [2026-10-18T14:44:29Z] [high] FIXED
+- summary: curried set_in/update_in 浅拷贝致嵌套原字典被污染
+- detail: vools/curried/collection.py `set_in`（L691-715）和 `update_in`（L718-743）文档都承诺"不修改原字典"（不可变更新语义），但实现只用 `result = dict(d)` 做顶层浅拷贝，路径上的嵌套 dict 与原字典共享引用。遍历路径时 `current = current[key]` 直接落到共享内层，`current[keys[-1]] = value` 就地改写了原字典。实测 RED：`d = {'a': {'b': {'c': 0}}}; set_in(['a','b','c'], 42, d)` 返回 `{'a': {'b': {'c': 42}}}`，同时**原字典 d 也被污染**为 `{'a': {'b': {'c': 42}}}`（预期 d 应保持 `{'a': {'b': {'c': 0}}}` 不变）。`update_in` 同样问题。修复：遍历路径时对每个经过的嵌套 dict 做 `dict(...)` 拷贝（持久化更新），确保原字典不被修改。
+
+
+
+### FIXED(2026-10-18T14:45:28Z / BUG-136)
+- evidence: vools/curried/collection.py `set_in`（L691-715）和 `update_in`（L718-743）文档承诺"不修改原字典"，但实现只 `result = dict(d)` 顶层浅拷贝，路径上的嵌套 dict 与原字典共享引用，`current[key]` 落到共享内层后 `current[keys[-1]] = value` 就地改写原字典。实测 RED：`d = {'a': {'b': {'c': 0}}}; set_in(['a','b','c'], 42, d)` 返回 `{'a': {'b': {'c': 42}}}`，同时**原字典 d 被污染**为 `{'a': {'b': {'c': 42}}}`（预期不变）；`update_in` 同样问题。修复：遍历路径时对每个经过的嵌套 dict 执行 `current[key] = dict(current[key])`（持久化更新语义）。GREEN：`set_in` 返回 `{'a': {'b': {'c': 42}}}` 且原字典保持 `{'a': {'b': {'c': 0}}}`；`update_in` 返回 `{'a': {'b': 20}}` 且原字典保持 `{'a': {'b': 10}}`。回归：`pytest --doctest-modules vools/curried/collection.py` 全 PASS（exit 0）。
+## BUG-137 [2026-10-18T14:47:10Z] [medium] FIXED
+- summary: curried reduce 捕获所有 TypeError 静默返回 None 吞掉 func 内部错误
+- detail: vools/curried/iteration.py `reduce`（L127-154）：当 `initializer is None` 时用 `try: functools_reduce(func, iterable) except TypeError: return None`。该 `except TypeError` 原本只为处理"空迭代且无初始值"（functools.reduce 抛 TypeError），但会**一并吞掉 func 内部抛出的任何 TypeError**，导致真实错误被静默掩盖成 None。实测 RED：`def bad(x, y): raise TypeError("boom 内部错误")`，`reduce(bad, [1, 2])` 返回 None（应抛 TypeError），用户完全无法发现 func 有 bug。修复：不再用 `except TypeError` 兜底，改为先检查迭代器是否为空——`it = iter(iterable); try: first = next(it) except StopIteration: return None`，非空则 `functools_reduce(func, chain([first], it))`；func 内部 TypeError 自然向上抛。
+
+
+
+### FIXED(2026-10-18T14:48:06Z / BUG-137)
+- evidence: vools/curried/iteration.py `reduce`（L127-154）在 `initializer is None` 时用 `except TypeError: return None` 兜底，本意只处理 functools.reduce 对空迭代抛的 TypeError，却把 func 内部抛出的 TypeError 一并吞掉、静默返回 None。实测 RED：`def bad(x, y): raise TypeError("boom 内部错误")`，`reduce(bad, [1, 2])` 返回 None（应抛 TypeError），用户完全无法发现 func 有 bug。修复：删除 `except TypeError`，改为先取迭代器第一个元素——`it = iter(iterable); try: first = next(it) except StopIteration: return None`，非空则 `functools_reduce(func, chain([first], it))`（`chain` 已在模块顶部 import），func 内部 TypeError 自然向上抛。GREEN：`reduce(bad, [1,2])` 抛错不再返回 None；`reduce(add, [1,2,3])`=6、`reduce(add, [1,2,3], 10)`=16、`reduce(add, [])`=None 均保持。回归：`pytest --doctest-modules vools/curried/` 全 PASS（exit 0）。
+## BUG-138 [2026-10-18T14:49:29Z] [medium] FIXED
+- summary: curried itemgetter 不支持多键，文档示例 itemgetter(0,-1) 直接 TypeError
+- detail: vools/curried/predicate.py `itemgetter`（L376-397）文档和示例都声称"支持多个键"（示例 `itemgetter(0, -1)(data)` 期望 `('a', 'd')`），但签名是 `def itemgetter(key)` 单参数，传多个键直接 `TypeError: itemgetter() takes 1 positional argument but 2 were given`，示例根本无法运行。修复：改为 `itemgetter(*keys)` 可变参数——单键返回 `obj[key]`，多键返回 `tuple(obj[k] for k in keys)`，与 `operator.itemgetter` 语义一致。
+
+
+
+### FIXED(2026-10-18T14:52:37Z / BUG-138)
+- evidence: vools/curried/predicate.py `itemgetter`（L376-397）签名是 `def itemgetter(key)` 单参数，但文档示例写 `itemgetter(0, -1)(data)` 期望 `('a', 'd')`（多键），实测 RED：直接抛 `TypeError: itemgetter() takes 1 positional argument but 2 were given`，示例根本无法运行。修复：改为 `itemgetter(*keys)` 可变参数——单键返回 `obj[keys[0]]`，多键返回 `tuple(obj[k] for k in keys)`，与 `operator.itemgetter` 语义一致。GREEN：`itemgetter(0)(data)`='a'、`itemgetter(0, -1)(data)`=('a','d')、`itemgetter('x','y')({'x':1,'y':2})`=(1,2)。回归：`pytest --doctest-modules vools/curried/` 10 项全 PASS（exit 0）；`tests/decorators/` 182 项全 PASS（exit 0）。
+## BUG-139 [2026-10-18T14:53:44Z] [medium] FIXED
+- summary: curried strip_suffix 空 suffix 时 s[:-0] 返回空字符串
+- detail: vools/curried/string.py `strip_suffix`（L312-332）：`s.endswith(suffix)` 对空 suffix 恒为 True，然后 `s[:-len('')]` = `s[:0]` = `''`，导致 `strip_suffix('', 'abc')` 返回空字符串（应为 `'abc'`，因为空 suffix 没有东西可去）。`strip_prefix` 因 `s[len(''):]` = `s[0:]` = `'abc'` 侥幸正确。实测 RED：`strip_suffix('', 'abc')` → `''`。修复：加 `suffix` 非空检查——`if suffix and s.endswith(suffix): return s[:-len(suffix)]`。
+
+
+
+### FIXED(2026-10-18T14:54:21Z / BUG-139)
+- evidence: vools/curried/string.py `strip_suffix`（L312-332）中 `s.endswith(suffix)` 对空 suffix 恒为 True，随后 `s[:-len('')]` = `s[:0]` = `''`，导致 `strip_suffix('', 'abc')` 返回空字符串（应为 `'abc'`，空 suffix 无东西可去）。`strip_prefix` 因 `s[len(''):]` = `s[0:]` 侥幸正确。实测 RED：`strip_suffix('', 'abc')` → `''`。修复：加 suffix 非空检查 `if suffix and s.endswith(suffix): return s[:-len(suffix)]`。GREEN：`strip_suffix('', 'abc')` → `'abc'`、`strip_suffix('.py', 'script.py')` → `'script'`、`strip_prefix('', 'abc')` → `'abc'`。回归：`pytest --doctest-modules vools/curried/` 全 PASS（exit 0）。
+## BUG-140 [2026-10-18T14:55:49Z] [medium] FIXED
+- summary: box 装饰器返回值 None 时链式 Box 丢失，因 args 已先解箱
+- detail: vools/functional/box.py `box` 装饰器 wrapper（L180-197）：文档 L190-191 承诺"当被装饰的函数返回 None 时，返回包装它的 Box 实例以支持链式调用"，但 L186 先执行 `args = list(map(_nobox, args))` 把 args 里的 Box 全部解箱成 `__wrapped__`，导致 L192-194 的 `for frame_info in range(len(args)): if isinstance(args[frame_info], Box)` 恒为 False（args 已无 Box）；L195 `isinstance(wrapper.__wrapped__, Box)` 也不成立（`_wraps(wrapped)` 把 `wrapper.__wrapped__` 设为原始函数，不是 Box）。实测 RED：`b = Box([1,2,3]); @box def mut_list(lst): lst.append(99); r = mut_list(b)`，r 为 None（预期应返回原 Box b 以支持链式调用）。修复：在解箱**之前**捕获 args/kwargs 中的 Box 实例，返回 None 时回退到第一个 Box 实参。
+
+
+
+### FIXED(2026-10-18T14:56:44Z / BUG-140)
+- evidence: vools/functional/box.py `box` 装饰器 wrapper（L180-197）文档承诺"返回 None 时返回包装它的 Box 实例以支持链式调用"，但 L186 先执行 `args = list(map(_nobox, args))` 把 args 里所有 Box 解箱成 `__wrapped__`，L192-194 的 `isinstance(args[frame_info], Box)` 恒为 False；L195 `wrapper.__wrapped__` 经 `_wraps(wrapped)` 设为原始函数而非 Box。实测 RED：`b = Box([1,2,3]); @box def mut_list(lst): lst.append(99); r = mut_list(b)`，r 为 None（链式丢失）。修复：解箱前捕获 `box_args = [a for a in args if isinstance(a, Box)]` 与 `box_kwargs`，返回 None 时回退到第一个 Box 实参。GREEN：`mut_list(b) is b` 为 True，链式保留；`add_one(5)`=6 正常。回归：`tests/functional/` 233 项全 PASS（exit 0）。
+## BUG-141 [2026-10-18T14:58:25Z] [medium] FIXED
+- summary: placeholder to_holder 用 is 比较 inf 导致 *args 函数 arity=-1 误抛 ValueError
+- detail: vools/functional/placeholder.py `to_holder`（L694-726）：L721 `if max_rq is not float('inf')` 用 `is` 比较 float。CPython 中 `float('inf') is float('inf')` 恒为 False（每次新建对象），所以只要函数含 `*args`/`**kwargs`（L710-711 设 `max_rq = float('inf')`），`max_rq is not float('inf')` 仍为 True，错误进入 ValueError 分支。实测 RED：`to_holder(lambda *args: sum(args), arity=-1)` 抛 `ValueError: Expected arity >= 1, got inf, artity is -1 support only *args and **kwargs`（应成功创建 holder）；`to_holder(lambda x, *args: x+sum(args), arity=-1)` 同样抛错。修复：改用 `max_rq != float('inf')`。
+
+
+
+### FIXED(2026-10-18T14:59:06Z / BUG-141)
+- evidence: vools/functional/placeholder.py `to_holder`（L694-726）：L721 `if max_rq is not float('inf')` 用 `is` 比较 float。CPython 中 `float('inf') is float('inf')` 恒为 False（每次新建对象），所以只要函数含 `*args`/`**kwargs`（L710-711 设 `max_rq = float('inf')`），`max_rq is not float('inf')` 仍为 True，错误进入 ValueError 分支。实测 RED：`to_holder(lambda *args: sum(args), arity=-1)` 抛 `ValueError: Expected arity >= 1, got inf, artity is -1 support only *args and **kwargs`（应成功创建 holder）；`to_holder(lambda x, *args: x+sum(args), arity=-1)` 同样抛错。修复：改为 `max_rq != float('inf')`。GREEN：纯 *args 与固定+*args 的 arity=-1 均成功；`to_holder(lambda a, b: a+b, arity=2)` 正常；`arity=5` 超界仍正确抛 `Expected arity <= 2, got 5`。回归：`tests/functional/` 全 PASS（exit 0）。
+## BUG-142 [2026-10-18T15:03:07Z] [medium] FIXED
+- summary: utils regexp_instr 忽略 occurrence，恒返回第一个匹配位置
+- detail: vools/utils/tools.py `regexp_instr`（L705-718）：实现先调 `regexp_substr(...)` 取第 occurrence 个匹配的字符串，再用 `source_string.find(temp)` 找位置。但 `str.find` 恒返回**第一个**匹配的位置，完全忽略 `occurrence`。实测 RED：`regexp_instr('a', 'aXaXa', occurrence=2)` 返回 0（应返回第 3 个 'a' 的位置 4），与 `occurrence=0` 的结果相同，`occurrence` 形同虚设。修复：改用 `re.compile(pattern, flags).finditer(source_string)` 取第 `occurrence`（支持负索引）个 Match 的 `.start()`，越界返回 -1。
+
+
+
+### FIXED(2026-10-18T15:04:16Z / BUG-142)
+- evidence: vools/utils/tools.py `regexp_instr`（L705-718）原实现先 `regexp_substr(...)` 取第 occurrence 个匹配的字符串，再用 `source_string.find(temp)` 找位置；但 `str.find` 恒返回第一个匹配位置，`occurrence` 被完全忽略。实测 RED：`regexp_instr('a', 'aXaXa', occurrence=2)` 返回 0（应为第 3 个 'a' 的位置 4），与 `occurrence=0` 结果相同。修复：改用 `re.compile(pattern, flags).finditer(source_string)` 取第 `occurrence`（支持负索引）个 Match 的 `.start()`，越界/无匹配返回 -1。GREEN：`occurrence=0`→0、`occurrence=2`→4、`occurrence=-1`→4、无匹配→-1、越界 occurrence=5→-1。回归：`tests/utils/` 全 PASS（exit 0）。
+## BUG-143 [2026-10-18T15:05:25Z] [medium] FIXED
+- summary: IndexedDict.__next__ 恒返回第一个元素，迭代器不推进
+- detail: vools/utils/stuff.py `IndexedDict`（L110-166）：`__next__`（L162-163）实现为 `next(iter(self._data.values()))`，每次新建迭代器，因此 `next(d)` **恒返回第一个元素**，永不推进；`__iter__`（L159-160）返回独立迭代器，使 `next(idx)` 与 `for x in idx` 语义割裂。实测 RED：`d = IndexedDict([10, 20, 30]); next(d)` 三次均返回 10。修复：在实例上维护惰性迭代器 `_iter`（首次调用 `next` 时初始化），`__next__` 从 `_iter` 取下一个值，耗尽后抛 `StopIteration`；`__iter__` 返回 `self`（使其可被 `next()` 推进）。
+
+
+
+### FIXED(2026-10-18T15:06:22Z / BUG-143)
+- evidence: vools/utils/stuff.py `IndexedDict`（L110-166）`__next__` 实现为 `next(iter(self._data.values()))`，每次新建迭代器，`next(d)` 恒返回第一个元素，永不推进；`__iter__` 返回独立迭代器，使 `next(idx)` 与 `for x in idx` 语义割裂。实测 RED：`d = IndexedDict([10,20,30]); next(d)` 三次均返回 10。修复：实例上维护惰性迭代器 `_iter`（首次 next 初始化），`__next__` 从中取值并真正推进，耗尽后抛 `StopIteration` 并重置 `_iter` 以支持反复遍历；`__iter__` 仍返回独立迭代器，`for` 与 `next` 互不干扰。GREEN：`next(d)` 依次 10/20/30，耗尽抛 StopIteration，`list(d)` 仍 [10,20,30]。回归：`tests/utils/` + `tests/functional/` 全 PASS（exit 0）。
+## BUG-144 [2026-10-18T15:11:02Z] [low] FIXED
+- summary: persist 装饰器忽略 FileLock.acquire 返回 False 仍写缓存
+- detail: vools/cache/persist.py `persist` 装饰器 L296 `with FileLock(cache_path)` 未检查 `FileLock.acquire()` 的返回值。`FileLock.acquire` 使用非阻塞 `msvcrt.locking(fd, LK_NBLCK, 1)`（Windows）/ `fcntl.flock(fd, LOCK_EX)`（Linux），锁被占用时返回 False 且 `self._locked=False`，但 `with` 语法完全忽略该返回值，随后仍执行 `json.dump` 写入缓存文件（L302-303），在多进程/多线程竞争场景下会并发写坏缓存。文档（L73-76）自己说明 acquire 返回 False 应"等待/重试"，但调用处未遵守。修复：acquire 返回 False 时跳过本次写缓存（保留旧缓存），或改用阻塞轮询重试。
+
+
+
+### FIXED(2026-10-18T15:12:31Z / BUG-144)
+- evidence: vools/cache/persist.py `persist` 装饰器 L296 原为 `with FileLock(cache_path)`，忽略 `FileLock.acquire()` 返回值。acquire 使用非阻塞 `msvcrt.locking(fd, LK_NBLCK, 1)`/`fcntl.flock(fd, LOCK_EX)`，锁被占用时返回 False 且 `_locked=False`，但 `with` 语法仍执行 `json.dump` 写缓存（L302-303），多进程/线程竞争会并发写坏。修复：改为 `_lock = FileLock(cache_path); if _lock.acquire(): try: ... finally: _lock.release()`，acquire 失败时跳过写缓存（保留旧缓存），仍返回 result。GREEN：`@persist(...)` 首次 add(1,2)=3 且写缓存，二次命中返回 3 不重算；缓存文件 testcache.json 内容 result=3。回归：`tests/cache/` 全 PASS（exit 0）。
+## BUG-145 [2026-10-18T15:15:10Z] [medium] FIXED
+- summary: get_signature 同名用户函数误命中内置签名缓存
+- detail: vools/cache/sigcache.py `get_signature`（L139-145）：缓存未命中时按 `func_name = getattr(func, '__name__', None)` 查 `_BUILTIN_SIGS` 预定义内置签名表。若用户自定义函数的 `__name__` 恰好与内置函数同名（如 `def print(x, y)`、`def len(items)`），会误命中内置签名并写入缓存。实测 RED：`def print(x, y): ...; get_signature(print)` 返回参数 `['values','sep','end','file','flush']`（内置 print 的签名），而非真实的 `('x','y')`。修复：按名命中时校验对象身份 `getattr(builtins, func_name, None) is func`，只有 func 就是那个内置对象时才用预定义签名；否则回落到真实 inspect.signature。
+
+
+
+### FIXED(2026-10-18T15:16:01Z / BUG-145)
+- evidence: vools/cache/sigcache.py `get_signature`（L139-145）原按 `func_name in _BUILTIN_SIGS` 命中预定义内置签名，用户自定义函数若 `__name__` 恰为内置名（如 `def print(x, y)`）会误拿内置签名并写入缓存。实测 RED：`get_signature(自定义print)` 返回 `['values','sep','end','file','flush']` 而非 `('x','y')`。修复：按名命中时增加身份校验 `getattr(builtins, func_name, None) is func`，仅当 func 就是该内置对象时才用预定义签名，否则回落真实 `inspect.signature`。GREEN：自定义 print 签名 `('x','y')`、内置 print 签名 `('values','sep','end','file','flush')`、len 签名 `('obj',)`。回归：`tests/cache/` + `tests/decorators/` 全 PASS（exit 0）。
+## BUG-146 [2026-10-18T15:17:20Z] [medium] FIXED
+- summary: TimedCache pickle 因 max_size 属性名不一致抛 AttributeError
+- detail: vools/cache/memorize.py `TimedCache.__getstate__`（L29-33）读 `self.max_size`（无下划线），但 `__init__`（L25）只设了 `self._max_size`，导致 pickle 序列化直接抛 AttributeError。实测 RED：`pickle.dumps(TimedCache(max_size=100))` 抛 `AttributeError: 'TimedCache' object has no attribute 'max_size'`。修复：`__getstate__`/`__setstate__` 统一使用 `_max_size`，并把反序列化后的 `_cache` 转回 `OrderedDict` 以支持 LRU popitem(last=False)。
+
+
+
+### FIXED(2026-10-18T15:18:26Z / BUG-146)
+- evidence: vools/cache/memorize.py `TimedCache.__getstate__`（L29-33）读 `self.max_size`（无下划线），但 `__init__`（L25）只设 `self._max_size`，pickle 序列化抛 AttributeError。实测 RED：`pickle.dumps(TimedCache(max_size=100))` 抛 `AttributeError: 'TimedCache' object has no attribute 'max_size'`。修复：`__getstate__`/`__setstate__` 统一使用 `_max_size`，并把反序列化后的 `_cache` 转回 `OrderedDict`（否则 `popitem(last=False)`/`move_to_end` 会失败）。GREEN：`pickle.dumps/loads` 往返成功，恢复 `_max_size=100` 与缓存内容，`get('k')=42`；LRU 淘汰仍正确（max_size=2 时插入 a/b/c 弹出 a，剩 ['b','c']）。回归：`tests/cache/` + `tests/functional/` 全 PASS（exit 0）。
+## BUG-147 [2026-10-18T15:26:31Z] [medium] FIXED
+- summary: flex_pos 签名变换丢失从 args 移入 kwonly 参数的默认值
+- detail: vools/decorators/flex_pos.py `_transform_signature`（L307-318）：`_` 变换为 `*args` 后，原本位于 `_` 之后的普通位置参数被移入 `kwonlyargs`，但 `kw_defaults` 只回查原 `kwonly` 列表（L312），从 args 移入的参数匹配不到 → 默认值丢失、置 None。实测 RED：`@flex_pos def f(_, b=2): return (_ + b, b)` 变换后 `f()` 报 `TypeError: missing 1 required keyword-only argument: 'b'`，原默认值 2 丢失。修复：先计算 `moved_args`（移入 kwonly 的原 args 片段），建立 arg.arg -> 原 args 索引映射，生成 kw_defaults 时若原 kwonly 未命中则回查该映射并从 `args_node.defaults[idx - default_start]` 取默认值。GREEN：`f()(3)` 返回 (5, 2)（b 默认 2 生效）、`g(1)(10)` 返回 (1, 13)（b=3 生效）。回归：`tests/decorators/` 全 PASS（exit 0）。
+
+
+
+### FIXED(2026-10-18T15:26:43Z / BUG-147)
+- evidence: vools/decorators/flex_pos.py `_transform_signature`（L307-318）：`_` 变 `*args` 后，`_` 之后的位置参数移入 `kwonlyargs`，但 `kw_defaults` 仅回查原 `kwonly` 列表，从 args 移入的参数匹配不到 → 默认值丢失、置 None。实测 RED：`@flex_pos def f(_, b=2): return (_ + b, b)` 变换后 `f()` 报 `TypeError: missing 1 required keyword-only argument: 'b'`。修复：先算 `moved_args`（移入 kwonly 的原 args 片段）并建 `arg.arg -> 原 args 索引` 映射，生成 kw_defaults 时原 kwonly 未命中则回查映射并从 `args_node.defaults[idx - default_start]` 取默认值。GREEN：`f()(3)` 返回 (5, 2)（b 默认 2 生效）、`g(1)(10)` 返回 (1, 13)（b=3 生效）、`h()(1,2)` 正常。回归：`tests/decorators/` 全 PASS（exit 0）。
+## BUG-148 [2026-10-18T15:31:49Z] [medium] FIXED
+- summary: singleton 装饰器把类替换成函数，破坏 isinstance/类型语义
+- detail: vools/decorators/shotcut.py `singleton`（L158-169）：把被装饰类替换为 `get_instance` 函数。实测 RED：`@singleton class Foo` 后 `Foo()` 返回同一实例（单例有效），但 `Foo` 名绑定到函数而非类型——`isinstance(a, Foo)` 抛 `TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union`；`issubclass`、`__bases__`、类型注解 `x: Foo`、`Foo.__init_subclass__` 全部失效。修复：改为改写 `__new__`/`__init__`，保留原类型——`__new__` 内按类缓存实例并只初始化一次，`__init__` 置空实现避免重复初始化。GREEN：`@singleton class Foo` 后 `isinstance(a, Foo)` 为 True、`a is b` 为 True、`Foo` 仍是类型。回归 `tests/decorators/` 全 PASS。
+
+
+
+### FIXED(2026-10-18T15:32:39Z / BUG-148)
+- evidence: vools/decorators/shotcut.py `singleton`（L158-169）：把被装饰类替换为 `get_instance` 函数。实测 RED：`@singleton class Foo` 后 `Foo()` 返回同一实例（单例有效），但 `isinstance(a, Foo)` 抛 `TypeError: isinstance() arg 2 must be a type`。修复：改为改写 `__new__`/`__init__` 保留原类型——`_new_singleton` 内按类缓存实例并只初始化一次，`cls.__init__` 置空避免重复初始化；子类各自独立单例。GREEN：`a is b` True、`isinstance(a, Foo)` True、`Foo is type` True、`a.value()`=1、`issubclass(Foo, object)` True、子类 `Bar(Foo)` `c is d` True 且 `c is a` False。回归 `tests/decorators/` 全 PASS（exit 0）。
+## BUG-149 [2026-10-18T15:36:45Z] [high] FIXED
+- summary: Task.to_dict 对 args/result 含函数等对象抛 TypeError，任务无法持久化
+- detail: vools/task/core/models.py `Task.to_dict`（L80-106）：对 `payload`/`args`/`kwargs`/`result`/`back_info`/`dependencies` 无条件 `json.dumps(...)`，无 default 回调。实测 RED：`Task(id=2, task_name="func_task", args=[my_func])` 调 `to_dict()` 抛 `TypeError: Object of type function is not JSON serializable`；`result=Custom()` 同理。函数任务（`queue.submit(func, *args)`）把函数对象放进 args 是常见用法，一旦持久化就崩溃。修复：新增 `_json_default` 回调——对不可 JSON 序列化对象用 pickle base64 编码为 `__pickle__` 标记字符串，`from_dict` 侧同步解码恢复；对仍失败的（如 lambda/局部类）回退 `repr` 保证不崩溃。GREEN：`Task(args=[my_func]).to_dict()` 不再抛错且 `from_dict(d).args[0] is my_func`；正常 `to_dict()` 结果不变；回归 `tests/task/` 全 PASS。
+
+
+
+### FIXED(2026-10-18T15:40:33Z / BUG-149)
+- evidence: vools/task/core/models.py `Task.to_dict`/`from_dict`：对 `payload`/`args`/`kwargs`/`result`/`back_info`/`dependencies` 无条件 `json.dumps` 无 default 回调。实测 RED：`Task(id=2, task_name="func_task", args=[my_func]).to_dict()` 抛 `TypeError: Object of type function is not JSON serializable`；`result=Custom()` 同理。修复：新增 `_json_default`（不可 JSON 序列化 → pickle+base64 编码为 `__vools_pickle__:` 标记，再失败回退 `repr`）+ `_restore_pickle`（递归解码 marker）+ `_dump_json`/`_load_json` helper，替换所有 json.dumps/json.loads 调用点。GREEN：`Task(args=[my_func]).to_dict()` 不再抛错，`from_dict(d).args[0] is my_func` 为 True；`result=Custom()` 恢复为 Custom；`args=[datetime(2024,1,1)]` 恢复为 datetime；正常 `to_dict()`/`from_dict()` 结果不变。回归 `tests/task/` + `tests/test_task_rules_dag.py` + `tests/task/test_backends_dag.py` 全 PASS（exit 0）。
+## BUG-150 [2026-10-18T15:41:51Z] [high] FIXED
+- summary: lambda 任务函数序列化走路径格式，反序列化 getattr 失败
+- detail: vools/task/core/queue.py `_serialize_func`（L145-168）：优先用路径格式 `f"{module}:{name}"` 序列化函数，但 lambda 的 `__name__` 是 `'<lambda>'`，`_deserialize_func` 时 `getattr(module, "<lambda>")` 抛 AttributeError。实测 RED：`q.submit(lambda x: x*2, 5)` 后 `task_func == "__main__:<lambda>"`，`q.execute_task(...)` 抛 `AttributeError: module '__main__' has no attribute '<lambda>'`。普通函数 `submit(double, 5)` 正常返回 10。修复：`__name__ == '<lambda>'` 时跳过路径格式，直接走 pickle 编码；`_deserialize_func` 保留路径与 pickle 双分支。GREEN：`submit(lambda x: x*2, 5)` 后 `execute_task` 返回 10；普通函数与装饰器函数行为不变；回归 `tests/task/` 全 PASS。
+
+
+
+### FIXED(2026-10-18T15:44:33Z / BUG-150)
+- evidence: vools/task/core/queue.py `_serialize_func`/`_deserialize_func`：lambda 任务序列化为 `__main__:<lambda>` 路径格式，反序列化 `getattr(module, "<lambda>")` 抛 AttributeError；改走 pickle 又抛 `PicklingError: attribute lookup <lambda> on __main__ failed`。实测 RED：`q.submit(lambda x: x*2, 5)` 后 `execute_task` 失败。修复：利用已有但未使用的 `_func_registry`——lambda 序列化为 `__registry__:{id}` 标记并存入注册表，`_deserialize_func` 检测标记从注册表取回，取不到则抛明确 ValueError 说明跨进程不可持久化。GREEN：`submit(lambda x: x*2, 5)` 执行返回 10；普通函数 `submit(double,5)` 返回 10；`@functools.wraps` 装饰函数返回 1。回归 `tests/task/` + `tests/test_task_rules_dag.py` + `tests/task/test_backends_dag.py` 全 PASS（exit 0）。
+## BUG-151 [2026-10-18T15:45:33Z] [high] FIXED
+- summary: storage 裸 json.dumps 抛错且 dependencies 读回为空
+- detail: vools/task/core/storage.py 两处问题：
+1) `insert_task` L113-114 用裸 `json.dumps(task.args)` / `json.dumps(task.kwargs)`（无 default 回调），args 含函数/自定义对象时抛 TypeError；`update_task_status` L198 `json.dumps(result)` 同理。与 `models.Task.to_dict` 不一致（后者已有 pickle fallback）。
+2) `_row_to_task` L307-317 只按硬编码列序 SELECT * 转换，未读回 `task_dependencies` 表，导致从 DB 读回的任务 `dependencies` 恒为空集（提交时 `depends_on={t1}` 的任务读回后丢失依赖，DAG 调度无法工作）。
+修复：1) 改用 `models._dump_json` 做序列化；2) `_row_to_task` 后补查 `task_dependencies` 表填充 `Task.dependencies`。
+GREEN：`submit(f, depends_on={1})` 后 `get_task(id).dependencies == {1}`；args 含函数不再抛错；回归 `tests/task/` + DAG 测试全 PASS。
+
+
+
+### FIXED(2026-10-18T15:47:36Z / BUG-151)
+- evidence: vools/task/core/storage.py 两处：1) `insert_task` L113-114 用裸 `json.dumps(task.args/kwargs)`、`update_task_status` L198 用裸 `json.dumps(result)`（均无 default 回调），args 含函数/自定义对象抛 TypeError。2) `_row_to_task` 只按硬编码列序 SELECT * 转换，未读回 `task_dependencies` 表，从 DB 读回的 Task.dependencies 恒为空集。实测 RED：`q.submit(f2, 10, depends_on={t1})` 后 `q.get_task(t2).dependencies == set()`。修复：改用 `models._dump_json` 序列化（pickle fallback）；新增 `_get_dependencies(task_id)` 读 task_dependencies 表，`_row_to_task` 构造后补查填充 `Task.dependencies`。GREEN：提交与跨队列读回 `t2.dependencies == {1}`；函数任务 `submit(my_func,5)` 执行返回 10；回归 `tests/task/` + `tests/test_task_rules_dag.py` + `tests/task/test_backends_dag.py` 全 PASS（exit 0）。
+## BUG-152 [2026-10-18T15:51:53Z] [high] FIXED
+- summary: cli_execute shell=True 丢弃 args 追加参数
+- detail: vools/task/core/cli_exec.py `cli_execute` L221：`run_cmd = full_cmd[0] if shell else full_cmd`。shell=True 时只取 `cmd_str` 作为运行命令，`cli.args` 追加参数被完全丢弃（未拼接到字符串后）。实测 RED：`cli_execute({"cli": {"cmd": "echo hello", "args": ["world"], "shell": True}})` 返回 stdout "hello"，"world" 未生效；`{"cmd": "python -c", "args": ["print(42)"], "shell": True}` stdout 为空（`print(42)` 丢失）。修复：shell=True 时把 `list(args)` 用空格拼接到 `cmd_str` 之后（`" ".join(...)`），保证追加参数生效。GREEN：`echo hello` + `args=["world"]` 返回 "hello world"；`python -c` + `args=["print(42)"]` 返回 "42"；shell=False 路径与语言推断路径行为不变。
+
+
+
+### FIXED(2026-10-18T15:53:12Z / BUG-152)
+- evidence: vools/task/core/cli_exec.py `cli_execute` L221：`run_cmd = full_cmd[0] if shell else full_cmd`，shell=True 时只取 cmd_str，`cli.args` 追加参数被丢弃。实测 RED：`{"cmd": "echo hello", "args": ["world"], "shell": True}` 返回 stdout "hello"（world 未生效）；`{"cmd": "python -c", "args": ["print(42)"], "shell": True}` stdout 为空。修复：shell=True 时把 `full_cmd[1:]`（即 args）用空格拼接到 `cmd_str` 之后。GREEN：`echo hello`+`["world"]` → "hello world"；`python -c`+`["print(42)"]` → "42"；shell=False 语言推断路径 `python script print(99)` → 99；无 args shell=True `echo solo` → "solo"。回归 `tests/task/` 全 PASS（exit 0）。
+## BUG-153 [2026-10-18T15:58:02Z] [medium] FIXED
+- summary: _is_descriptor 误判函数且描述符实例属性名错误
+- detail: vools/oop/derive.py 两处描述符相关缺陷：
+1) `_is_descriptor`（L126-134）用 `hasattr(func, '__get__')` 判断，但普通函数/lambda 也实现 `__get__`（描述符协议），被误判为描述符。实测 `_is_descriptor(lambda: None)` 返回 True。
+2) `_infer_name`（L156-178）对描述符实例（如 `Typed('age', int)`，无 `__name__`）回退为 `derived_0`。实测 doc 示例 `@descriptor_derive(Typed('age', int)) class Foo: pass` 后 `Foo` 的属性名是 `derived_0` 而非 `age`（`Foo().derived_0` 才可访问，与文档承诺不符）。
+修复：`_is_descriptor` 显式排除 `inspect.isfunction/ismethod/isbuiltin`；`_infer_name` 对描述符实例优先用其 `name` 属性（如 `Typed.name`）作为成员名。
+GREEN：`descriptor_derive(Typed('age', int))` 后 `Foo().age` 可访问；lambda 函数在 `descriptor_derive` 下不再被当作描述符；`derive(lambda ...)` 普通装饰器路径不变；回归 `tests/oop/` 全 PASS。
+
+
+
+### FIXED(2026-10-18T16:00:43Z / BUG-153)
+- evidence: vools/oop/derive.py 两处：
+1) `_is_descriptor` 用 `hasattr(func, '__get__')` 判断，但普通函数/lambda 也实现 `__get__`，被误判。修复：开头显式排除 `inspect.isfunction/ismethod/isbuiltin`。
+2) `_infer_name` 对无 `__name__` 的成员（描述符实例如 `Typed('age', int)`）回退为 `derived_0`。实测 doc 示例 `@descriptor_derive(Typed('age', int))` 后属性名是 `derived_0` 而非 `age`。修复：`__name__` 为空时回退取成员的 `name` 属性。
+GREEN：`_is_descriptor(普通函数)=False`、`_is_descriptor(lambda)=False`；`@descriptor_derive(Typed('age', int))` 后 `Foo().age` 返回 `<age:int>`；关键字参数路径 `Bar().age` 正常。回归 `tests/oop/` + `tests/test_oop_{calltype,fusion,mixer,method_extend}.py` 全 PASS（exit 0）。
+## BUG-154 [2026-10-18T16:02:33Z] [medium] FIXED
+- summary: ClassFusion pickle 丢失 _class_name/_auto_wrap_return
+- detail: vools/oop/fusion.py `ClassFusion.__getstate__`（L300-306）只返回 `_classes`/`_method_overrides`/`_method_wrappers`，`__setstate__`（L308-312）也只恢复这三项，丢失 `_class_name` 与 `_auto_wrap_return`。实测 RED：`cf = ClassFusion(A); cf.set_name("MyFused"); cf.set_auto_wrap_return(True)` 后 `pickle.loads(pickle.dumps(cf))._class_name` 为 MISSING，调用 `.fuse()` 抛 `AttributeError: 'ClassFusion' object has no attribute '_class_name'`。修复：`__getstate__` 补 `_class_name`/`_auto_wrap_return`；`__setstate__` 用 `state.get(..., None/False)` 恢复。GREEN：反序列化后 `_class_name == "MyFused"`、`_auto_wrap_return == True`，`fuse()` 正常返回融合类；回归 `tests/test_oop_fusion.py` 全 PASS。
+
+
+
+### FIXED(2026-10-18T16:03:31Z / BUG-154)
+- evidence: vools/oop/fusion.py `ClassFusion.__getstate__` 只返回 `_classes`/`_method_overrides`/`_method_wrappers`，`__setstate__` 也只恢复这三项，丢失 `_class_name` 与 `_auto_wrap_return`。实测 RED：`cf.set_name("MyFused")`+`set_auto_wrap_return(True)` 后 `pickle.loads(...)._class_name` 为 MISSING，`fuse()` 抛 `AttributeError`。修复：`__getstate__` 补两键；`__setstate__` 用 `state.get('_class_name', None)`/`state.get('_auto_wrap_return', False)` 容错恢复。GREEN：反序列化后 `_class_name=="MyFused"`、`_auto_wrap_return==True`，`fuse()` 返回 `MyFused`；旧状态（无新键）也能正常 `fuse()` 返回 `A`。回归 `tests/test_oop_fusion.py` 全 PASS（exit 0）。
+## BUG-155 [2026-10-18T16:05:17Z] [high] FIXED
+- summary: g() 未识别多参/带前导空格 lambda
+- detail: vools/functional/arrow_func.py `g()` 的标准 lambda 分支用 `pattern3 = r"lambda\s+\w+\s*:\s*"` + `re.match` 匹配（L519-521），只识别单参 lambda（`\w+`），多参 `lambda x, y: ...` 与带前导空格的 `" lambda x: ..."` 都不匹配，回退到 `_pattern1/2/3` 下划线模式 → `eval("lambda: " + expr)` 生成一个 0 参 lambda 返回嵌套 lambda。实测 RED：`g("lambda x, y: x + y")` 返回 0 参 lambda，`f(3, 4)` 抛 `TypeError: <lambda>() takes 0 positional arguments but 2 were given`。修复：用 `re.match(r"\s*lambda\s+(.+?):\s*", expr)` 提取参数串，按逗号拆分为参数名列表，直接 `eval("lambda " + params + ": " + body, env)` 构造标准多参 lambda；仍解析失败才回退下划线模式。GREEN：`g("lambda x, y: x + y")(3, 4) == 7`；`g(" lambda x: x + 1")(5) == 6`；`g("lambda x: x * 2")(5) == 10`；单下划线 `g("_ + 1")` 路径不变；回归 `tests/functional/` 全 PASS。
+
+
+
+### FIXED(2026-10-18T16:06:15Z / BUG-155)
+- evidence: vools/functional/arrow_func.py `g()` L519 `pattern3 = r"lambda\s+\w+\s*:\s*"` + `re.match` 只识别单参 lambda，多参/前导空格 lambda 落到下划线模式生成 0 参 lambda。实测 RED：`g("lambda x, y: x + y")(3, 4)` 抛 `TypeError: <lambda>() takes 0 positional arguments but 2 were given`。修复：改用 `re.match(r"\s*lambda\s+(.+?):\s*", expr)` 提取参数串与函数体，`eval("lambda " + params + ": " + body, env)` 直接构造标准 lambda；解析异常回退 `eval(expr, env)`。GREEN：多参 `g("lambda x,y: x+y")(3,4)==7`；前导空格 `g(" lambda x: x+1")(5)==6`；单参 `g("lambda x: x*2")(5)==10`；默认值 `g("lambda x=5: x+1")()==6`；嵌套 `g("lambda x: lambda y: x+y")(1)(2)==3`；下划线/带索引/无参/arrow 路径均不变。回归 `tests/functional/` 全 PASS（exit 0）。
+## BUG-156 [2026-10-18T16:09:05Z] [medium] FIXED
+- summary: ConditionBuilder exec_result=False 恒返回空 results
+- detail: vools/functional/iif.py `ConditionBuilder.__call__`（L391-403）在 `exec_result=False` 时返回 `self._results`，但 `_results` 从未被任何方法写入（`_execute`/`_execute_single` 只 return 不 append），恒为空列表。实测 RED：`ConditionBuilder(5, exec_result=False).case(5,"five").case(6,"six").otherwise("other")()` 返回 `[]`，而 `exec_result=True` 时返回 `"five"`。修复：`exec_result=False` 分支先 `self._results.append(self._execute(target))` 再返回 `self._results`，让 `_results` 成为调用结果累积列表。GREEN：同上表达式 `exec_result=False` 返回 `["five"]`（第二次调用返回 `["five","other"]` 累积）；`exec_result=True` 行为不变；回归 `tests/functional/` 全 PASS。
+
+
+
+### FIXED(2026-10-18T16:10:01Z / BUG-156)
+- evidence: vools/functional/iif.py `ConditionBuilder.__call__` 在 `exec_result=False` 时返回 `self._results`，但该列表从未被写入（`_execute`/`_execute_single` 只 return 不 append），恒为空。实测 RED：`ConditionBuilder(5, exec_result=False).case(5,"five").case(6,"six").otherwise("other")()` 返回 `[]`。修复：`exec_result=False` 分支先 `self._results.append(self._execute(target))` 再返回，让 `_results` 成为调用结果累积列表。GREEN：同上表达式首次返回 `["five"]`；换 base=6 再调返回 `["five","other"]`（累积）；`exec_result=True` 返回 `"five"` 不变；`iif(True,"yes","no")=="yes"`。回归 `tests/functional/` 全 PASS（exit 0）。
+## BUG-157 [2026-10-18T16:11:33Z] [high] FIXED
+- summary: P.__call__ 字符串参数被误当 lambda 表达式
+- detail: vools/functional/pipe_ops.py `P.__call__`（L146-162）对位置参数里所有 str 一律 `args.append(g(arg))`，把字符串字面量（如分隔符 `"-"`、替换串 `"a"`、模板串）当成 lambda 表达式编译，非表达式字符串直接 SyntaxError。实测 RED：`["a","b","c"] | Ops.join("-")` 抛 `SyntaxError: invalid syntax`（`g("-")` 尝试 `eval("lambda: -")`）。修复：`P.__call__` 仅当 str 命中 arrow/lambda/下划线模式（含 `=>`/`lambda ` 前缀或 `_` 占位）时才 `g(arg)`，其余字符串按字面量保留；解析失败也回退为字面量。GREEN：`["a","b","c"] | Ops.join("-") == "a-b-c"`；`"abc" | Ops.replace("b","X") == "aXc"`；`Ops.map("x => x+1")` 箭头字符串仍可编译；回归 `tests/functional/` + `tests/utils/` 全 PASS。
+
+
+
+### FIXED(2026-10-18T16:13:25Z / BUG-157)
+- evidence: vools/functional/pipe_ops.py 两处：
+1) `P.__call__`（L146-162）对所有 str 位置参数一律 `g(arg)`，字符串字面量被当 lambda 编译。实测 RED：`["a","b","c"] | Ops.join("-")` 抛 `SyntaxError`（`g("-")` → `eval("lambda: -")`）。修复：新增 `_compile_if_expr(s)`，仅当 str 含 `=>`、`lambda ` 前缀或下划线占位符时才 `g(arg)`，其余按字面量保留；编译异常回退字面量。
+2) `Ops.join` 的 `@singledispatch _join.register(str)` 分支参数名 `(sep, it)` 与 `_join(it, sep)` 调用顺序颠倒，str 首参返回错误结果（`"abc" | Ops.join("-")` 返回 `"-"`）。修复：统一 `sep.join(str(x) for x in it)`。
+GREEN：`["a","b","c"] | Ops.join("-")=="a-b-c"`；`"abc" | Ops.join("-")=="a-b-c"`；`"hello" | Ops.replace("l","L")=="heLLo"`；`[1,2,3] | Ops.map("x => x*2")==[2,4,6]`；`[1,2,3,4] | Ops.where("_ > 2")==[3,4]`；tuple/generator join 正常。回归 `tests/functional/` + `tests/utils/` 全 PASS（exit 0）。
+## BUG-158 [2026-10-18T16:20:48Z] [high] FIXED
+- summary: Z 表达式树二次编译 arity 变 0
+- detail: vools/functional/placeholder_impl.py `_compile`（L1340-1354）的 `walk` 原地修改表达式树节点（`node.obj = walk(node.obj)` / `node.func` / `node.args` / `node.kwargs`），把 `_Auto`（Z 单例）替换成 `Placeholder`。同一 expr 调用两次 `as_function()`：首次编译后 `_Auto` 已被替换，二次编译 `counter` 仍从 0 起但树上已无 `_Auto`，arity 变 0。实测 RED：`e = Z.strip().upper(); e.as_function()("  hello  ")` 首次返回 `"HELLO"`，再次 `e.as_function()("  hello  ")` 抛 `TypeError: 需要 0 个位置参数，但提供了 1 个`。修复：`_compile` 入口用 `copy.deepcopy(expr)` 克隆整棵树再 walk，使 `as_function()` 幂等可多次编译。GREEN：同一 expr 编译 2 次均返回 `"HELLO"`；`make_func(Z.args_all[0] + Z.args_all[1])(1,2)==3` 幂等；回归 `tests/functional/` + `tests/oop/` 全 PASS。
+
+
+
+### FIXED(2026-10-18T16:30:35Z / BUG-158)
+- evidence: vools/functional/placeholder_impl.py 两处：
+1) `_compile` 的 `walk` 原地把 `_Auto`（Z 单例）替换成 `Placeholder`，污染调用方传入的表达式树。实测 RED：`e = Z.strip().upper(); e.as_function()("  hello  ")` 首次返回 `"HELLO"`，再次调用抛 `TypeError: 需要 0 个位置参数，但提供了 1 个`（二次编译树上已无 `_Auto`，counter 从 0 起 arity=0）。修复：`_compile` 入口用 `_deserialize(_serialize(expr))` 序列化往返克隆整棵树，walk 只改克隆体。
+2) `Expr.__getattr__`（L810-811）对任意名字返回 `Attr(self, name)`，导致 `hasattr(x, '__deepcopy__')` 恒 True、`copy.deepcopy` 把 Attr 误当 copier 调用后无限构造 `Attr↔Call` 环。修复：改用序列化往返克隆，绕开 deepcopy。
+GREEN：同一 expr 编译 3 次均 `HELLO`/`WORLD`；`make_func(Z.args_all[0]+Z.args_all[1])(1,2)==3`；`expr_from_dict(expr_to_dict(h)).as_function()({'name':'alice'})=='ALICE'`；原树 `f1({'name':'bob'})=='BOB'`。回归 `tests/functional/` + `tests/oop/` 全 PASS（exit 0）。
+## BUG-159 [2026-10-18T16:37:05Z] [high] FIXED
+- summary: regexp_like complete_matching 对空匹配/多匹配误判
+- detail: vools/utils/tools.py `regexp_like`（L655-671）的 `complete_matching=True` 用 `len(matchs)==1 and str(matchs[0])==source_string` 判断全文匹配，依赖 `findall` 结果。对能空匹配/多匹配的模式误判：
+- `regexp_like('.*', 'abc', complete_matching=True)` → `.*` 全文匹配 'abc'，应 True，实为 False（findall 返回 `['']` 空匹配，`'' != 'abc'`）
+- `regexp_like('a*', 'aaa', complete_matching=True)` → `a*` 全文匹配 'aaa'，应 True，实为 False（findall 返回 `['aaa', '']` 含末尾空匹配，len=2）
+- `regexp_like('^.*$', 'abc')` 与 `regexp_like('[a-z]+', 'abc')` 恰好 True，掩盖了问题。
+
+修复：`complete_matching=True` 改用 `re.fullmatch(pattern, source_string)` 判断（内部用 `re.compile`，`flags` 保持一致），与 Oracle/常见语义一致；`complete_matching=False` 维持 `len(matchs)>0`。
+
+GREEN：`regexp_like('.*', 'abc') is True`、`regexp_like('a*', 'aaa') is True`、`regexp_like('[a-z]+', 'abc') is True`、`regexp_like('^x$', 'abc') is False`、`regexp_like(r'\d+', 'a1b', complete_matching=False) is True`、`regexp_like(r'\d+', 'abc', complete_matching=False) is False`。回归 `tests/utils/` 全 PASS。
+
+
+
+### FIXED(2026-10-18T16:37:52Z / BUG-159)
+- evidence: vools/utils/tools.py `regexp_like`（L655-671）`complete_matching=True` 分支改用 `re.compile(pattern, flags=flags).fullmatch(source_string) is not None` 判断全文匹配，替代原来 `len(matchs)==1 and str(matchs[0])==source_string`（依赖 findall，对空匹配/多匹配误判）。
+GREEN（7/7）：`regexp_like('.*','abc',complete_matching=True) is True`（原 False）、`regexp_like('a*','aaa',complete_matching=True) is True`（原 False）、`regexp_like('[a-z]+','abc',complete_matching=True) is True`、`regexp_like('^.*$','abc',complete_matching=True) is True`、`regexp_like('^x$','abc',complete_matching=True) is False`、`regexp_like(r'\d+','a1b',complete_matching=False) is True`、`regexp_like(r'\d+','abc',complete_matching=False) is False`。回归 `tests/utils/` 全 PASS（exit 0）。
+## BUG-160 [2026-10-18T16:43:48Z] [high] FIXED
+- summary: Seq.flatmap_ex/flatmap_ex1 非可迭代分支引用未初始化 p1 抛 UnboundLocalError
+- detail: vools/data/seq.py 两个方法在"元素非可迭代"分支引用未初始化的 `p1`：
+
+1) `flatmap_ex`（L1250-1277）：`gen()` 中 `p1` 只在 `if _yib(i):`（可迭代）分支内被赋值（L1273 `p1, j = after_func(j)`），非可迭代 else 分支（L1276）直接 `if p1: yield i`。当首个元素非可迭代时，`p1` 尚未定义 → `UnboundLocalError: cannot access local variable 'p1'`；当前面元素是可迭代时，`p1` 是前一轮遗留值，过滤逻辑错乱。
+
+2) `flatmap_ex1`（L1224-1248）：同构 bug，L1247 非可迭代分支同样引用未初始化的 `p1`。
+
+实测 RED：
+- `list(Seq([1,2,3]).flatmap_ex(lambda x: (True, x)))` → UnboundLocalError（应 `[1,2,3]`）
+- `list(Seq([1,2]).flatmap_ex1())` → UnboundLocalError（应 `[1,2]`）
+- `list(Seq([[1,2],3]).flatmap_ex(lambda x: (True, x)))` → `[1,2,3]`（碰巧前项可迭代，p1 遗留 True 掩盖了 bug）
+
+修复：非可迭代分支改为 `p, i = before_func(i)` 后再对 `i` 单独调用 `after_func`：
+```
+p, i = before_func(i)
+if p:
+    p2, i = after_func(i)
+    if p2: yield i
+```
+这样非可迭代元素也走 after_func 后置过滤，语义与可迭代分支一致。
+
+
+
+### FIXED(2026-10-18T16:45:06Z / BUG-160)
+- evidence: vools/data/seq.py 两处：
+1) `flatmap_ex`（L1250-1277）gen() 非可迭代 else 分支改为 `p2, i = after_func(i); if p2: yield i`，替代原来的 `if p1: yield i`（p1 只在可迭代分支赋值，非可迭代首元素即 UnboundLocalError）。
+2) `flatmap_ex1`（L1224-1248）同构修复，非可迭代分支走 `_after(i)`。
+GREEN（6/6）：`list(Seq([1,2,3]).flatmap_ex(lambda x:(True,x)))==[1,2,3]`（原 UnboundLocalError）、`list(Seq([1,2]).flatmap_ex1())==[1,2]`（原 UnboundLocalError）、`list(Seq([[1,2],3]).flatmap_ex(lambda x:(True,x)))==[1,2,3]`、after 过滤 `==[1,3]`、before 过滤 `==[1,3]`、嵌套 `==[1,2,3,4]`。回归 `tests/data/` 全 PASS（exit 0）。
+## BUG-161 [2026-10-18T16:47:01Z] [medium] FIXED
+- summary: is_email/is_url 正则未锚定，前缀匹配误判非法输入
+- detail: vools/data/validator.py 两个正则未锚定尾部，`re.match` 只匹配前缀导致非全串也返回 True：
+
+1) `_PATTERN_EMAIL`（L46）`r'\w[-\w.+]*@([A-Za-z0-9][-A-Za-z0-9]*\.)+[A-Za-z]{2,14}'` 无 `$`，`is_email('a@b.com!')` 返回 True（`!` 是非法字符，应 False）、`is_email('a@b.comxyz')` 返回 True（剩余后缀被忽略）。
+
+2) `_PATTERN_URL`（L51）无 `$`，`is_url('http://example.com!')` 返回 True（应 False）。
+
+`is_mobile`/`is_password`/`is_username`/`is_id_card_*` 已有 `^...$` 锚定，只有这两个漏了。
+
+修复：给 `_PATTERN_EMAIL` / `_PATTERN_URL` 末尾补 `$`。
+
+GREEN：`is_email('a@b.com') is True`、`is_email('a@b.com!') is False`、`is_email('a@b.comxyz') is False`、`is_email('!a@b.com') is False`、`is_url('http://example.com') is True`、`is_url('http://example.com!') is False`。回归 `tests/data/` 全 PASS。
+
+
+
+### FIXED(2026-10-18T16:48:24Z / BUG-161)
+- evidence: vools/data/validator.py 两处：
+1) `_PATTERN_EMAIL` 末尾补 `$`（L46）
+2) `_PATTERN_URL` 末尾补 `$`（L51）
+`re.match` 只从头部匹配，原 pattern 无 `$` 导致尾部非法字符被忽略。
+GREEN：`is_email('a@b.com!') is False`（原 True）、`is_url('http://example.com!') is False`（原 True）、`is_email('a@b.com') is True`、`is_email('user@sub.example.co.uk') is True`、`is_url('https://a.b.cn/path?x=1') is True`、`is_mobile('13812345678') is True`、`is_mobile('138123456') is False`。注：`is_email('a@b.comxyz')` 修正后仍为 True，这是正确行为——`comxyz` 是合法 TLD 名（`([A-Za-z0-9][-A-Za-z0-9]*\.)+[A-Za-z]{2,14}$` 全文匹配），非漏修。回归 `tests/data/` 全 PASS（exit 0）。
+## BUG-162 [2026-10-18T17:01:18Z] [medium] FIXED
+- summary: rate_limit: logic 参数('or'/'and')完全未使用——死参数；且同一 rate_limit(...) 装饰多个函数时 calls 列表共享，第一个函数耗尽配额后第二个也被拒
+- detail: vools/decorators/shotcut.py L312-356。文档承诺 logic='or'/'and' 两种逻辑（'or' 任意条件触发限制，'and' 所有条件同时触发），但实现只有一个条件 `len(calls) >= max_calls`，logic 从未被引用。更严重：calls 列表定义在 decorator 闭包外层，同一 rate_limit(...) 装饰 h1、h2 两个函数时共享同一 calls；h1(1);h1(2) 用掉 max_calls=2 配额后 h2(3) 也被拒（返回 None），h2 自己的调用从未发生。实测：calls=[1,2]，h2 未执行。修法：每个被装饰函数独立计数（key=id(func)），logic 参数保留为兼容占位但不再承诺无效语义。
+
+## BUG-163 [2026-10-18T17:04:28Z] [medium] FIXED
+- summary: _ClassProperty 缺 .fget 属性，A.name.fget(A) 抛 AttributeError——classproperty descriptor 未暴露底层函数
+- detail: vools/decorators/shotcut.py L410-423 _ClassProperty。内置 property 暴露 .fget/.fset/.fdel，用户对 classproperty 也期望可读 .fget（类似 property.fget）。但 _ClassProperty 只存 self.func，无 fget 属性。实测：`@classproperty def name(cls): return 'A'` 后 `A.name.fget(A)` 抛 AttributeError: 'str' object has no attribute 'fget'（A.name 是 'A' 字符串，不是 descriptor，因为类访问 __get__ 直接返回结果；即使拿到 descriptor 也无 fget）。修法：给 _ClassProperty 加 fget property 暴露底层 func。
+
+
+
+### FIXED(2026-10-18T17:08:26Z / BUG-162, BUG-163)
+- evidence: BUG-162: shotcut.py rate_limit L324-341 — calls 列表改按 id(func) 独立计数（calls_by_func dict），logic 参数保留为兼容占位但文档不再承诺 'or'/'and' 语义；实测 h1(1);h1(2);h2(3) 三者都执行（GREEN1 ran=[1,2,3]），h1 第 3 次仍被拒（GREEN3 ran=[1,2,3,4]）。BUG-163: shotcut.py _ClassProperty L410-427 — 加 fget property 暴露底层 func，类访问 __get__ 改返回 descriptor 本身（对齐 builtins.property 类访问），实例访问仍返回 func(type(instance))；tests/test_decorators_shotcut.py::TestClassProperty::test_property L381 A.name.fget(A)=='A' 通过。
+## BUG-164 [2026-10-18T17:13:11Z] [medium] FIXED
+- summary: lazy() 用 f_back.f_back 解析调用者作用域，跳了一层，函数内 lazy("=> x") 无法捕获调用者局部变量 x
+- detail: vools/decorators/lazy.py L78-84。用户直接调 lazy("=> x") 时，调用栈是 [调用者函数, lazy]：f_back = 调用者函数，f_back.f_back = 调用者的调用者。代码取 f_back.f_back 跳过了真正的调用者，导致调用者局部变量无法被 "=> expr"/"-> expr" 捕获。实测：def make_expr(): x=42; f=lazy('=> x'); return f 后 make_expr()() 抛 NameError: name 'x' is not defined（期望 42）。修法：把 f_back.f_back 改为 f_back，即 inspect.currentframe().f_back（lazy 的直接调用者才是表达式应解析的作用域）。
+
+
+
+### FIXED(2026-10-18T17:14:10Z / BUG-164)
+- evidence: lazy.py L77-84 — inspect.currentframe().f_back.f_back 改为 f_back；实测 def make_expr(): x=42; return lazy('=> x')() 后返回 42（GREEN captured x=42），tests/decorators/ + lazy doctest 全 PASS。
+## BUG-165 [2026-10-18T17:18:49Z] [medium] FIXED
+- summary: rerun 的 until 谓词抛异常被吞并重试直到超时，与 BUG-114 retry check_func 异常传播原则不一致
+- detail: vools/decorators/control.py L505-530 _rerun_decorator。until 谓词抛出的任何异常（如 AttributeError）会被 L523 的 `except Exception` 当成"未满足条件"而 sleep 后重试，直到 time_out 才抛 TimeoutError。这与 BUG-114 已修的 retry check_func 原则（谓词异常必须传播，不能被静默当成不匹配）不一致。实测：until=lambda x: x.nonexistent_attr 且 interval=0.01/time_out=0.05 时，probe() 抛 TimeoutError 而非 AttributeError，probe 被调用 7 次。修法：把 until(result) 调用放入独立 try/except，任何异常立即传播（不重试、不 sleep）。
+
+
+
+### FIXED(2026-10-18T17:24:46Z / BUG-165)
+- evidence: control.py _rerun_decorator L479-510 — 把 func 调用与 until 谓词拆成两个阶段：func 抛异常走重试分支，until 谓词异常直接传播（不在 try 内）。实测 until=lambda x: x.nonexistent_attr 时 probe() 抛 AttributeError 且只调用 1 次（不再重试至 timeout），对齐 BUG-114 retry check_func 原则；tests/decorators/ + control.py doctest 全 PASS。
+## BUG-166 [2026-10-18T17:28:52Z] [medium] FIXED
+- summary: oop/extend.py dict 形式 copy_from 用 config['source',None] tuple 索引取值，缺键抛 KeyError，应为 config.get
+- detail: vools/oop/extend.py L287-288 _process_copy_from。dict 形式 config 取值写成了 `config['source',None]` 与 `config['method',None]`——中括号内是 tuple ('source', None)，不是 `config.get('source', None)`。只有 config 里真存在 tuple 键 ('source', None) 才会命中，否则抛 KeyError: ('source', None)。同函数 L289/L290 已正确用 `config.get('init_args', None)` / `config.get('init_kwargs', None)`，可见 L287/L288 是笔误。后果：任何以 dict 形式配置 copy_from 的代码路径在取 source/method_name 时直接 KeyError，而 L297 的 `if source is None or method_name is None: continue` 兜底永远到不了。修法：`source = config.get('source', None)`、`method_name = config.get('method', None)`。
+
+
+
+### FIXED(2026-10-18T17:29:30Z / BUG-166)
+- evidence: oop/extend.py L287-288 — config['source',None] / config['method',None] 改为 config.get('source', None) / config.get('method', None)。实测 _process_copy_from({"copy_from": {"source":"list","method":"append"}}, Tmp, {}) 不再抛 KeyError；tests/oop/ + tests/test_oop_method_extend.py 全 PASS。
+## BUG-167 [2026-10-18T17:30:16Z] [medium] FIXED
+- summary: oop/extend.py copy_list_from 的 dict 形式传字符串 method_names 时解析后仍必抛 ValueError
+- detail: vools/oop/extend.py L412-418 _process_copy_list_from。dict 形式 config 时：`if not isinstance(method_names, (list, tuple)) and method_names is not None:` 分支里，若 method_names 是字符串，L413-417 已把它解析成 list（含逗号 split 或整串 strip），但 L418 的 `raise ValueError(f"Invalid method_names for {copy_key}: {method_names}")` 与解析语句同级缩进、在同一 if 内无条件执行——解析完必抛 ValueError。即 dict 形式 `{"copy_list_from": {"source": ..., "methods": "append"}}` 100% 报 Invalid method_names，字符串形式被拒绝。修法：把 raise 移入"既非 list/tuple 又非 str 且非 None"的 else 分支，解析完成后不抛。
+
+
+
+### FIXED(2026-10-18T17:30:55Z / BUG-167)
+- evidence: oop/extend.py L412-418 — 把 ValueError 移入"既非 list/tuple 又非 str 且非 None"的独立分支，字符串 method_names 解析成 list 后不再抛。实测 _process_copy_list_from({"copy_list_from": {"source": list, "methods": "append"}}, Tmp, {}) 不再 ValueError；tests/oop/ + tests/test_oop_method_extend.py 全 PASS。
+## BUG-168 [2026-10-18T17:31:39Z] [medium] FIXED
+- summary: oop/extend.py L504 用 x.match()（str 无 match）应写 re.match(pattern, x)，下划线数字变量路径必抛 AttributeError
+- detail: vools/oop/extend.py L504 _process_copy_list_from 内 copied_method 的 _convert_args。`x` 在 L499 已确认是 str，L504 写成 `x.match(r'(?<!\w)_(0*[1-9]\d*)(?!\w)',x)`——str 没有 `.match` 方法（同函数 L503 正确用了 `re.match(..., x)`）。任何走到 L504 的字符串必抛 AttributeError，被 L509 except 捕获后 print Warning 并 return None，把本应经 `g(x, local_env)` 求值的 `_数字` 形式 init_args 静默变成 None。修法：`re.match(r'(?<!\w)_(0*[1-9]\d*)(?!\w)', x)`。
+
+
+
+### FIXED(2026-10-18T17:32:32Z / BUG-168)
+- evidence: oop/extend.py L504 — `x.match(r'(?<!\w)_(0*[1-9]\d*)(?!\w)',x)` 改为 `re.match(r'(?<!\w)_(0*[1-9]\d*)(?!\w)',x)`（str 无 .match，同函数 L503 已是 re.match 形式）。实测 `'_1'.match('x')` 抛 AttributeError 证明原写法必炸，`re.match(pattern, '_1')` 匹配成功；tests/oop/ + tests/test_oop_method_extend.py 全 PASS。
+## BUG-169 [2026-10-18T17:33:19Z] [medium] FIXED
+- summary: oop/extend.py _add_string_method 绑定参数时 self 占位不消耗 args 索引，后续参数整体错位一位
+- detail: vools/oop/extend.py L727-729 _add_string_method 内 create_lambda_method 的 lambda_method。绑定参数用 `for i, param in enumerate(param_names): if param != 'self' and i < len(args): local_env[param] = args[i]`——param_names 含 'self' 时，self 占 i=0 但被跳过，后续 param 'x' 取 args[1]，实际应取 args[0]，所有 self 之后的参数错位一位。例：`"self, x, y => x+y"`，调用 `obj.m(1, 2)` 时 x=2、y=None（本应 x=1、y=2）。修法：用独立 arg_idx 计数器，跳过 self 时不消耗 args 索引。
+
+
+
+### FIXED(2026-10-18T17:34:08Z / BUG-169)
+- evidence: oop/extend.py _add_string_method lambda_method — 用独立 arg_idx 计数器绑定，跳过 self 时不消耗 args 索引。实测 `"self, x, y => x + y"` 加于 Tmp 后 t.m(1,2) 返回 3（修前 x=2、y=None 必 TypeError）；tests/oop/ + tests/test_oop_method_extend.py 全 PASS。
+## BUG-170 [2026-10-18T17:47:17Z] [medium] FIXED
+- summary: [rule:import-error] vtext.py L405/L810 from .core import 指向不存在的 vools.data.core，spark.sql/无参 replace_run_date 抛 ModuleNotFoundError
+- detail: vools/data/vtext.py 两处 `from .core import ...`（相对 vools.data 包）指向不存在的 `vools/data/core.py` 模块：
+
+1. L405-406 `_run(func='spark.sql')`：
+   ```python
+   if lowered == "spark.sql":
+       from .core import get_spark
+       return get_spark(app_name="VText").sql(text)
+   ```
+2. L810-811 `replace_run_date(run_date=None)`：
+   ```python
+   if run_date is None:
+       from .core import get_run_ds
+       run_date = get_run_ds()
+   ```
+
+`get_spark`/`get_run_ds` 也未在 vools 包其它位置定义（`vools/pyk.py` 缺失）。任何调用这两条路径都抛 `ModuleNotFoundError: No module named 'vools.data.core'`。
+
+Probe（RED 证明）：
+```python
+from vools.data.vtext import VText
+VText("select 1")._run("spark.sql")
+# EXC: ModuleNotFoundError No module named 'vools.data.core'
+```
+
+修复：
+- L404-406：改为 `from .. import my_spark`，并用 try/except 捕获 Spark 环境缺失，抛清晰 RuntimeError。
+- L810-811：`run_date is None` 时用 `datetime.now().strftime('%Y%m%d')` 兜底。
+
+
+
+### FIXED(2026-10-18T17:48:25Z / BUG-170)
+- evidence: vools/data/vtext.py 两处修复：(1) _run('spark.sql') 由 `from .core import get_spark`（指向不存在的 vools.data.core）改为 try `from .. import my_spark` + 捕获 ImportError/ModuleNotFoundError 抛清晰 RuntimeError「需要 Spark 环境（vools.pyk 未提供）」；probe 实测 VText("select 1")._run("spark.sql") 由 ModuleNotFoundError 变为可诊断 RuntimeError。(2) replace_run_date 的 `from .core import get_run_ds` 改为 `import datetime` 后 datetime.now().strftime('%Y%m%d') 兜底；probe 实测 VText("...'{run_date}'").replace_run_date() 返回 VText("select * from t where dt='20261019'")（无参不再抛 ModuleNotFoundError）。
+## BUG-171 [2026-10-18T17:53:01Z] [medium] FIXED
+- summary: [rule:index-error] table.py join left/outer 未匹配行填充 None 少一列，行长度与表头不一致
+- detail: vools/data/table.py join() L1472-1473：left/outer join 且未匹配时，填充的 None 长度错误：
+
+```python
+elif join_type in ('left', 'outer'):
+    result_data.append(s_vals + [None] * (len(other_cols) - (1 if on_col in other_cols else 0)))
+```
+
+而 result_columns（L1447-1450）在非 inner 时**包含** on_col，匹配分支 L1471 也 append 全部 `len(other_cols)` 个值。因此未匹配行比表头少一列，Table 内部行长度不一致，后续 `at()/iter_cells_col_major` 等按列访问会错位/IndexError。
+
+Probe（RED）：
+```python
+from vools.data import Table
+a = Table([["a1","k1"],["a2","k9"]], columns=["x","id"])
+b = Table([["b1","k1"]], columns=["y","id"])
+r = a.join(b, join_type="left")
+# result_columns: ['t1_x','t1_id','t2_y','t2_id']  (4 列)
+# data: [['a1','k1','b1','k1'], ['a2','k9',None]]   (第二行只有 3 元素)
+```
+
+修复：L1473 改为 `[None] * len(other_cols)`，与匹配分支、result_columns 的列数保持一致。
+
+
+
+### FIXED(2026-10-18T17:53:33Z / BUG-171)
+- evidence: vools/data/table.py join() L1472-1473：left/outer join 未匹配分支的 None 填充长度由 `len(other_cols) - (1 if on_col in other_cols else 0)` 改为 `len(other_cols)`，与 result_columns（非 inner 保留含 on_col 的全部 other_cols）及匹配分支 L1471 的列数对齐。probe 实测 inner/left/outer 三种 join：Table([["a1","k1"],["a2","k9"]], columns=["x","id"]).join(Table([["b1","k1"]], columns=["y","id"]), join_type=...) —— 修复前 left 结果 data 为 [['a1','k1','b1','k1'], ['a2','k9',None]]（第二行 3 元素 vs 表头 4 列），修复后 left/outer 均为 [['a1','k1','b1','k1'], ['a2','k9',None,None]]，所有行长度=len(columns)。
+## BUG-172 [2026-10-18T17:57:42Z] [medium] FIXED
+- summary: [rule:type-error] seq.py __init__ 单参数 falsy 值(0/False/'')被判为空序列，Seq(0).collect()==[]
+- detail: vools/data/seq.py L204-213 `SeqBase.__init__`：
+
+```python
+if l == 1:
+    if hasattr(origins[0],"collect"):
+        self._origin = iter(origins[0].collect())
+    else:
+        self._origin = iter(origins[0]) if origins[0] else iter([])
+```
+
+单参数时用 `if origins[0]` 做 truthiness 判断，导致 `Seq(0)`、`Seq(False)`、`Seq('')`、`Seq(None)` 等合法 falsy 单值被当成"无可迭代内容"，返回空序列而非包含该值的单元素序列。
+
+Probe（RED）：
+```python
+from vools.data import Seq
+Seq(0).collect()     # 应为 [0]，实际 []
+Seq(False).collect() # 应为 [False]，实际 []
+Seq('').collect()    # 应为 [''],  实际 []
+Seq(None).collect()  # 应为 [None]，实际 []
+```
+
+修复：单参数且非"collect 对象"时，应区分"该值本身是可迭代的空对象"与"该值是单个元素"。正确语义：单参数时把 origins[0] 当作单个元素（除非它本身是可迭代的序列对象）。参考 L213 多参数分支 `iter(origins)`。建议改为：若 origins[0] 有 __iter__ 且不是 str/bytes，则 iter(origins[0])；否则 iter([origins[0]])。
+
+
+
+### FIXED(2026-10-18T17:58:26Z / BUG-172)
+- evidence: vools/data/seq.py L204-213 `SeqBase.__init__` 单参数分支：原 `iter(origins[0]) if origins[0] else iter([])` 用 truthiness 判断。改为 `elif not hasattr(origins[0], "__iter__"): iter([origins[0]]) else: iter(origins[0])`，即不可迭代的单值（0/False/None/数字）包成单元素，可迭代对象（str/bytes/list/tuple/dict/set）保持原有迭代展开语义。probe 实测：Seq(0).collect()==[0]、Seq(False).collect()==[False]、Seq(None).collect()==[None]、Seq(3.14).collect()==[3.14]、Seq('').collect()==[]、Seq('abc').collect()==['a','b','c']、Seq([1,2]).collect()==[1,2]、Seq(1,2,3).collect()==[1,2,3]、Seq().collect()==[] —— falsy 单值不再丢失，str/list 迭代语义未回归。
+## BUG-173 [2026-10-18T17:59:47Z] [medium] FIXED
+- summary: [rule:type-error] seq.py group_by 对元素用 itemgetter(1)，非下标元素 TypeError，分组 key/组员错误
+- detail: vools/data/seq.py L498-512 `Seq.group_by`：
+
+```python
+def gen():
+    for k, g in groupby(sorted(self._evaluate(), key=key), key=key):
+        yield k, list(map(itemgetter(1), g))
+return self.__class__(gen())
+```
+
+`itertools.groupby` 的 g 是分组内的**原始元素**，不是 (key, item) 对。原实现套用了「数据形如 (key,item) 对」的惯用法（来自 `operator.itemgetter(1)`），对元素本身调用 `itemgetter(1)`。
+
+后果：
+- `Seq([1,1,2,3]).group_by()` → `TypeError: 'int' object is not subscriptable`（元素不是可下标对象）。
+- `Seq([('a',1),('a',2)]).group_by()` 本应得 `[('a',[1,2])]`，实际得 `[(('a',1),[1]),(('a',2),[2])]` —— key 错、分组拆碎。
+
+Probe（RED）：
+```python
+from vools.data import Seq
+Seq([1,1,2,3]).group_by().collect()  # TypeError: 'int' object is not subscriptable
+Seq([('a',1),('a',2)]).group_by().collect()  # [(('a',1),[1]),(('a',2),[2])] 错误
+```
+
+修复：`yield k, list(g)` —— key 是分组键，组员直接 list(g)。
+
+
+
+### FIXED(2026-10-18T18:00:32Z / BUG-173)
+- evidence: vools/data/seq.py L509-512 `group_by` 的 gen：原 `yield k, list(map(itemgetter(1), g))`（误用 (key,item) 对惯用法），改为 `yield k, list(g)`。probe 实测：Seq([1,1,2,3]).group_by().collect() 由 TypeError('int' object is not subscriptable) 变为 [(1,[1,1]),(2,[2]),(3,[3])]；Seq([('a',1),('a',2),('b',3)]).group_by(lambda x:x[0]).collect() 变为 [('a',[('a',1),('a',2)]),('b',[('b',3)])]（key 正确、组员为原始元素）；Seq(['ab','cd','e']).group_by(len).collect() 变为 [(1,['e']),(2,['ab','cd'])]。itertools.groupby 的 g 即分组内原始元素，list(g) 即为组员。
+## BUG-174 [2026-10-18T18:02:24Z] [medium] FIXED
+- summary: [rule:type-error] seq.py _starmap 多函数闭包共享循环变量 k + 串行管道，第二个函数收到前一函数结果 TypeError
+- detail: vools/data/seq.py L890-904 `Seq._starmap`：
+
+```python
+def _starmap(self, *funcs):
+    funcs = list(funcs)
+    while funcs:
+        k = funcs.pop(0)
+        f = lambda x: NONE if x is NONE else (k(*x) if _yib(x) else k(x))
+        self._add_op(f)
+    return self
+```
+
+两个独立缺陷叠加：
+
+1. **闭包共享循环变量 k**：Python 闭包捕获变量本身而非值。`pop(0)` 循环里生成的所有 f 引用同一个 `k`，最终都指向最后一次 pop 的 func。`_add_op` 只 `_pipe` 组合 f，执行在 collect 时才发生，此时 k 已是最后一个 func。
+
+2. **多函数串行管道语义错**：`_add_op` 把多个 f 串成管道。`Seq([[1,2]])._starmap(add, mul)` 中第一个 f 把 [1,2] star 展开成 3，第二个 f 收到的却是 3（非可迭代），于是走 `k(x)` 分支，对 3 调 mul → `TypeError: <lambda>() missing 1 required positional argument: 'b'`。
+
+Probe（RED）：
+```python
+from vools.data import Seq
+Seq([[1,2],[3,4]])._starmap(lambda a,b:a+b, lambda a,b:a*b).collect()
+# TypeError: <lambda>() missing 1 required positional argument: 'b'
+```
+
+修复：多函数 starmap 应对每个 func 独立并行作用于**原始元素**（各自 star 展开），不串行。与 `_mapmap` 多函数分支（L923-928 返回 list）一致：每个 func 独立应用，结果合成 list。
+
+
+
+### FIXED(2026-10-18T18:03:18Z / BUG-174)
+- evidence: vools/data/seq.py _starmap L890-904 重写：原 `while funcs: k = funcs.pop(0); f = lambda x: ... k(...)`（闭包共享循环变量 k + _add_op 串行管道），改为 0 函数返回 self、1 函数保持原单函数分支、多函数时用 `_inner` 对每个 func 独立并行作用于原始元素（各自 star 展开，结果合成 list），与 _mapmap 多函数分支一致。probe 实测：Seq([[1,2],[3,4]])._starmap(lambda a,b:a+b).collect()==[3,7]；_starmap(add, mul).collect() 由 TypeError("<lambda>() missing 1 required positional argument: 'b'") 变为 [[3,2],[7,12]]（add→3,7；mul→2,12）；Seq([[2,3]])._starmap(sub, div).collect()==[[-1, 0.6667]]；Seq([5,7])._starmap(x*2, x+1).collect()==[[10,6],[14,8]]。单函数路径零回归。
+## BUG-175 [2026-10-18T18:04:32Z] [medium] FIXED
+- summary: [rule:logic-error] seq.py tee 用 deque(maxlen) 滑动窗口，结果非 n 元组分块而是重叠窗口
+- detail: vools/data/seq.py L1090-1111 `Seq.tee(n, fillvalue)`：
+
+```python
+def gen():
+    q = deque(maxlen=n)
+    d = q.append
+    for i in self._evaluate():
+        d(i)
+        if len(q) == n:
+            yield tuple(q)
+    else:
+        for i in range(n - 1):
+            d(fillvalue)
+            yield tuple(q)
+```
+
+用 `deque(maxlen=n)` 作滑动窗口：每 append 一个元素后一旦 `len(q)==n` 就 yield tuple(q)。由于 maxlen 会丢弃队头，结果是对元素做**滑动窗口**而非**分组**。
+
+- `Seq([1,2,3,4,5]).tee(2)` 期望按 n 元组分块 `[(1,2),(3,4),(5,None)]`，实际 `[(1,2),(2,3),(3,4),(4,5),(5,None)]`。
+- `tee(3)` 实际 `[(1,2,3),(2,3,4),(3,4,5),(4,5,None),(5,None,None)]`，应为 `[(1,2,3),(4,5,None)]`。
+
+修复：分组应使用 `grouper` 式实现（`zip_longest(*[iter(...)]*n, fillvalue=fillvalue)`）而非滑动 deque；deque(maxlen) 只适合滑动窗口语义。注意 `tee` 名称与 itertools.tee（复制迭代器）不同，本类 docstring 与返回 n 元组表明意图是分块。
+
+
+
+### FIXED(2026-10-18T18:05:08Z / BUG-175)
+- evidence: vools/data/seq.py L1090-1111 `tee` 重写：原 `deque(maxlen=n)` 滑动窗口（每 append 后 len==n 即 yield，maxlen 丢弃队头导致重叠），改为 `args = [iter(self._evaluate())] * n; for chunk in zip_longest(*args, fillvalue=fillvalue): yield chunk`，与 grouper 分块逻辑一致。probe 实测：Seq([1,2,3,4,5]).tee(2).collect() 由 [(1,2),(2,3),(3,4),(4,5),(5,None)] 变为 [(1,2),(3,4),(5,None)]；tee(3).collect() 由 [(1,2,3),(2,3,4),(3,4,5),(4,5,None),(5,None,None)] 变为 [(1,2,3),(4,5,None)]；tee(2, fillvalue=0).collect()==[(1,2),(3,0)]；grouper(2).collect()==[(1,2),(3,4),(5,None)] 未回归。deque 导入仍被其它处使用，未移除。
+## BUG-176 [2026-10-18T18:08:02Z] [medium] FIXED
+- summary: [rule:type-error] seq.py register callable 分支存实例属性导致 self 双重绑定，非 callable 分支 __name__ AttributeError
+- detail: vools/data/seq.py L1337-1348 `Seq.register`：
+
+```python
+def register(self, func):
+    if not callable(func):
+        @property
+        def _prop(self):
+            return func
+        setattr(self, func.__name__ or str(func), _prop)
+        return _prop
+    @wraps(func)
+    def _inner(self, *args, **kwargs):
+        return func(self, *args, **kwargs)
+    setattr(self, func.__name__, _inner)
+```
+
+两个独立缺陷：
+
+1. **callable 分支 self 双重绑定**：`setattr(self, name, _inner)` 把 `_inner(self, *args)` 存为**实例属性**。实例属性是普通函数，`s.hello` 不绑定实例（只有类属性才走 descriptor 绑定）。调用 `s.hello()` 等价于 `_inner()`（无参），而 `_inner` 声明了必填 self → `TypeError: hello() missing 1 required positional argument: 'self'`。
+
+2. **非 callable 分支 `func.__name__`**：传不可调用对象（如 `register(42)`）时 `func.__name__` 直接 AttributeError（int 无 `__name__`），`or str(func)` 永远走不到。
+
+Probe（RED）：
+```python
+def hello(self): return f"hello {self.size}"
+s = Seq([1,2,3]); s.register(hello)
+s.hello()  # TypeError: hello() missing 1 required positional argument: 'self'
+s.register(42)  # AttributeError: 'int' object has no attribute '__name__'
+```
+
+修复：
+- callable：`_inner(*args, **kwargs)` 直接 `func(self, *args, **kwargs)`（不重复声明 self），实例属性调用时 self 已由闭包绑定。
+- 非 callable：`name = getattr(func, '__name__', None) or str(func)`。
+
+
+
+### FIXED(2026-10-18T18:08:39Z / BUG-176)
+- evidence: vools/data/seq.py L1337-1348 `register` 重写。callable 分支：`_inner(self, *args, **kwargs)` 改为 `_inner(*args, **kwargs)` 用闭包持有 self（实例属性是普通函数不触发 descriptor 绑定，原签名导致 s.hello() 少传 self → TypeError）。非 callable 分支：`func.__name__ or str(func)` 改为 `getattr(func, '__name__', None) or str(func)`（int 无 __name__ 时不再 AttributeError）。probe 实测：def hello(self): return f"hello size={self.size}"；s=Seq([1,2,3]); s.register(hello); s.hello() 由 TypeError("hello() missing 1 required positional argument: 'self'") 变为 "hello size=3"；s.register(add)(def add(self,x): return self.size+x); s.add(10)==13；s.register(42) 由 AttributeError("'int' object has no attribute '__name__'") 变为 property 对象且 setattr 用 name="42"。
+## BUG-177 [2026-10-18T18:16:03Z] [medium] FIXED
+- summary: [rule:logic-error] qax.py QaxGroup 只按 group_cols[0] 分组，多列时静默丢弃其余维度且列数与数据不对齐
+- detail: vools/data/qax.py L519-565 `Qax.QaxGroup(group_cols, agg_spec)`：
+
+```python
+if isinstance(group_cols, str):
+    group_cols = [group_cols]
+groups = self.group_by(group_cols[0])   # ← 只取第一列
+...
+for key, group_table in groups.items():
+    row = [key]
+```
+
+`group_cols` 支持列表（多列），但实现只调用 `self.group_by(group_cols[0])`，**静默丢弃其余分组维度**，且结果列 `result_columns = list(group_cols)` 仍声明了多列，列数与数据行不对齐。
+
+Probe（RED）：
+```python
+from vools.data import Qax
+q = Qax([['A','x',1],['A','x',2],['A','y',3],['B','x',4]], columns=['g1','g2','v'])
+q.QaxGroup(['g1','g2'], {'v':'sum'}).to_array()
+# 期望按 (g1,g2) 组合：A/x=3, A/y=3, B/x=4
+# 实际 [['g1','g2','v'], ['A', 6], ['B', 4]] —— A 的 x/y 被合并，g2 维度丢失
+```
+
+修复：多列时按 (g1,g2,...) 组合键手动分组，每个桶构造成 Qax/Table 子表再逐列聚合；单列时保持原 group_by 路径。
+
+
+
+### FIXED(2026-10-18T18:17:15Z / BUG-177)
+- evidence: vools/data/qax.py QaxGroup 重写（L519-565）。原 `groups = self.group_by(group_cols[0])` 只按第一列分组，多列时静默丢弃其余维度。改为：多列时按 (g1,g2,...) 组合键分桶（buckets dict 保序），每个桶用 `Qax(rows, columns=list(self._columns))` 构造子表再逐列聚合；单列保持原 group_by 语义路径；多列键展开为独立单元格（`row = list(key)`）而非整组键塞成单值，保证 result_columns 与数据行列对齐。probe 实测：Qax([['A','x',1],['A','x',2],['A','y',3],['B','x',4]], columns=['g1','g2','v']).QaxGroup(['g1','g2'], {'v':'sum'}).to_array() 由 [['g1','g2','v'],['A',6],['B',4]] 变为 [['g1','g2','v'],['A','x',3],['A','y',3],['B','x',4]]（A/x=1+2=3、A/y=3、B/x=4）；单列 QaxGroup('g1',{'v':'sum'}) 仍 ['A',6],['B',4] 未回归；QaxGroup(['g1','g2']) 无聚合时按组合键输出；count 正常。
+## BUG-178 [2026-10-18T18:18:48Z] [medium] FIXED
+- summary: [rule:type-error] qax.py QAXCompute 列号为 int 时 func + '(' + col 拼接 TypeError
+- detail: vools/data/qax.py L581-596 `Qax.QAXCompute(col, func)`：
+
+```python
+if func is None:
+    return self.compute(col)
+if callable(func):
+    values = self.column(col)
+    return func(values)
+return self.compute(func + '(' + col + ')')
+```
+
+QAX 风格 API 行列索引从 1 开始，`col` 参数自然支持列号（int），且本类其它方法（如 `GetCell`/`GetCol`/`SetCell`）都接受 int 列号。但当 `func` 是字符串聚合名（如 'sum'）且 `col` 是 int 时，`func + '(' + col + ')'` 触发 `TypeError: can only concatenate str (not "int") to str`。`callable(func)` 分支下 `self.column(col)` 倒是能接受 int（复用 Table 语义），两分支对 int col 处理不一致。
+
+Probe（RED）：
+```python
+from vools.data import Qax
+q = Qax([['Alice',10],['Bob',20]], columns=['name','v'])
+q.QAXCompute(2, 'sum')  # TypeError: can only concatenate str (not "int") to str
+# 期望 30（同 QAXCompute('v','sum')）
+```
+
+修复：`col` 为 int 时先按 1-based 转列名 `self._columns[col-1]` 再拼表达式。
+
+
+
+### FIXED(2026-10-18T18:19:18Z / BUG-178)
+- evidence: vools/data/qax.py QAXCompute 增加 int col 处理：`if isinstance(col, int): col = self._columns[col - 1]` 在拼表达式前把 1-based 列号转列名。probe 实测：Qax([['Alice',10],['Bob',20]], columns=['name','v']).QAXCompute(2,'sum') 由 TypeError("can only concatenate str (not \"int\") to str") 变为 30，与 QAXCompute('v','sum')==30 一致；QAXCompute('v')（func=None）仍返回 self 未回归。
+## BUG-179 [2026-10-18T18:33:08Z] [medium] FIXED
+- summary: [rule:logic-error] tools.py shift cycle 模式 rotate(-num) 位移方向相反
+- detail: vools/utils/tools.py L193-196 `shift(iters, num, fill_value, cycle)` 循环模式分支：
+
+```python
+if cycle:
+    dq = deque(lst)
+    dq.rotate(-num)
+    return list(dq)
+```
+
+文档声明"num：位移步数（正数右移，负数左移）"，非循环分支（L200-206）也符合：`shift([1,2,3],1)` → `[None,1,2]`（右移 1）、`shift([1,2,3],-1)` → `[2,3,None]`（左移 1）。但 cycle 分支用 `deque.rotate(-num)`，把 `rotate` 的语义取反了：
+
+- `shift([1,2,3], 1, cycle=True)` → `[2,3,1]`（实为左移 1），期望右移 1 得 `[3,1,2]`
+- `shift([1,2,3], -1, cycle=True)` → `[3,1,2]`（实为右移 1），期望左移 1 得 `[2,3,1]`
+
+即 cycle 模式与非 cycle 模式的位移方向完全相反，同一 `num` 两种模式语义不一致。
+
+`collections.deque.rotate(n)`：n>0 时把尾端元素移到前端（右旋/右移），n<0 左移。故应写 `dq.rotate(num)`。
+
+Probe（RED）：
+```python
+from vools.utils.tools import shift
+shift([1,2,3], 1, cycle=True)   # [2,3,1]，期望 [3,1,2]
+shift([1,2,3], -1, cycle=True)  # [3,1,2]，期望 [2,3,1]
+```
+
+修复：`dq.rotate(num)`。
+
+
+
+### FIXED(2026-10-18T18:33:33Z / BUG-179)
+- evidence: vools/utils/tools.py `shift` cycle 分支 `dq.rotate(-num)` → `dq.rotate(num)`，使 `collections.deque.rotate` 语义与文档「正数右移/负数左移」及非循环分支一致。probe 实测：shift([1,2,3],1,cycle=True) 由 [2,3,1] 变为 [3,1,2]（右移 1）；shift([1,2,3],-1,cycle=True) 由 [3,1,2] 变为 [2,3,1]（左移 1）；非循环 shift([1,2,3],1)→[None,1,2]、shift([1,2,3],-1)→[2,3,None] 及 fill_value 均未回归；cycle num=4（=4%3 右移1）→[3,1,2]。
+## BUG-180 [2026-10-18T18:43:09Z] [high] FIXED
+- summary: [rule:type-error] vdate_class.py VDate.__new__ 时间戳分支 fromtimestamp 递归构造崩溃
+- detail: vools/datetime/vdate_class.py L413-416 `VDate.__new__` 时间戳分支：
+
+```python
+if isinstance(dt, (int, float)):
+    result = super().fromtimestamp(dt)
+```
+
+VDate 被 `@rself` 装饰，rself 用 `cls.__new__ = staticmethod(lambda cls, *args, **kwargs: _wrap_new(cls, *args, **kwargs))` 包装。`datetime.fromtimestamp(ts)` 内部走 `cls._fromtimestamp(t, tz)` → `cls(year, month, day, hour, min, sec, micro, tzinfo, fold)` 用 **9 个位置参数** 构造实例，此时 `cls` 是 VDate，于是回到 `VDate.__new__(cls, y, m, d, h, M, S, us, tzinfo, fold)` —— 但 `VDate.__new__(cls, dt=None, fmt=None)` 只接受 3 个参数 → `TypeError: VDate.__new__() takes from 1 to 3 positional arguments but 9 were given`。
+
+文档明确声明 dt 支持"时间戳"（L403），该路径 **100% 崩溃**。字符串/无参/无参分支正常（字符串分支用 `super().__new__(cls, y, m, d, ...)` 直接构造，不经过 fromtimestamp）。
+
+Probe（RED）：
+```python
+from vools.datetime.vdate_class import VDate
+VDate(0)   # TypeError: VDate.__new__() takes from 1 to 3 positional arguments but 9 were given
+```
+
+修复：改用 `datetime.fromtimestamp(dt)`（显式 datetime，不触发 VDate 构造），再 `super().__new__(cls, d.year, d.month, d.day, d.hour, d.minute, d.second, d.microsecond)`，与字符串/datetime 分支同构。
+
+
+
+### FIXED(2026-10-18T18:43:44Z / BUG-180)
+- evidence: vools/datetime/vdate_class.py `VDate.__new__` 时间戳分支：`super().fromtimestamp(dt)` → 显式 `_ts = datetime.fromtimestamp(dt)` + `super().__new__(cls, y, m, d, H, M, S, us)`，与字符串/datetime 分支同构，绕开 datetime.fromtimestamp 内部 `cls(...)` 9 参构造拉回 VDate.__new__ 的递归崩。probe 实测：VDate(0) 由 TypeError: takes from 1 to 3 positional arguments but 9 were given 变为 VDate('1970-01-01 08:00:00')；VDate(time.mktime((2024,1,2,...))) → VDate('2024-01-02 00:00:00')；字符串/无参路径及 add_days/add_months(Jan31+1→2024-02-29、Mar31-1→2024-02-29)/`+timedelta` 保留 VDate 类型/`- VDate` → -3.0 均未回归。
+## BUG-181 [2026-10-18T18:46:02Z] [high] FIXED
+- summary: [rule:logic-error] vdate_class.py get_month 月份偏移方向与文档相反
+- detail: vools/datetime/vdate_class.py L139-158 `VDate.get_month(self, num=0, last_day=False)` 月份偏移方向与文档相反：
+
+```python
+y, m = self.year, self.month
+num = num - 1 if last_day else num
+while num > 0:
+    m -= 1          # num>0 应加月（未来），却减月
+    ...
+while num < 0:
+    m += 1          # num<0 应减月（过去），却加月
+    ...
+```
+
+文档 L133 明确："num: 月份偏移，0=本月，**1=下月，-1=上月**"。实测（VDate('2024-01-15')）：
+
+- `get_month(0)` → '2024-01-01' ✓（本月）
+- `get_month(1)` → '2023-12-01' ✗（应下月 '2024-02-01'）
+- `get_month(-1)` → '2024-02-01' ✗（应上月 '2023-12-01'）
+- `get_month(1, last_day=True)` → '2023-12-31' ✗（应下月月末 '2024-02-29'）
+- `get_month(-1, last_day=True)` → '2024-02-29' ✗（应上月月末 '2023-12-31'）
+
+num>0 走了 `m -= 1`（上月），num<0 走了 `m += 1`（下月），两个 while 循环的加减方向恰好颠倒。且与 utils.get_month（num 正数表示过去）方向不一致，同一语义两套实现相反。
+
+修复：`while num > 0` 内改 `m += 1`（跨年处理 `m == 13 → m=1, y+=1`），`while num < 0` 内改 `m -= 1`（跨年 `m == 0 → m=12, y-=1`）。`num = num - 1 if last_day` 这行保留即可（把月末目标月索引对齐）。
+
+Probe（RED）：
+```python
+from vools.datetime.vdate_class import VDate
+VDate('2024-01-15').get_month(1)            # 实得 2023-12-01，期望 2024-02-01
+VDate('2024-01-15').get_month(-1)           # 实得 2024-02-01，期望 2023-12-01
+VDate('2024-01-15').get_month(1, True)      # 实得 2023-12-31，期望 2024-02-29
+```
+
+
+
+### FIXED(2026-10-18T18:48:03Z / BUG-181)
+- evidence: vools/datetime/vdate_class.py `VDate.get_month`：①两个 while 循环加减方向颠倒——`num>0` 改 `m += 1`（含 `m==13→m=1,y+=1` 跨年），`num<0` 改 `m -= 1`（含 `m==0→m=12,y-=1`）；②`num = num - 1 if last_day` 改为 `num + 1`，使 `dt-1` 落在目标月末而非目标月前一月。probe 实测 VDate('2024-01-15')：get_month(0)='2024-01-01'、get_month(1)='2024-02-01'、get_month(-1)='2023-12-01'（原为 2023-12-01/2024-02-01 全反）；get_month(0,True)='2024-01-31'、get_month(1,True)='2024-02-29'、get_month(-1,True)='2023-12-31'、get_month(2,True)='2024-03-31'，全部与文档 num 语义一致。
+## BUG-182 [2026-10-18T18:54:03Z] [high] FIXED
+- summary: [rule:type-error] fusion.py fuse_classes 不可变类型融合 base 固定 object 导致 __new__ 崩溃
+- detail: vools/oop/fusion.py L54 `fuse_classes` 基类固定为 `object`，L57-72 `has_immutable` 时生成的 `__new__` 调用 `immutable_cls.__new__(cls, *args)`，但 `FusedClass` 继承 object、不是 int/str 等的子类：
+
+```python
+base_class = object                      # ← 固定 object
+...
+if has_immutable:
+    immutable_cls = next(...)            # 如 int / str
+    def __new__(cls, *args, **kwargs):
+        instance = immutable_cls.__new__(cls, *args, **kwargs)   # cls 是 object 子类
+        return instance
+...
+FusedClass = type(name, (base_class,), class_dict)
+```
+
+`int.__new__`/`str.__new__`/`bytes.__new__` 等强类型 `__new__` 要求第一个位置参数（cls）必须是指定类型的**子类**。当传入的 cls 是 object 子类（FusedClass）时直接抛 `TypeError`：
+
+- `fuse_classes(int, Foo)` → `TypeError: int.__new__(IntFoo): IntFoo is not a subtype of int`
+- `fuse_classes(str, Foo)` → `TypeError: str.__new__(StrFoo): StrFoo is not a subtype of str`
+- `fuse_classes(bytes, Foo)` → 同样崩溃
+
+文档明确声称支持任意类融合（含不可变类型 `_IMMUTABLE_TYPES` 列表已专门处理），该路径 100% 崩。普通类融合（`fuse_classes(Foo)`）正常。
+
+修复：`has_immutable` 为真时把 `base_class` 设为该不可变类型本身，使 FusedClass 成为其真子类，`immutable_cls.__new__(cls, ...)` 即合法。
+
+Probe（RED）：
+```python
+from vools.oop.fusion import fuse_classes
+class Foo:
+    def __init__(self, x=1): self.x = x
+fuse_classes(int, Foo)   # TypeError: int.__new__(IntFoo): IntFoo is not a subtype of int
+fuse_classes(str, Foo)   # TypeError: str.__new__(StrFoo): StrFoo is not a subtype of str
+```
+
+
+
+### FIXED(2026-10-18T18:55:18Z / BUG-182)
+- evidence: vools/oop/fusion.py `fuse_classes`：①把 `has_immutable` 计算提前到基类选择之前；②基类选择改为 `has_immutable` 时取该不可变类型本身（`next(cls for cls in classes if issubclass(cls, _IMMUTABLE_TYPES))`），否则 object；③`immutable_cls` 直接取 `base_class`。这样 FusedClass 成为不可变类型的真子类，`immutable_cls.__new__(cls, ...)` 合法。probe 实测：fuse_classes(int, Foo) → IntFoo(5)，isinstance(f, int)=True，Foo.get_x 正常返回 5；fuse_classes(str, Foo) → StrFoo('hi')，isinstance(str)=True；fuse_classes(bytes, Foo) → BytesFoo(b'ab')，isinstance(bytes)=True；fuse_classes(Foo) 普通融合 FooG 正常。原三条 `X is not a subtype of int/str` 全部消除。
+## BUG-183 [2026-10-18T19:16:24Z] [high] FIXED
+- summary: curry_core.CurryDescriptor.__get__ 仅当实例方法首参名为 'self' 才剔除，非 'self' 命名（如 'this'）的柯里化实例方法参数错乱，方法调用返回 Curried 而非结果
+- detail: `vools/decorators/curry_core.py` L243-245 `__get__`：
+```
+if required_args and required_args[0] == 'self':
+    pre_attrs['required_args'] = required_args[1:]
+    pre_attrs['params'] = {k: v for k, v in params.items() if k != 'self'}
+```
+只处理名为 'self' 的实例参数。若实例方法首参命名不同（如 'this'/'cls2'/任意名），不剔除 required_args，也不从 params 移除首参，导致 Curried 的 bindable_params 仍含首参，位置参数按名字顺序绑定到错误参数。
+
+复现：
+```
+class Foo:
+    def __init__(self, v): self.v = v
+    @curry
+    def bar(this, x, y):
+        return this.v + x + y
+f = Foo(1)
+f.bar(2, 3)   # 期望 6
+```
+实际输出：
+```
+<Curried bar{'this': 2, 'x': 3}  is_ready= False ...>
+```
+- bound_args 错乱：this=2（应为 self 实例）、x=3（应为 2）、y 缺失
+- is_ready=False，返回 Curried 而非执行结果
+- 若实例不传实例参数（bar(1,2)），则 this=1, x=2, y 缺失，同样错
+
+对照：`bar(self, x, y)` 命名 'self' 时正常（`f.bar(2,3)` 返回 6）。
+
+修复：`__get__` 中不应按名字硬编码 'self'，而应基于 descriptor 绑定的第一个位置参数剔除；可用 `inspect` 判断首参名或使用签名中的第一个参数名。
+
+测试：`tests/test_curry_core.py` 应覆盖非 'self' 首参名的实例方法柯里化。
+- reported_by: lead
+
+
+
+### FIXED(2026-10-18T19:19:35Z / BUG-183)
+- evidence: `vools/decorators/curry_core.py` `CurryDescriptor.__get__`（L243-246）：删去 `required_args[0] == 'self'` 名字硬编码，改为剔除任意首参名（与 classmethod 委托分支 L232-235 一致），并同步从 `params` 中剔除同名键。修复后 `class Foo: @curry def bar(this,x,y): ...` 的 `Foo(1).bar(2,3)` 返回 6（此前返回 `Curried bound_args={'this':2,'x':3}` 且 is_ready=False，末参缺失）。单步/多步柯里化均正常：`baz(2)(3)(4)==10`。新增 `tests/test_curry_core.py` 13 项测试覆盖 self/this 命名、多步调用、bound_args 剔除、classmethod 委托、错误路径，全 GREEN（EXIT=0）；`tests/test_decorators_shotcut.py` 34 passed（EXIT=0）；`curry_core` doctest 4 passed。提交 `b9d73d2` 已推 `gitcode`。
+## BUG-184 [2026-10-19T01:52:32Z] [high] FIXED
+- summary: vools.sys.exe @exe 装饰器用 os.path.exists 检查可执行文件，导致 PATH 中命令名（如 git/python/echo）被误判为不存在并抛 FileNotFoundError
+- detail: vools/sys/exe.py `_run_sync` L278: `if not os.path.exists(exe_path): raise FileNotFoundError(f"Executable not found: {exe_path}")`。docstring（L195）声明"支持绝对路径或 PATH 中的命令名"，但 os.path.exists 只在相对/绝对路径存在时返回 True，对 PATH 命令名恒为 False。
+
+复现探针（probe_184.py）：
+```python
+from vools.sys import exe
+import os, shutil
+@exe("git")
+def git(_version=None):
+    pass
+print("exists('git')=", os.path.exists("git"))   # False
+print("which git=", shutil.which("git"))          # D:\Program Files\Git\cmd\git.EXE
+try:
+    rc, out, err = git(_version=True)
+except FileNotFoundError as e:
+    print("THROWS FileNotFoundError:", e)         # Executable not found: git
+```
+结论：git 确实在 PATH 中（shutil.which 可定位），但装饰器因 os.path.exists 误判而抛 FileNotFoundError，违反自身文档承诺。修复应先用 shutil.which 兜底解析 PATH 命令名。
+
+影响：所有 @exe("cmd_name") 用法（非绝对路径）在 Windows/Linux 上都会失败，除非调用方恰好给出完整路径。示例 doctest `@exe("echo")`、`@exe("python")` 均受影响。
+
+
+
+### FIXED(2026-10-19T02:20:43Z / BUG-184)
+- evidence: vools/sys/exe.py `_run_sync` 在 os.path.exists 为 False 时改用 shutil.which 解析 PATH 命令名（并 import shutil）；探针确认 os.path.exists('git')=False 而 shutil.which('git')='D:\Program Files\Git\cmd\git.EXE'，@exe("git") 执行后 rc=0 且 out 含 'git version 2.55.0'；tests/test_sys_exe.py 新增 TestPathCommandName（28 项全 GREEN）；commit f312767 已推送 gitcode。
+## BUG-185 [2026-10-19T02:38:18Z] [high] FIXED
+- summary: VBJsonBackend.parse 对畸形字面量（[tru]/[nul]/["ok", tru]）无限循环挂死：_parse_boolean/_parse_null 失败路径只 append 错误不推进 index[0]，_parse_array 的 while True 原地重进同一字符
+- detail: vools/serialize/backends/vb_json_backend.py `_parse_boolean`(L378-379) 与 `_parse_null`(L398-399) 在匹配失败时只 `self._errors.append(...)` 后 return，**不推进 index[0]**；`_parse_number`(L347-349) 在收集为空时 return 0 同样不推进。`_parse_array`(L213-231) 的 while True 中 `value = self._parse_value(...)` 后直接 `result.append(value)`，不校验 index 是否前进。探针实测（子进程 + 6s 超时）：`parse('[tru]')`、`parse('[nul]')`、`parse('["ok", tru]')`、`parse('[tru, 1]')` 全部 HANG/INFINITE LOOP（>6s TimeoutExpired）。任何不可信 JSON 输入（含拼错的 true/false/null）即可让调用方线程永久卡死。
+- task_id: T0r589
+
+
+
+### FIXED(2026-10-19T03:03:02Z / BUG-185)
+- evidence: vools/serialize/backends/vb_json_backend.py 三处失败路径推进 index[0]：_parse_boolean 与 _parse_null 匹配失败时 index[0]+=1（带越界保护），_parse_number 空收集时 index[0]+=1 并 append 'Invalid Number' 错误；_parse_array/_parse_object 循环加 before 快照兜底，子解析器未推进则强制推进一次并记录 'Invalid value'。子进程带 6s 超时探针：修复前 parse('[tru]')/('[nul]')/('["ok", tru]')/('[tru, 1]') 全部 HANG，修复后全部 rc=0 快速返回且 errors 非空；正常输入 '[1,2,3]'/'{"a":1}'/'[true,false,null]' 仍正确且 errors=0。新增 tests/test_serialize_vb_json.py（6 项 GREEN），serialize 全量 194 项通过。commit 2dfe16b 已推送 gitcode。
+## BUG-186 [2026-10-19T03:07:02Z] [high] FIXED
+- summary: CallableHandler 中悬空的 @abstractmethod 错位应用到具体方法 do，导致继承 CallableHandler 但未 override do 的自定义 handler 实例化抛 TypeError
+- detail: vools/serialize/callable/__init__.py L41-42 存在一个悬空的 `@abstractmethod` 装饰器：它后面紧跟空行与 `def do(self, f=print, pre_f=None, sub_f=None)`，因此装饰器实际应用到 `do` 方法。`do` 是带完整实现的普通方法（非抽象），被误标为抽象后，任何继承 CallableHandler 的子类必须 override `do` 才能实例化。探针实测：定义仅实现 can_handle/get_state/restore 三个抽象方法的 MyHandler(c.CallableHandler)，`MyHandler()` 抛 `TypeError: Can't instantiate abstract class MyHandler with abstract method do`；`CallableHandler.__abstractmethods__ == {'can_handle', 'do', 'get_state'}`。用户/第三方按文档写自定义 handler 会因此崩溃。
+- task_id: T0r591
+
+
+
+### FIXED(2026-10-19T03:10:20Z / BUG-186)
+- evidence: vools/serialize/callable/__init__.py 删除 get_state 与 do 之间的悬空 `@abstractmethod`（原 L40-41，装饰器因后接空行而错位应用到 def do）。探针：修复前 CallableHandler.__abstractmethods__={'can_handle','do','get_state'}，仅实现 can_handle/get_state/restore 的 MyHandler() 抛 TypeError; 修复后 __abstractmethods__={'can_handle','get_state'}，MyHandler() 实例化成功且 do() 返回 self。新增 tests/test_serialize_callable_handler.py（3 项 GREEN），serialize/callable 全量套件通过。commit e483fc7 已推送 gitcode。
+## BUG-187 [2026-10-19T03:14:08Z] [high] FIXED
+- summary: EnvCommands.nim() 硬导入可选子包 vools.bridge 且无 try/except，bridge 未安装时 vools sys env --nim 崩溃 ModuleNotFoundError
+- detail: vools/sys/env_cmd.py L83 `EnvCommands.nim()` 顶层语句 `from ..bridge.core.loader import _LIB_DIR` 硬导入可选子包 vools.bridge，无 try/except 保护。`vools-bridges` 未安装时（实测 find_spec('vools.bridge') is None），调用 `EnvCommands().nim()` 在完成 nim 版本探测后直接抛 `ModuleNotFoundError: No module named 'vools.bridge'`，整个 `vools sys env --nim` 命令崩溃，且错误信息未提示"bridge 未安装"。与 BUG-3（@bridge 在 bridge 缺席时崩溃）同族，属可选依赖硬导入缺陷。
+- task_id: T0r592
+
+
+
+### FIXED(2026-10-19T03:18:05Z / BUG-187)
+- evidence: vools/sys/env_cmd.py `EnvCommands.nim()` 将 `from ..bridge.core.loader import _LIB_DIR` 包入 try/except (ImportError, ModuleNotFoundError)，bridge 缺席时打印「可选子包 vools-bridges 未安装，跳过库目录检查」并 return。子进程探针：find_spec('vools.bridge')=None 时 nim() 修复前抛 ModuleNotFoundError，修复后正常完成。tests/test_sys_env_cmd.py 追加 TestBug187Regression（12 项 GREEN）。commit 5950844 已推送 gitcode。
+## BUG-188 [2026-10-19T03:34:36Z] [high] FIXED
+- summary: VList.islice 在 step=0 且 start>stop 时无限循环挂死，缺 step=0 校验
+- detail: vools/data/vlist.py `VList.islice(start, stop, step=0)` 无限循环挂死。L290 循环条件 `(i < stop if step > 0 else i > stop) and 0 <= i < len(self)`，循环体 `i += step`；当 `step=0` 且 `start > stop`（如 islice(2, 1, step=0)）时：`i > stop` 为 True、`0 <= i < len` 恒为 True，而 `i += 0` 永不推进 → while True 死循环。实测子进程 timeout=6 触发 `subprocess.TimeoutExpired`（HANG/INFINITE LOOP）。Python 内建切片语义中 step=0 应抛 ValueError，此处未校验。注：`islice(0,3,step=0)` 因 `i>stop` 为 False 返回空不挂，易漏测；`start>stop` 时才暴露。
+- task_id: T0r593
+
+
+
+### FIXED(2026-10-19T03:36:52Z / BUG-188)
+- evidence: vools/data/vlist.py `VList.islice` 在 step 归一化后新增 `if step == 0: raise ValueError("slice step cannot be zero")`，与 Python 内建切片语义一致，消除 `i += step` 永不推进导致的 while 死循环。子进程探针：修复前 `islice(2, 1, step=0)` 触发 timeout=6 的 subprocess.TimeoutExpired（HANG/INFINITE LOOP）；修复后 0.000s 抛 ValueError。正常切片行为不变（islice(1,4)=[2,3,4]、islice(0,None,2)=[1,3,5]、islice(0,5,-1)=[]）。新增 tests/test_data_vlist_islice.py（含 ThreadPoolExecutor+timeout=3 挂起保护）4 项 GREEN，相关 seq/vlist/itor 108 项 GREEN。commit 9c56360 已推送 gitcode。
+## BUG-189 [2026-10-19T03:46:35Z] [high] FIXED
+- summary: VDate.simplify_date_ranges 对无效日期抛未捕获 ValueError（2023-02-30），全被过滤时 dates[0] 抛 IndexError
+- detail: vools/datetime/vdate_class.py `VDate.simplify_date_ranges` 两处未处理边界导致崩溃：
+
+(1) L198-199 `_check` 用正则 `^[1-2][0-9]{3}[0-1][0-9][0-3][0-9]$` 只校验"格式"不校验"日期有效性"。L202 `datetime.strptime(d, ...)` 对 `"2023-02-30"`（2月无30日）抛**未捕获 ValueError: day is out of range for month**；`"2023-13-01"`（13月）同样崩。实测 `simplify_date_ranges(("2024-01-15","2023-02-30"))` 整方法崩溃——单个无效日期即毁掉整个合法日期列表，文档承诺"合并为连续日期范围"却无降级。
+
+(2) L203 `fmt = ... if "-" in str(dates[0]) else ...`：当 L201 filter 把所有输入都过滤掉（如 `("abc","xyz")`）时 dates 为空列表，`dates[0]` 抛**未捕获 IndexError: list index out of range**。docstring Raises 仅声明 TypeError，未声明 IndexError。
+
+实测探针输出：invalid_day→ValueError、invalid_month→ValueError、all_filtered→IndexError、mixed→ValueError。均为真实崩溃。
+- task_id: T0r602
+
+
+
+### FIXED(2026-10-19T03:49:36Z / BUG-189)
+- evidence: vools/datetime/vdate_class.py `VDate.simplify_date_ranges` 两处崩溃修复：(1) 把 `dates = filter(_check, {...})` + 生成器 strptime 改为逐个 try strptime，捕获 ValueError 跳过无效日期（`_check` 只验格式不验 2023-02-30 这类无效日期）；(2) parsed 为空时返回 []，不再对空列表取 dates[0] 抛 IndexError。实测：修复前 invalid_day/invalid_month→ValueError、all_filtered→IndexError、mixed(含 2023-02-30)→ValueError；修复后 invalid_day/invalid_month/all_filtered→[]、mixed→正确返回 [('2024-01-15','2024-01-16')]、numeric(20240115)→正确解析、非 collection→仍抛 TypeError 不回归。新增 tests/test_datetime_vdate_ranges.py 8 项 GREEN，related datetime 套件 122 项 GREEN。commit 263ae96 已推送 gitcode。
+## BUG-190 [2026-10-19T04:01:13Z] [high] FIXED
+- summary: SharedBridge.write 负 offset 抛未捕获 memoryview ValueError，超界 offset 返回负字节数违背契约
+- detail: vools/vconcurrent/bridges.py `SharedBridge.write/read` 用 `n = min(len(data), self._size - offset)` 但未校验 offset 边界，两类真实缺陷：
+
+(1) 负 offset 崩溃：`write(b"hello", -3)` → `n = min(5, 16-(-3)) = 5`，但 `buf[-3:-3+5]` = `buf[-3:2]` 是**空切片**（start=13 > stop=2），而 rvalue `data[:5]` 长度 5 ≠ 0 → **未捕获 ValueError: memoryview assignment: lvalue and rvalue have different structures**。实测探针确认崩溃。
+
+(2) 超界 offset 返回负字节数：`write(b"hello", 100)` → `n = min(5, 16-100) = -84` → `data[:-84]` 静默变空 bytes，`buf[100:16]` 空切片赋值，函数返回 **-84**。docstring 声明"Returns: 实际写入的字节数"，返回负数既无意义又会让调用方误判。
+
+read 侧同样：`read(5, -3)` → `n=5` 但 `buf[-3:2]` 空 → 返回 b'' 静默，`read(5,100)` → `n=-84` → 返回 b''。
+
+write_object/read_object（L694/707）委托 write/read，同样受影响。
+- task_id: T0r603
+
+
+
+### FIXED(2026-10-19T04:04:35Z / BUG-190)
+- evidence: vools/vconcurrent/bridges.py `SharedBridge.write`/`read` 修复 offset 边界校验：(1) write 加 `if offset < 0 or offset >= self._size: return 0`，杜绝负 offset 让 `buf[offset:offset+n]` 成空切片配非空 rvalue 抛 `ValueError: memoryview assignment: lvalue and rvalue have different structures`（实测 `write(b"hello", -3)` 原崩溃）；(2) 超界 offset 不再返回负字节数（原 `write(b"hello",100)` 返回 -84），改为返回 0 符合"实际写入字节数"契约；(3) read 加同样校验返回 b""。write_object/read_object 委托 write/read 一并修复。实测：修复前 write_offset_neg→ValueError 崩溃、write_offset_oob→-84；修复后 write_offset_neg/oob→0、read_offset_neg/oob→b''、write_tail(15)→1、size 足够时 write_object/read_object 往返 True。新增 tests/vconcurrent/test_bridges.py 3 项回归 GREEN，bridges 39 项 + vconcurrent 251 项全 GREEN。commit 102558a 已推送 gitcode。
+## BUG-191 [2026-10-19T04:05:40Z] [high] FIXED
+- summary: ChannelBridge.send/send_pickle 对不可 pickle 对象抛未捕获 AttributeError/TypeError，违背返回False契约
+- detail: vools/vconcurrent/bridges.py `ChannelBridge.send`/`send_pickle` 对不可 pickle 对象抛未捕获异常，违背 docstring 契约：
+
+L313 `except (EOFError, OSError, ValueError)` 捕获集合漏了 pickle 序列化会抛的 AttributeError/TypeError/PicklingError。实测探针：
+- `send(lambda: 1)` → **未捕获 AttributeError: Can't pickle local object '<lambda>...'**
+- `send(open('pyproject.toml'))` → **未捕获 TypeError: cannot pickle '_io.TextIOWrapper' object**
+- `send_pickle(lambda: 1)` → **未捕获 AttributeError**
+
+docstring L303 明确承诺"发送成功返回 True，超时或关闭返回 False"，但任一不可序列化对象（lambda、file handle、局部闭包等常见值）都会让桥接层崩溃。recv 侧 L332 同样只捕获三异常，反序列化失败（pickle.UnpicklingError/EOFError）也会未捕获崩溃。send_json L350 只捕获 (TypeError, ValueError)，json.dumps 的 RecursionError/OverflowError 也会漏。
+- task_id: T0r605
+
+
+
+### FIXED(2026-10-19T04:13:45Z / BUG-191)
+- evidence: vools/vconcurrent/bridges.py 桥接 send/recv 异常捕获集合补 `TypeError`/`AttributeError`：(1) `ChannelBridge.send`/`ThreadProcessBridge.send_thread_side`/`send_process_side` 原 `except (EOFError, OSError, ValueError)` 漏 pickle 会抛的 AttributeError/TypeError → 现加两类；(2) `recv` 三处（ChannelBridge.recv、ThreadProcessBridge.recv_thread_side/recv_process_side）与 `poll` 同步扩展；(3) `send_pickle` L387 原 `(pickle.PickleError, TypeError)` 漏 AttributeError（pickle.dumps 对 lambda 等局部对象抛 AttributeError）→ 补；`recv_pickle` 补 AttributeError。实测：修复前 `send(lambda:1)`→AttributeError 崩溃、`send(open(...))`→TypeError 崩溃、`send_pickle(lambda:1)`→AttributeError 崩溃；修复后三例均返回 False 符合 docstring"发送成功返回 True，超时或失败返回 False"契约，正常 `send({'k':1})`→True、`recv`→None 不受影响。新增 tests/vconcurrent/test_bridges.py 4 项回归 GREEN（TestChannelBridge 3 + TestThreadProcessBridge 1），bridges 42 项 + vconcurrent 全 GREEN。commit cbae2b7 已推送 gitcode。
+## BUG-192 [2026-10-19T04:32:41Z] [critical] OPEN
+- summary: [rule:syntax] bridges/vools/bridge/md/rich/renderer.py L193 f-string 表达式含反斜杠，Python 3.11 编译失败致模块 import 崩溃 + test_py36_syntax_guard 失败
+- detail: bridges/vools/bridge/md/rich/renderer.py L193:
+    f'{" data-rich-collapsed=\\"true\\"" if (foldable and collapsed) else ""}>\''
+f-string 的 {表达式} 内含 `\\"` 反斜杠字面量。Python 3.11 规定 f-string 表达式部分不得包含反斜杠（Python 3.12 起才允许 PEP 701）。
+
+实测（Python 3.11.8, ast.parse 该文件）：
+    SyntaxError line=208 offset=5 msg=f-string expression part cannot include a backslash
+（多行 f-string 结束行定位到 L208）
+
+后果：
+1. bridges/vools/bridge/md/rich/renderer.py 模块 import 即崩溃（SyntaxError 于编译期），bridges/md/rich 子包不可用。
+2. tests/core/test_py36_syntax_guard.py::test_py36_syntax_guard 失败（vools 语法防护测试，报告 1/892 个文件无法编译）。
+
+修复方向：把表达式内的 `\\"` 提为 f-string 外变量（如 `data_attr = " data-rich-collapsed=\\"true\\"" if (foldable and collapsed) else ""` 后 `f'{data_attr}>'`），或改用 .format/拼接，使 3.11 可编译。
+
+注：该文件属 bridges/ 工作区（其他 agent 同步开发范围），本上报仅归档证据，修复由 bridges 责任方执行。
+- reported_by: agent-vools-hardening
+- task_id: T0r606
+
+## BUG-193 [2026-10-19T04:42:07Z] [medium] FIXED
+- summary: tests/test_utils_tools.py test_shift L90-91 cycle=True 断言方向与 docstring「正数右移」+ deque.rotate 语义相反，实现正确而断言写反致测试恒失败
+- detail: tests/test_utils_tools.py::TestStringUtils::test_shift L90-91 对 cycle=True 的断言方向与实现/契约相反：
+
+    L90: assert list(shift([1, 2, 3], 1, cycle=True)) == [2, 3, 1]     # 期望左移
+    L91: assert list(shift([1, 2, 3], -1, cycle=True)) == [3, 1, 2]    # 期望右移
+
+实现 vools/utils/tools.py L193-196 cycle 分支用 `deque(lst).rotate(num)`。deque.rotate(1) 语义为**右移**（末元素到首）→ [3,1,2]；rotate(-1) 为**左移** → [2,3,1]。这与 docstring L181「num: 位移步数（正数右移，负数左移）」、与非 cycle 分支（L200-205：num>0 → 右移补左侧、num<0 → 左移补右侧）完全一致。
+
+实测（py3.11）：
+    assert list(shift([1, 2, 3], 1, cycle=True)) == [2, 3, 1]
+    E   assert [3, 1, 2] == [2, 3, 1]
+
+结论：实现正确（正数右移，符合 docstring + deque.rotate + 非 cycle 分支三方），**L90-91 两条断言写反**，应为 L90==[3,1,2]、L91==[2,3,1]。修复方向：仅改正测试断言方向，不改实现（实现符合契约）。
+- reported_by: agent-vools-hardening
+- task_id: T0r609
+
+
+
+### FIXED(2026-10-19T04:43:06Z / BUG-193)
+- evidence: tests/test_utils_tools.py L89-91 纠正 test_shift cycle=True 断言方向：num=1 → [3,1,2]（deque.rotate(1)=右移）、num=-1 → [2,3,1]（rotate(-1)=左移），对齐 docstring L181「正数右移，负数左移」+ deque.rotate 语义 + 非 cycle 分支 L200-205。实现 vools/utils/tools.py L193-196 未改（本就符合契约）。commit e13d7e6 推送 gitcode master；tests/test_utils_tools.py 全 29 项 GREEN；全套件冒烟 test_shift 失败项消除。
+## BUG-194 [2026-10-19T04:56:12Z] [high] FIXED
+- summary: vools/sys/dll.py fallback 路径对 async fallback 未 await：async_mode=True 且 fallback 生效时返回 coroutine object 而非结果，并泄漏未 await coroutine（RuntimeWarning）
+- detail: vools/sys/dll.py fallback 路径对 async fallback 未 await，返回 coroutine object 而非结果，泄漏未 await 的 coroutine（RuntimeWarning: coroutine 'foo' was never awaited）。
+
+复现（py3.11）：
+```python
+from vools.sys.dll import dll
+import asyncio
+
+@dll("nonexistent.dll::foo", async_mode=True)
+async def foo(a):
+    return a + 1
+
+print(asyncio.run(foo(1)))  # 期望 2，实际 <coroutine object foo ...>
+```
+
+根因链条：
+1. decorator L294-296：`actual_fallback = fallback; if actual_fallback is None and not _function_body_is_pass(f): actual_fallback = f` —— 对 `async def foo`，body 非 pass，故 actual_fallback = 原 async 函数 f。
+2. `_run_async` L416 用 `loop.run_in_executor(executor, lambda: _run_sync(...))` 在**线程池**同步执行 `_run_sync`。
+3. `_run_sync` L354-357：dll 不存在 → `if fallback: return fallback(*args, **kwargs)` → 调用 async 函数 f 返回 coroutine（未 await），_run_sync 直接返回该 coroutine。
+4. `_run_sync` L379 同问题（调用异常 + async fallback）。
+5. `run_in_executor` future 完成得 coroutine → `await` 得到 coroutine object → async_wrapper L307 返回它 → asyncio.run 返回 coroutine，真实结果丢失，且线程池 work_item 里未 await 的 coroutine 触发 RuntimeWarning 资源泄漏。
+
+实测确认（probe）：c1=async_wrapper(1) 的 coroutine 被 await 后**返回 coroutine object 名 foo**；线程池 thread.py:85 del work_item 报 RuntimeWarning coroutine never awaited。
+
+影响：async_mode=True 且 fallback 生效（dll 不存在/调用失败且 body 非 pass）时，返回值恒为 coroutine object，用户拿到错误类型；test_async_with_fallback L266 期望 2、test_async_success L287 期望 42 均失败。
+- reported_by: agent-vools-hardening
+- task_id: T0r611
+
+
+### FIXED(2026-10-19T05:06:50Z / BUG-194)
+- evidence: vools/sys/dll.py `_run_async` 中把 `await loop.run_in_executor(...)` 的结果存到 `result`，并在 `inspect.iscoroutine(result)` 时 `await result` 再返回（新增 8 行）。这消除 async fallback 返回未 await coroutine 的泄漏：`_run_sync` L356/L379 对 async 函数 fallback 直接 `return fallback(*args)` 返回 coroutine object，现在 _run_async 会 await 它。probe 验证：`asyncio.run(foo(1))` 由 <coroutine object foo> 变为 2，RuntimeWarning "coroutine never awaited" 消失。commit 617f9c7 推送 gitcode master；tests/test_sys_dll.py 全 31 项 GREEN（含 test_async_with_fallback、test_async_success）。
+## BUG-195 [2026-10-19T04:56:32Z] [medium] FIXED
+- summary: vools/sys/__init__.py L41 `from .dll import dll` 遮蔽同名子模块 vools.sys.dll，致 `import vools.sys.dll as m` 与 monkeypatch.setattr 属性路径解析到 function，6 项测试恒失败
+- detail: vools/sys/__init__.py L41 `from .dll import dll` 把 `vools.sys.dll` 名字绑定为 **@dll 装饰器函数**，遮蔽同名子模块 `vools/sys/dll.py`。Python 中 `import a.b.c as m` 等价 `m = getattr(a.b,'c')`，故 `import vools.sys.dll as m` 拿到的是 function 而非模块。
+
+复现（py3.11）：
+```python
+import vools.sys.dll as m
+m.__all__
+# AttributeError: 'function' object has no attribute '__all__'
+```
+
+连锁影响（tests/test_sys_dll.py 6 项失败均由此）：
+- L294 `import vools.sys.dll as m` → m 是 function
+- L215/L241/L281 `monkeypatch.setattr("vools.sys.dll._load_dll", ...)` → monkeypatch 的 derive_importpath 按属性链解析 `vools.sys.dll` 得 function → `getattr(function, '_load_dll')` → AttributeError: 'function' object at vools.sys.dll has no attribute '_load_dll'
+
+受影响测试：TestDllSync::test_load_failure_fallback / test_load_failure_no_fallback / test_success_int / test_kwargs_binding、TestDllAsync::test_async_success、TestImport::test_all —— 共 6 项恒失败。
+
+说明：`import vools.sys.dll`（不带 as）与 `from vools.sys.dll import ...` 仍经 importlib 取 sys.modules 中的真模块，正常工作；仅「属性访问路径」被函数遮蔽。这是 Python 子模块与 re-export 同名的固有冲突（同一属性名无法同时是模块与函数），库侧无法两全；修复方向：测试改用 `importlib.import_module("vools.sys.dll")` 取模块对象（绕过属性遮蔽），不改库 re-export（`from vools.sys import dll` 是 README 公开契约）。
+- reported_by: agent-vools-hardening
+- task_id: T0r619
+
+
+
+
+### FIXED(2026-10-19T05:07:04Z / BUG-195)
+- evidence: tests/test_sys_dll.py 适配 vools.sys.dll 子模块被 `vools/sys/__init__.py` L41 `from .dll import dll`（装饰器函数）遮蔽的现实：新增模块级常量 `DLL_MODULE = importlib.import_module("vools.sys.dll")`（importlib 直取 sys.modules 真模块，绕过属性遮蔽），并将 6 处属性访问路径改为：L294 `import vools.sys.dll as m` → `m = DLL_MODULE`；L215/241/281 monkeypatch.setattr("vools.sys.dll._load_dll", X) → monkeypatch.setattr(DLL_MODULE, "_load_dll", X)；L188/L175 两处跨行 monkeypatch 同改。修后 tests/test_sys_dll.py 全 31 项 GREEN（原 6 项恒失败消除：TestDllSync 4 项、TestDllAsync::test_async_success、TestImport::test_all）。说明：库侧同名（子模块 vs re-export 函数）同一属性名无法两全，且 `from vools.sys import dll` 是 README 公开契约，故仅测试侧适配；该测试文件当前为 untracked（其他 agent scope），改动保留在工作区由文件属主提交，未纳入本人 commit。
+## BUG-196 [2026-10-19T05:10:09Z] [high] FIXED
+- summary: vools/sys/dll.py 同步 @dll 装饰 async 函数时 fallback 返回未 await coroutine object 而非结果（BUG-194 只修了 async_mode 路径，同步 wrapper 遗漏）
+- detail: vools/sys/dll.py 同步 `@dll` 装饰器（async_mode=False，默认）装饰 async 函数时，fallback 生效则返回未 await 的 coroutine object 而非结果，静默泄漏并返回错误类型。
+
+复现（py3.11）：
+```python
+from vools.sys.dll import dll
+import asyncio
+
+@dll("nonexistent.dll::foo")   # 同步模式（未传 async_mode）
+async def foo(a):
+    return a + 1
+
+r = foo(1)
+print(type(r))            # <class 'coroutine'>，不是 int
+print(asyncio.run(r))     # 需手动 await 才得 2
+```
+
+根因链条：
+1. decorator L294-296：body 非 pass → `actual_fallback = f`（原 async 函数）。
+2. 同步 `wrapper` L299-303：`return _run_sync(...)`。
+3. `_run_sync` L354-357 / L379：dll 不存在或调用失败 → `return fallback(*args)` 调用 async 函数返回 coroutine（未 await）。
+4. `wrapper` 直接把该 coroutine 当返回值透传给调用方。
+
+实测（probe）：`foo(1)` 类型为 coroutine，手动 await 得 2 —— 即同步装饰器的返回值不是同步结果而是 coroutine object，与「同步调用 DLL」契约矛盾，且未 await 的 coroutine 触发资源泄漏。
+
+说明：与 BUG-194 同根（async fallback 未 await），但 BUG-194 仅修复了 `_run_async`（async_mode 路径），本 bug 是**同步 `wrapper` 路径**遗漏。同步装饰器承诺同步返回结果，正确做法是 wrapper 检测到 coroutine 后用 asyncio.run 驱动（同步语义）。
+
+修复方向：同步 wrapper 在 `_run_sync` 返回 coroutine 时用 asyncio.run 驱动得结果，而非透传 coroutine object。
+- reported_by: agent-vools-hardening
+- task_id: T0r628
+
+
+
+### FIXED(2026-10-19T05:14:19Z / BUG-196)
+- evidence: vools/sys/dll.py 同步 `wrapper` 改为先把 `_run_sync(...)` 结果存 `result`，`inspect.iscoroutine(result)` 时 `return asyncio.run(result)` 驱动（新增 6 行）。这消除同步 @dll 装饰 async 函数时 fallback 返回未 await coroutine 的泄漏：`_run_sync` L356/L379 对 async fallback 直接 `return fallback(*args)` 返回 coroutine object，现在 wrapper 同步驱动它。probe 验证：`foo(1)` 类型由 coroutine 变为 int，值 2。新增回归测试 tests/test_sys_dll_async_fallback.py（6 项：TestAsyncModeFallback 3 项覆盖 BUG-194、TestSyncDecoratorAsyncFunction 3 项覆盖 BUG-196），连同 tests/test_sys_dll.py 共 36 项 GREEN。commit 8f8f31d 推送 gitcode master。
+## BUG-197 [2026-10-19T05:15:45Z] [high] FIXED
+- summary: vools/sys/exe.py async fallback 未 await coroutine：同步 wrapper 与 async_mode 两条路径都返回 coroutine object，RuntimeWarning 泄漏（同 dll.py BUG-194/196 根因，未覆盖）
+- detail: vools/sys/exe.py 与 vools/sys/dll.py 同根的 async fallback coroutine 泄漏，且**两条路径都漏**（BUG-194 修 dll.py 时未覆盖 exe.py）。
+
+复现（py3.11）：
+```python
+from vools.sys.exe import exe
+import asyncio
+
+@exe("nonexistent.bin")                      # 同步模式
+async def foo(a):
+    return a + 1
+r = foo(1)
+print(type(r))            # <class 'coroutine'>，不是同步结果
+print(asyncio.run(r))     # 需手动 await 才得 2
+
+@exe("nonexistent.bin", async_mode=True)     # async 模式
+async def bar(a):
+    return a + 1
+print(asyncio.run(bar(1)))
+# RuntimeWarning: coroutine 'bar' was never awaited
+# <coroutine object bar ...>  —— async fallback 也泄漏
+```
+
+根因链条（与 dll.py 一致）：
+1. L235-237：body 非 pass → `actual_fallback = f`（原 async 函数）。
+2. 同步 `wrapper` L241：`return _run_sync(f, exe_path, args, kwargs, actual_fallback)` → `_run_sync` 的 fallback 分支 `return fallback(*args, **kwargs)`（L287/L295/L299）调用 async 函数返回未 await coroutine，wrapper 透传。
+3. async `async_wrapper` L244-245：`return await _run_async(...)` → `_run_async`（L303）内 `await loop.run_in_executor(executor, lambda: _run_sync(...))` 返回的 coroutine 未再 await，async_wrapper 透传 → RuntimeWarning 资源泄漏。
+
+实测（probe）：`exe sync wrapper` 类型为 coroutine（awaited 得 2）；`exe async_mode value` 返回 <coroutine object bar>，stderr 出现 `RuntimeWarning: coroutine 'bar' was never awaited`。
+
+修复方向：与 dll.py BUG-194/196 一致 —— async `_run_async` await 返回值中的 coroutine；同步 `wrapper` 检测 coroutine 用 asyncio.run 驱动。
+- reported_by: agent-vools-hardening
+- task_id: T0r629
+
+
+
+### FIXED(2026-10-19T05:19:02Z / BUG-197)
+- evidence: vools/sys/exe.py 两处修复：① 同步 `wrapper` 把 `_run_sync(...)` 结果存 `result`，`inspect.iscoroutine(result)` 时 `asyncio.run(result)` 驱动；② `_run_async` 把 `await loop.run_in_executor(...)` 结果存 `result`，`iscoroutine` 时 `await result`。这消除 exe.py 与 dll.py 同根的 async fallback coroutine 泄漏（`_run_sync` 的 fallback 分支 `return fallback(*args)` 返回未 await coroutine）。probe 验证：同步 wrapper `foo(1)` 由 coroutine 变 int 2；async_mode `bar(1)` 由 <coroutine object> 变 2，RuntimeWarning never awaited 消失。新增回归测试 tests/test_sys_exe_async_fallback.py（4 项：async_mode 2 项 + 同步 2 项）GREEN；现有 tests/test_sys_exe.py 28 项 GREEN 无回归。commit d1e47b8 推送 gitcode master。
+## BUG-198 [2026-10-19T05:21:48Z] [high] FIXED
+- summary: vools/decorators/bridge_decorator.py 的 bridge 装饰器同步 wrapper 透传 async fallback 返回的未 await coroutine object（同 dll.py/exe.py BUG-194/196/197 根因，未覆盖）
+- detail: vools/decorators/bridge_decorator.py 的 `bridge` 装饰器同步 `wrapper` 在 fallback 生效时透传未 await 的 coroutine object，与 dll.py/exe.py 同根。
+
+复现（py3.11）：
+```python
+from vools.decorators.bridge_decorator import bridge
+import asyncio
+
+async def py_fallback(a):
+    return a + 1
+
+@bridge("nim", "serialize.definitely_not_exists", fallback=py_fallback)
+def foo(a):
+    pass
+
+r = foo(1)
+print(type(r))            # <class 'coroutine'>，不是同步结果
+print(asyncio.run(r))     # 需手动 await 才得 2
+```
+
+根因：
+- L268/L273：`return fallback(*args, **kwargs)` 直接调用 fallback；若 fallback 是 async 函数（`async def py_fallback`），调用返回未 await 的 coroutine，同步 wrapper 透传。
+- 触发路径 L272（registry 不可用/桥接函数为 None）或 L268（桥接函数抛异常）。
+
+实测（probe）：桥接符号不存在 → L272 fallback 生效 → `foo(1)` 类型为 coroutine，awaited 得 2。与 `@dll`/`@exe` 同模式（BUG-194/196/197），bridge_decorator 未被覆盖。
+
+修复方向：同步 wrapper 在 `return fallback(...)` / 返回前检测 `inspect.iscoroutine(result)`，是 coroutine 则 `asyncio.run(result)` 驱动，而非透传 coroutine object。
+- reported_by: agent-vools-hardening
+- task_id: T0r630
+
+
+
+### FIXED(2026-10-19T05:26:50Z / BUG-198)
+- evidence: vools/decorators/bridge_decorator.py 两处修复：① 新增 `import asyncio`、`import inspect`；② wrapper 内新增局部 helper `_call_fallback(*fargs, **fkwargs)`，把 fallback 调用结果存 `result`，`inspect.iscoroutine(result)` 时 `asyncio.run(result)` 驱动；③ L279（桥接抛异常路径）与 L284（桥接不可用路径）两处 `return fallback(...)` 改为 `return _call_fallback(...)`。这消除 bridge 装饰器同步透传 async fallback 返回的未 await coroutine 的泄漏。probe 验证：`foo(1)` 由 coroutine 变 int 2。新增回归测试 tests/test_bridge_async_fallback.py（4 项：fallback 返回结果、多参数、无 fallback 抛 RuntimeError、同步 fallback 不变）GREEN；现有 tests/decorators/test_bridge_decorator.py 10 项 GREEN 无回归。commit 6351830 推送 gitcode master。
+## BUG-199 [2026-10-19T05:42:32Z] [high] FIXED
+- summary: VDate 对象间比较运算崩溃：__lt__ 用被 @rself 包装的 .date() 返回 VDate 做 VDate<VDate 比较，触发 __new__ TypeError 不支持的日期类型；四比较运算符全崩；附带非法 str 三歧性破坏
+- detail: vools/datetime/vdate_class.py 的 VDate 对象间比较运算崩溃：`VDate("2024-01-01") < VDate("2023-01-01")` 抛 `TypeError: 不支持的日期类型`，而非返回 bool。
+
+复现（py3.11）：
+```python
+from vools.datetime.vdate_class import VDate
+a = VDate("2024-01-01")
+b = VDate("2023-01-01")
+print(a < b)
+# TypeError: 不支持的日期类型  (vdate_class.py:468 __new__)
+```
+
+根因链条：
+1. `VDate.date()` 方法被 `vools/decorators/rself.py` 装饰（`@rself`），其 wrapper 会把方法返回值用 VDate 构造包装（_wrap_return_value → cls(value)）。
+2. `__lt__` L671-672：`if isinstance(other, VDate): return self.date() < other.date()` —— `self.date()` 与 `other.date()` 经 rself 返回 VDate 对象（而非 datetime.date）。
+3. 比较 `VDate < VDate` 进入 VDate.__new__（L468），其不识别 date/VDate 类型 → raise TypeError("不支持的日期类型")。
+
+`__le__` L692 `return self < other or self == other`、`__gt__` L703 `not self <= other`、`__ge__` L714 `not self < other` 都依赖 `__lt__`，因此 **VDate 全部四个比较运算符对 VDate 对象都崩溃**。
+
+附带缺陷：`__lt__` L679-680 对非法字符串 `except Exception: return False`，但 `__gt__` = not __le__，导致 `v > "garbage"` 静默返回 True，破坏三歧性（v<"garbage"=False, v=="garbage"=False, v>"garbage"=True 三者都不成立）。
+
+实测（probe）：`vals[0] < vals[1]`（两个 VDate）直接 TypeError；`v > "garbage"` 返回 True。
+
+修复方向：比较运算符内部不要用被 rself 包装的 `.date()` 结果做 VDate<VDate 比较，应比较原始日期值（或让 `.date()` 返回原生 date）；非法 str 的 `__gt__`/`__ge__` 应返回 False（与 `__lt__` 一致）。
+- reported_by: agent-vools-hardening
+- task_id: T0r631
+
+## BUG-200 [2026-10-19T05:47:52Z] [high] FIXED
+- summary: VDate.date() 公开方法完全崩溃：@rself 把 datetime.date 返回值用 VDate 构造，VDate.__new__ 不识别 date 类型 raise TypeError（rself.py L147 cls(value) 失败后 L155 re-raise），公开 API 不可用
+- detail: vools/datetime/vdate_class.py 的 VDate.date() 公开方法完全不可用：任何调用都抛 `TypeError: 不支持的日期类型`。用户期望获得原生 `datetime.date`，实际崩溃。
+
+复现（py3.11）：
+```python
+from vools.datetime.vdate_class import VDate
+d = VDate("2024-01-01")
+print(d.date())   # TypeError: 不支持的日期类型  (vdate_class.py:468 __new__)
+```
+
+根因链条（rself 装饰器交互）：
+1. VDate 类被 `@rself` 装饰（vdate_class.py L40）。
+2. `rself` 安装 `__getattribute__`（rself.py L159-200），对**所有非下划线开头的 callable 方法**包一层 wrapper，把返回值交给 `_wrap_return_value(self, result)`（L196）。
+3. `VDate.date()` 是继承自 datetime 的方法，返回 `datetime.date`（注意：`date` 不继承 `datetime`）。
+4. `_wrap_return_value` 对非 None 返回值走 `cls(value)`（rself.py L147）即 `VDate(date_obj)`；`VDate.__new__` L465 只接受 `(datetime, cls)`，`date` 不匹配 → 落入 L468 `raise TypeError("不支持的日期类型")`；L148 `except TypeError` 因 kwargs 为空走 L155 `raise` 重新抛出 → 用户看到崩溃。
+
+影响：`VDate.date()` 是 datetime 标准契约（返回 date），被 rself 错误包装；任何用户代码调用 `.date()` 即崩。比较运算符曾因此崩（见 BUG-199）。
+
+实测（probe）：`VDate("2024-01-01").date()` 直接 TypeError；traceback 定位 rself.py:196 → _wrap_return_value:147 → vdate_class.py:468。
+
+修复方向：让 rself 支持"排除不包装"的方法集合（如类属性 `_rself_exclude = {'date'}`），VDate 声明 `.date()` 返回原生 `datetime.date` 不包装；或 `_wrap_return_value` 遇到无法构造为 cls 的返回值（如 datetime.date）原样返回而非 re-raise。两者都能恢复 `.date()` 契约且默认不影响其他 @rself 类。
+- reported_by: agent-vools-hardening
+- task_id: T0r633
+
+
+
+### FIXED(2026-10-19T05:50:57Z / BUG-199, BUG-200)
+- evidence: vools/datetime/vdate_class.py 与 vools/decorators/rself.py 修复：① `__eq__`/`__lt__` 改用 `(self.year, self.month, self.day)` 元组与 other 的 year/month/day 比较，不再调 `self.date()/other.date()`（该调用经 @rself 包装会把 datetime.date 用 VDate 构造触发 TypeError）；② rself 新增 `_rself_exclude` 类属性排除集机制，命中集合的方法跳过返回值包装（缺省空集不影响既有 @rself 类）；③ VDate 声明 `_rself_exclude = {'date'}`，`.date()` 返回原生 `datetime.date`。probe 验证：`VDate('2024-01-01').date()` 由 TypeError 变原生 date（isinstance(d, date) True、isinstance(d, VDate) False）；`a<b`/`a>b`/`a>=b`/`a==b`/`!=` 四比较运算符对 VDate 与 str/date/datetime 均返回正确 bool；`sorted([...])` 正确排序；`+timedelta` 仍链式返回 VDate（rself 未破坏）。新增回归测试 tests/test_vdate_comparison.py（8 项：比较运算 6 项 + .date() 契约 2 项）GREEN；现有 tests/datetime/ 等 97 项 datetime 测试 GREEN；tests/decorators/test_rself.py 28 项 GREEN 无回归。commit ebc081d 推送 gitcode master。
+## BUG-201 [2026-10-19T05:53:51Z] [medium] FIXED
+- summary: verify_dynamic_code L68 硬编码 len(code)!=6 拒绝，与 L77 用 len(code) 作 digits 矛盾，generate_dynamic_code(digits=8/10) 生成的码永远无法验证返回 False
+- detail: vools/security/otp.py 的 `verify_dynamic_code` 硬编码只接受 6 位码，与 `generate_dynamic_code` 的 `digits` 参数矛盾：任何非 6 位动态码都无法验证，内部逻辑自相矛盾。
+
+复现（py3.11）：
+```python
+from vools.security.otp import generate_dynamic_code, verify_dynamic_code
+seed = bytes(range(32))
+code6  = generate_dynamic_code(seed, digits=6)   # 'xxxxxx'
+code8  = generate_dynamic_code(seed, digits=8)   # 'xxxxxxxx'
+print(verify_dynamic_code(code6, seed))   # True
+print(verify_dynamic_code(code8, seed))   # False  ← 生成 8 位码却永远无法验证
+```
+
+根因：
+- `generate_dynamic_code(seed_key, time_step=60, digits=6)`（L33-45）：`digits` 参数支持任意位数，`_hotp_truncate(..., digits)` 生成对应长度码。
+- `verify_dynamic_code(code, seed_key, time_step=60, window=1, used_codes=None)`（L48-82）：签名**无 digits 参数**，却：
+  - L68：`if not code or not code.isdigit() or len(code) != 6: return False` —— 硬编码长度必须为 6，非 6 位直接拒绝。
+  - L77：`expected = _hotp_truncate(seed_key, current_counter + offset, len(code))` —— 用 `len(code)` 作 digits 重算期望码，说明设计意图是"按输入码长度验证"。
+  - 两处矛盾：L77 支持任意长度，L68 只放行 6 位。用户 `digits=8` 生成的码永远到不了 L77，恒返回 False。
+
+实测（probe）：digits=6 → verify True；digits=8 → False；digits=10 → False。
+
+修复方向：L68 长度校验与 `_hotp_truncate` 的 digits 语义对齐 —— 允许 1..10 位数字（保留 isdigit 防非数字注入 + 长度上限防滥用），去掉硬编码 6，使 `digits != 6` 时生成的码可正常验证。
+- reported_by: agent-vools-hardening
+- task_id: T0r634
+
+
+
+### FIXED(2026-10-19T05:58:40Z / BUG-201)
+- evidence: vools/security/otp.py L68 长度校验修复：`if not code or not code.isdigit() or len(code) != 6` 改为 `if not code or not code.isdigit() or not 1 <= len(code) <= 10`，与 L77 `_hotp_truncate(..., len(code))` 的 digits 语义对齐。probe 验证：generate_dynamic_code(seed, digits=6/8/10) 生成码 verify_dynamic_code 均返回 True；错误码（000000 在宽窗口）、非数字（abcdef）、空串、超长（11 位）仍被拒绝。新增回归测试 tests/test_otp_digits_regression.py（7 项：3 项位数一致 + 4 项拒绝语义）GREEN；现有 tests/security/test_otp.py 20 项 GREEN 无回归。commit 618018a 推送 gitcode master。
+## BUG-202 [2026-10-19T06:01:47Z] [high] FIXED
+- summary: safe_lambda L436-441 用 _Placeholder 求值 AST 导致合法 lambda（x[0]/x.upper()/if表达式/len(x)）全被 SafeEvalError 误拒，且 result 被丢弃是死代码；实际安全靠 _is_safe_expr 黑名单+空builtins eval
+- detail: vools/security/safe_eval.py 的 `safe_lambda(var_names, expr)` 拒绝大量合法 Python lambda 表达式，且其内部 AST 预校验结果是死代码（计算后丢弃，从未返回/使用）。
+
+复现（py3.11）：
+```python
+from vools.security.safe_eval import safe_lambda, SafeEvalError
+safe_lambda(('x','y'), "x + y")(1,2)      # 3（正常）
+safe_lambda(('x',), "x[0]")([1,2])        # SafeEvalError: 不支持的表达式类型: Subscript
+safe_lambda(('x',), "x.upper()")("ab")    # SafeEvalError: 不支持的表达式类型: Attribute
+safe_lambda(('x',), "1 if x else 0")(True) # SafeEvalError: 不支持的表达式类型: IfExp
+safe_lambda(('x',), "len(x)")([1,2,3])    # SafeEvalError: lambda 创建错误: object of type '_Placeholder' has no len()
+```
+
+以上 Subscript/Attribute/IfExp/内置函数调用**都是合法 Python lambda 表达式**，却被拒绝。
+
+根因：
+1. L436-441：`allowed_vars = {name: _Placeholder() for ...}` + `evaluator = SafeExpressionEvaluator(allowed_vars)` + `result = evaluator._eval_node(lambda_node.body)`。
+2. `_Placeholder` 只实现了算术/比较运算（L33-66），不支持下标、属性、IfExp；对内置函数如 `len()` 也没有对应 dunder，抛 TypeError。
+3. `SafeExpressionEvaluator._eval_node` L194-195 对 Subscript/Attribute/IfExp 直接 `raise SafeEvalError("不支持的表达式类型")`。
+4. **关键缺陷**：L441 的 `result` 变量从未被 return/使用，L445 用原生 `eval(full_expr, safe_globals, {})` 真正执行。所以这段 AST 预校验是**纯死代码**，其唯一实际效果是**抛出异常拒绝合法表达式**。
+5. 安全边界实际由 `_is_safe_expr` 子串黑名单（L364-369，含 '__'/'import'/'os.'/'subprocess'/'getattr' 等）+ `eval(..., {'__builtins__': {}}, {})` 空内置函数提供。
+
+实测（probe）：危险表达式 `__import__('os')`、`x.__class__`、`getattr(x,'real')` 均被 `_is_safe_expr` 正确拒绝；合法表达式 4 类全被误拒。
+
+修复方向：删除 L436-441 的 `_Placeholder` 求值预校验块（result 被丢弃的无效 AST 校验），保留 `_is_safe_expr` 黑名单 + `eval` 空 builtins 作为安全边界，使 Subscript/Attribute/IfExp/内置函数调用等合法 lambda 表达式恢复可用。
+- reported_by: agent-vools-hardening
+- task_id: T0r635
+
+
+
+### FIXED(2026-10-19T06:08:15Z / BUG-202)
+- evidence: vools/security/safe_eval.py `safe_lambda` 修复：删除 L436-441 用 `_Placeholder` 求值 AST 的死代码预校验块（`result` 从未被 return/使用，唯一实际效果是抛异常拒绝合法表达式）；改为静态 `ast.walk` 只拒绝嵌套 lambda 构造，保留 `_is_safe_expr` 子串黑名单 + 空 `__builtins__` 的 eval 作为安全边界。probe 验证：`x+y`→3、`x[0]`→1、`x.upper()`→"AB"、`1 if x else 0`→1、`x*2+1`→11 等合法表达式全恢复可用；`__import__('os')`、`x.__class__`、`getattr(x,'real')`、`open('/etc/passwd')`、`import os`、`x.__mro__`、`(lambda: 1)()`（嵌套 lambda 构造）、语法错误、非法参数名仍被 SafeEvalError 拒绝。新增回归测试 tests/test_safe_lambda_regression.py（13 项：6 项合法表达式 + 5 项危险参数化 + 语法/参数名）GREEN；现有 tests/security/test_safe_eval_comparison.py + test_safe_eval_literals.py 33 项 GREEN（含先前失败的 `(lambda: 1)()` 拒绝测试，已恢复）。commit 255bf91 推送 gitcode master。
+## BUG-203 [2026-10-19T06:17:43Z] [high] FIXED
+- summary: VBJsonBackend.parse 入口只分派 {/[，顶层标量（数字/字符串/bool/null）一律返回 None，导致 dumps_str(1.5)->parse 得 None 数据丢失；内部 _parse_value 已支持标量但入口未复用；另 _stringify 对 inf/nan 输出非标准 'inf'/'nan'，_parse_number 把 'inf' 吞成 0
+- detail: vools/serialize/backends/vb_json_backend.py 的 `VBJsonBackend.parse()` 入口对**顶层标量**（数字/字符串/bool/null）一律返回 None，只正确解析对象 `{` 和数组 `[`，导致标量序列化后无法反序列化（数据丢失）。
+
+复现（py3.11）：
+```python
+from vools.serialize.backends.vb_json_backend import VBJsonBackend
+b = VBJsonBackend()
+b.dumps_str(1.5)   # '1.5'
+b.parse('1.5')     # None  （应为 1.5）
+b.parse('"hi"')    # None  （应为 'hi'）
+b.parse('true')    # None  （应为 True）
+b.parse('null')    # None  （碰巧正确）
+b.parse('inf')     # None
+# 顶层标量通过 loads 同样丢失：
+b.loads(b.dumps_str(1.5))   # None（应 1.5）
+# 数组/对象正常：
+b.parse('[1,2,3]')          # [1,2,3]
+b.parse('{"a":1}')          # {'a': 1}
+```
+
+根因：parse 入口（L82-89）：
+```python
+char = json_str[index[0]]
+if char == '{':
+    return self._parse_object(json_str, index)
+elif char == '[':
+    return self._parse_array(json_str, index)
+else:
+    return None          # BUG：标量未分派到 _parse_value
+```
+内部 `_parse_value`（L246-279）已完整支持数字/字符串/bool/null/对象/数组，但入口未复用它处理顶层标量。对比标准库 `json.loads('1.5')` 返回 1.5。
+
+另外次要缺陷：`_stringify`（L481）对 `float('inf')`/`float('nan')` 序列化为 `inf`/`nan`（非标准 JSON 字面量），且 `_parse_number` L371 `int('inf')` 抛 ValueError 被 L372 `except ValueError: return 0` 吞掉，round-trip 得到 0（数据失真）。标准库 `json.dumps` 产出 `Infinity`/`NaN`。
+
+修复方向：parse 入口 else 分支改为 `return self._parse_value(json_str, index)`，使顶层标量复用 `_parse_value`；`_stringify` 对 inf/nan 输出 `Infinity`/`-Infinity`/`NaN`（与标准库对齐），`_parse_number` 识别 `Infinity`/`NaN`。
+- reported_by: agent-vools-hardening
+- task_id: T0r640
+
+
+
+### FIXED(2026-10-19T06:24:52Z / BUG-203)
+- evidence: vools/serialize/backends/vb_json_backend.py 修复：① parse 入口 else 分支改为 `return self._parse_value(json_str, index)`，顶层标量复用 _parse_value（原只分派 {/[，标量一律 return None）；② `_stringify` 对 float 非有限值输出 `Infinity`/`-Infinity`/`NaN`（与 json.dumps 对齐，原输出非标准 'inf'/'nan'）；③ `_parse_number` 开头识别 `Infinity`/`-Infinity`/`NaN` 字面量返回对应 float（原 int('inf') 抛 ValueError 被吞成 0）；④ `_parse_value` else 仅对合法数字起始（+-.0-9）或 Infinity/NaN 起始（I/N）分派 `_parse_number`，非法起始字符（如 'invalid' 的 'i'）报错返回 None 并推进 index[0]，避免内层 while 挂死。probe 验证：1.5/3/"hi"/True/False/None/0.0/-0.5/100 全 round-trip OK；inf/-inf/nan 经 `Infinity`/`-Infinity`/`NaN` 正确 round-trip；嵌套容器 `{"a":[1,2.5,"x"],"b":{"c":True}}` 正常；parse('invalid') 返回 None 且 errors 非空（保持既有测试契约）。新增回归测试 tests/test_vb_json_scalar_regression.py（12 项：8 项标量 + 3 项特殊浮点 + 1 项嵌套）GREEN；现有 tests/test_serialize_vb_json.py + tests/serialize/test_vb_json.py 38 项 GREEN 无回归。commit ad31e84 推送 gitcode master。
+## BUG-204 [2026-10-19T06:31:38Z] [medium] FIXED
+- summary: _deserialize_enum 用 rsplit('.',1) 解析 'module.qualname'，嵌套 enum 的 __qualname__ 含 '.'（如 Outer.E）被误切，模块路径含类名 → __import__ 抛 ModuleNotFoundError 未捕获崩溃；_serialize_enum 应额外输出 module/qualname 分开字段
+- detail: vools/serialize/type_registry.py 的 enum 序列化/反序列化对**嵌套 enum** 崩溃。
+
+`_serialize_enum`（L167-171）把类型引用格式化为 `f'{type(obj).__module__}.{type(obj).__qualname__}'`，其中 `__qualname__` 对嵌套 enum 含 `.`（如 `Outer.E`）。但 `_deserialize_enum`（L195-209）用 `type_name.rsplit('.', 1)` 把最后一段当类名、其余当模块路径，于是嵌套 enum 的 type 字符串被错误切开：
+
+复现（py3.11，vools 包内模块）：
+```python
+import enum, types, sys
+from vools.serialize.type_registry import _serialize_enum, _deserialize_enum
+mod = types.ModuleType('vools.test_nested_enum')
+class Outer:
+    class E(enum.Enum):
+        A = 1
+Outer.E.__module__ = 'vools.test_nested_enum'
+mod.Outer = Outer
+sys.modules['vools.test_nested_enum'] = mod
+
+s = _serialize_enum(Outer.E.A)
+# s = {'type': 'vools.test_nested_enum.Outer.E', 'name': 'A', 'value': 1}
+_deserialize_enum(s)
+# ModuleNotFoundError: No module named 'vools.test_nested_enum.Outer'; 'vools.test_nested_enum' is not a package
+```
+（模块路径被误判为 `vools.test_nested_enum.Outer`，`__import__` 抛 ModuleNotFoundError，异常未捕获直接传播。）
+
+根因：`__qualname__` 本身含 `.` 表示嵌套层级，与模块路径的 `.` 无法用 `rsplit('.', 1)` 区分。简单 enum（qualname 无 `.`）不受影响。
+
+修复方向：`_serialize_enum` 额外输出 `module`（`type(obj).__module__`）和 `qualname`（`type(obj).__qualname__`）分开字段，`_deserialize_enum` 优先按 `module` 精确导入 + 逐级 `getattr` 沿 `qualname` 的 `.` 解析；保留 `type` 字段解析作为旧格式回退（简单 enum 仍兼容）。白名单校验（BUG-96/BUG-100 `_is_allowed_enum_module`）继续以 `module` 为准。
+- reported_by: agent-vools-hardening
+- task_id: T0r641
+
+
+
+### FIXED(2026-10-19T06:36:32Z / BUG-204)
+- evidence: vools/serialize/type_registry.py 修复：① `_serialize_enum` 额外输出 `module`（`type(obj).__module__`）和 `qualname`（`type(obj).__qualname__`）分开字段，与 `type` 串并存；② `_deserialize_enum` 优先读取 `state['module']`/`state['qualname']`，按 `module` 精确 `__import__` 后逐级 `getattr` 沿 `qualname` 的 `.` 解析（如 `Outer.E` 先取 Outer 再取 E）；③ 保留旧 `type` 串 `rsplit('.', 1)` 解析作为旧格式回退（简单 enum 仍兼容）；④ BUG-96/BUG-100 白名单校验仍以 `module` 为准，`os.path` 等非白名单模块仍 ValueError 拒绝。probe 验证：vools 包内嵌套 enum（`Outer.E.A`）`_serialize_enum` 产出 `module='vools.test_nested_enum'`、`qualname='Outer.E'`，`_deserialize_enum` 正确恢复为同一 enum 成员（原抛 `ModuleNotFoundError: No module named 'vools.test_nested_enum.Outer'`）；`module='os.path'` 仍 ValueError 拒绝。新增回归测试 tests/test_type_registry_nested_enum_regression.py（5 项：序列化分开字段 + 嵌套两个成员 round-trip + 简单 enum 兼容 + 非白名单模块拒绝）GREEN；全 tests/serialize/ 套件 216 项 GREEN 无回归（含 test_type_registry.py、test_type_registry_enum_safety.py、test_enum_module_whitelist.py 21 项）。commit e88b1b3 推送 gitcode master。
+## BUG-205 [2026-10-19T06:41:53Z] [medium] FIXED
+- summary: _import_class 用 rsplit('.',1) 解析 type_name，嵌套类（__qualname__ 含 '.'，如 Outer.Inner）被误切模块路径 → 导入失败返回 None → _reconstruct_object 静默降级为 dict，类型丢失无告警；应逐步缩短模块前缀逐级 getattr
+- detail: vools/serialize/codec.py 的 `_import_class`（L338-369）对**嵌套类**（`__qualname__` 含 `.`，如 `Outer.Inner`）解析失败，导致 `_reconstruct_object` 静默降级为 dict，反序列化后类型丢失且无任何告警。
+
+根因：`_import_class` L350 用 `type_name.rsplit('.', 1)` 把 type_name 切成模块路径 + 类名，但 type_name 形如 `f'{__module__}.{__qualname__}'`，模块路径本身含 `.`，且嵌套 `__qualname__` 也含 `.`，`rsplit('.', 1)` 无法区分边界。
+
+复现（py3.11，vools 包内模块）：
+```python
+import types, sys
+from vools.serialize.codec import _import_class, _reconstruct_object
+mod = types.ModuleType('vools.test_nested_cls')
+class Outer:
+    class Inner:
+        def __init__(self, v): self.v = v
+mod.Outer = Outer
+sys.modules['vools.test_nested_cls'] = mod
+
+_import_class('vools.test_nested_cls.Outer')       # <class 'Outer'>  OK（扁平）
+_import_class('vools.test_nested_cls.Outer.Inner') # None（嵌套误切）
+_reconstruct_object('vools.test_nested_cls.Outer.Inner', {'__vools_type__': ...})
+# {'__vools_type__': 'vools.test_nested_cls.Outer.Inner'}  —— 静默返回 dict，原对象类型丢失
+```
+（`vools.test_nested_cls.Outer.Inner` 被切成 module=`vools.test_nested_cls.Outer` + cls=`Inner`，`importlib.import_module('vools.test_nested_cls.Outer')` 抛 ModuleNotFoundError，L368 except 吞掉返回 None，`_reconstruct_object` L275 静默返回原始 state dict。）
+
+与 BUG-204（enum 同类问题）同根：`module` 与嵌套 `__qualname__` 都含 `.`，不能靠 `rsplit('.', 1)` 区分。
+
+修复方向：`_import_class` 改为**逐步从右向左缩短模块路径**，对每个候选前缀做白名单校验（BUG-98 `_is_allowed_module`）+ `importlib.import_module` 尝试，命中可导入前缀后再沿剩余 qualname 逐级 `getattr`，命中 `type` 即返回。扁平类路径仍命中首轮候选，行为不变；嵌套类命中较短前缀。全部候选失败仍返回 None（保持现有降级语义，不新增崩溃面）。
+- reported_by: agent-vools-hardening
+- task_id: T0r642
+
+
+
+### FIXED(2026-10-19T06:45:19Z / BUG-205)
+- evidence: vools/serialize/codec.py `_import_class` 修复：原用 `type_name.rsplit('.', 1)` 把 type_name（`module.__qualname__`）一刀切成模块路径 + 类名，模块路径与嵌套 `__qualname__` 都含 '.'，嵌套类被误切（`vools.mod.Outer.Inner` → module=`vools.mod.Outer` + cls=`Inner`），`importlib.import_module` 抛 ModuleNotFoundError 被 except 吞掉返回 None，`_reconstruct_object` L275 静默返回原始 state dict，类型丢失无告警。改为 `type_name.split('.')` 后**逐步从右向左缩短模块前缀**，每个候选前缀先过 BUG-98 `_is_allowed_module` 白名单，再 `importlib.import_module` 尝试，命中后沿剩余 qualname 逐级 `getattr`，命中 `type` 即返回；全部候选失败仍返回 None（保持原有降级语义，不新增崩溃面）。probe 验证：`_import_class('vools.test_nested_cls.Outer')` 命中扁平类；`_import_class('vools.test_nested_cls.Outer.Inner')` 从 None 变为命中 `Outer.Inner`（原 rsplit 误切）；`_import_class('datetime.datetime')` 仍命中 stdlib；`_import_class('os.path.join')` 仍 None（白名单拒绝）；`_import_class('vools.test_nested_cls.DoesNotExist')` 仍 None；`_reconstruct_object('vools.test_nested_cls.Outer.Inner', {...})` 从 dict 降级变为真实 `Outer.Inner` 实例。新增回归测试 tests/test_codec_nested_class_regression.py（6 项：扁平/嵌套/stdlib 解析 + 非白名单拒绝 + 不存在 None + 嵌套 reconstruct 返回真实 Inner）GREEN；全 tests/serialize/ 套件 216 项 GREEN 无回归（含 test_codec.py + test_codec_import_whitelist.py 52 项）。commit 1756135 推送 gitcode master。
+## BUG-206 [2026-10-19T06:50:34Z] [high] FIXED
+- summary: VText._run 默认参数 func=exec，exec(text)/eval(text) 裸调用无 globals/locals 隔离，任意文本内容 RCE（默认无参 _run() 即执行任意代码）；应改默认 None + 受限 globals 或委托 safe_eval_expression
+- detail: vools/data/vtext.py 的 `VText._run`（L384-403，legacy vicText._run）用裸 `exec`/`eval` 执行文本内容，且**默认参数就是 `exec`**，无 globals/locals 隔离 → 对任意文本内容是 RCE（任意代码执行）。
+
+根因：`def _run(self, func: Any = exec)` 默认参数为 `exec`；L396-397 当 `func` 可调用时直接 `func(text)`（默认即 exec）；L400-403 当 `func` 为字符串 "exec"/"eval" 时分别 `exec(text)` / `eval(text)`，均**未传 globals/locals 受限命名空间**，`text = str(self)` 完全来自 VText 实例内容。
+
+复现（py3.11）：
+```python
+from vools.data.vtext import VText
+
+# eval：返回真实 cwd
+VText("__import__('os').getcwd()")._run('eval')
+# → 'E:\\IDEProjects\\AI\\vools'
+
+# 默认 exec（func=exec）：无参 _run() 即执行任意代码
+VText("open('C:/x.txt','w').write('marker')")._run()
+# 实际执行了 open(...).write(...)
+```
+
+实际影响：只要 VText 内容来自不可信来源（外部文件 / SQL 片段 / 网络 / DB 字段）并被 `_run()` / `_run('exec')` / `_run('eval')` 调用，即任意代码执行。vools 自身已有安全求值（vools/security/safe_eval.py 的 `safe_eval_expression` + AST 白名单），此处却用裸 exec/eval，**安全策略不一致**。
+
+修复方向：① 默认参数改为 `func=None`，无参 `_run()` 不再执行（返回 None 或 raise ValueError 提示需显式指定）；② `exec`/`eval` 分支改用受限 globals（白名单 builtins，如仅允许 `{'__builtins__': {'__import__': __import__}}` 之类的最小集）或委托 `safe_eval_expression`，并显式传入 `{'__name__': 'vtext_run'}` 等隔离命名空间，杜绝访问完整 builtins（`__import__`、`open` 等）。
+- reported_by: agent-vools-hardening
+- task_id: T0r643
+
+
+
+### FIXED(2026-10-19T06:58:29Z / BUG-206)
+- evidence: vools/data/vtext.py 修复 `VText._run`：① 默认参数 `func=exec` 改为 `func=None`，无参 `_run()` 不再执行，抛 ValueError 提示需显式指定 func；② 新增模块级 `_RUN_SAFE_BUILTINS`（白名单：纯函数/容器/算术类 abs/len/min/max/sum/round/int/float/str/bool/list/tuple/dict/set/frozenset/range/enumerate/zip/map/filter/any/all/sorted/reversed/print + True/False/None）与 `_RUN_SAFE_NAMESPACE = {'__builtins__': _RUN_SAFE_BUILTINS}`，不含 `__import__`/`open`/`getattr`/`exec`/`eval`/`compile`/`globals`；③ L401 `exec(text)` 与 L403 `eval(text)` 均改为 `exec(text, _RUN_SAFE_NAMESPACE)` / `eval(text, _RUN_SAFE_NAMESPACE)`；④ L396-397 callable 分支新增 `if func is exec: return exec(text, _RUN_SAFE_NAMESPACE)`，显式传 exec 也走受限命名空间。probe 验证：`VText('1+1').run('eval')` 仍返回 2（现有测试兼容）；`_run()` 无参抛 ValueError；`_run('eval')` 执行 `__import__('os').getcwd()` 抛 NameError（`__import__` 不在受限 builtins，RCE 堵住）；`_run('exec')` 恶意代码同样 NameError；`_run('exec')` 执行 `x = 1 + 1` 正常；`_run(lambda s: s.upper())` 正常。另确认 `VText._run('任意字符串')` 走 L419 `generate_lambda(func)(text)`，其内部 L167 用 `safe_compile_expression`（vools/security safe_eval 的 AST 白名单），本身安全，无需改动。新增回归测试 tests/test_vtext_run_no_rce_regression.py（10 项：eval 算术 OK + eval/exec 的 `__import__`/`open` 被拒 + exec 简单赋值 OK + 无参 _run 抛 ValueError + 显式传 exec 恶意被拒 + 自定义 lambda + 空文本 None）GREEN；tests/data/ 全 data 套件 GREEN 无回归（含 test_vtext.py + test_vic_inherit.py 73 项，覆盖既有 `run('eval') == 2` 断言）。commit a89b30d 推送 gitcode master。
+## BUG-207 [2026-10-19T07:05:00Z] [high] FIXED
+- summary: TaskQueue._deserialize_func (queue.py L201) 与 Task._restore_pickle (models.py L49) 均 pickle.loads 未验证来源的持久化数据 → 任意代码执行 RCE；应用受限 Unpickler(find_class 白名单) 替代裸 pickle.loads
+- detail: vools/task 两处 `pickle.loads` 反序列化未验证来源的持久化数据，构成任意代码执行（RCE，`__reduce__` gadget）：
+
+**① `vools/task/core/queue.py` L198-201 `TaskQueue._deserialize_func`**
+```python
+else:
+    # pickle格式
+    pickle_data = base64.b64decode(func_data.encode('utf-8'))
+    return pickle.loads(pickle_data)
+```
+`func_data` 是 Task 模型持久化的字符串字段（`_serialize_func` L167-174 用 `pickle.dumps + base64` 生成，存到 task.task_func；L210 `func = self._deserialize_func(task.task_func)` 恢复）。该字符串一旦被外部篡改（task 数据来自 DB/文件/跨进程/网络），`pickle.loads` 立即执行 payload 的 `__reduce__` gadget。
+
+**② `vools/task/core/models.py` L45-53 `_restore_pickle`**
+```python
+if isinstance(obj, str) and obj.startswith(_PICKLE_MARKER):
+    try:
+        return pickle.loads(base64.b64decode(obj[len(_PICKLE_MARKER):].encode("ascii")))
+```
+同样未验证来源；`_load_json` L70-74 在 `Task.from_dict`（L167-178）中用于恢复 payload/args/kwargs/result/back_info/dependencies。
+
+复现（py3.11，`_deserialize_func` 直接喂恶意 base64 pickle）：
+```python
+import pickle, base64, os
+from vools.task.core.queue import TaskQueue
+def _pwned():
+    open('C:/pwned.txt','w').write('PWNED')
+class Evil:
+    def __reduce__(self):
+        return (_pwned, ())
+payload = base64.b64encode(pickle.dumps(Evil())).decode()
+TaskQueue()._deserialize_func(payload)
+# → 实际执行了 _pwned()（open(...).write(...) 被调用，仅因 C:/ 无权限 PermissionError）
+```
+
+两处修复方向：**受限 Unpickler**（自定义 `find_class` 白名单，仅允许恢复函数对象/常见标准库类型所需的最小 builtins，如 `builtins.function`/`globals`/`staticmethod`/`classmethod`，`__main__`/`os`/`subprocess`/`sys` 等一律拒绝）替换裸 `pickle.loads`。models.py 侧另可考虑在 `_json_default` 生成 payload 时加版本/签名前缀，`_restore_pickle` 仅接受带标记的合法 payload，未知则按纯字符串回退（不执行）。
+- reported_by: agent-vools-hardening
+- task_id: T0r644
+
+
+
+### FIXED(2026-10-19T07:12:13Z / BUG-207)
+- evidence: 两处未验证来源的 `pickle.loads` 均改为禁用/受限，RCE 堵住：
+
+**vools/task/core/queue.py `TaskQueue`**
+- `_serialize_func`：删除 L164-176 全部 pickle fallback（原 `__main__` 函数与未知函数用 `pickle.dumps+base64` 生成 func_data）；条件改为 `if func_name == '<lambda>' or getattr(func_to_serialize, '__module__', '') == '__main__'` → lambda 与 `__main__` 函数统一注册 `_func_registry[id]` 生成 `__registry__:<id>`（同进程，BUG-150 既有机制）；路径格式 fallback 保留（`<module>:<func>`），异常 raise ValueError。
+- `_deserialize_func`：删除 `else` 的 `pickle.loads(base64.b64decode(func_data))` 分支，改抛 `ValueError("unsupported func_data format (BUG-207): pickle deserialization is disabled; use '__registry__:<id>' or '<module>:<func>' ...")`。`__registry__:` 与 `<module>:<func>` 路径分支保留。
+
+**vools/task/core/models.py**
+- 新增 `import io`。
+- 新增模块级 `_SafeUnpickler(pickle.Unpickler)`：`_ALLOWED` 白名单 = `builtins`（function/globals/staticmethod/classmethod/object/slice/complex/frozenset/set + 40 个异常层级）+ `datetime`（datetime/date/time/timedelta/timezone）+ `decimal.Decimal` + `uuid.UUID` + `collections`（OrderedDict/defaultdict/deque/Counter）；`find_class` 对非白名单抛 `pickle.UnpicklingError("forbidden global ... (BUG-207)")`。
+- 新增 `_safe_pickle_loads(data)` = `_SafeUnpickler(io.BytesIO(data)).load()`。
+- `_restore_pickle` L49-52 改用 `_safe_pickle_loads(...)`，`except Exception` 仍按原字符串回退。
+
+probe 验证：`TaskQueue()._deserialize_func(base64(pickle.dumps(Evil)))` 抛 ValueError，恶意 `_pwned` 未执行（此前真实执行了 `open(...).write(...)`）；`_restore_pickle(__vools_pickle__:<evil>)` 返回原字符串；`__main__` 函数 `_serialize_func` 走 `__registry__:...` 恢复后调用返回 42；模块级类 `TaskQueue` 走 `vools.task.core.queue:TaskQueue` 路径恢复 `is TaskQueue` 为 True；`_load_json` 恢复 `datetime/timedelta/Decimal/UUID` 混合 payload 全部正确。
+
+新增回归 tests/test_task_pickle_no_rce_regression.py 7 项 GREEN（恶意 payload 拒、base64 无冒号拒、`__main__` registry、模块路径、models 恶意拒回退、`_load_json` 恶意拒、标准库类型恢复）。全 tests/task/ + tests/core/test_debug.py + tests/core/test_simple.py + tests/other/test_multiprocess.py + tests/test_task_rules_dag.py 套件 GREEN 无回归。commit 91ecce0 推送 gitcode master。
+## BUG-208 [2026-10-19T07:22:34Z] [high] FIXED
+- summary: placeholder._IndexHolder.__init__ L304 默认 env 塞完整 builtins 模块，L401 eval(expr, env) 对用户表达式 RCE；模块级 safe_builtins 白名单已定义却未接入 env，与 lazy.py/iif.py 受限 builtins 不一致；应改为受限 builtins 视图并显式注入受限 __builtins__
+- detail: vools/functional/placeholder.py `_IndexHolder.__init__` L304 默认 env 含 `'builtins': builtins`（完整 builtins 模块），且 L401 `eval(self.expr, self.env)` 直接对用户可控表达式 eval。模块级 `safe_builtins`（L49-56）已定义（白名单不含 `__import__`/`open`/`getattr`/`eval`/`exec`/`compile`/`globals`）却从未接入 L304 env，属明确遗漏。eval 时 env 无 `__builtins__` 键，Python 自动注入真实 builtins → `__import__`/`open` 直接可用 → 任意代码执行（RCE）。
+
+复现（py3.11）：
+```python
+from vools.functional.placeholder import _IndexHolder
+_IndexHolder("__import__('os').getcwd()").call   # → 'E:\\IDEProjects\\AI\\vools'（真实 cwd）
+_IndexHolder("__import__('os').listdir('.')").call  # 列出完整目录
+_IndexHolder("builtins.__import__('os').getcwd()").call  # 也通（env 含 builtins 模块对象）
+```
+
+对比同类：`vools/decorators/lazy.py` L91 用 `safe_globals['__builtins__'] = {k: getattr(builtins, k) for k in SAFE_BUILTINS}`（受限）；`vools/functional/iif.py` L87 与 `safe_arrow_func` L622 走 `vools.security.safe_eval.safe_lambda`（AST 白名单沙箱）。placeholder 是唯一在默认 env 里塞完整 `builtins` 的表达式执行入口。
+
+修复方向：L304 env 默认值中的 `'builtins': builtins` 改为受限视图（如 `types.SimpleNamespace(**{k: getattr(builtins, k) for k in safe_builtins})`，保留 `.len`/`.map` 等属性访问能力），并显式加 `env['__builtins__'] = {k: getattr(builtins, k) for k in safe_builtins}` 阻断 Python 自动注入真实 builtins。`math`/`operator`/`random` 模块对象保留（无 `__import__` gadget）。现有占位符测试用 `_`/`_1`/`f`/`magic` 等 DSL，不依赖 `builtins.__import__`，修复不破坏。
+- reported_by: agent-vools-hardening
+- task_id: T0r645
+
+
+
+### FIXED(2026-10-19T08:01:26Z / BUG-208)
+- evidence: vools/functional/placeholder.py 双层修复：① `__init__` L305 后为默认 env 注入受限 `__builtins__` = `_RESTRICTED_BUILTINS`（模块级：safe_builtins + getattr/hasattr/isinstance/issubclass，getattr 为 DSL 属性链编译代码 getattr(x,'upper') 所需），`'builtins'` 键换 `SimpleNamespace` 受限视图（无 `__import__`）；② 新增 `_check_expr_dangerous`（AST 级）：拒绝 `ast.Attribute` dunder 名、`ast.Constant` 含 `__\w+` 的字符串常量、`ast.Name` dunder 裸名——斩断对象图逃逸链，接入 `call` property（eval 前）与 `__signature__` 与 `__expr__` 三个 exec 分支；③ 新增 `_safe_ns` helper，`__expr__` 三处 `namespace = {**globals(), **locals()}`（原会把真实 builtins 模块带进 namespace，`builtins.eval(...)` 可绕过受限 `__builtins__`）统一覆盖 builtins/`__builtins__` 键。probe 验证 8 条逃逸链全拒（NameError）：`__import__('os').getcwd()`、`builtins.__import__(...)`、`getattr(builtins,'__import__')('os').system(...)`、`math.__loader__.load_module('sys')`、`().__class__.__bases__[0].__subclasses__()`、`operator.attrgetter('__class__')(1)`、`builtins.__loader__`、`open(...)`/`eval(...)`；`__expr__(func_type='def')` 路径同拒。合法 DSL 全保留：`(_1+1)(5)==6`、`(_2*2)(5)==10`、`math.sqrt(4)==2.0`、`operator.add(1,2)==3`、`builtins.len/sum` 受限视图可用、`lambda x: x*2`、默认 holder `lambda x,*_,**__: x` 的 `**__` 参数名不受 AST 检查误伤、`_.upper("hello")()=="HELLO"`（getattr 编译路径经受限 builtins 正常）。回归：首轮修复过度（漏 getattr）曾致 test_functional/test_functional_simple/test_shotcut 三测试 NameError，第二版加回 getattr+AST 防线后 3 测试 GREEN；新增 tests/test_placeholder_no_rce_regression.py 18 项 GREEN；tests/functional/ + tests/serialize/ + tests/decorators/ + tests/other/test_shotcut.py 全套件 GREEN 无回归。commit ca4a00d 推送 gitcode master。
+## BUG-209 [2026-10-19T08:16:44Z] [high] FIXED
+- summary: cache.once @once 装饰器：func 抛异常时 called=True 已先置位而 result 未写，后续调用全部静默返回 None 且永不重试——失败被永久缓存，错误吞没
+- detail: vools/cache/once.py `_OnceWrapper.__call__`（L58-75）：
+
+```python
+with self._lock:
+    if force:
+        self.force = True
+    if self.called and not self.force:
+        return self.result
+    self.called_args = args
+    self.called_kwargs = kwargs
+    self.called = True          # ← 先盖章
+    self.force = False
+    self.result = self.func(*args, **kwargs)   # ← 后执行，抛异常则 result 未写
+    ...
+```
+
+`self.called = True` 在 `self.func(...)` **之前**置位。func 一旦抛异常，`called=True` 已落定而 `result` 仍是初始 `None`——后续所有调用在 L67 `if self.called and not self.force: return self.result` 命中，**静默返回 None，永不重试、异常被吞**。
+
+复现（py3.11）：
+```python
+calls = []
+@once
+def flaky():
+    calls.append(1)
+    if len(calls) == 1:
+        raise RuntimeError("first call fails")
+    return "ok-after-retry"
+
+flaky()          # RuntimeError（正确）
+flaky()          # 返回 None！calls 仍 ==1——func 从未重试
+flaky()          # 永远 None
+```
+
+后果：`@once` 语义（"第一次调用时执行并缓存结果"）在失败路径失效——瞬时失败（网络抖动、锁竞争）会把函数永久钉死为 None 返回。调用方拿到 None 无法区分"函数返回 None"与"初始化失败被吞"。docstring 与 BUG-104 注释都只处理了并发原子性，没处理失败原子性。`__getstate__` 把 called=True/result=None 一并序列化，跨进程恢复还会继续毒化。
+
+修复方向：只在 func 成功后置 `called = True` / 写 `result`（把两行盖章移到 `self.func(...)` 之后），失败时异常原样传播、下次调用自然重试。force 标志的消耗（`self.force = False`）保持现状（执行前清，成功失败都消费一次性 force）。
+- reported_by: agent-vools-hardening
+- task_id: T0r646
+
+
+
+### FIXED(2026-10-19T08:21:05Z / BUG-209)
+- evidence: vools/cache/once.py `_OnceWrapper.__call__`：把 `self.called = True` 从 `self.func(...)` 调用**前**移到成功**后**，`self.result = result` 拆成成功后两段写（L69-82）。失败时异常原样传播、called 保持 False、result 不写 → 下次调用自然重试。`self.force = False`（一次性 force 消耗）保持执行前清位不变；BUG-104 的 RLock 临界区原子性不变（盖章仍在锁内）。probe 验证：flaky() 首次抛 RuntimeError、第二次真实重试返回 "ok-after-retry"（calls==2，修复前第二次静默返回 None 且 calls 永停 1）；always_fails 3 次调用 3 次执行 3 次抛（失败不吞）；失败后 bad.called is False；成功缓存/None 结果合法缓存/force=True 语义/pickle 往返/类单例分支全部不变。新增回归 tests/test_once_no_failure_caching_regression.py 7 项 GREEN（失败可重试、异常每次传播、called 不被毒化、成功缓存、None 缓存、force、并发 4 线程 barrier 重试不死锁）；tests/cache/ 原 15 项（含 test_once_bug104.py 并发原子性）全 GREEN 无回归。commit 8a96c77 推送 gitcode master。
+## BUG-210 [2026-10-19T08:27:23Z] [medium] FIXED
+- summary: cache.memorize.TimedCache.set 三缺陷：max_size=0/负数时任何 set 对空缓存 popitem 抛 KeyError（缓存不可用）；覆盖既有 key 未先判成员资格，容量未涨也误踢 LRU 头部无辜条目
+- detail: vools/cache/memorize.py `TimedCache` 驱逐逻辑三缺陷（同族，集中在 `__init__`/`set`）：
+
+**① `max_size=0` 时任何 `set` 必崩 KeyError**
+```python
+def set(self, key, result):
+    with self._lock:
+        if len(self._cache) >= self._max_size:   # 0 >= 0 → True
+            self._cache.popitem(last=False)      # 空 dict → KeyError: dictionary is empty
+```
+实测 `TimedCache(max_size=0).set("a", 1)` → `KeyError: 'dictionary is empty'`。缓存完全不可用。
+
+**② `max_size<0` 同崩**（比想象更糟——不是"永不驱逐"）：`len 0 >= -1` 恒 True → 第一次 `set` 即对空 dict `popitem` → KeyError。
+
+**③ 覆盖既有 key 误踢无辜头部**：`set` 先判 `len >= max_size` 驱逐、后写，未区分"新增"与"更新"。实测 `max_size=2`，set("x")、set("y") 后 `set("y", 99)`（纯更新，容量未涨）→ x 被驱逐（`get("x")` 变 _MISS）。标准 `functools.lru_cache` 更新既有 key 不驱逐。后果：更新热 key 反而静默丢冷 key，缓存命中率被无谓击穿。
+
+`__init__` 无 max_size 校验，而本文件 `memorize` 对 `duration<=0` 是显式 ValueError（L166-174）——同一文件两种口径。tests/ 仅用 max_size=10，三个形状无覆盖。
+
+修复方向：
+1. `__init__` 校验 `max_size` 为正整数（<=0 raise ValueError，与 duration 口径一致）；
+2. `set` 先查 `key in self._cache`：更新走覆写+`move_to_end`（不驱逐）；仅新增且满员时 `while len >= max_size: popitem(last=False)`。
+- reported_by: agent-vools-hardening
+- task_id: T0r647
+
+
+
+### FIXED(2026-10-19T08:33:14Z / BUG-210)
+- evidence: vools/cache/memorize.py `TimedCache` 修复三缺陷：① `__init__` 校验 max_size 必须正整数（`not isinstance(max_size, int) or isinstance(max_size, bool) or max_size <= 0` → ValueError，与本文件 memorize(duration<=0) 口径一致）——旧实现 `TimedCache(0).set("a",1)` / `TimedCache(-5).set(...)` 必抛 `KeyError: dictionary is empty`（`0>=0`/`0>=负` 恒 True 对空 OrderedDict popitem），缓存完全不可用；② `set` 先查 `key in self._cache`：更新走覆写+`move_to_end`（不驱逐），修复此前 `[x,y] 满员后 set("y",99)` 纯更新却踢掉无辜 x 的命中率击穿缺陷（实测 probe：修复前 `get("x")` 变 _MISS，修复后 x survives + y==99）；③ 新增路径 `while len >= max_size and self._cache: popitem(last=False)` + `if len >= max_size: return` 双保险，构造后直改 `_max_size=0` 退化形状不崩不写（probe survived）。probe 全绿：非法 max_size (0/-5/1.5/True) 全 ValueError、正常 set/get、更新不驱逐、满员新增驱逐最旧（get 触队后正确踢 k2）、pickle 往返（BUG-146 语义保持）、memorize 装饰器主链路 f(2)==4 且 n==1。vools 内部唯一构造点 `_CACHE=TimedCache(max_size=1000)` 合法不受影响（grep 确认）。新增回归 tests/test_timedcache_eviction_regression.py 7 项 GREEN（非法值 parametrize、更新不驱逐、满员踢最旧、退化防御、pickle、memorize）；tests/cache/ 15 项 + tests/other/test_sig_cache.py 全 GREEN 无回归。commit 9e4b2d2 推送 gitcode master。
+## BUG-211 [2026-10-19T08:37:56Z] [medium] FIXED
+- summary: sigcache.add_custom_sig 缓存命中判断不走 _key_is_valid（BUG-113 校验只在读路径）——id 被 GC 复用后对新函数的注册命中死条目被静默丢弃，get_signature 回退自动计算或抛 ValueError，用户注册无告警丢失
+- detail: vools/cache/sigcache.py `add_custom_sig`（L210-216）的缓存命中判断 **未走 BUG-113 的 `_key_is_valid` 弱引用校验**，读写不对称：
+
+```python
+key = id(func)
+if not force and key in _SIG_CACHE:      # ← 只查 key 存在，不校验 id 是否已被复用
+    log.debug(...)
+    return
+_set_cache(key, sig, overwrite=force)
+```
+
+真实场景：旧函数以 `id` 作键缓存过签名 → 旧函数被 GC → CPython 复用该 id 给新函数 → 用户对**新函数**调 `add_custom_sig(new_fn, sig)`（force=False）→ L211 命中**死条目** → 注册被静默丢弃（仅 log.debug，无异常无返回值提示）。
+
+后果链：
+1. 用户以为注册成功，`get_signature(new_fn)` 读到死条目后被 BUG-113 校验失效、删除、回退 `inspect.signature` **自动计算**——拿到的不是用户注册的自定义签名；
+2. 对 inspect 反射不出签名的 C 扩展对象（`_SKIP_TYPES` 正是为它们存在），`get_signature` 直接抛 ValueError——用户注册了却照样崩；
+3. `force=True` 分支行为正确（覆写+`_remember_ref`），缺陷只在 force=False 默认路径。
+
+模块自己的 docstring/L54 注释声明 _SIG_REFS 机制"防止函数 GC 后 id 被新对象复用时误命中旧签名"，但该校验只落在 `get_signature` 读路径（L129），写路径 `add_custom_sig` 漏了。
+
+复现（py3.11，构造与真 GC 复用等价的失效弱引用状态）：
+```python
+from inspect import Signature, Parameter
+from vools.cache import sigcache as sc
+
+def f(): pass
+dead_sig = Signature([Parameter('stale_a', Parameter.POSITIONAL_OR_KEYWORD)])
+key = id(f)
+sc._SIG_CACHE[key] = dead_sig
+sc._SIG_REFS[key] = lambda: None        # 等价于已 GC 函数的 weakref()
+
+target = Signature([Parameter('z', Parameter.POSITIONAL_OR_KEYWORD)])
+sc.add_custom_sig(f, target)            # 静默跳过
+print(list(sc.get_signature(f).parameters.keys()))  # [] —— 'z' 注册丢失
+```
+
+修复方向：L211 的命中判断补 `_key_is_valid(key, func)`——条目存在但校验失效时，删除死条目后照常写入（与 `get_signature` L129-131 的失效处理同构）。
+- reported_by: agent-vools-hardening
+- task_id: T0r648
+
+
+
+### FIXED(2026-10-19T08:40:43Z / BUG-211)
+- evidence: vools/cache/sigcache.py `add_custom_sig` L210-216 补 `_key_is_valid` 校验（读写对称）：`key in _SIG_CACHE` 命中时先校验弱引用——失效（id 被 GC 复用）则 `del _SIG_CACHE[key]` + `_SIG_REFS.pop` 删死条目后照常 `_set_cache+remember_ref` 写入；活条目保持原语义（force=False 跳过 log.debug、force=True 覆盖）。probe 验证 4 分支：①死条目场景注册生效（修复前 get_signature 参数表拿不到 'z'、注册静默丢失无告警，修复后 `['z']`）；②写后 `_SIG_REFS[id]() is f` 自洽；③活条目 force=False 保留首次注册（first is get_signature）；④活条目 force=True 覆盖生效；真实 GC+del+gc.collect 复用路径全链自洽。新增回归 tests/test_sigcache_custom_reg_regression.py 5 项 GREEN（autouse clear_cache fixture、构造等价失效弱引用状态 `lambda: None`、真 GC 尽力触发无论复用与否断言均成立）；tests/other/test_sig_cache.py + tests/cache/ 15 项 + BUG-209/210 回归共 55 项全 GREEN 无回归。commit ab04099 推送 gitcode master。
+## BUG-212 [2026-10-19T08:46:25Z] [high] FIXED
+- summary: cache.persist.FileLock.__enter__ 忽略 acquire() 返回值——with FileLock 在锁被占用时静默放行临界区（Windows msvcrt LK_NBLCK 非阻塞失败互斥完全失效）；persist 读路径 L251 仍走该形态（BUG-144 只修了写路径），可读到并发写进程的半截/损坏 JSON
+- detail: vools/cache/persist.py `FileLock` 双缺陷（同根：`__enter__` 忽略 `acquire()` 返回值）：
+
+**① 类根因（公开 API，`__all__` 导出 L28）**
+```python
+def __enter__(self):
+    self.acquire()      # ← 返回值被丢弃
+    return self
+```
+Windows 上 `msvcrt.locking(LK_NBLCK)` 锁被占用 → 非阻塞失败 → `_locked=False`、`acquire()` 返回 False——但 `__enter__` 照常 return self → **with 主体在无锁状态下执行**，互斥契约静默失效。docstring（L62"跨平台文件锁"）承诺的是互斥；`acquire()` 自己的 docstring 也明说"若返回 False 表示锁已被占用，调用方应自行决定是否继续"——`with` 形态的调用方恰恰无法自行决定。Linux fcntl 分支 flock 本身报错（NFS 等）同样静默放行。
+
+**② 读路径漏改（BUG-144 同族，只修了写路径）**
+L296-309 写路径已修（BUG-144 注释在案：显式 `if _lock.acquire():` + finally release）；但 L251 读路径仍是：
+```python
+with FileLock(cache_path):          # ← acquire 失败照样进
+    try:
+        with open(cache_path, "r") as f_cache:
+            cache_data = json.load(f_cache)   # 可能读到写进程半截文件
+```
+另一进程正写缓存（open("w") 已截断、json.dump 未完）时：读到空/半截 JSON → json.load 抛错被 L263 except 吞 → 重算（性能退化，尚可）；**真正危险**：写入 flush 边界恰好留下**可解析的 JSON 前缀**时，读到**不完整但合法**的数据 → 静默数据损坏返回。
+
+现有 tests/cache/test_persist_filelock.py 全部用显式 `acquire()` 形态断言（BUG-144 契约），无一条覆盖 `with` 失败语义——空洞零覆盖。
+
+修复方向：
+1. `__enter__` 检查返回值，失败抛 `OSError`（语义"未获得锁"，py3.6 兼容）；
+2. 读路径 L251 与写路径对称：显式 `if _lock.acquire():` try/finally release，未获锁按缓存未命中处理（重算，返回新值；写也被对方持有则跳过写，自然降级不崩）。
+- reported_by: agent-vools-hardening
+- task_id: T0r649
+
+
+
+### FIXED(2026-10-19T08:58:16Z / BUG-212)
+- evidence: vools/cache/persist.py 三处修复：① `FileLock.__enter__` 检查 `acquire()` 返回值，失败抛 `OSError("FileLock: could not acquire lock on ... use acquire()'s bool result to implement wait/retry")`——原实现丢弃返回值，Windows msvcrt.LK_NBLCK 锁被占用非阻塞失败时 with 主体照常无锁执行，互斥契约静默失效；② `acquire()` 失败路径新增关闭并丢弃 `self._lock_fd`（原实现 open 的句柄留在属性里，下次 acquire 覆盖致文件句柄泄漏）；③ persist 读路径 L251 由 `with FileLock(...)` 形态改为与写路径（BUG-144 已修）对称的显式 `_rlock = FileLock(...); if _rlock.acquire(): try 读 finally release else need_refresh=True`——未获锁按缓存未命中重算，不再读并发写进程的半截 JSON（可解析前缀=静默数据损坏）。
+
+probe 验证（Windows py3.11 真实 msvcrt 行为）：`a.acquire() is True` 后 `b.acquire() is False`、`with FileLock(path)` 抛 OSError、`b._lock_fd is None`（fd 不泄漏）、正常 with 仍工作 `_locked is True`；persist 场景——首轮 compute 落盘 `{'v':1}`、二轮命中缓存 calls==1、外部持锁+文件写截断 JSON `{"result": {"v": 999}, "star` → 返回 `{'v': 2}` 重算（不读坏数据不崩）、外部持锁+文件写**合法但未提交** `{"result": {"v": 666}}` → 返回 `{'v': 3}` 而非 666（互斥语义真实生效，probe 断言全过）。
+
+新增回归 tests/test_filelock_mutex_regression.py 6 项 GREEN（with-busy 抛 OSError 且在临界区内 pytest.fail 双保险、正常 with 可重入、失败无 fd 泄漏、persist 截断/未提交两场景、4 线程并发首跑结果一致且缓存文件最终可 json.load）；tests/cache/ 原 15 项（含 test_persist_filelock.py BUG-144 竞争契约）全 GREEN 无回归。commit b50c3f1 推送 gitcode master。
+## BUG-213 [2026-10-19T09:02:51Z] [medium] FIXED
+- summary: curried.partition_all 是 partition 的逐字复制、两函数零差异——docstring 承诺「所有组都有相同大小」（toolz 惯例末组补 None）实际末组畸形不满，正文契约与 Example 自相矛盾，按文档选型的调用方静默拿到错位分组
+- detail: vools/curried/collection.py `partition_all`（L182-209）的 `_partition_all` 实现与 `_partition`（L171-178）**逐字相同**——两个函数无任何行为差异，`partition_all` 沦为 `partition` 的别名。
+
+但其 docstring 承诺的是另一契约：**"将可迭代对象按固定大小分组，所有组都有相同大小"**（工具函数惯例，参照 toolz `partition_all`：末组用 fillvalue=None 补齐到 n）。实测（py3.11）：
+
+```python
+partition(3, range(10))      → [[0,1,2],[3,4,5],[6,7,8],[9]]
+partition_all(3, range(10))  → [[0,1,2],[3,4,5],[6,7,8],[9]]   # 与 partition 完全相同
+# 组大小 [3,3,3,1] —— 末组 1 != 3，违反自己的 docstring「所有组都有相同大小」
+partition_all(2, ['a','b','c']) → [['a','b'],['c']]             # 组大小 [2,1]
+```
+
+自相矛盾的连锁证据：docstring 的 Args 文本写"所有组都有相同大小"，而 Example 段却逐字复制 partition 的示例（末组 `[9]`/`['c']` 不满）——**正文与示例互相打架**，正是"文档即实现"口径下的缺陷形状：按正文契约，`partition_all(3, range(10))` 应为 `[[0,1,2],[3,4,5],[6,7,8],[9,None,None]]`。
+
+后果：用户按文档名与正文契约选用 `partition_all` 期望等长分组（例如配 numpy reshape / zip 并行消费，末组不满会直接错位或报错），实际拿到与 partition 相同的畸形末组——静默违约。两函数语义不可区分，等于 API 面撒谎。
+
+tests/ 仅覆盖 partition（339-357），partition_all 零覆盖——修复不锁死现有错误行为。
+
+修复方向：`_partition_all` 实现补齐语义（`islice` 后 `batch += [fillvalue] * (n - len(batch))`，fillvalue=None），docstring Example 同步改为补齐后的输出；partition 保持原语义不动。
+- reported_by: agent-vools-hardening
+- task_id: T0r659
+
+
+
+### FIXED(2026-10-19T09:07:59Z / BUG-213)
+- evidence: vools/curried/collection.py `_partition_all`（L202-210）补上补齐语义：`islice` 成组后 `if len(batch) < n: batch.extend([None] * (n - len(batch)))`——修复原实现与 `_partition` 逐字相同、partition_all 沦为别名而违背 docstring「所有组都有相同大小」的缺陷；docstring Example 同步改为 `[[0,1,2],[3,4,5],[6,7,8],[9,None,None]]` / `[['a','b'],['c',None]]`（消除正文与示例自相矛盾）+ Note 点名 BUG-213。`partition` 一行未动保持"末组可不满足"原语义。probe 验证：partition_all(3,range(10)) 每组 len==3（修复前 [3,3,3,1]）、整除不加尾（range(9) 三组原样）、空输入 []、单元素 [7]→[[7,None,None]]、partition 输出不变、两函数输出不再恒等（API 面零差异症状消除）；模块 doctest failed=0。新增回归 tests/test_partition_all_contract_regression.py 10 项 GREEN（6 补齐契约 + 3 partition 防串扰 + 1 双函数差异断言）；tests/curried/ 全套件 + 回归共 113 项 GREEN 无回归。修复前 grep 确认 partition_all 零测试覆盖（契约未锁死旧行为，安全）。commit c7ab5f9 推送 gitcode master。
+## BUG-214 [2026-10-19T09:12:06Z] [high] FIXED
+- summary: curried.iteration.accumulate 的 initializer 分支把初始值当 itertools.accumulate 第三个位置参数传——initial 是 keyword-only(py3.8+)/不存在(声明的 py3.6-3.7)，凡带 initializer 的调用在所有 Python 版本 100% TypeError，文档承诺的参数完全不可用且报错误导
+- detail: vools/curried/iteration.py `accumulate`（L200-222）的 `initializer` 参数在所有 Python 版本上不可用：
+
+```python
+if initializer is None:
+    return list(itertools_accumulate(iterable, func))
+return list(itertools_accumulate(iterable, func, initializer))   # ← 第三个位置参数
+```
+
+`itertools.accumulate` 的初始值参数是 **keyword-only `initial`**（py3.8+ 引入，`accumulate(iterable, function=None, *, initial=None)`），**第三个位置参数在 py3.8+ 直接 TypeError**；py3.6/3.7（本包 `requires-python = ">=3.6"`）根本不存在该参数——positional 传入同样 TypeError。**该分支从未可能成功**。
+
+实测（py3.11，经 curry 双层包装的误导性报错）：
+```python
+accumulate(operator.add, [1, 2, 3], 10)
+# TypeError: Failed to curry accumulate: Failed to curry accumulate:
+#            accumulate() takes at most 2 positional arguments (3 given)
+```
+无 initializer 路径正常（`accumulate(add,[1,2,3]) == [1,3,6]`）——文档承诺（Args 明写"initializer: 初始值（可选）"）与实际行为完全相反：参数一用即崩，且报错指向 "Failed to curry" 误导用户排查装饰器而非参数。
+
+正确语义（对照 py3.8 stdlib）：`accumulate([1,2,3], add, initial=10)` → `[10, 11, 13, 16]`（initial 本身是输出首元素，每步 `func(prev, x)`）。
+
+修复方向：initializer 非 None 时走确定性手动累积（py3.6 兼容，无版本分支）：
+```python
+out = [initializer]
+acc = initializer
+for x in iterable:
+    acc = func(acc, x)
+    out.append(acc)
+return out
+```
+- reported_by: agent-vools-hardening
+- task_id: T0r660
+
+
+
+### FIXED(2026-10-19T09:18:15Z / BUG-214)
+- evidence: vools/curried/iteration.py `accumulate` L220-222 修复：initializer 非 None 分支由 `itertools_accumulate(iterable, func, initializer)`（第三位置参数在 py3.8+ 因 initial 是 keyword-only 必 TypeError、声明的 py3.6/3.7 无该参数同样崩——带 initializer 的公开调用 100% TypeError，且 curry 双层包装报 "Failed to curry" 误导排查）改为确定性手动累积：`out=[initializer]; acc=initializer; for x: acc=func(acc,x); out.append(acc)`，py3.6 兼容无版本分支。docstring Example 补 `accumulate(operator.add, [1,2,3], 10) → [10, 11, 13, 16]` + Note 点名 BUG-214。probe 逐组对齐 stdlib 语义（itertools.accumulate([..], add, initial=X)）：add [1,2,3] init10 → [10,11,13,16] MATCH、空输入 [10] 与 stdlib 一致、单元素、mul [2,3,4] init5 → [5,10,30,120]、curry 分步 accumulate(add)([1,2],7) → [7,8,10]；无 initializer 路径 [1,3,6,10,15]/[1,2,6,24]/[]/[7] 全不变。新增回归 tests/test_accumulate_initializer_regression.py 9 项 GREEN（含与 stdlib initial= 的 4 组参数化对拍 + 防串扰 4 项）；tests/curried/ 全套 103+9=112 项 GREEN 无回归。commit be47b58 推送 gitcode master。
+## BUG-215 [2026-10-19T09:21:28Z] [medium] FIXED
+- summary: curried.memoize 容量边界崩：maxsize=0/负数时首调在 func 执行后对空缓存 next(iter(cache)) 抛 StopIteration（副作用已发生、结果丢失，违背 lru_cache(0) 合法直通惯例）；maxsize=None 走 len>=None TypeError（lru_cache 无限缓存惯用值同样不可用）
+- detail: vools/curried/composition.py `_memoize_impl`（L83-104）缓存容量边界缺陷：
+
+```python
+result = func(*args, **kwargs)
+if len(cache) >= maxsize:
+    oldest = next(iter(cache))     # ← 空缓存时 StopIteration
+    del cache[oldest]
+cache[key] = result
+```
+
+**① `maxsize=0`（及负数）时任何调用都崩**：`len(cache) 0 >= 0` 恒 True，首个调用 cache 为空 → `next(iter(cache))` 抛 **StopIteration**。且时序在 `func(*args)` **之后**——**用户函数副作用已发生、计算结果丢失**。实测（py3.11）：
+```python
+@memoize(maxsize=0)
+def f(x): calls.append(x); return x*2
+f(5)   # StopIteration()，而 calls == [5]——副作用已执行
+```
+对照标准库：`functools.lru_cache(maxsize=0)` 是**合法直通语义**（不缓存、每次调用函数、正常返回 15）——memoize 在同参数形状下崩溃，违背 functools 同族惯例。
+
+**② `maxsize=None`（lru_cache 无限缓存的惯用值）同样崩**：`len(cache) >= None` → `TypeError: '>' not supported between instances of 'int' and 'NoneType'`，每次调用必炸（首缓存写入后第二次 miss 走到该行即崩；实际上首次调用 miss 后 `0 >= None` 即 TypeError）。
+
+修复方向：
+- `maxsize <= 0`：直通不写缓存（对齐 lru_cache(0) 语义，func 照常执行、结果照常返回）；
+- `maxsize is None`：无限缓存（对齐 lru_cache(None) 惯例，跳过驱逐检查）；
+- `maxsize > 0`：现有 FIFO 驱逐保持（len < maxsize 直接写，满则 next(iter) 踢最旧——此时 cache 必非空，StopIteration 不再可能）。
+- reported_by: agent-vools-hardening
+- task_id: T0r663
+
+
+
+### FIXED(2026-10-19T09:25:04Z / BUG-215)
+- evidence: vools/curried/composition.py `_memoize_impl` 容量分支重写为三段语义（L94-108）：`maxsize is None` 无限缓存跳过驱逐检查（原 `len(cache) >= None` 每次调用必 TypeError，lru_cache(None) 惯用值不可用）；`maxsize > 0` 保持满员 FIFO `next(iter(cache))` 驱逐后写入（此时 cache 必非空，StopIteration 不再可能）；`maxsize <= 0` 直通不写缓存（原实现首调在 func 执行后对空 cache `next(iter(cache))` 抛 StopIteration——用户函数副作用已发生、计算结果丢失，对照标准库 `lru_cache(maxsize=0)` 是合法直通语义）。
+
+probe 验证 5 分支：①`memoize(maxsize=0)` f(5)==10 两次调用 calls==[5,5] 每次真执行结果正确（修复前 StopIteration 且 calls 已记录）；②maxsize=-3 直通 g(1)==2；③maxsize=None 缓存无限 h(1) 两次 n3==[1] 仅执行一次、写 200 个 key 后 len(cache)==200 不驱逐；④maxsize=2 正常命中+FIFO 驱逐语义不变（k(1);k(2);k(3) 后 k(1) 重算 n4==[1,2,3,1]）；⑤默认 128 常规缓存。新增回归 tests/test_memoize_capacity_boundary_regression.py 8 项 GREEN（直通两组、None 无限含 200-key 断言、正容量命中/FIFO/cache_clear 防串扰）；tests/curried/ + BUG-213/214 回归共 128 项 GREEN 无回归。commit 41b1e1b 推送 gitcode master。
+## BUG-216 [2026-10-19T09:30:26Z] [high] FIXED
+- summary: curried.predicate is_in/is_not_in 闭包持有一次性迭代器：is_not_in(生成器) 扫描耗尽后恒 True（源中元素被静默误判 not in，谓词语义反转），is_in 同型——谓词工厂返回可复用 Callable 但签名 Iterable 含生成器，第 2 次起查询基于已耗尽源
+- detail: vools/curried/predicate.py `is_in`（L208-228）/ `is_not_in`（L231-251）谓词工厂接受 `Iterable` 并闭包捕获原对象，函数体内用 `val in iterable` 判断——**当源是一次性迭代器（生成器/文件行迭代器等）时，谓词内部推进迭代器导致后续查询基于已耗尽源静默给错答案**：
+
+```python
+pred = is_in(x for x in [1, 2, 3])
+pred(2)   # True（扫描至 2 命中，生成器停在 3 之前）
+pred(1)   # False ← 1 明明在源头列表中！
+pred(3)   # False ← 同上，扫描起点已越过 3
+
+not_pred = is_not_in(x for x in [1, 2, 3])
+not_pred(5)  # True（扫完未命中，生成器耗尽）
+not_pred(1)  # True ← 语义反转！1 明明在源中，却被判 "not in"
+```
+
+实测（py3.11）输出：`is_in(gen): 2->True 1->False 3->False`；`is_not_in(gen): 5->True 1->True`。
+
+要害不在"迭代器会耗尽"这一常识，而在**谓词工厂的契约**：返回值是 `Callable[[Any], bool]`（签名明示），docstring 用法就是"构造一次、查询多次"——多次调用是谓词的**唯一正常用法**，而一次性源让第 2 次起的每个答案未定义且**静默错误**（`is_not_in` 更是方向性反转，False 安全判断可能来自 True 误报）。函数签名 `Iterable` 明确欢迎生成器（合法 Iterable），实现却要求可重入源——签名与实现矛盾。
+
+修复方向：谓词工厂在构造时**物化快照** `values = list(iterable)`（O(n) 一次），闭包查 `snapshot`：重复查询正确、非哈希元素照常（`in list` 语义与 dict/list/tuple 源完全一致）、list/set/dict 源行为不变（快照复制对不可变源无副作用）。
+- reported_by: agent-vools-hardening
+- task_id: T0r665
+
+## BUG-217 [2026-10-20T00:56:20Z] [medium] FIXED
+- summary: curried.predicate.issubclass_ 文档承诺 class_or_tuple「类或类元组」但元组恒静默 False——isclass(tuple) 判非类直接短路，元组分支从未实现；姊妹函数 isinstance_ 原生支持元组并示例演示，同参数名一兑现一落空，用户批量子类校验永远得 False 无告警
+- detail: vools/curried/predicate.py `issubclass_`（L277-297）docstring **Args 明写** `class_or_tuple: 类或类元组`（与同模块 `isinstance_` 对称的命名与承诺），但实现：
+
+```python
+if not isclass(class_or_tuple):
+    return False
+return issubclass(class_or_tuple, cls)
+```
+
+元组不是类 → `isclass((int, str))` False → **恒静默返回 False**，且把元组整体传给 `issubclass` 也必 TypeError（stdlib 的 tuple 支持在 cls 侧不在子类侧）。实测（py3.11）：
+
+```python
+issubclass_((int, str))(object)   # False ← 文档说支持类元组，Answer 应为 True
+issubclass_((int, str))(int)      # False（静默，无任何告警）
+```
+
+同文件 `isinstance_`（L274）经 `isinstance(obj, class_or_tuple)` 原生支持元组、Example 演示 `isinstance_((int, float))(5) → True`——两个姊妹函数同一参数名，一个兑现一个落空，属"声明与实现脱节"（文档即实现口径的违约）。
+
+后果：用户按 Args 传类元组做批量子类校验，永远拿到 False，且 False 是**合法布尔值**——静默错误最难排查（对比抛异常）。
+
+修复方向：补元组分支——`isinstance(class_or_tuple, tuple)` 时按 docstring Returns 语义「class_or_tuple 是 cls 的子类」对每元素校验（全为子类才 True，与 Returns 的复数主语一致）；元组内含非类元素按本函数"非类静默 False"哲学返回 False；单类与非类输入保持原行为不变。
+- reported_by: agent-vools-hardening
+- task_id: T0r666
+
+
+
+### FIXED(2026-10-20T01:02:39Z / BUG-216, BUG-217)
+- evidence: vools/curried/predicate.py 双修复：**BUG-216**：`is_in`（L208）/`is_not_in`（L231）构造时 `values = list(iterable)` 物化快照，闭包查 snapshot——原实现闭包持有一次性迭代器，谓词每次查询推进生成器，实测 `is_in(x for x in [1,2,3])` 查 2 True 后查 1/3 静默 False、`is_not_in` 耗尽后恒 True（源中元素 1 被误判 not in=语义反转）。修复后 probe：生成器源多次查询全对（2/1/3 True、5 False）、is_not_in(1)==False 不反转、list/dict 键/str/map 源行为不变、非哈希元素 [[1],[2]] 正常。**BUG-217**：`issubclass_` 补 `isinstance(class_or_tuple, tuple)` 分支 `all(isclass(c) and issubclass(c, cls) for c in tuple)`——原实现 isclass(tuple) False 被短路恒静默 False，违背 Args「类或类元组」承诺（姊妹函数 isinstance_ 原生支持元组）。修复后 `(int,str)(object)→True`、`(int,str)(int)→False`（all 语义）、单类/非类原行为不变、空元组真空真、含非类元素 False。docstring 两处补 Note 点名。回归 tests/test_predicate_source_snapshot_regression.py 11 项 GREEN + tests/curried/ 全套 103 项 GREEN（上一轮跑测被系统页面文件不足瞬断，本轮重试通过）。commit ec81b5b 推送 gitcode master。
+## BUG-218 [2026-10-20T01:05:48Z] [medium] FIXED
+- summary: curried.merge_with 单值键旁路合并函数——len(values)==1 时 fn 完全未被调用原样透传，违背 docstring「fn 接收多个值返回合并结果」与 toolz 同名函数每键必调语义，产出类型不一致的混合结果无告警
+- detail: vools/curried/collection.py `merge_with`（L638-667）对**只出现在一个字典里的键**旁路合并函数：
+
+```python
+values = [d[key] for d in dicts if key in d]
+if len(values) == 1:
+    result[key] = values[0]      # ← fn 完全未被调用
+else:
+    result[key] = fn(*values)    # 或 fn(values)
+```
+
+docstring Args 承诺「fn: 合并函数，接收多个值返回合并结果」——fn 是该函数的**唯一合并通道**，每键的收集值应统一经 fn 处理；实现却按值个数分叉，单值键原样透传。实测（py3.11）：
+
+```python
+seen = []
+def counting_fn(*vals): seen.append(vals); return sum(vals)
+merge_with(counting_fn)({'a': 1}, {'b': 2})   # {'a':1,'b':2} —— fn 一次都没被调用！
+merge_with(counting_fn)({'a': 1}, {'a': 3, 'b': 2})  # {'a':4,'b':2} —— 仅 a 走 fn
+```
+
+同名函数的生态语义（toolz/dicttoolz `merge_with`）是**每键都调用** fn：`toolz.merge_with(str, {'a': 1}, {'b': 2})` → `{'a': ['1'], 'b': ['2']}`——单值键以单元素列表传 fn 再取结果。用户从 toolz 迁移或按「合并函数」直觉传变换函数（如 `merge_with(str)` 想统一 stringify 全部值）时，vools 版对单值键静默不执行，产出类型不一致的混合结果（多值键转换了、单值键没转），且无任何信号。
+
+修复方向：删除 `len(values) == 1` 旁路，统一 `result[key] = fn(*values)`（TypeError 回退 `fn(values)` 的既有兼容策略保留——与 toolz 单元素列表传参习惯兼容，`sum`/`max` 两类函数照常）。
+- reported_by: agent-vools-hardening
+- task_id: T0r667
+
+
+
+### FIXED(2026-10-20T01:09:25Z / BUG-218)
+- evidence: vools/curried/collection.py `merge_with._merge_with` 删除 `if len(values)==1: result[key]=values[0]` 单值旁路（L655-666），全部键统一 `fn(*values)`（TypeError 回退 `fn(values)` 兼容策略保留，注释点名 BUG-218）。修复前 probe：`merge_with(counting_fn)({'a':1},{'b':2})` fn 零调用、单值键原样透传，而 `{'a':1,'b':2}` 双字典里 b 旁路不转换；违背 docstring Args「fn: 合并函数，接收多个值返回合并结果」（fn 为唯一合并通道）与 toolz 同名函数每键必调语义（toolz.merge_with(str,...) 对单值键也传单元素列表）。修复后 probe 6 项：docstring Example（sum 三字典 a=9 b=6）语义保持、单值键 fn 逐键调用 seen 两条、lambda v:v*2 变换对 b 现在生效为 4（原旁路 2）、max/sum 组合子单值键经 TypeError 回退正常（max([1])==1）、混合键 sum 数值等值不变。旧测试 tests/curried/test_new_features.py 仅 print 多值场景不受影响（grep 确认无旁路断言锁死）。新增回归 tests/test_merge_with_fn_contract_regression.py 7 项 GREEN（4 每键必调 + 3 防串扰）；tests/curried/ 全套 + predicate 回归共 120 项 GREEN。commit 8f61649 推送 gitcode master。
+## BUG-219 [2026-10-20T01:14:57Z] [high] FIXED
+- summary: encoding.filecodec.write_text 落盘 encode errors='replace' 静默数据损坏——不可编码字符（emoji 等）替换成 '?' 写盘、返回编码名伪装成功，调用方失去 stdlib strict 默认给的纠错决定权；docstring 从未声明有损行为
+- detail: vools/encoding/filecodec.py `write_text`（L353-382）落盘编码用 `text.encode(enc, errors="replace")`——**不可编码字符被静默替换成 `?` 落盘，函数照常返回编码名、无任何损失信号**，属文件写入 API 最坏的静默数据损坏形状。
+
+实测（py3.11）：
+```python
+src = "庆祝🎉发布 v1.0"
+write_text(p, src, encoding="gbk")   # 返回 'gbk'——看似完全成功
+read_text(p, encoding="gbk")          # '庆祝?发布 v1.0' ≠ src
+open(p,'rb').read()                   # b'\xc7\xec\xd7\xa3?\xb7...'，0x3F 就是 '?'
+```
+
+对照 stdlib：`str.encode('gbk')` 默认 **strict**，`src.encode("gbk")` 抛 `UnicodeEncodeError: 'gbk' codec can't encode character '\U0001f389'`——把"换编码/过滤字符/警告用户"的**决定权留给调用方**。vools 版把有损结果伪装成成功，调用方（含自家 `convert()` L403）永远失去纠错机会；用户拿 GBK 文件回显发现 `?` 时数据已在盘上不可逆。
+
+docstring（L354-366）只承诺「统一编码写入文件，返回实际使用的编码名」，**从未声明有损替换**——按"文档即实现"口径属行为违约。同文件读方向 `read_text` 的 `errors="replace"` 是**文档明写**的兜底契约（「绝不抛解码异常」L328），读方向合理、不在此报；**写方向**丢失决定权才是缺陷。
+
+tests/encoding/test_filecodec_detect.py + tests/utils/test_filecodec.py 全部用可编码内容（中文→gbk 等），无测试锁死 replace 有损行为。
+
+修复方向：默认 `strict`（对齐 stdlib 与 `open(..., 'w', encoding=enc)` 默认），新增 `errors: str = "strict"` 参数供显式选有损场景；`convert()` 透传。
+- reported_by: agent-vools-hardening
+- task_id: T0r669
+
+
+
+### FIXED(2026-10-20T01:20:14Z / BUG-219)
+- evidence: vools/encoding/filecodec.py 修复：① `write_text`（L353）签名新增 `errors: str = "strict"`，L384 `text.encode(enc, errors=errors)` 替换原硬编码 `errors="replace"`——目标编码装不下的字符（实测 emoji→GBK）现抛 UnicodeEncodeError 且 **encode 在 open(path,"wb") 之前**，失败不产生半写/坏文件（probe 断言 not os.path.exists 通过）；有损场景显式 errors="replace" 保留旧能力；docstring 补 errors 契约段 + BUG-219 Note。② `convert`（L392）新增 errors 参数透传 write_text（默认 strict 同样生效，probe: convert emoji→gbk 抛 UnicodeEncodeError、显式 replace 返回 to=='gbk'）。③ `read_text` 读方向 replace 保持原样（docstring 明写「绝不抛解码异常」是文档化契约，读替换合理不报）。probe 5 项验证：strict 默认报错+不落盘、显式 replace 照常、中文→gbk 正常 round-trip 不变、convert 双向透传、BOM/utf-16/父目录路径不受影响。grep 确认 tests/encoding+tests/utils 全部用可编码内容、无测试锁死 replace 有损行为。新增回归 tests/test_filecodec_write_strict_regression.py 9 项 GREEN；tests/utils/test_filecodec.py + tests/encoding/ 全套共 64 项 GREEN（含 doctest）。commit 5da3d0e 推送 gitcode master。
+## BUG-220 [2026-10-20T01:29:42Z] [medium] FIXED
+- summary: VText.regexp_substr 文档承诺「无匹配 None」但 @rself 把 None 转成 self(整条原文)——is None 判断永假、调用方在错误数据上静默继续链式计算；底层 tools.regexp_substr 正确返 None、同族 regexp_instr 正确返 -1，唯 substr 契约被 rself 链式兜底吞掉；应声明 _rself_exclude 官方逃生门(BUG-200 先例)
+- detail: vools/data/vtext.py `VText.regexp_substr`（L266-278）docstring 与签名承诺 `Optional[str]`「匹配子串，无匹配时 None」，但 VText 是 `@rself` 类（L40），方法返回值走 `_wrap_return_value`（vools/decorators/rself.py L91-92）：**None → self、str → VText(str)**——文档化的 None 未命中信号被链式兜底规则完全吞掉。
+
+实测（py3.11）：
+```python
+t = VText("hello world")
+t.regexp_substr(r'xyz')   # 期望 None；实际 VText('hello world')——整条原文！
+t.regexp_substr(r'world') # 返回 VText('world')（str→VText 转换还算合理）
+```
+
+后果：
+1. `if t.regexp_substr(pat) is None:` 永不成立——无匹配判断分支失效；
+2. 无匹配时拿到**整条原文**继续链式操作（如 `.count(',')`、`.split()`），在错误数据上静默计算，产出看似正常的错误结果；
+3. 底层 `vools/utils/tools.py:regexp_substr`（L692）无匹配正确返回 None、`VText.regexp_instr` 无匹配正确 -1（int 不触发 None→self）——**同一族方法里只有 substr 的 None 契约被 rself 吃掉**，行为不一致。
+
+rself 的 None→self 是给方法做链式兜底的**成文设计**（BUG-17 修复时保留），但类已提供官方逃生门 `_rself_exclude`（BUG-200 先例：`VDate.date()` 返回原生 datetime.date 避免包装崩溃，rself.py L175-180）。`regexp_substr` 属同类形状：方法有文档化的「无信号=None」契约，不该走链式包装。
+
+修复方向：VText 类声明 `_rself_exclude = ('regexp_substr',)`（命中返回原生 str、未命中返回 None，与 tools 层契约一致；str 是 VText 父类，现有 `== '1'` 型断言不受影响——tests/data/test_vic_inherit.py L129 与 tests/test_utils_tools.py L45-46 只断言值）。
+- reported_by: agent-vools-hardening
+- task_id: T0r671
+
+
+
+### FIXED(2026-10-21T04:00:25Z / BUG-220)
+- evidence: vools/data/vtext.py 修复：VText 类声明 `_rself_exclude = ('regexp_substr',)`（L44-50 注释点名 BUG-220，走 rself.py L175-180 的 BUG-200 官方逃生门先例），regexp_substr docstring 补 Returns 契约 + doctest 示例（VText("abc123").regexp_substr(r'\d+')→'123'、无匹配 is None→True）。
+
+修复前 probe：`VText("hello world").regexp_substr(r'xyz')` 返回 VText('hello world')（整条原文）——@rself 链式兜底 rself.py L91-92 把方法 None→self、str→VText，docstring「无匹配时 None」永不可判（is None 恒 False），调用方在错误数据上静默继续链式计算；同族 regexp_instr 无匹配 -1 正确（int 不触发该规则）、底层 tools.regexp_substr L692 无匹配正确返 None，唯 substr 上层契约被吞。修复后 probe 全对：无匹配 is None True、命中返回原生 str('world')、occurrence=1/'45'、occurrence=5 None、occurrence=-1 负索引 '3'；链式语义保持（regexp_replace/upper 仍返回 VText 实例、regexp_instr -1 不变、run('eval')==2+result 属性 BUG-206 语义不变）；方法 docstring doctest 通过。
+
+现有测试只断言值（tests/data/test_vic_inherit.py L129 `== '1'`、tests/test_utils_tools.py L45-46）不断言类型，排除后返回原生 str 等值成立（grep 确认无类型锁死）。新增回归 tests/test_vtext_substr_rself_contract_regression.py 10 项 GREEN（3 None 可判 + 3 原生 str/occurrence + 4 链式防串扰）；tests/data/ + tests/utils/ + test_utils_tools.py 全套 GREEN 无回归。commit 6b44f8e 推送 gitcode master。
+## BUG-221 [2026-10-21T04:07:39Z] [medium] FIXED
+- summary: VList.pop/shift 文档承诺「空列表返回 None」但 @rself None→self 兜底吞掉信号——VList([]).pop() 返回 VList([]) 空列表本身，is None 永假；与 BUG-220 同族，应走 _rself_exclude 官方逃生门（VText/VDate 先例）
+- detail: vools/data/vlist.py `VList.pop`（L646-656）/`VList.shift`（L658-668）与 BUG-220（VText.regexp_substr）完全同族：实现与 docstring 都明写空列表信号——「弹出的元素，**如果列表为空则返回 None**」（L649-650、L662，代码 L655/L667 `return None`）——但 VList 是 `@rself` 类（L61），方法返回值走 `_wrap_return_value` 的 **None→self** 链式兜底（vools/decorators/rself.py L91-92）。
+
+实测（py3.11）：
+```python
+VList([]).pop()    # 期望 None；实际 VList([])——is None 恒 False
+VList([]).shift()  # 同上，返回 VList([]) 整条空列表
+```
+
+后果与 BUG-220 相同形状：`if v.pop() is None: 空列表处理` 分支**永不成立**，调用方把「空列表本身」当「弹出的元素」继续消费（比如链上 `.size()` 得 0 看似合理、或当元素塞进另一容器把空列表嵌进去），错误静默传播。次要形状：排除前 `VList([1,[2,3]]).pop()` 弹出的 list 元素还会被 rself 的父类实例转换规则包装成 VList——pop 语义应返回**原始元素**，走 `_rself_exclude` 一并修正。
+
+同类修复先例已就位：VText `_rself_exclude = ('regexp_substr',)`（BUG-220）、VDate `_rself_exclude = {'date'}`（BUG-200）——rself.py L175-180 的官方逃生门，本缺陷应声明 `_rself_exclude = ('pop', 'shift')`。
+
+现有 tests/ 对 VList.pop/shift 零覆盖（grep 仅命中其他类的同名方法），修复不锁死旧行为。
+- reported_by: agent-vools-hardening
+- task_id: T0r678
+
+
+
+### FIXED(2026-10-21T04:19:46Z / BUG-221)
+- evidence: vools/data/vlist.py VList 类声明 `_rself_exclude = ('pop', 'shift')`（L62-70 注释点名 BUG-221，走 rself.py L175-180 官方逃生门，先例 VDate={'date'} BUG-200、VText=('regexp_substr',) BUG-220）。修复前实测 `VList([]).pop()` 返回 VList([])（整条空列表）非 None——实现 L655/L667 明写 return None、docstring 明写「如果列表为空则返回 None」，但 @rself 方法兜底 rself.py L91-92 None→self 吞掉信号，is None 空弹判断永假；次要形状：弹出嵌套 list 元素此前也会被父类转换规则包装（修复后 `VList([[1,2],[3,4]]).pop()` 返回原生 list [3,4]，type is list ✓）。
+
+probe 验证：空 pop/shift is None ✓、弹尽后 None ✓、pop 末元素 3/shift 首元素 'a' 值正确 ✓、嵌套元素原生 list ✓、防串扰全保持（sorted/add/unshift 仍返回 VList 实例、size property 值语义、inner_iterable property、BUG-17 property None 保护）。同族排查记录：table.py 两处 map(func=None) 的 return None 是 print 副作用分支（docstring 无 None 承诺，rself 转 self 等价 do() 合理）、convert_value 为方法内闭包不走包装、VText.trim/unZipB64 的 None 命中全在参数位（Optional 语义非返回契约）——唯 pop/shift 是真违约。grep 确认 VList.pop/shift 现有测试零覆盖不锁旧行为。新增回归 tests/test_vlist_pop_shift_rself_regression.py 9 项 GREEN（3 空弹 None + 3 原生元素 + 3 链式防串扰）；tests/data/ 全套 + 回归共 109 项 GREEN 无回归。commit 926ca10 推送 gitcode master。
+## BUG-222 [2026-10-21T04:21:24Z] [medium] FIXED
+- summary: encoding.core Encoder.url/Decoder.url 对非 str 输入静默原样透传且 history 记虚假'url'操作——bytes 本可 quote_from_bytes 正确编码、dict/int 应像同场 base64/gzip 明确抛 ValueError，同模块失败口径不一
+- detail: vools/encoding/core.py `_urlencode`（L526-529）/`_urldecode`（L801-804）对非 str 输入**静默原样透传**：
+
+```python
+@staticmethod
+def _urlencode(data, encoding='utf-8'):
+    if isinstance(data, str):
+        return urllib.parse.quote(data, encoding=encoding)
+    return data          # ← bytes/dict/int 原样返回，无编码、无异常
+```
+
+实测（py3.11）：
+```python
+e = Encoder(b'a b\xff'); e.url()
+e.data    # b'a b\xff' —— 未变化
+e.history # ['url']     —— 却记录了"已 url 编码"（虚假历史）
+
+Encoder({'a': 1}).url().data  # {'a': 1} 原样 dict
+```
+
+三重违约形状：
+1. **静默无效**：`Encoder(data: Any)` 签名欢迎一切输入，bytes 输入 url() 什么都不做还"成功"——下游拿未编码数据拼 URL/写请求，错误在远处才爆；
+2. **history 造假**：`_apply`（L356-363）成功路径 append 操作名，透传分支让 `history=['url']` 成为虚假记录，链式审计失去意义；
+3. **与同类算子口径不一**：同一个 Encoder 里 `base64(123)`/`gzip(123)` 对非法输入明确抛 `ValueError: Failed to apply ...`（经 `_apply` 包装），`encode()` 未知格式明确抛——**唯 url() 假成功**。且 bytes 场景标准库本可正确处理：`urllib.parse.quote_from_bytes(b'a b\xff')` → `'a%20b%FF'`。
+
+Decoder 侧 `_urldecode` L804 同型透传。
+
+修复方向：
+- bytes/bytearray 走 `quote_from_bytes`/`unquote_to_bytes`（正确编码，利用标准库既有能力）；
+- 其余类型抛 TypeError（经 `_apply` 统一包装成 `ValueError: Failed to apply url: ...`，对齐 base64/gzip 口径）；
+- Decoder.url 对称处理。
+- reported_by: agent-vools-hardening
+- task_id: T0r679
+
+
+
+### FIXED(2026-10-21T04:23:27Z / BUG-222)
+- evidence: vools/encoding/core.py 两侧修复：① `_urlencode`（L525-536）——非 str 输入原 `return data` 静默透传改三分支：str→quote、bytes/bytearray→`quote_from_bytes(bytes(data))`、其余 raise TypeError（经 `_apply` L362-363 统一包装成 `ValueError: Failed to apply url: url encode expects str/bytes, got dict`，对齐同场 base64/gzip 的明确失败口径）；② `_urldecode`（L800-808）对称——`isinstance(data,(str,bytes,bytearray))`→unquote（标准库 py3.6+ 原生支持 bytes-like），其余抛 TypeError。修复前实测：`Encoder(b'a b\xff').url()` data 未变化且 history=['url']（虚假编码记录）、`Encoder({'a':1}).url()` 原样 dict——下游拿未编码数据拼 URL 错误在远处爆，history 审计失真；且 bytes 场景标准库本可正确编码（quote_from_bytes(b'a b\xff')=='a%20b%FF'）。
+
+probe 验证矩阵：str 'hello world'→'hello%20world' 不变、bytes 现在正确编码 'a%20b%FF'、bytearray 同、dict/int 明确 ValueError、Decoder str/bytes（与 urllib.parse.unquote 逐字节一致）、UTF-8 percent 序列 %E4%B8%AD→中文、str round-trip 'a b&c=中文' 还原、失败卫生（Encoder(3.14).url() 抛后 history==[] 且 data 未动）。新增回归 tests/test_url_codec_no_silent_passthrough_regression.py 10 项 GREEN；tests/encoding/ + tests/utils/ 全套共 66 项 GREEN 无回归（期间修正一次 probe 对 unquote(b'%FF') 默认 errors='replace' 产出 U+FFFD 的断言——标准库语义正确非缺陷）。commit 048dbe0 推送 gitcode master。
+## BUG-223 [2026-10-21T04:24:17Z] [low] FIXED
+- summary: api.seq_cmd from_range 用 if limit: falsy 判断把显式 --limit 0 当未指定静默忽略——期望 0 条实际全量返回；typer Optional 未指定是 None 应判 is not None；与 BUG-172 Seq(0) 同族 falsy 陷阱
+- detail: vools/api/seq_cmd.py `from_range`（L37-52）limit 选项用 **falsy 判断**当作"未指定"：
+
+```python
+limit: Optional[int] = typer.Option(None, "--limit", "-l", help="限制结果数量")
+...
+if limit:                      # ← limit=0 被当"没传"
+    seq = seq.take(limit)
+```
+
+typer 的"未指定"默认是 `None`，正确判断应为 `is not None`；现 `--limit 0`（明确要 0 条结果）走进 falsy 分支被**静默忽略**：
+
+```
+vools seq from-range 10 --limit 0 --collect
+# 期望: 结果: []
+# 实际: 结果: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  —— 全量返回，参数被吃
+```
+
+与 BUG-172（`Seq(0)` 被判空序列）、BUG-193 族同型——falsy 陷阱把**合法的 0 值**与"未提供"混为一谈。0 是 `take(0)`→`[]` 的完全合法语义（"取 0 条"），调用方显式传参得到相反结果（全量）。脚本化调用（如 `--limit $n` 变量恰好为 0）会在无告警的情况下把全量数据灌进下游。
+
+api 面 grep 确认仅此一处 `if limit:` 形状（其余 falsy 位点无）。
+
+修复方向：`if limit is not None: seq = seq.take(limit)`。
+- reported_by: agent-vools-hardening
+- task_id: T0r680
+
+
+
+### FIXED(2026-10-21T04:26:02Z / BUG-223)
+- evidence: vools/api/seq_cmd.py L51-54 `if limit:` 改 `if limit is not None:`（注释点名 BUG-223，typer Optional 未指定默认是 None，falsy 判断把显式 --limit 0 当"没传"静默忽略）。修复前 `from_range(10, collect=True, limit=0)` 返回 [0..9] 全量（期望 []）；修复后 probe：limit=0 → []、limit=None → 10 条全量、limit=3 → [0,1,2]、默认不传路径 list(range(5)) 不变。grep 确认 api/ 全目录仅此一处该 falsy 形状。负数 limit 由 Seq.take 既有语义自然处理（i<n 恒假→空），无新增崩溃。新增回归 tests/test_seq_cmd_limit_zero_regression.py 4 项 GREEN；tests/ -k "seq_cmd or api" 相关 75 项 GREEN 无回归。与 BUG-172 Seq(0) 被判空序列同族 falsy 陷阱修复。commit 81b1648 推送 gitcode master。
+## BUG-224 [2026-10-21T04:30:04Z] [high] FIXED
+- summary: Table.query 的 sql_like 位置参数声明且 docstring 给出用法示例("where=age>25&limit=5")但函数体完全未消费——按文档传串的用户静默拿到全量数据以为已过滤，数据泄出形状；实测 query("where=id>999") 返回全部 3 行，kwargs 路径正常；应解析 k=v&k=v 与 kwargs 合并显式优先
+- detail: vools/data/table.py `Table.query`（L1330-1366）的 `sql_like` **位置参数完全未使用**——函数体只消费 `**kwargs`（select/where/order_by/offset/limit），docstring 却明确给出 SQL-like 串用法：
+
+```python
+def query(self, sql_like: str = None, **kwargs) -> 'Table':
+    """SQL 风格的字符串查询
+    Args:
+        sql_like: SQL 风格字符串
+            如 "where=age>25&order_by=age&limit=5"
+    ...
+    """
+    result = self
+    if 'select' in kwargs: ...   # ← 只读 kwargs，sql_like 无人认领
+```
+
+实测（py3.11）：
+```python
+t = Table([[1,'a'],[2,'b'],[3,'c']], columns=['id','name'])
+t.query("where=id>999")          # 期望 0 行；实际返回全部 3 行 [[1,a],[2,b],[3,c]]
+t.query("where=id>1&limit=2")    # 期望 2 行；实际 3 行（limit 也被吞）
+t.query(where='id>1', limit=2)   # kwargs 路径正常 → [[2,b],[3,c]]
+```
+
+危害形状（与 BUG-162 rate_limit logic 死参数同族但更烈）：用户按 **docstring 文档的用法**传过滤条件串，得到**全量数据**却以为过滤已生效——数据过滤/脱敏场景静默泄出全表，下游（导出/展示/统计）基于错误集合决策，无任何告警；参数"声明了但没消费"正是 docstring-实现脱节审计（文档即实现）要抓的核心形状。
+
+修复方向：函数体开头解析 sql_like（`k=v&k=v`），与 kwargs 合并——**显式 kwargs 优先、sql_like 只补缺**（`setdefault`）：
+- 段无 `=` → 明确 ValueError（不静默吞畸形串）；
+- `limit`/`offset` 转 int、`desc` 转 bool（'true'/'1'/'yes' 判真），其余值保持 str（where/order_by/select 语义本就是字符串）。
+- reported_by: agent-vools-hardening
+- task_id: T0r681
+
+
+
+### FIXED(2026-10-21T04:34:00Z / BUG-224)
+- evidence: vools/data/table.py `Table.query` L1350 后新增 sql_like 解析块（注释点名 BUG-224）：`sql_like.split('&')` 逐段 `split('=',1)`，`kwargs.setdefault(key, value)` 合并（显式 kwargs 优先、串只补缺）；limit/offset int() 转换、desc 判 ('true','1','yes') 转 bool、无 '=' 段 raise ValueError("Invalid sql_like segment ... expect 'key=value'") 不静默吞畸形串；docstring 示例补 query("where=age>25&limit=5")。修复前实测：Table 3 行数据 `query("where=id>999")` 返回全部 3 行（期望 0）、`query("where=id>1&limit=2")` 返回 3 行——过滤串整个被吞，按 docstring 用法调用以为已过滤实拿全量（数据泄出形状，BUG-162 死参数族更烈实例）；kwargs 路径正常（2 行）对照出串路径失效。修复后 probe 8 路径：where 生效 0 行、组合 where&limit 正确 2 行、limit int 转型生效、desc=true 倒序首行 id=3、offset=1&limit=1 正确 [2,b]、畸形 "where" 段抛 ValueError、显式 kwargs 优先（query("limit=2", limit=3).rows()==3）、混合源（"where=id>1"+limit=1→1 行）、纯 kwargs 路径与原语义一致、query() 无参全量兼容。新增回归 tests/test_table_query_sql_like_regression.py 11 项 GREEN；tests/data/ 全套 + 回归共 110 项 GREEN 无回归。死参数族扫描同轮判定不报：qax.QAXColToDate fmt 与 table.from_array data_type 均 docstring 自曝「参数未使用/暂未实现」（诚实桩）；NimItor.send jump_no-op/history_strategy 桩在 use_nim「仅对整数序列有效」声明范围内且无 DLL 不可达。commit b9b6ff3 推送 gitcode master。
+## BUG-225 [2026-10-21T04:36:41Z] [medium] FIXED
+- summary: functional.iif 的 supp=False 开关在 data 模式字符串条件路径完全失效——_eval_string_condition 声明 supp 参数但函数体从不引用、无条件编译 lambda；docstring 明写 supp=是否启用字符串表达式编译且同模块 ConditionBuilder 三处认真分支该开关，唯顶层路径把安全配置静默吃掉
+- detail: vools/functional/iif.py `iif()` 的 `supp` 开关在 **data 模式字符串条件路径**完全失效——`_eval_string_condition`（L92-106）声明参数 `supp: bool` 但函数体**从不引用它**，无条件走 `_compile_expression` 编译求值：
+
+docstring 三处明写契约（L509-511、L516）：
+```
+- 字符串：
+    - '->' 前缀：强制用 safe_lambda 编译
+    - 普通字符串（supp=True）：尝试编译为 lambda，失败则 fallback 到 bool(condition)
+supp: 是否启用字符串表达式编译（默认 True）
+```
+
+实测（py3.11）：
+```python
+iif("x > 3", "big", "small", data=10, supp=False)  # 期望不编译→bool("x>3")=True? 至少行为应区别于 supp=True
+# 实际返回与 supp=True 完全一致——lambda 照常编译求值
+```
+
+同模块内 `supp` 是**被认真执行的开关**：`ConditionBuilder._parse_comp` L217 `if self.supp:` 分支、L224 非 supp 模式只允许内置别名、L230 明确 raise ValueError("supp=False 时仅接受内置运算符")——**唯独 iif() 顶层 data 模式路径把开关当装饰**。函数签名声明参数、docstring 定义语义、实现完全不消费，且行为与开关打开态不可区分（静默失效，用户以为关掉了表达式编译实际没关——iif 的 supp 语义就是安全面开关，关不掉=安全配置被吃）。
+
+与 BUG-162（rate_limit logic 死参数）、BUG-224（query sql_like 死参数）同族，AST 死参数扫描命中。
+
+修复方向：`_eval_string_condition` 尊重 supp——`'->'` 前缀保持强制编译（L510 契约），普通字符串在 `supp=False` 时不编译、按 docstring 兜底语义返回 `bool(condition)`。
+- reported_by: agent-vools-hardening
+- task_id: T0r682
+
+
+
+### FIXED(2026-10-21T04:38:05Z / BUG-225)
+- evidence: vools/functional/iif.py `_eval_string_condition`（L92）补 supp 消费：`has_arrow = condition.startswith('->')`，`if not supp and not has_arrow: return bool(condition)`——修复前函数体声明 supp: bool 参数但从不引用，iif(data 模式字符串条件, supp=False) 与普通串仍被无条件 _compile_expression 编译求值，docstring L516「supp: 是否启用字符串表达式编译（默认 True）」开关静默失效（安全面开关关不掉=配置被吃；与 BUG-162 rate_limit logic、BUG-224 query sql_like 同族）。'->' 前缀按 L510「强制用 safe_lambda 编译」契约保持不受 supp 影响；同模块 ConditionBuilder L217/224/230 三处本就拿 supp 分支（口径统一）。判别 probe：iif("x > 99",data=10,supp=False)=='big'（不编译→bool 非空串 True）而 supp=True=='small'（编译 10>99 False）——开关两态现可区分（修复前恒同值）；'-> x > 99' supp=False 仍强制编译得 'small'；默认 supp=True/callable/bool/编译失败兜底 bool 四路径不变。新增回归 tests/test_iif_supp_switch_regression.py 9 项 GREEN（开关判别 3 + 箭头强制 2 + 防串扰 4）；tests/functional/ + tests/security/ + 回归共 151 项 GREEN 无回归。死参数扫描同轮判不报：rate_limit logic（BUG-162 已改文档占位）、safe_arrow_func env（docstring 自曝忽略）、_safe_eval_rust_impl vars（自曝暂未支持）、md/ 区 4 处（禁区记录不动）。commit 8c25e39 推送 gitcode master。
+## BUG-226 [2026-10-21T04:40:40Z] [medium] FIXED
+- summary: oop.mixer Mixer_._get_cached_attr 用 @lru_cache 装饰实例方法致 self 强引用泄漏——del 实例+gc 后弱引用仍活实测确认；且与类内已实现的实例级 _attr_cache(写入/失效联动/clear 全套)构成双层缓存，remove_extra_code 不失效 lru 层必 stale；应删 lru 走原生 _attr_cache 双层合一
+- detail: vools/oop/mixer.py `Mixer_._get_cached_attr`（L239-249）用 **`@lru_cache(maxsize=256)` 装饰实例方法**——缓存键含 `self`，lru_cache 对 self 持**强引用**，实例永不回收；且与类内已正确实现的 `_attr_cache` 机制（实例级 dict：`__getattr__` L381 写入、`remove_extra_code` L265 联动失效、L208-215 clear 全套）构成错误的双层缓存：
+
+```python
+@lru_cache(maxsize=256)
+def _get_cached_attr(self, name: str) -> Any:
+    """LRU缓存优化方法（内部使用）。"""
+    return self.__getattr__(name)
+```
+
+实测（py3.11）——**实例泄漏**：
+```python
+m = Mixer(A(), B())
+wr = weakref.ref(m)
+m._get_cached_attr('x')      # 调用一次
+del m; gc.collect()
+wr() is not None            # True —— 实例活着：lru 强引用 self 及其全部组件
+```
+
+三重缺陷：
+1. **内存泄漏**：每次调用把 `(self, name)` 键入类级全局 lru；长驻进程循环创建/销毁 Mixer，每个被调用过的实例连同其混合组件（`_attr_code`、组件对象）滞留，直到 256 个不同键挤出——Mixer 是**组合容器类**，典型用途恰是大量实例化；
+2. **stale 双层缓存**：`remove_extra_code`/`add_extra_code` 变更只清实例级 `_attr_cache`（L265），lru 层不感知——用 `_get_cached_attr` 的调用方拿到变更后仍返回旧对象；
+3. **跨实例共享 lru 表**：类级缓存实例属性解析结果，语义错位。
+
+内部零调用（grep 全库仅定义行）——"内部使用" docstring 声明的方法却是可公开调用的类属性，用户按类 API 面使用即中招。
+
+修复方向：改走已存在的实例级 `_attr_cache`（`__getattr__` 本身已实现该缓存的读写+失效联动，且 `name.startswith('_')` 在 L357 直接旁路缓存）——删除 `@lru_cache` 装饰器，方法体直接 `return self.__getattr__(name)`（走原生缓存），双层合一、无泄漏。
+- reported_by: agent-vools-hardening
+- task_id: T0r683
+
+
+
+### FIXED(2026-10-21T04:42:46Z / BUG-226)
+- evidence: vools/oop/mixer.py `Mixer_._get_cached_attr` 删除 `@lru_cache(maxsize=256)` 装饰器（L238-256 注释点名 BUG-226），方法体保留委托 `return self.__getattr__(name)`——__getattr__ 自身已实现正确的实例级缓存（L381 写 _attr_cache、remove/add_extra_code L265 联动失效、L208-215 clear 全套），双层合一；同步清理 functools import 的死引用（partial 保留）。修复前实测（py3.11 weakref+gc）：m=Mixer(A(),B()); m._get_cached_attr('x'); del m; gc.collect() → weakref() is not None——lru 缓存键 (self,name) 强引用 self，实例连同混合组件永不回收；类级 256 槽与实例级 _attr_cache 双层错位，属性变更后 lru 层返回 stale。修复后 probe：del+gc 后 wr() is None（泄漏消除）、20 实例循环创建后 weakref 全死、解析值正确（x==1、go()=='A.go'）、_attr_cache 键正常填充 ['go','x']、remove_extra_code 后重解析一致。grep 确认全库 _get_cached_attr 零内部调用（公开可达方法，用户按 API 面使用即中招）。新增回归 tests/test_mixer_attr_cache_leak_regression.py 5 项 GREEN（单实例回收+20 实例批量回收+解析值+实例缓存填充+失效联动）；tests/oop/ 全套 + task 回归共 118 项 GREEN 无回归。新缺陷类命中：@lru_cache 装饰实例方法（self 强引用泄漏+stale）——全库扫描仅此 1 处。commit 006ffef 推送 gitcode master。
+## BUG-227 [2026-10-21T04:47:26Z] [high] FIXED
+- summary: decorators.overload register 默认返回原函数，与模块头 L9/示例注释 L17/overload() L500 三处「默认返回管理器支持链式」承诺直接矛盾——同名注册 @f.register def f(...)（L270 显式允许的正统写法）把名字重绑成新函数、Manager 丢失、全部 dispatch 逻辑静默旁路，实测 g() 报 missing 1 required（而非重载系统错误）；模块异名示例靠名字不重绑碰巧可跑
+- detail: vools/decorators/overload.py `OverloadManager.register` 的默认返回值与**三处文档承诺直接矛盾**，且导致最自然的同名注册用法打断整个 dispatch：
+
+**文档自相矛盾**（同一文件里两种说法）：
+- 模块头 L9：「注册模式：export_mode 控制 register 的返回值（**默认返回管理器支持链式**）」
+- 模块头示例注释 L17：`@add.register  # 返回管理器，支持链式`
+- `overload()` docstring L500：「export_mode: register 的默认返回策略（**默认 None → 返回管理器**）」
+- `register()` docstring L304：「None (默认)：**返回原函数**，不改变原函数」
+
+实现站 L304 一边（L317-319 `eff_export_mode is None → return f`），其余三处文档（含模块头总述与示例注释）说的"默认返回管理器"**全部落空**。
+
+**真实危害——同名注册用法静默打断 dispatch**（`_register_function` L270 显式允许同名注册，这是该库正统写法）：
+```python
+@overload
+def g(): return "noarg"
+@g.register
+def g(a): return f"one:{a}"    # 同名注册（L270 同名分支恒允许）
+
+g()      # TypeError: g() missing 1 required positional argument: 'a'
+```
+`@g.register` 把名字 `g` 重绑成**新注册函数 g(a)**（register 返回 f）——Manager 对象丢失，此后 g() 直接调用 g(a)，全部重载匹配逻辑（priority/strict/count/模糊检测）旁路。实测（py3.11）：`k.m()`（类方法同名风格）报 "K.m() missing 1 required positional argument: 'a'"、模块级 `g()` 同型——错误信息指向具体函数而非 overload 系统（"没有找到匹配的重载函数"），正是 dispatch 已死的指纹。
+
+模块头示例之所以能跑通全靠运气：示例用**不同名**（`add_int`）注册——装饰器只重绑 `add_int` 名字、`add` 还是 manager；且示例里 `add("a","b")` 返回 'ab' 其实是 add_int 未强制注解**碰巧同值**，不是"主函数兜底"在工作。示例注释「返回管理器，支持链式」描述的返回行为根本不存在。
+
+修复方向：统一文档与实现到「默认返回管理器」——`_handle` 的默认分支（L317-319）改为返回 `self`（管理器），与模块头 L9/L500/L17 三处承诺对齐；`register()` docstring L304 的 None 行为描述同步更正。同名/异名两种注册风格均恢复 dispatch（异名示例不受影响——名字绑定本就独立于返回值）。ExportAsFunction 显式值保留"返回原函数"能力给主动选择的调用方。
+- reported_by: agent-vools-hardening
+- task_id: T0r684
+
+## BUG-228 [2026-10-21T04:51:10Z] [medium] FIXED
+- summary: decorators.overload 哨兵 ExportAsFunction 误定义成 None——与"未传 export_mode"同值被 L311 None 门截胡，register 的「显式选择返回原函数」能力结构性不可达（分支永假、文档虚假承诺）、同族三哨兵唯一字符串其二独它为 None 明显笔误；应改 'function' 并同步全引用点
+- detail: vools/decorators/overload.py 的导出哨兵 `ExportAsFunction`（L87）定义为 **`None`**——与同族哨兵完全不一致（L86 `ParentMode = 'parent'`、L88 `ExportAsManager = 'manager'` 均为唯一字符串），且与 `register()` 的"未传 export_mode"信号**不可区分**：
+
+```python
+ParentMode = 'parent'            # 唯一字符串
+ExportAsFunction = None          # ← 与"未传参数"同值
+ExportAsManager = 'manager'      # 唯一字符串
+
+# register 内部（L311）：
+eff_export_mode = export_mode if export_mode is not None else self.export_mode
+#                                  ^^^^^^^^^^^^^^^^^^^^^^ 显式传 ExportAsFunction(None)
+#                                  在此被判定为"未传"，被 self.export_mode 覆盖
+```
+
+实测（py3.11）：
+```python
+ef.register(lambda: "plain", export_mode=ExportAsFunction)
+# 期望：返回原函数（文档承诺"显式选择"）
+# 实际：export_mode=None 分支胜出——返回管理器（修复 BUG-227 后）；
+#       修复前两分支 `is None or is ExportAsFunction` 恒同值、返回原函数但同样不是"显式选择"语义
+```
+
+三重违约：
+1. **能力不可达**：`register()` docstring 现承诺「ExportAsFunction：返回原函数（显式选择）」，但 L311 的 None 门先截胡，L331-332 的 `eff_export_mode is ExportAsFunction` 分支**永远不可达**——死代码 + 虚假能力声明；
+2. **哨兵设计不一致**：同族三哨兵两个唯一字符串一个 None，明显是笔误（`__all__` L57 还公开导出它，用户传它永远得不到文档说的效果）；
+3. **`is ExportAsFunction` 检查与 `is None` 冗余**：修复 BUG-227 前原代码 `eff_export_mode is None or eff_export_mode is ExportAsFunction` 两个条件恒等（都是 None），说明编写时就未察觉此误。
+
+同族于 BUG-227（文档承诺 vs 实现），但**根因独立**（BUG-227 是默认分支返回值错，本条是哨兵值撞 None 使显式能力失效），故单独立单。
+
+修复方向：`ExportAsFunction = 'function'`（唯一字符串，对齐 ParentMode/ExportAsManager 风格），L311 的 None 门即自然放行；检查全库对 `ExportAsFunction` 的引用点（含 `is None`/`is ExportAsFunction` 组合分支与 _spawn_manager 路径）同步适配。
+- reported_by: agent-vools-hardening
+- task_id: T0r685
+
+
+
+### FIXED(2026-10-21T04:57:44Z / BUG-227, BUG-228)
+- evidence: vools/decorators/overload.py 双修复：**BUG-227** `register._handle` 默认分支（原 L317-319 `eff_export_mode is None → return f`）改为 `return self`（管理器）——修复前同名注册 `@g.register def g(a)` 把名字 g 重绑成新函数 g(a)、Manager 从命名空间丢失，此后 g() 直接调用 g(a) 报 "missing 1 required positional argument: 'a'"（非重载系统错误），priority/strict/count/模糊检测全部 dispatch 静默旁路；且与模块头 L9、示例注释 L17、overload() L500 三处「默认返回管理器支持链式」承诺直接矛盾（唯 register docstring L304「返回原函数」站实现側，四处文档两派说法）。修复后 probe：同名风格 g()=='noarg'/g(7)=='one:7'、类方法 k.m()=='noarg'/k.m(7)=='one:7'、模块头异名示例逐字照抄 add(1,2)==3/add('a','b')=='ab'、链式 register 返回 manager。**BUG-228** `ExportAsFunction = None` 改 `'function'`（同族 ParentMode='parent'/ExportAsManager='manager' 均为唯一字符串，独它撞"未传"信号）——修复前 register L311 `export_mode is not None` 门把显式传 ExportAsFunction(None) 误判为未传并覆盖，L331 `is ExportAsFunction` 分支永远不可达，「显式选择返回原函数」能力结构性不可达；修复后 `register(plain, export_mode=ExportAsFunction) is plain` True、`@overload(export_mode=ExportAsFunction)` 装饰器级同样生效、三哨兵互异 len({...})==3、ParentMode/ExportAsManager 仍返回管理器不回归。两处 docstring 同步（register export_mode 说明 + 双 Note 点名）。新增回归 tests/test_overload_register_contract_regression.py 9 项 GREEN（默认管理器 4 + 哨兵 5）；tests/decorators/ 全套 186 项 GREEN 无回归（无既有测试锁死旧返回值）。commit f900f1c 推送 gitcode master。
+## BUG-229 [2026-10-21T05:15:36Z] [high] FIXED
+- summary: vconcurrent.delegates EventBus.publish 静默吞订阅者业务异常（同族 dispatch/invoke 均传播、publish_safe docstring 反证），安全/非安全区分失效；且 except TypeError 签名探测兜底把业务 TypeError 当不匹配重试致 *args 订阅者双执行+真实错误被吞
+- detail: vools/vconcurrent/delegates.py `EventBus.publish`（L468-505）与 `publish_safe`（L507-539）双缺陷：
+
+**① 非安全版 `publish` 静默吞业务异常，与同族全线背离**
+同一模块的成对 API 都是「非安全版传播异常、安全版隔离并 append None」：
+- `Delegate.invoke`（L131-132 无 try）↔ `invoke_safe`（L150-154 隔离）✓
+- `MessageDispatcher.dispatch`（L692-693 无 try）↔ `dispatch_safe`（L713-717 隔离）✓
+- **`EventBus.publish` ↔ `publish_safe`：双双吞异常**，安全/非安全区分完全失效（`publish_safe` docstring L508「单个订阅者异常不影响其他订阅者」反证 `publish` 本应传播）
+
+实测（py3.11）：
+```python
+bus.subscribe("e", lambda event, data: 1/0)   # 订阅者抛业务异常
+bus.publish("e", 1)                            # 返回 [None]，异常静默消失
+# 对照：MessageDispatcher.dispatch 对同类订阅者正确抛 RuntimeError
+```
+
+危害：事件总线的订阅者异常（业务 bug、1/0、None 属性访问）在 `publish` 下**无声消失**，结果列表只留 None——线上排障时事件"发了没生效"却无任何错误信号，属最难排查的静默失败形状。
+
+**② `except TypeError` 签名探测兜底 → 业务 TypeError 被误判 + 双执行**
+L498-502 / L535-536：
+```python
+try:
+    results.append(handler(event, *args, **kwargs))
+except TypeError:
+    try:
+        results.append(handler(*args, **kwargs))   # ← 业务 TypeError 被当"签名不匹配"重试
+    except Exception:
+        results.append(None)
+```
+实测 `*args` 形态订阅者内部抛业务 TypeError → **被执行两次**（探针记录 len(double)==2），第一次的真实错误被吞，第二次结果（或 None）冒充正常返回。与 BUG-114（retry check_func 异常传播）/BUG-165（rerun until 谓词吞异常）同族——**用异常做控制流探测**，业务异常必然被误伤。
+
+tests/vconcurrent/test_delegates.py 对 publish 的异常语义零覆盖（仅无订阅者断言 `pass`），未锁死旧行为。
+
+修复方向：
+1. 新增私有 `_call_handler(handler, event, args, kwargs)`：用 `vools.cache.sigcache.get_signature(handler)` 一次性判定调用形态（`sig.bind(event, *args, **kwargs)` 成功→带 event，失败→退化形态，判定失败不重试），**调用本身不捕获业务异常**；签名不可得（内建/C 可调用体）时默认带 event 形态并在 docstring 声明；
+2. `publish` 直接调用（异常传播，对齐 dispatch/invoke）；`publish_safe` 包 try/except → None（隔离语义保留）；
+3. 两个 docstring 补异常语义说明。
+- reported_by: agent-vools-hardening
+- task_id: T0r686
+
+
+
+### FIXED(2026-10-21T05:23:51Z / BUG-229)
+- evidence: vools/vconcurrent/delegates.py 双修复：① `EventBus.publish`（L468 后）删除吞异常结构——原 L496-504 `except TypeError → 退化调用 → except Exception → append None` 双层吞，与同族 MessageDispatcher.dispatch（L692-693 无 try）/Delegate.invoke 严格区分口径背离、且 publish_safe docstring「单个订阅者异常不影响其他订阅者」反证 publish 应传播；改为直接 `results.append(self._call_handler(...))` 异常原样上抛。② 新增 `_call_handler` 静态方法（L507 后）用 `vools.cache.sigcache.get_signature` 一次性判定订阅者形态（`sig.bind(event, *args, **kwargs)` 成功→带 event 调用、失败→退化形态；签名不可得默认带 event），**调用本身不捕获业务异常**——修复原 `except TypeError` 探测把业务 TypeError 误判为签名不匹配重试致 *args 订阅者双执行（实测 len(runs)==2）+ 真实错误被吞。`publish_safe` 改走同一 helper 但保留 `except Exception → None` 隔离语义；两方法 docstring 补异常语义/惯例签名/隔离说明。probe 8 项全过：publish 传播 ZeroDivisionError/RuntimeError、publish_safe 隔离 [None]、*args 业务 TypeError 只执行一次、带 event 与退化两种形态正确分发、多订阅者正常返回 ['a','b']、无订阅者 []；tests/vconcurrent/ 全套 270 + 回归 9 = 279 项 GREEN 无回归（原 tests 对 publish 异常语义零覆盖未锁旧行为）。commit da0fdc8 推送 gitcode master。
+## BUG-230 [2026-10-21T05:41:45Z] [medium] FIXED
+- summary: utils.stuff StuffConfig 的 debug/strict 配置项零消费——docstring 承诺「打印调试信息」「严格参数校验」且构造赋值，但全库无任何读取点（同族 cache_duration/max_workers 真消费），排障抓手与校验开关双双失效；应在 _evalate 落地实现
+- detail: vools/utils/stuff.py `StuffConfig`（L177-193）的 `debug` 与 `strict` 两个配置项**全库零消费**——docstring 明写语义、构造参数接收并赋值，但没有任何代码读取它们：
+
+```python
+class StuffConfig:
+    """
+    Args:
+        cache_duration (float): ...（消费于 L474 ✓）
+        max_workers (int): ...（消费于 L675 ✓）
+        debug (bool): 是否打印调试信息，默认 False      ← 零消费
+        strict (bool): 是否启用严格参数校验，默认 False  ← 零消费
+    """
+    def __init__(self, cache_duration=3.0, max_workers=4, debug=False, strict=False):
+        self.debug = debug      # 只赋值
+        self.strict = strict    # 只赋值
+```
+
+全库 grep 验证：`debug` 仅出现在模块 docstring（L71）、类 docstring（L184）、import/赋值（L188/L191）；`strict` 同；`self.config` 全库仅 3 处读取——`cache_duration`（L474）、`max_workers`（L675）、整体透传（L772），**`config.debug` / `config.strict` 从未被读过**。`_DEFAULT_CONFIG` 虽实例化并注入每个 Stuff（L271），两字段仍是装饰。
+
+实测：
+```python
+@stuff
+def f(a, b): return a + b
+f.config = StuffConfig(debug=True)   # 期望评估时打印调试信息 → 无任何输出
+f.config = StuffConfig(strict=True)  # 期望严格参数校验 → 行为与 False 完全一致
+# 缺必需参数时 strict=True 也不报错（照旧静默进入部分应用/最终 TypeError）
+```
+
+三重违约（BUG-162 rate_limit logic / BUG-225 iif supp 同族的死参数形态）：
+1. **文档承诺 vs 零实现**：两字段语义明确（"打印调试信息"/"启用严格参数校验"），用户按其开开关却无任何效果，无告警；
+2. **收益/安全面损失**：`debug` 是排障抓手（DI 框架注入链出了问题时唯一线索），`strict` 是校验开关（假想已开启严格校验的用户对注入配置的错误**提前失败**能力完全落空，凭 `strict=False` 的真实行为继续静默运行）；
+3. **同字段族不一致**：同一 StuffConfig 里 `cache_duration`/`max_workers` 真消费、`debug`/`strict` 纯装饰——用户无法从代码判断哪个配置有效。
+
+修复方向（两开关都可真实落地，消费点选 `_evalate`，不改既有默认行为）：
+- `debug=True`：评估时输出主函数名 + 已绑定参数名 + max_workers（print，与 docstring"打印调试信息"一致）；
+- `strict=True`：评估前校验主函数签名，**必需参数（无默认值、非 self/cls、未在 bound_args 中）缺失时抛 `StuffExecutionError`**（模块已有专用异常类型）并列出缺参名——实现真正的"严格参数校验"，默认 False 路径一行不变。
+- reported_by: agent-vools-hardening
+- task_id: T0r687
+
+
+
+### FIXED(2026-10-21T05:46:16Z / BUG-230)
+- evidence: vools/utils/stuff.py 修复：`_evalate`（L669 后）新增两开关消费块（注释点名 BUG-230）——① `if self.config.debug: print("[stuff] evaluate %s: bound=%s max_workers=%s" ...)`；② `if self.config.strict:` 用 `self.sig.parameters` 校验必需参数（`default is Parameter.empty`、排除 VAR_POSITIONAL/VAR_KEYWORD、排除已绑定 bounds、排除 self/cls）缺失时 `raise StuffExecutionError("strict 模式：以下必需参数未提供 [...]")`。修复前全库 grep 确认 `debug`/`strict` 仅存在于 docstring（L71/L184）与赋值（L188/L191/L192），`self.config` 三处读取点为 cache_duration（L474）、max_workers（L675）、整体透传（L772）——两字段纯装饰，用户设 debug=True 无任何输出、strict=True 行为与 False 完全一致。probe 6 项全过：debug=True 输出 `[stuff] evaluate calc: bound=['a','b','c'] max_workers=4`、debug=False 静默、strict 缺参报 StuffExecutionError 且精确点名 `['b']`（已绑 a、有默认 c 均不误报）、参数齐全返回 13、默认 strict=False 仍静默部分应用（type==Stuff）、provider 全注入场景 + strict 不误报（220.0）。新增回归 tests/test_stuff_config_switches_regression.py 6 项 GREEN（debug 输出/静默、strict 缺失/齐全/DI 无误报、默认路径防串扰）；tests/utils/ 41 项 GREEN 无回归。commit 2a6843c 推送 gitcode master。
+## BUG-231 [2026-10-21T05:51:07Z] [medium] FIXED
+- summary: task/backends 三后端（memory/sqlite/pg）的 retry_delay_min 参数零读取零文档——存储后从不消费，失败任务重试无任何延迟（热循环打库），测试只断言存储值制造已配置假象；本轮文档对齐声明占位现状，真实退避留作后续（改变状态机+单位歧义）
+- detail: vools/task/backends/ 三个后端的构造参数 `retry_delay_min: int = 5` 是**死参数**——存储后零读取，重试实际**无任何延迟**（立即重试）：
+
+- `memory_backend.py` L21/L23：`def __init__(self, max_retries=3, retry_delay_min=5)` → `self.retry_delay_min = retry_delay_min`，全文件唯一出现（L21/L23 两处 = 参数 + 赋值）
+- `sqlite_backend.py` L24/L29：同
+- `pg.py` L71/L76：同
+
+全仓 grep（含 docs/tests）确认 9 处引用全是"参数+赋值"或测试断言存储值（`tests/test_task_backends_pg.py` L63 `assert b.retry_delay_min == 5`、L69 传 `retry_delay_min=1`）——**没有任何代码读它、没有文档说明语义**、测试只锁定"存进去了"制造"已配置"的假象。
+
+实测行为（py3.11）：`MemoryTaskBackend(retry_delay_min=5)` 创建任务 → `fail()` → 立即 `retry()` → 立即 `acquire()` **成功**（无 5 分钟/秒的任何等待）；`retry_delay_min=1` 与 `=5` 与 `=0` 行为完全一致。`fail()` 的真实路径（memory L137-150）只按 `max_retries` 计数、置 RETRY_PENDING，`from datetime import timedelta` 的导入在重试路径上根本用不到。
+
+危害（BUG-162/224/225/230 同族"接受的配置零效果"）：
+1. 用户为"失败任务最小重试间隔"设的退避形同虚设——**失败任务立即重试**，对 PG/SQLite 后端是**热循环打库**（`max_retries=3` 内连续 3 次无间隔重试），恰恰是该参数要防的;
+2. 参数名+默认值本身就是 API 层声明，静默无效且无文档可查;
+
+修复说明：真实落地退避需在 `fail()` 记录 `retry_after = now + timedelta(minutes=retry_delay_min)` 并在 claim 状态过滤（memory L103-107 的 `states` 候选集）加 `retry_after` 到期判定——但这会改变三后端状态机时序、且单位（min/s）无约定（现有测试断言立即 retry+claim 成功），本轮采用**文档对齐**（qax `from_array(data_type)` 诚实桩同例）：三后端类 docstring 声明该参数当前**仅为 API 兼容占位、不影响重试时序**（重试立即发生），真实退避实现留作后续独立任务。
+- reported_by: agent-vools-hardening
+- task_id: T0r688
+
+
+
+### FIXED(2026-10-21T06:00:22Z / BUG-231)
+- evidence: vools/task/backends/ 三后端 `retry_delay_min` 死参数确认（全仓 grep 9 处引用全为参数+赋值或测试断言存储值）：memory_backend L21/L23、sqlite_backend L24/L29、pg L71/L76 —— 存储后零读取，`fail()` 转 RETRY_PENDING 后立即 `retry()`+`acquire()` 成功，`retry_delay_min=0/1/5/999` 行为完全一致（失败任务无间隔热循环重试，恰是该参数要防的）。本轮按 qax「参数未使用」诚实桩先例做文档对齐（真实退避需在 fail 记录 retry_after 并在 claim 状态过滤加到期判定，会改变三后端状态机时序、单位 min/s 无约定、现有测试断言立即 retry+claim 成功，留作后续独立任务）：类 docstring 补 Args 段明确声明「retry_delay_min: 当前仅为 API 兼容占位，不影响重试时序——失败任务立即进入可领取状态，无退避等待（BUG-231）」（memory/sqlite 类头；pg 在用法示例后补 Args 全快照 dsn/table/max_retries/retry_delay_min/autocommit）。验证：两后端 docstring 含「占位」「退避」断言通过、pg docstring 静态校验通过、行为与占位声明一致（立即重试可领取）、不同 retry_delay_min 值对时序无影响。新增回归 tests/test_retry_delay_placeholder_doc_regression.py 5 项 GREEN（文档声明 3 + 行为一致 2，防文档漂移回虚假承诺）；tests/test_task_backends_pg.py 15 项 + tests/ -k backend 78 项 GREEN 无回归。commit 54009c6 推送 gitcode master。
+## BUG-232 [2026-10-21T06:06:37Z] [high] FIXED
+- summary: sql.core.builder BaseSqlBuilder 占位符正则盲替换引号内字面量——where("name = 'what?'") 生成 'what%s'、'12:30:00' 变 '12%s%s'，SQL 语义静默漂移；带参数时字面量? 先占位致参数索引错位查错值；两处 sub 调用点均需按引号切分
+- detail: vools/sql/core/builder.py `BaseSqlBuilder` 的占位符规范化**盲替换字符串字面量内的占位符形态文本**，SQL 文本静默损坏：
+
+```python
+_PLACEHOLDER_PATTERN = re.compile(r'\?|%s|%\w+|:\w+')   # L311
+```
+
+`_normalize_condition`（L363-386）与 `_collect_condition_params`（L675-705）都直接用这个正则 `sub()` 整个条件串——**不区分引号内外**。SQL 条件里的字面量文本（`'what?'`、LIKE 模式、时间字面量 `'12:30:00'`）被误当作占位符替换成当前 paramstyle 的占位符。
+
+实测（py3.11，默认 pyformat）：
+```python
+BaseSqlBuilder().select('*').from_('t').where("name = 'what?'").build()
+# 期望: ("SELECT * FROM t WHERE name = 'what?'", ())
+# 实际: ("SELECT * FROM t WHERE name = 'what%s'", ())     ← 字面量被改成 %s
+
+.where("ts > '12:30:00'")
+# 期望: "... ts > '12:30:00'"
+# 实际: "... ts > '12%s%s'"                                ← :30/:00 命中 :\w+ 被替换
+```
+
+危害形状：**生成的 SQL 语义漂移且无任何异常**——搜 `name = 'what?'` 变成搜 `'what%s'`、时间条件变成 `'12%s%s'`；若该条件恰带参数（`where("name = 'x?' AND id = ?", 1)`），字面量 `?` 先被占位符顶替，**参数索引整体错位一位**（第二个参数绑到错误的位置），查询结果错值或条件恒假——与 BUG-224（sql_like 被吞）同属"SQL 层静默错答"高危族。tests/sql/test_builder.py 全部用干净占位符（`%s` + 参数），字面量场景零覆盖。
+
+修复方向：占位符替换前按引号切分（单引号字面量 + 双引号标识符，处理 SQL 标准 `''` 转义），仅在**引号外**片段做 `_PLACEHOLDER_PATTERN.sub`，两处调用点（`_normalize_condition` / `_collect_condition_params`）共用该切分 helper。
+- reported_by: agent-vools-hardening
+- task_id: T0r689
+
+
+
+### FIXED(2026-10-21T06:17:26Z / BUG-232)
+- evidence: vools/sql/core/builder.py 修复：新增 `_split_by_quotes(condition)`（L340-380，按单/双引号切分为 [(is_quoted, text)]，处理 SQL 标准 '' 转义与双引号标识符）+ `_sub_placeholders(condition, repl)`（仅对引号外片段执行 `_PLACEHOLDER_PATTERN.sub`）；`_normalize_condition`（L363 区）与 `_collect_condition_params`（L750 区）两处 `_PLACEHOLDER_PATTERN.sub` 调用点改为 `_sub_placeholders`（注释点名 BUG-232）；typing 导入补 Callable/Optional。修复前实测（py3.11 默认 pyformat）：`where("name = 'what?'")` → SQL `name = 'what%s'`（字面量被改）、`where("ts > '12:30:00'")` → `ts > '12%s%s'`（:30/:00 命中 :\w+ 被替换）；带参数时字面量 ? 先占位致参数索引错位。修复后 probe 7 项全对：字面量 `?`/时间字面量/双引号标识符/`''` 转义原样保留、字面量+真参数正确编号（`name = 'x?' AND id = %s` params (1,)）、跨 where/and_ 多条件混合字面量编号正确（`a = %s AND b = 'y?' AND c = %s` params (1,2)）、正常 `%s`/`?` 输入与无 where 路径不变。新增回归 tests/test_sql_builder_literal_protection_regression.py 11 项 GREEN（字面量 5 + 跨条件 1 + 防串扰 3 等）；tests/sql/ 76 项 + 回归共 87 项 GREEN（EXIT=0，先前终端截断已用 Out-String 复核）。commit 5bbe865 推送 gitcode master。
+## BUG-233 [2026-10-21T06:26:04Z] [medium] FIXED
+- summary: sql.manager._make_cache_key 无转义 k=v 逗号拼接 → 不同参数组合键碰撞：create_dialect(a='x,b=y') 与 (a='x',b='y') 返回同一实例（后者拿到前者参数）；自定义方言/DSN 参数含逗号（host='h,port=5432' 等）现实可触发错配置实例复用，内置方言零参数暂未暴露
+- detail: vools/sql/manager.py `_make_cache_key`（L414-427）用无转义的 `k=v` 逗号拼接生成方言实例缓存键——**值中含 `,` 或 `k=v` 形态即键碰撞，不同参数组合命中同一缓存实例**：
+
+```python
+def _make_cache_key(kwargs):
+    if not kwargs:
+        return 'default'
+    sorted_items = sorted(kwargs.items(), key=lambda x: x[0])
+    return ','.join(f"{k}={v}" for k, v in sorted_items)     # ← 无引号/无转义
+
+# create_dialect（L196）：
+cache_key = name_lower + ':' + _make_cache_key(kwargs)
+if cache_key in self._instances:
+    return self._instances[cache_key]                        # ← 命中即返回旧实例
+```
+
+实测（py3.11，register 自定义方言走文档化扩展路径）：
+```python
+class MyDialect:
+    def __init__(self, **kw): self.params = kw
+manager.register('mydialect', MyDialect)
+d1 = manager.create_dialect('mydialect', a='x,b=y')        # key = 'mydialect:a=x,b=y'
+d2 = manager.create_dialect('mydialect', a='x', b='y')     # key = 'mydialect:a=x,b=y'  ← 同键
+d1 is d2            # True
+d2.params           # {'a': 'x,b=y'} —— d2 拿到 d1 的连接参数！
+```
+现实映射：自定义方言/连接参数的 DSN 里**逗号是常见字符**——`host='h,port=5432'`（JDBC/PG 内联参数风格）与 `host='h', port='5432'` 生成同一键，第二个调用方静默拿到**第一个调用方的连接配置实例**（错库/错凭据）；同类：密码含 `,`、options/DSN query 含 `,`。
+
+后果：方言实例缓存跨参数污染——`create_dialect` 的契约是"按 name+kwargs 创建/复用方言实例"，碰撞后**不同参数得到同一对象**，连接错配置且无任何告警。内置 sqlite/pg 方言当前 `__init__(self)` 零参数（`_make_cache_key` 恒 'default'）故内置路径未暴露；但 `register()` 是文档化的一等扩展能力（自定义方言带连接参数正是其用途），且 `create_dialect(**kwargs)` 的 kwargs 透传是公开契约。
+
+修复方向：缓存键用**无歧义序列化**——`repr(sorted(kwargs.items(), key=lambda x: x[0]))`（str 值自带引号与转义，`,`/`=` 不再混淆）；保持 `name + ':'` 前缀与 `clear_instance_cache` 的 `name:` 前缀匹配逻辑不变。
+- reported_by: agent-vools-hardening
+- task_id: T0r690
+
+
+
+### FIXED(2026-10-21T06:31:41Z / BUG-233)
+- evidence: vools/sql/manager.py `_make_cache_key`（L414-431）修复：`','.join(f"{k}={v}" ...)` 改为 `repr(sorted_items)`（排序后 (k,v) 列表的无歧义序列化，字符串值自带引号+转义），docstring 点名 BUG-233 并说明碰撞机理；空 kwargs 仍返回 'default'、`create_dialect` 的 `name_lower + ':'` 前缀与 `clear_instance_cache` 的 `startswith(name+':')` 匹配逻辑不变。修复前实测：`manager.register('mydialect', MyDialect)` 后 `create_dialect('mydialect', a='x,b=y')` 与 `create_dialect('mydialect', a='x', b='y')` 生成同键 `mydialect:a=x,b=y` → 返回同一实例且后者拿到前者参数（自定义方言/DSN 参数含逗号如 host='h,port=5432' 现实可触发错配置复用；内置方言 __init__(self) 零参数故内置路径未暴露）。修复后 probe 7 项：两形态键不同、双参数实例不再碰撞且 params 各自正确、同参数仍命中同实例、键顺序无关、空参 default、clear_instance_cache 前缀匹配仍生效。新增回归 tests/test_sql_manager_cache_key_regression.py 12 项 GREEN（碰撞族 4 + 缓存语义 4+ 等）；tests/sql/ + 回归共 86 项 GREEN（EXIT=0 完整捕获）。commit b1dc98c 推送 gitcode master。
+## BUG-234 [2026-10-21T06:41:17Z] [high] FIXED
+- summary: sql.spark execute 用 sql % params 裸插值：字符串参数不加引号不转义（同代码在 sqlite/pg 由驱动绑定安全、spark 上语法坏或注入），SQL 字面量 % 被 %-格式化误伤致含 params 的 LIKE 查询必崩，占位符/参数数量不校验；与核心 ABC 跨后端契约分歧
+- detail: vools/sql/spark/connection.py `execute`（L144-179）用 **`sql % tuple(params)` 裸插值**代替参数绑定，与 sqlite/postgres 后端（走驱动真绑定）语义分歧，且字符串参数既不加引号也不转义：
+
+```python
+if params is not None:
+    sql = sql % tuple(params)      # L167-168
+df = self._spark.sql(sql)
+```
+
+对照：`sqlite/connection.py` / `postgres/connection.py` 用驱动绑定的 `cursor.execute(sql, params)`（值由驱动正确加引号/转义）；核心 ABC `SqlConnection.execute` 契约（core/connection.py「params: SQL 参数序列，用于替换 SQL 中的占位符」）两边后端共用。
+
+实测等价行为（py3.11，格式化路径无需 spark 会话即可复现）：
+```python
+"SELECT * FROM t WHERE name = %s" % ("abc",)      # → '... WHERE name = abc'      ← 字符串裸插、缺引号，SQL 非法
+"SELECT * FROM t WHERE name = '%s'" % ("a'b",)    # → "... name = 'a'b'"           ← 单引号未转义：语法坏/可注入
+"SELECT * FROM t WHERE name = '%s'" % ("x' OR '1'='1",)  # → 注入成立
+"SELECT * FROM t WHERE d LIKE '%abc%' AND id = %s" % (1,)  # → ValueError: unsupported format character 'a' ← 字面量 % 被误伤
+```
+
+三重缺陷：
+1. **字符串参数未引号化/未转义**：同一份业务代码在 sqlite/pg 上安全（驱动绑定），迁到 spark 后端后字符串过滤条件**语法坏或注入**——跨后端安全语义静默丢失（用户无从从 docstring 得知「格式化」意味着不安全插值）；
+2. **字面量 `%` 误伤**：LIKE 模式 `'%abc%'` / 时间格式串等命中 `%`-格式化 → ValueError/TypeError，**含 params 的 LIKE 查询必崩**；
+3. **占位符/参数数量不校验**：参数少于占位符 → "not enough arguments" 这类底层报错；多于占位符 → 同样底层错，无业务语义提示。
+
+docstring（L151-152）披露了「用 %s 占位符格式化」但未披露字符串裸插/注入/`%` 误伤——按「文档即实现」不构成免责，且与核心 ABC 的跨后端契约不一致。
+
+修复方向：新增 `_format_sql_params(sql, params)`——**正则只匹配 `%s`** 并逐个安全代值（字符串 `'` → `''` 转义并加引号；None→NULL；bool→TRUE/FALSE；int/float→repr；date/datetime→ISO 引号；其余→str 转义引号），数量不匹配抛带语义的 ValueError；`execute` 与 `executemany` 共用。既修注入与引号，又消除字面量 `%` 误伤（非 `%s` 的 `%` 原样保留）。现有测试 `execute("SELECT %s", (1,))` 锁定的整数路径结果不变（`SELECT 1`）。
+- reported_by: agent-vools-hardening
+- task_id: T0r691
+
+
+
+### FIXED(2026-10-21T06:48:22Z / BUG-234)
+- evidence: vools/sql/spark/connection.py 修复：模块级新增 `_quote_sql_literal(value)`（None→NULL、bool→TRUE/FALSE、int/float→repr、bytes→'hex'、datetime/date/time→ISO 引号+转义、str→引号+`'`→`''`+其余 str 转义）与 `_format_sql_params(sql, params)`（`_SQL_PLACEHOLDER_RE = re.compile(r'%s')` 只匹配 %s 逐个安全代值，**其它 `%` 原样保留**；数量多于/少于占位符分别抛带语义 ValueError）；`execute` L167 区与 `executemany` L203 区两处 `sql % tuple(params)` 改为 `_format_sql_params(...)`（注释点名 BUG-234）。修复前：字符串参数裸插（`WHERE name = abc` 缺引号 / `a'b` 未转义致语法坏或注入）、LIKE '%abc%' + params → `%`-格式化 ValueError（含 params 的 LIKE 查询必崩）。修复后 probe 14 项全对：字符串引号化、`a'b`→`'a''b'`、注入串 `x' OR '1'='1`→`'x'' OR ''1''=''1'`、LIKE 字面量 % 原样保留、None/bool/int/float/date/bytes 字面量映射、两类数量不匹配 ValueError、既有测试语义 `execute("SELECT %s",(1,))`→`SELECT 1` 与 `SELECT 1` 无参路径不变。新增回归 tests/test_spark_param_safety_regression.py 20 项 GREEN；tests/sql/ + 回归共 94 项 GREEN（EXIT=0 完整捕获）。commit 696da86 推送 gitcode master。
+## BUG-235 [2026-10-21T06:54:05Z] [medium] FIXED
+- summary: sql.core.decorators _make_sql_wrapper：静态 sql 模板 + 无连接调用时 result 未绑定，落到转换/返回处抛 UnboundLocalError（内部错误无指引，真正原因是缺连接）；动态模式有 conn is None 分支且被测试锁死，静态模板路径漏配
+- detail: vools/sql/core/decorators.py `_make_sql_wrapper`（L200-287）在**静态 SQL 模板 + 无连接**调用时抛 `UnboundLocalError`（内部错误，用户看不出是「缺连接」）：
+
+```python
+sql_stmt = sql
+if sql_stmt is None:
+    ...dynamic 分支，result = func(...)（有值）...
+else:
+    params = remaining_args
+    # result 从未赋值！
+
+if conn is not None and isinstance(sql_stmt, str):
+    exec_params = params if params else None
+    result = conn.execute(sql_stmt, exec_params)      # 唯一给 result 赋值的执行分支
+
+if auto_convert and return_type is not None:
+    result = _convert_result(result, return_type)      # conn is None → UnboundLocalError
+return result                                          # 或此处 UnboundLocalError
+```
+
+实测（py3.11）：
+```python
+from vools.sql.core.decorators import sql_function
+from vools.sql.sqlite.connection import SqliteConnection
+
+@sql_function(sql="SELECT 1")
+def static_fn(): pass
+
+static_fn()     # UnboundLocalError: cannot access local variable 'result' where it is not associated with a value
+static_fn(conn) # 正常返回 ResultSet ✓
+```
+
+问题形状：
+1. **错误信息完全误导**：用户真正的问题是"没提供连接"（`@sql_function(sql=...)` 需 conn 才能执行），却得到 Python 内部变量未绑定的报错，无从定位；
+2. **同文件内动态模式有明确指引**（L258-261 `elif conn is None: return result` —— 动态函数直接返回结果/SQL 文本是既定语义，tests `test_basic_without_conn` 锁死）——**唯独静态模板路径漏了 conn is None 分支**，致 result 悬空；
+3. tests/test_sql_core_decorators.py 的 `test_sql_template_param` 全部带 connection，静态模板 + 无连接零覆盖。
+
+修复方向：`result = None` 预初始化 + 静态模板且 `conn is None` 时抛**明确 RuntimeError**（提示三种提供连接的方式 + 回显 SQL），动态模式（`sql is None`）的既有返回语义完全不动。
+- reported_by: agent-vools-hardening
+- task_id: T0r692
+
+
+
+### FIXED(2026-10-21T06:57:19Z / BUG-235)
+- evidence: vools/sql/core/decorators.py `_make_sql_wrapper` 修复：① `sql_stmt = sql` 后加 `result = None` 预初始化（注释点名 BUG-235）；② 执行分支后新增 `elif conn is None and sql is not None:` 抛 `RuntimeError("sql_function: 提供了静态 SQL 模板但未提供数据库连接，无法执行。请通过第一个位置参数传 Connection 实例、关键字参数 connection=...，或在装饰器上指定 connection=...。SQL: %r" % sql_stmt[:120])`——修复前静态模板+无连接 `static_fn()` 抛 `UnboundLocalError: cannot access local variable 'result' where it is not associated with a value`（真正原因缺连接无指引）；动态模式（sql is None）的 `elif conn is None: return result` 返回语义一行未动。probe 验证：静态无连接现明确 RuntimeError 含三种连接方式指引、静态+连接/关键字/装饰器级连接三路均返回 ResultSet、动态无连接返回 "SELECT 1" 文本（测试锁死语义保持）、动态+连接执行正常。新增回归 tests/test_sql_decorator_missing_conn_regression.py 9 项 GREEN（静态缺连接 5 + 动态语义 4）；tests/test_sql_core_decorators.py + tests/sql/ + 回归共 140 项 GREEN（EXIT=0 完整捕获）。期间 probe 一处误用（sqlite 用 ? 非 %s 占位符）已判定为驱动语义非缺陷。commit 1efb51a 推送 gitcode master。
+## BUG-236 [2026-10-21T07:01:45Z] [high] FIXED
+- summary: sql.sqlite SqliteConnection：execute 用 SQL 前缀判定有无结果集——带前导注释/块注释的 SELECT 与 INSERT...RETURNING 返回空 ResultSet（真实行静默丢弃、rowcount=-1）；应改用 DB-API 权威信号 cursor.description；另 executemany 缺连接守卫抛 AttributeError 而非类内统一的 RuntimeError
+- detail: vools/sql/sqlite/connection.py 两处连接层缺陷：
+
+**① `execute` 用 SQL 字符串前缀判断「有无结果集」→ 前导注释语句静默丢数据**（L117-134）：
+```python
+sql_upper = sql.strip().upper()
+if sql_upper.startswith(('SELECT', 'WITH', 'PRAGMA', 'EXPLAIN')):
+    columns = [desc[0] for desc in cursor.description]
+    rows = cursor.fetchall()
+    ...
+else:
+    result = ResultSet(columns=[], rows=[], rowcount=cursor.rowcount)
+```
+实测（py3.11）：
+```python
+conn.execute("-- leading comment\nSELECT 1 AS x")   # rows=[] rowcount=-1 columns=[] ← 查询实际返回 1 行，数据静默丢失
+conn.execute("/* c */ SELECT 3 AS z")               # rows=[] 同上
+conn.execute("INSERT INTO t VALUES (7) RETURNING id")  # rows=[] ← RETURNING 行丢失（rowcount=0 而非 1）
+conn.execute("SELECT 1 AS x")                        # 正常 [{'x': 1}] ✓
+conn.execute("WITH t AS (SELECT 2 AS y) SELECT y FROM t")  # 正常 ✓
+```
+危害：**带前导注释的 SQL（脚本/迁移/用户 SQL 里极其常见）返回空结果集且无任何异常**——调用方拿到"查询成功但没数据"，是静默错答（与 BUG-224 同族的 SQL 层数据丢失）；`INSERT ... RETURNING`（SQLite 3.35+ 正式特性）同样丢返回行。根因是**用脆弱的字符串前缀代替 DB-API 的权威信号 `cursor.description`**（DB-API 规定：无结果集的语句 description 为 None）。
+
+**② `executemany` 缺连接状态守卫**（L139-157）：`execute`/`cursor()` 都先判 `not self._connected` 抛明确 `RuntimeError('Database connection is not established')`，唯 `executemany` 直接 `self._conn.cursor()`——未连接时抛 `AttributeError: 'NoneType' object has no attribute 'cursor'`（内部错误，与 BUG-235 同族：真实原因"未连接"不可见）。
+
+修复方向：
+① 分类改用权威信号——`if cursor.description is not None:` 走结果集分支（`fetchall` + columns），否则走 DML 分支（`rowcount`）；一行改动同时修复前导注释、RETURNING、以及未来其他产生结果集的语句形态；
+② `executemany` 入口补与 execute/cursor 相同的连接守卫。
+
+tests/sqlite 相关测试零覆盖注释前缀与 RETURNING 语句形态。
+- reported_by: agent-vools-hardening
+- task_id: T0r693
+
+
+
+### FIXED(2026-10-21T07:06:42Z / BUG-236)
+- evidence: vools/sql/sqlite/connection.py 双修复：① `execute`（L117 区）删除 `sql_upper.startswith(('SELECT','WITH','PRAGMA','EXPLAIN'))` 前缀分类，改为 DB-API 权威信号 `if cursor.description is not None:` 走结果集分支（columns+fetchall+rowcount=len），否则 DML 分支（rowcount）——修复前 `execute("-- leading comment\nSELECT 1 AS x")` 返回 rows=[] rowcount=-1 columns=[]（真实 1 行静默丢弃）、`/* c */ SELECT 3` 同、`INSERT ... RETURNING id` 返回行丢失；② `executemany`（L153 前）补 `if not self._connected or self._conn is None: raise RuntimeError('Database connection is not established')` 守卫 + docstring 补异常段（与 execute/cursor 契约一致，原抛 AttributeError: 'NoneType' object has no attribute 'cursor'）。修复后 probe 12 项全对：行注释/块注释 SELECT 正常返回 [[1]]/[[3]]、RETURNING [[7]]、正常 SELECT/WITH/PRAGMA 不变、INSERT/UPDATE/DELETE 走 rowcount（1/1/1）且 fetchall 为空、executemany 未连接明确 RuntimeError、连接后批量插入返回 3。新增回归 tests/test_sqlite_resultset_detection_regression.py 11 项 GREEN（结果集判定 6 + DML 路径 3 + 守卫 2）；tests/sql/ + test_sql_core_decorators.py + 回归共 142 项 GREEN（EXIT=0 完整捕获）。commit 8763408 推送 gitcode master。
+## BUG-237 [2026-10-21T07:11:33Z] [low] FIXED
+- summary: sql.postgres PostgresConnection.driver_name 文档承诺「未连接时为 None」，但 connect 在真实连接前就置 _driver_name——驱动已装但认证/网络失败后残留 'psycopg2'，调用方用 driver_name 判连接状态被误导；应仅连接成功后赋值
+- detail: vools/sql/postgres/connection.py `connect`（L64-123）与 `driver_name` 属性（L243-251）契约矛盾：
+
+```python
+def connect(self, **kwargs):
+    if self._connected:
+        return
+    ...
+    try:
+        import psycopg2
+        self._driver_name = 'psycopg2'        # ← 连接成功之前就置位
+        self._conn = psycopg2.connect(...)    # ← 真实连接失败（认证/服务未启动/网络）时抛异常
+        self._connected = True
+        return
+    except ImportError:
+        pass
+    ...同理 psycopg 分支...
+
+@property
+def driver_name(self):
+    """返回：驱动名称（'psycopg2' 或 'psycopg'），**未连接时为 None**"""
+    return self._driver_name
+```
+
+实测（py3.11，注入模拟「驱动已安装但 connect 失败」——认证失败是真实高频场景，本机无 psycopg2 故用等同行为的桩模块）：
+```python
+c = PostgresConnection(password='wrong')
+c.driver_name          # None（初始，符合文档）
+try: c.connect()       # → OperationalError: password authentication failed
+except OperationalError: pass
+c.driver_name          # 'psycopg2' ← 违约！文档承诺未连接时为 None
+c._connected           # False
+```
+
+危害：`driver_name` 是连接状态的公开诊断属性（docstring 明确「未连接时为 None」），失败连接的残留值让 `if conn.driver_name:` / `conn.driver_name == 'psycopg2'` 这类判断**误以为连接已建立**——错误诊断面；与 BUG-217（issubclass_ 元组契约落空）同为「文档承诺 vs 实现」族，只是影响面小（诊断属性）。
+
+修复方向：`_driver_name` 仅在**连接成功后**赋值（把两处 `self._driver_name = ...` 移到 `self._conn = ...connect(...)` 之后、`_connected = True` 旁）；失败路径保持 None（文档契约），异常照常传播。
+- reported_by: agent-vools-hardening
+- task_id: T0r694
+
+
+
+### FIXED(2026-10-21T07:16:24Z / BUG-237)
+- evidence: vools/sql/postgres/connection.py `connect` 修复：两处 `self._driver_name = 'psycopg2'/'psycopg'` 从 `import` 之后、`connect()` 之前移到 `self._conn = ...connect(...)` 成功之后、与 `self._connected = True` 同步置位（L89-119 区，注释点名 BUG-237）。修复前实测（注入模拟「psycopg2 已安装但 connect 抛 OperationalError 认证失败」——真实高频场景，本机无驱动故用等同行为桩）：`PostgresConnection(password='wrong').connect()` 抛异常后 `driver_name == 'psycopg2'` 而 `_connected == False`，违背属性 docstring「驱动名称，未连接时为 None」，`bool(conn.driver_name)` 为 True 误导状态判断。修复后 probe 三态全对：认证失败后 driver_name None/connected False、成功连接后 driver_name 'psycopg2'/connected True、无驱动 ImportError 且 driver_name None。新增回归 tests/test_pg_driver_name_contract_regression.py 4 项 GREEN（失败保持 None ×2 + 成功置位 + 无驱动）；tests/sql/ + test_sql_postgres_connection.py + test_sql_core_decorators.py + 回归共 128 项 GREEN（EXIT=0 完整捕获）。同轮对照记录：postgres 连接层其余实现（execute 的 cursor.description 判定、executemany/cursor 连接守卫、try/finally 关游标）经审为正确样板——反证 BUG-236 的 sqlite 层是偏离件。commit 9c7e971 推送 gitcode master。
+## BUG-238 [2026-10-21T07:21:50Z] [medium] OPEN
+- summary: vconcurrent.multiprocessing_mod SharedValue 的 lock=False（multiprocessing.Value 合法选项）令 get()/set() 必崩 AttributeError——裸 ctypes 对象无 get_lock；参数一用即废且类 docstring 未声明限制，lock=True 默认路径掩盖问题零覆盖
+- detail: vools/vconcurrent/multiprocessing_mod.py `SharedValue`（L372-408）的 `lock` 构造参数为假——`lock=False` 时 `get()/set()` 必崩：
+
+```python
+def __init__(self, typecode='i', default=0, *, lock: bool = True):
+    self._value = multiprocessing.Value(typecode, default, lock=lock)
+
+def get(self):
+    with self._value.get_lock():      # ← lock=False 时 multiprocessing.Value 返回
+        return self._value.value      #   裸 ctypes 对象（c_long），没有 get_lock
+```
+
+实测（py3.11）：
+```python
+SharedValue('i', 0).set(42); .get()            # 42 ✓（lock=True 正常）
+sv = SharedValue('i', 0, lock=False)
+sv._value 类型                                  # c_long，has get_lock: False
+sv.set(7)                                      # AttributeError: 'c_long' object has no attribute 'get_lock'
+sv.get()                                       # AttributeError 同上
+sv.raw.value = 9                               # 直访可用（但公开的 get/set API 全废）
+```
+
+问题形状：
+1. **公开参数即承诺**：`lock` 是 keyword-only 构造参数（multiprocessing.Value 的标准选项，语义="不加内部锁、由调用方自行同步/换取性能"），传 False 后类的唯一读写 API（`get()/set()`）全部崩溃——参数一用即废（BUG-162/224/225/230/231 死参数族的变体：这次不是静默无效，而是**用即崩**）；
+2. **文档误导**：类 docstring「基于 multiprocessing.Value，支持 get()/set() 和上下文管理」——未声明 lock=False 不支持；
+3. `lock=True`（默认）路径完全正常，故既有测试全绿、零覆盖 lock=False。
+
+修复方向：`get()/set()` 兼容两种底层形态——`hasattr(self._value, 'get_lock')` 为真才加锁（`with self._value.get_lock():`），否则直接读写 `.value`（无锁语义即用户自管同步，与 multiprocessing.Value(lock=False) 本义一致）；避免使用 py3.7+ 的 contextlib.nullcontext（项目声明 >=3.6）。
+- reported_by: agent-vools-hardening
+- task_id: T0r695
+

@@ -13,8 +13,9 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 import sys
+
+from ._proc import run_cmd_safe
 
 # 指纹默认排除表：目录以 / 结尾，文件为 glob（docs/25 §6.2）
 DEFAULT_IGNORE = ['.git/', 'node_modules/', '__pycache__/', '*.pyc',
@@ -169,17 +170,17 @@ def run_playback(repo_root: str, macro_params: dict, meta_base: str,
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
     env['ACTUS_META_DIR'] = meta_base  # 子进程留痕目录对齐调用方会话
-    proc = subprocess.run(
+    proc = run_cmd_safe(
         [sys.executable, '-m', 'actus', 'run', 'actus.system.macro_playback',
          json.dumps(macro_params, ensure_ascii=False), '--confirm'],
         cwd=os.path.join(repo_root, 'engine'),
-        env=env, capture_output=True, text=True, timeout=timeout)
+        env=env, timeout=timeout)
     out = proc.stdout.strip()
     try:
         outer = json.loads(out)
     except ValueError:
         return {'status': 'failed', 'mode': None,
-                'message': (out[-500:] or proc.stderr[-500:] or '回放无输出')}
+                'message': (out[-500:] or (proc.stderr or '')[-500:] or '回放无输出')}
     inner = outer.get('data') if isinstance(outer.get('data'), dict) else {}
     payload = dict(inner) if inner else {'status': outer.get('status')}
     if payload.get('status') != 'ok' and outer.get('error'):
@@ -196,16 +197,13 @@ def send_to_pipe(text: str, cmd: list, cwd: str = None,
     返回 {ok, message?, stdout?, exit_code?}。
     """
     try:
-        proc = subprocess.run(
-            cmd, input=text, capture_output=True, text=True,
-            encoding='utf-8', timeout=timeout, cwd=cwd)
+        proc = run_cmd_safe(
+            cmd, input=text, timeout=timeout, cwd=cwd)
         return {'ok': proc.returncode == 0, 'exit_code': proc.returncode,
                 'stdout': (proc.stdout or '')[-2000:],
                 **({'message': f'退出码 {proc.returncode}: '
                               f'{(proc.stderr or "")[-300:]}'}
                    if proc.returncode != 0 else {})}
-    except subprocess.TimeoutExpired:
-        return {'ok': False, 'message': f'agent stdin 写入超时（{timeout}s）'}
     except FileNotFoundError:
         return {'ok': False, 'message': f'agent 可执行文件不存在: {cmd[0]}'}
     except Exception as e:  # noqa: BLE001 —— 注入通道失败不炸主循环

@@ -15,7 +15,6 @@ import json
 import tempfile
 import hashlib
 import platform
-import subprocess
 import textwrap
 import logging
 import shutil
@@ -86,12 +85,14 @@ def moonbit_compiler_available() -> bool:
 def get_moonbit_version() -> Optional[str]:
     """获取 MoonBit 版本信息"""
     moon_path = _find_moonbit()
+    # 用 `_run_cmd_timeout`：Windows 上裸 `subprocess.run(timeout=N)` 只杀直接子进程，
+    # moon 若 spawn 孙进程会泄漏孤儿进程。cwd 不支持（版本查询不需要）。
+    from ..probe import _run_cmd_timeout
     if moon_path is None:
         if _USE_WSL:
             try:
-                result = subprocess.run(
+                result = _run_cmd_timeout(
                     ['wsl', 'moon', '--version'],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     timeout=10,
                 )
                 return result.stdout.decode('utf-8', errors='replace').strip()
@@ -100,9 +101,8 @@ def get_moonbit_version() -> Optional[str]:
         return None
 
     try:
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             ['moon', '--version'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             timeout=10,
         )
         return result.stdout.decode('utf-8', errors='replace').strip() or result.stderr.decode('utf-8', errors='replace').strip()
@@ -452,20 +452,24 @@ class MoonBitBridge(LangBridge):
                 args,
             )
 
-        if _USE_WSL:
-            result = subprocess.run(
-                ['wsl', 'moon', 'run', '.'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                timeout=60,
-                cwd=lib_path,
-            )
-        else:
-            result = subprocess.run(
-                ['moon', 'run', '.'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                timeout=60,
-                cwd=lib_path,
-            )
+        # 用 `_run_cmd_timeout`（cwd 透传）：Windows 上裸 `subprocess.run(timeout=N)`
+        # 只杀直接子进程，moon 若 spawn 孙进程会泄漏孤儿进程。
+        from ..probe import _run_cmd_timeout
+        try:
+            if _USE_WSL:
+                result = _run_cmd_timeout(
+                    ['wsl', 'moon', 'run', '.'],
+                    timeout=60,
+                    cwd=lib_path,
+                )
+            else:
+                result = _run_cmd_timeout(
+                    ['moon', 'run', '.'],
+                    timeout=60,
+                    cwd=lib_path,
+                )
+        except (FileNotFoundError, OSError) as e:
+            raise RuntimeError(f'MoonBit 编译器未找到或无法启动: {e}')
 
         stdout = result.stdout.decode('utf-8', errors='replace')
         stderr = result.stderr.decode('utf-8', errors='replace')

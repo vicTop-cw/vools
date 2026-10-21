@@ -59,9 +59,6 @@ class TestShellInjection:
         # 实际上内容会被作为 -c 脚本执行，$(...) 仍是 shell 语法
         # 这里只验证执行成功（不因注入报错）
         import shutil
-        if sys.platform == "win32":
-            # Windows 上 bash.exe 是 WSL stub，输出 UTF-16 无法 text 解码
-            pytest.skip("shell blocks not well-supported on Windows (WSL bash stub)")
         if not (shutil.which("bash") or shutil.which("sh")):
             pytest.skip("bash/sh not installed")
         content = "echo 'hello world'"

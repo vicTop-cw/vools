@@ -181,6 +181,47 @@ from vools.cache import memorize, once, persist
 from vools.cache.sigcache import get_signature
 ```
 
+## 子项目 API
+
+### rhop 协议子项目
+
+详细文档：[rhop/index.md](../rhop/index.md) / [rhop/sftp-channel.md](../rhop/sftp-channel.md)
+
+| 名称 | 说明 | 模块 |
+|------|------|------|
+| `SftpChannel` | paramiko 优先的 SFTP 通道（支持注入式回退） | vools.rhop.transport |
+| `select_transport` | 传输选择（在线优先 / 离线回退 shared path） | vools.rhop.transport |
+| `RhopCrypto` | 加密封装 | vools.rhop.crypto |
+| `RhopWatcher` | 文件监控（shared_path, crypto, on_packet, extensions, backend, interval） | vools.rhop.watch |
+
+### actus 动作引擎
+
+详细文档：[actus/index.md](../actus/index.md)
+
+| 名称 | 说明 | 模块 |
+|------|------|------|
+| `Action` / `parse_cfg_from_file` | 动作数据模型 | vools.actus |
+| `execute` / `preview` | 执行 / 预览 | vools.actus |
+| `Workflow` / `run_workflow` | 工作流调度 | vools.actus |
+| `build_registry` / `search_registry` | 动作注册表 | vools.actus |
+| `set_key` / `get_key` / `resolve_secrets` | 密钥管理 | vools.actus |
+| `decide` / `check_permissions` | 信任决策 | vools.actus |
+| `SecurityScanner` | 安全扫描 | vools.actus |
+| `prepare` / `sandbox_env` | 沙箱环境 | vools.actus |
+| `push` / `pull` / `sync` / `compute_sync_plan` | 跳板机文件传输 | vools.actus.jump |
+
+### rx 响应式扩展
+
+详细文档：[rx/index.md](../rx/index.md) / [rx/reactive-monitoring.md](../rx/reactive-monitoring.md)
+
+| 名称 | 说明 | 模块 |
+|------|------|------|
+| `Observable` / `Subject` / `BehaviorSubject` / `ReplaySubject` | 响应式核心类 | vools.reactive |
+| `from_keyboard` / `from_mouse` / `from_clipboard` | 系统监控源 | vools.reactive.monitoring |
+| `from_filesystem` / `from_foldersystem` | 文件/文件夹监控源 | vools.reactive.monitoring |
+| `from_window` / `from_process` | 窗口/进程监控源 | vools.reactive.monitoring |
+| `KeyboardDispatcher` | 热键注册 | vools.reactive.monitoring |
+
 ## 版本历史
 
 - **v0.4.x** - Table/QAX 重写，FreeBASIC 支持

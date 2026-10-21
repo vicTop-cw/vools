@@ -26,6 +26,7 @@ from typing import Dict, Optional, List, Any, Tuple
 from pathlib import Path
 
 from ..manager import get_helper
+from ..probe import _run_cmd_timeout
 from .._base import LangBridge, FunctionSpec, FunctionParser
 from ..core.types import LangType
 from .templates import generate_lib_code, generate_cargo_toml
@@ -81,8 +82,7 @@ class RustCompiler:
                 if os.path.exists(cargo_bin):
                     return True
             # 兜底检查系统 PATH
-            result = subprocess.run(['cargo', '--version'],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+            result = _run_cmd_timeout(['cargo', '--version'], timeout=5)
             return result.returncode == 0
         except Exception:
             return False
@@ -268,16 +268,14 @@ class RustCompiler:
         # 执行编译
         try:
             # 执行 cargo build --release
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 ['cargo', 'build', '--release'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=60,
                 cwd=project_dir,
             )
 
             if result.returncode != 0:
-                error_msg = result.stderr or result.stdout
+                error_msg = (result.stderr or result.stdout).decode('utf-8', errors='replace')
                 raise RuntimeError(f'Rust compilation failed:\n{error_msg}')
 
             # 检查 DLL 是否生成
@@ -505,19 +503,17 @@ pub extern "C" fn {spec.name}({params_str}) -> {ret_type} {{
             else:
                 artifact_name = f'lib{lib_name}.so'
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             cwd=project_dir,
-            timeout=300
+            timeout=300,
         )
 
         if result.returncode != 0:
             raise RuntimeError(
                 f'Cargo build failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}'
             )
 
         built_path = os.path.join(target_dir, artifact_name)
@@ -588,19 +584,17 @@ pub extern "C" fn {spec.name}({params_str}) -> {ret_type} {{
 
             cmd = [rustc_path, '-O', '--crate-type', 'cdylib', src_file, '-o', output_path]
 
-        result = subprocess.run(
+        result = _run_cmd_timeout(
             cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
             cwd=project_dir,
-            timeout=120
+            timeout=120,
         )
 
         if result.returncode != 0:
             raise RuntimeError(
                 f'rustc compilation failed:\n'
-                f'stderr:\n{result.stderr}\n'
-                f'stdout:\n{result.stdout}\n'
+                f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+                f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
                 f'command: {" ".join(cmd)}'
             )
 

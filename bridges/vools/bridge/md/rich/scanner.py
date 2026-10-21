@@ -303,6 +303,8 @@ def _body_to_html(
     *,
     links_out: List[FileLink],
     allow_remote: bool,
+    base_dir: Optional[str] = None,
+    allow_remote_images: bool = False,
 ) -> str:
     """轻量正文 → HTML（不引入 markdown 依赖）。
 
@@ -358,7 +360,14 @@ def _body_to_html(
 
         close_list()
         # 行内：图片 + 链接（链接收集到 links_out）
-        line_html = _inline_to_html(stripped, links_out, allow_remote, idx)
+        line_html = _inline_to_html(
+            stripped,
+            links_out,
+            allow_remote,
+            idx,
+            base_dir=base_dir,
+            allow_remote_images=allow_remote_images,
+        )
         out.append(f"<p>{line_html}</p>")
 
     close_list()
@@ -370,12 +379,49 @@ def _inline_to_html(
     links_out: List[FileLink],
     allow_remote: bool,
     start_index: int,
+    *,
+    base_dir: Optional[str] = None,
+    allow_remote_images: bool = False,
 ) -> str:
     """行内转换：图片 / 链接。链接按安全模型分类并收集。"""
 
     def replace_img(m: re.Match) -> str:
         alt = _escape(m.group(1))
         src = m.group(2).strip()
+        lower = src.lower()
+        if lower.startswith(("http://", "https://")):
+            # 远程图片（决策 2）：默认禁止；仅 allow_remote_images opt-in 放行
+            status = (
+                ok_status("remote")
+                if allow_remote_images
+                else error_status("E_REMOTE_DISABLED", "远程图片未 opt-in")
+            )
+            links_out.append(
+                FileLink(index=len(links_out), text=alt, target=src, kind="remote", status=status)
+            )
+            if allow_remote_images:
+                return f'<img src="{_escape(src)}" alt="{alt}">'
+            return (
+                f'<span class="md-rich-denied" title="远程图片未 opt-in">'
+                f"图片:{alt}</span>"
+            )
+        if base_dir and not lower.startswith(("data:", "#")):
+            # 本地图片：文件不存在时降级占位（链接仍收集，渲染层可提示）
+            candidate = src if os.path.isabs(src) else os.path.join(base_dir, src)
+            if not os.path.exists(candidate):
+                links_out.append(
+                    FileLink(
+                        index=len(links_out),
+                        text=alt,
+                        target=src,
+                        kind="local",
+                        status=error_status("E_FILE_MISSING", "本地图片不存在"),
+                    )
+                )
+                return (
+                    f'<span class="md-rich-missing" title="本地图片不存在">'
+                    f"图片:{alt}</span>"
+                )
         return f'<img src="{_escape(src)}" alt="{alt}">'
 
     def replace_link(m: re.Match) -> str:
@@ -439,7 +485,8 @@ def scan_rich(
     """
     parsed = parse_md(md_path)
 
-    with open(md_path, "r", encoding="utf-8") as f:
+    # utf-8-sig：自动剥 BOM，避免 \ufeff#!rich 指令头失效
+    with open(md_path, "r", encoding="utf-8-sig") as f:
         text = f.read()
 
     # 1. #!rich 文件级指令
@@ -488,7 +535,9 @@ def scan_rich(
             from .sanitize import sanitize_html_fragment
 
             if len(html_text.encode("utf-8")) <= config.max_inline_size:
-                safe, _audit = sanitize_html_fragment(html_text)
+                safe, _audit = sanitize_html_fragment(
+                    html_text, allow_remote_images=config.allow_remote_images
+                )
             else:
                 safe = _escape(html_text)
             inline_htmls.append(
@@ -503,6 +552,8 @@ def scan_rich(
         remaining,
         links_out=file_links,
         allow_remote=config.allow_remote,
+        base_dir=os.path.dirname(os.path.abspath(md_path)),
+        allow_remote_images=config.allow_remote_images,
     )
 
     # 5. 产物引用（export 产物，计划 D5 类型感知）

@@ -22,6 +22,7 @@ from typing import Optional, List, Any
 
 from .._base import LangBridge, FunctionSpec
 from ..core.types import LangType
+from ..probe import _run_cmd_timeout
 
 # =============================================================================
 # 平台判断
@@ -98,11 +99,9 @@ def _get_julia_path() -> str:
     # 如果是 Windows，尝试通过 WSL 调用 julia
     if _IS_WINDOWS:
         try:
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 ['wsl', '-e', 'bash', '-c', '/root/.juliaup/bin/julia --version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
-                timeout=10
+                timeout=10,
             )
             if result.returncode == 0:
                 # Julia 在 WSL 中可用，使用 WSL 路径
@@ -132,17 +131,13 @@ def julia_compiler_available() -> bool:
     """
     try:
         if _IS_WINDOWS and _is_wsl_path(_JULIA_PATH):
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 ['wsl', '-e', 'bash', '-c', f'{_JULIA_PATH} --version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=10,
             )
         else:
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 [_JULIA_PATH, '--version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=10,
             )
         return result.returncode == 0
@@ -156,21 +151,18 @@ def _get_julia_version() -> str:
     """获取 Julia 版本号"""
     try:
         if _IS_WINDOWS and _is_wsl_path(_JULIA_PATH):
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 ['wsl', '-e', 'bash', '-c', f'{_JULIA_PATH} --version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=10,
             )
         else:
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 [_JULIA_PATH, '--version'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
                 timeout=10,
             )
         if result.returncode == 0:
-            output = result.stdout.strip() or result.stderr.strip()
+            output = result.stdout.decode('utf-8', errors='replace').strip() \
+                or result.stderr.decode('utf-8', errors='replace').strip()
             # 解析版本号
             import re
             match = re.search(r'version (\d+\.\d+\.\d+)', output)
@@ -286,10 +278,8 @@ EXPORT long long {func_name}_wrapper(long long a) {{
         c_path,
     ]
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         compile_cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
         timeout=30,
     )
 
@@ -297,8 +287,8 @@ EXPORT long long {func_name}_wrapper(long long a) {{
         # 如果 gcc 不可用，返回一个占位符
         raise RuntimeError(
             f'Julia/C 编译失败:\n'
-            f'stderr:\n{result.stderr}\n'
-            f'stdout:\n{result.stdout}\n'
+            f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+            f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
             f'注意：完整支持需要 GCC 编译器'
         )
 
@@ -376,9 +366,8 @@ end
         wsl_jl_script = f'/tmp/vools_julia_cache/compile_{base_name}.jl'
 
         # 先在 WSL 中创建目录
-        subprocess.run(
+        _run_cmd_timeout(
             ['wsl', '-e', 'bash', '-c', f'mkdir -p {wsl_cache_dir}'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             timeout=10,
         )
 
@@ -391,9 +380,8 @@ end
 
         # 复制到 WSL
         _win_path = temp_script_path.replace(":", "").replace("\\", "/")
-        subprocess.run(
+        _run_cmd_timeout(
             ['wsl', '-e', 'bash', '-c', f'cp /mnt/{_win_path} {wsl_jl_script}'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             timeout=10,
         )
         os.unlink(temp_script_path)
@@ -406,18 +394,16 @@ end
             f.write(jl_script)
         cmd = [_JULIA_PATH, jl_script_path]
 
-    result = subprocess.run(
+    result = _run_cmd_timeout(
         cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
         timeout=120,
     )
 
     if result.returncode != 0:
         raise RuntimeError(
             f'Julia StaticCompiler 编译失败:\n'
-            f'stderr:\n{result.stderr}\n'
-            f'stdout:\n{result.stdout}\n'
+            f'stderr:\n{result.stderr.decode("utf-8", errors="replace")}\n'
+            f'stdout:\n{result.stdout.decode("utf-8", errors="replace")}\n'
             f'代码:\n{code}'
         )
 
@@ -427,9 +413,9 @@ end
     elif use_wsl:
         # 尝试从 WSL 复制到 Windows
         try:
-            subprocess.run(
+            _run_cmd_timeout(
                 ['cp', wsl_so_path, so_path],
-                shell=True,
+                timeout=30,
             )
         except Exception:
             pass
@@ -678,11 +664,12 @@ class JuliaBridge(LangBridge):
 
             cmd = ['julia', script_path]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = _run_cmd_timeout(cmd, timeout=30)
             if result.returncode != 0:
-                raise RuntimeError("Execution failed: " + result.stderr)
-            
-            output = result.stdout.strip()
+                raise RuntimeError("Execution failed: " +
+                                   result.stderr.decode('utf-8', errors='replace'))
+
+            output = result.stdout.decode('utf-8', errors='replace').strip()
             if not output:
                 return None
 
@@ -909,9 +896,8 @@ class JuliaBridge(LangBridge):
                 else:
                     wsl_source = wsl_temp
 
-                subprocess.run(
+                _run_cmd_timeout(
                     ['wsl', '-e', 'bash', '-c', f'cp "{wsl_source}" {wsl_script}'],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     timeout=10,
                 )
                 cmd = ['wsl', '-e', 'bash', '-c', f'{_JULIA_PATH} {wsl_script}']
@@ -923,9 +909,8 @@ class JuliaBridge(LangBridge):
                     temp_script = tf.name
                 cmd = [_JULIA_PATH, temp_script]
 
-            result = subprocess.run(
+            result = _run_cmd_timeout(
                 cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=60,
             )
 

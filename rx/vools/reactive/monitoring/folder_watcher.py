@@ -31,7 +31,10 @@ import tempfile
 import threading
 import time
 from collections import deque
-from ctypes import wintypes as wt
+try:
+    from ctypes import wintypes as wt
+except (ImportError, ValueError):  # Linux/py3.6: ctypes.wintypes 的 VARIANT_BOOL 导入崩溃
+    wt = None
 from ...core.dataclass_compat import dataclass
 from datetime import datetime
 from vools.core.datetime_compat import datetime_fromisoformat  # py3.6 兼容（datetime.fromisoformat 是 3.7+）
