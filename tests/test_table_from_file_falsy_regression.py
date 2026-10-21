@@ -48,4 +48,6 @@ class TestColsFalsyTrap:
     def test_cols_specific(self, csv_path):
         t = Table.from_file(csv_path, cols=[0, 2])
         assert t.columns() == ['a', 'c']
-        assert t._data[0] == ['1', '3']
+        # 注意：from_file 的表头行也作为数据第 0 行保留（既有语义）
+        assert t._data[0] == ['a', 'c']
+        assert t._data[1] == ['1', '3']
