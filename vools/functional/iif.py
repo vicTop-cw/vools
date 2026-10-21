@@ -95,8 +95,17 @@ def _eval_string_condition(condition: str, data: Any, supp: bool) -> bool:
 
     优先处理 '->' 前缀；否则尝试编译为 lambda（需要 supp=True）；
     兜底直接做 bool(condition)。
+
+    BUG-225: 原实现声明 supp 参数却从不引用——supp=False 时普通字符串
+    仍被无条件编译求值，"是否启用字符串表达式编译"开关在 iif() data 模式
+    静默失效（与同模块 ConditionBuilder 对 supp 的三处认真分支口径不一）。
+    现 supp=False 且无 '->' 前缀时不编译，按 docstring 兜底语义返回
+    bool(condition)；'->' 前缀保持强制编译（docstring L510 契约）。
     """
-    expr = condition[2:] if condition.startswith('->') else condition
+    has_arrow = condition.startswith('->')
+    expr = condition[2:] if has_arrow else condition
+    if not supp and not has_arrow:
+        return bool(condition)
     cond_func = _compile_expression(expr)
     if cond_func is None:
         return bool(condition)
