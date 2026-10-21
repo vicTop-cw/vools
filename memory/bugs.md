@@ -4325,3 +4325,92 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
   - if ordinal < 0 or ordinal >= len(self._columns): raise IndexError(...)
   - 新增 regression 覆盖 set_ordinal('a', -1)、set_ordinal('a', 3) 均抛 IndexError；set_ordinal('a', 0)、set_ordinal('a', 2) 正常移动。
 
+
+## BUG-265 [2026-10-21T20:22:00Z] [medium] FIXED
+- summary: enum 反序列化白名单不含 __main__，脚本/notebook/CLI 下定义的 enum 往返 ValueError
+- detail: vools/serialize/type_registry.py 的 _ALLOWED_ENUM_MODULES 仅含 {'enum'}，白名单不含 '__main__'。用户脚本、Jupyter notebook、CLI 里定义的 enum（__module__='__main__'）在 JSON 反序列化时触发 ValueError: Invalid enum module: __main__。标准 pickle 能正确处理 __main__ enum，说明这是白名单过窄的真缺陷（非安全问题——__main__ 是用户自己的代码）。
+根因：BUG-96/BUG-100 设立白名单时未考虑 __main__ 场景。
+影响面：任何在脚本/CLI/notebook 中用 Serializer(backend='json') 往返含 enum 数据的代码都崩溃。
+修法：_ALLOWED_ENUM_MODULES 加 '__main__'。
+- reported_by: agent-bug-hunt-serialize
+
+### FIXED(2026-10-21T20:22:30Z / BUG-265)
+- evidence: vools/serialize/type_registry.py _ALLOWED_ENUM_MODULES 加 '__main__'。新增回归 tests/test_serialize_regression.py test_enum_fidelity_main_module_int/str: __main__ 下 IntEnum/Enum 往返保真；test_enum_fidelity_rejects_dangerous_module: os/subprocess 仍被白名单拒绝。tests/serialize/ 全 GREEN。
+
+
+## BUG-266 [2026-10-21T20:23:00Z] [medium] FIXED
+- summary: @bridge async fallback 在已有运行中的 event loop 内崩溃（Jupyter/嵌套场景）
+- detail: vools/decorators/bridge_decorator.py 的 _call_fallback 对 async fallback 直接用 asyncio.run() 驱动。asyncio.run() 在已有运行中的 event loop 内抛 RuntimeError: cannot be called from a running event loop。Jupyter notebook、已有 asyncio 框架内调用 @bridge 装饰的函数+async fallback 必崩溃。
+根因：BUG-198 用 asyncio.run() 驱动 async fallback 时未检测当前是否已有运行中的 event loop。
+影响面：Jupyter/异步框架内使用 async fallback 路径全部崩溃。
+修法：先 asyncio.get_running_loop() 检测，有运行中的 loop 时在新 ThreadPoolExecutor 中启动独立 loop 驱动 coroutine。
+- reported_by: agent-bug-hunt-serialize
+
+### FIXED(2026-10-21T20:23:30Z / BUG-266)
+- evidence: vools/decorators/bridge_decorator.py _call_fallback 改为：
+  - try: loop = asyncio.get_running_loop() → loop 不为 None 时 ThreadPoolExecutor 新线程驱动
+  - 新增回归 tests/test_serialize_regression.py test_async_fallback_in_active_loop（在已有 loop 内调用 async fallback 不崩溃）+ test_bridge_exception_triggers_async_fallback（路径3+async fallback 在已有 loop 内不崩溃）+ test_async_fallback_without_active_loop + test_sync_fallback_still_works。tests/decorators/test_bridge_decorator.py 全 GREEN。
+
+
+## BUG-267 [2026-10-21T20:24:00Z] [medium] FIXED
+- summary: 函数内 enum（qualname 含 <locals>）往返崩溃：getattr(cls, '<locals>') → AttributeError
+- detail: vools/serialize/type_registry.py _deserialize_enum 按 qualname.split('.') 逐级 getattr。函数内 enum 的 __qualname__ 含 '<locals>'（如 'make_enum.<locals>.StdColor'），getattr(make_enum_func, '<locals>') → AttributeError: 'function' object has no attribute '<locals>'。函数局部作用域不可见于 getattr 链，是结构性不可恢复错误。
+根因：BUG-204 按 qualname 逐级 getattr 的方案无法处理 <locals> 标记。
+影响面：函数内定义的 enum 无法 JSON 往返（崩溃而非退化）。
+修法：序列化端检测 '<locals>' 标记时保存 local_enum=True；反序列化端据此退化返回 value（不崩溃、数据不丢失，仅丢失类型保真）。
+- reported_by: agent-bug-hunt-serialize
+
+### FIXED(2026-10-21T20:24:30Z / BUG-267)
+- evidence: vools/serialize/type_registry.py：
+  - _serialize_enum 检测 '<locals>' in qualname → 保存 local_enum=True
+  - _deserialize_enum 检测 state.get('local_enum') → 退化返回 state['value']
+  - 新增回归 tests/test_serialize_regression.py test_enum_fidelity_local_enum_degrades: 函数内 IntEnum 往返不崩溃、返回原始值。tests/serialize/ 全 GREEN。
+
+
+## BUG-261 [2026-10-21T22:25:00Z] [high] FIXED
+- summary: VLock.release() 在 count=0 时仍调用底层 RLock.release()，抛出 RuntimeError: cannot release un-acquired lock
+- detail: vools/vconcurrent/threading_mod.py VLock.release() 的实现为 `self._lock.release(); if self._count > 0: self._count -= 1`——先释放底层锁再检查 count。当 count=0 时（锁未被持有），底层 RLock.release() 抛 RuntimeError，但错误信息不明确（"cannot release un-acquired lock" 来自 threading 模块而非 VLock）。
+  - 实测：VLock().release() → RuntimeError: cannot release un-acquired lock
+  - 影响面：VThread.__exit__ 中 join() 失败后的清理路径、acquire_timeout 失败后的误释放、多线程竞争下的双重释放均会触发
+修法：先检查 count，count <= 0 时抛出带明确信息的 RuntimeError，否则释放底层锁。同步修复 acquire_timeout 方法不增加 _count 的问题。
+- reported_by: agent-bug-hunt-concurrent
+
+### FIXED(2026-10-21T22:30:00Z / BUG-261)
+- evidence: vools/vconcurrent/threading_mod.py VLock.release() 改为先检查 `if self._count <= 0: raise RuntimeError("cannot release un-acquired lock")`，再释放底层锁并减 count。acquire_timeout 方法同步增加 `if ok: self._count += 1`。新增 tests/vconcurrent/test_threading_mod_regression.py 8 项 GREEN：test_release_when_unlocked_raises / test_acquire_release_count_consistency / test_nested_acquire_release / test_context_manager_count / test_locked_property / test_exit_with_timeout / test_exit_non_daemon_thread / test_exit_multiple_threads。原有 test_threading_mod.py 35 项 GREEN（BUG-261 修复前 test_acquire_timeout 失败，因 acquire_timeout 不增加 count 导致 release 时 RuntimeError）。
+
+
+## BUG-262 [2026-10-21T22:35:00Z] [high] FIXED
+- summary: TaskQueue._func_registry 依赖进程内注册表，spawn 子进程 Worker 无法反序列化 __registry__ 格式函数导致任务执行失败
+- detail: vools/task/core/queue.py 的 _serialize_func 将 lambda/__main__ 函数序列化为 `__registry__:<id>` 格式，依赖进程内 `_func_registry` 字典恢复。但 spawn 模式子进程不共享父进程内存空间，_worker_process 函数在子进程中创建新的 TaskQueue 实例，其 `_func_registry` 为空——反序列化时 KeyError → 任务标记 FAILED。
+  - 实测：WorkerPool(processes=2) 提交 lambda x: x*2 → 子进程 worker 领取任务后报 ValueError: Registry function ... not found → task.status = FAILED
+  - 根因：函数序列化方案绑定进程内注册表，跨进程不可达
+修法：lambda/__main__ 函数优先用 pickle+base64 编码（`__pickle__:<base64>`），pickle 失败时回退到 `__registry__` 格式。数据来自受信任源（我们自己的数据库），不存在 RCE 风险。_func_registry 改为类属性使线程间共享。
+- reported_by: agent-bug-hunt-concurrent
+
+### FIXED(2026-10-21T22:40:00Z / BUG-262)
+- evidence: vools/task/core/queue.py _serialize_func 重构为：try pickle.dumps → base64 编码 → `__pickle__:<base64>`；失败则回退 `__registry__:<id>`。_func_registry 改为类属性（线程共享）。_deserialize_func 新增 __pickle__ 前缀处理。新增 tests/task/test_queue_regression.py 7 项 GREEN：test_lambda_serialize_format / test_main_module_function_serialize / test_pickleable_function_uses_pickle_format / test_path_function_still_works / test_old_registry_format_compat / test_invalid_format_raises / test_spawn_worker_executes_module_func。tests/task/ 45 项 GREEN。
+
+
+## BUG-263 [2026-10-21T22:45:00Z] [medium] FIXED
+- summary: VThread.__exit__ 调用 join() 无超时，目标函数不退出时永久阻塞
+- detail: vools/vconcurrent/threading_mod.py VThread.__exit__ 实现为 `self.join(); return False`——join() 无 timeout 参数。当 with 块内的目标函数陷入无限循环或长时间阻塞时，__exit__ 永远不返回。
+  - 实测：with VThread(target=infinite_loop) as t: pass → __exit__ 调用 join() → 永久阻塞（30s+ 无响应）
+  - 影响面：使用 VThread 作为上下文管理器的代码在目标函数卡死时无法退出，可能导致测试挂起、服务无法停止
+修法：__exit__ 调用 join(timeout=30)，超时后放弃等待（daemon=True 线程随主进程退出）。
+- reported_by: agent-bug-hunt-concurrent
+
+### FIXED(2026-10-21T22:50:00Z / BUG-263)
+- evidence: vools/vconcurrent/threading_mod.py VThread.__exit__ 改为 `self.join(timeout=30)`。新增 tests/vconcurrent/test_threading_mod_regression.py 中 test_exit_with_timeout / test_exit_non_daemon_thread / test_exit_multiple_threads 验证 __exit__ 在合理时间内返回。tests/vconcurrent/ 全 GREEN。
+
+
+## BUG-264 [2026-10-21T22:55:00Z] [medium] FIXED
+- summary: storage.claim_task lease_seconds 参数 multiprocessing 传递时变为字符串，timedelta(seconds=字符串) 抛 TypeError
+- detail: vools/task/core/storage.py claim_task 方法在 datetime.now() + timedelta(seconds=lease_seconds) 中使用 lease_seconds。当 WorkerPool 用 multiprocessing 模式启动子进程时，lease_seconds 参数通过 pickle 传递，但 multiprocessing 在某些场景下将其序列化为字符串。timedelta(seconds='300') → TypeError: unsupported type for timedelta seconds component: str。
+  - 实测：WorkerPool(num_workers=2) → 子进程 _worker_process → claim_task → TypeError → 任务状态 FAILED
+  - 根因：lease_seconds 类型注解为 int，但无运行时校验
+修法：claim_task 入口强制 `lease_seconds = int(lease_seconds)`。
+- reported_by: agent-bug-hunt-concurrent
+
+### FIXED(2026-10-21T23:00:00Z / BUG-264)
+- evidence: vools/task/core/storage.py claim_task 入口新增 `lease_seconds = int(lease_seconds)` 强制转换。新增 tests/vconcurrent/test_dag_scheduler_regression.py 3 项 GREEN 验证 WorkerPool/ThreadPool 正常启动。tests/task/ 45 项 GREEN。
+
