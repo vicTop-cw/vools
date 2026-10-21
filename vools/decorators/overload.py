@@ -84,7 +84,11 @@ _DEFAULT_MODE = Priority | Strict | AllowSyncName
 # =============================================================================
 
 ParentMode = 'parent'            # 返回新管理器（继承父级模式）
-ExportAsFunction = None          # 返回原函数（不创建新管理器）
+# BUG-228: 原为 None——与"未传 export_mode"同值，register 的
+# `export_mode is not None` 门会把显式选择误判为未传，令"显式返回原函数"
+# 能力结构性不可达。同族哨兵 ParentMode/ExportAsManager 均为唯一字符串，
+# 此处对齐为唯一字符串。
+ExportAsFunction = 'function'    # 返回原函数（不创建新管理器）
 ExportAsManager = 'manager'      # 返回新管理器（等同于 ParentMode 语义）
 
 
@@ -301,12 +305,22 @@ class OverloadManager:
             func: 要注册的函数；若为 None 则返回装饰器
             priority: 优先级（默认 0；在 Priority 模式下生效）
             export_mode: 决定 register 调用的返回值
-                - None (默认)：返回原函数，不改变原函数
+                - None (默认)：返回管理器，支持链式（与模块头文档一致）
+                - ExportAsFunction：返回原函数（显式选择）
                 - ParentMode / ExportAsManager：返回新管理器（继承父级模式）
                 - OverloadMode 值：以指定模式创建新管理器
 
         返回:
             原函数 / 管理器 —— 取决于 export_mode
+
+        Note:
+            BUG-227: 原默认分支返回原函数 f——同名注册 ``@f.register
+            def f(...)``（_register_function 显式允许的正统写法）会把名字 f
+            重绑成新函数、Manager 从命名空间丢失，此后 f(...) 直接调用最后
+            注册的函数，priority/strict/count/模糊检测全部 dispatch 静默
+            旁路；且与模块头 L9、示例注释 L17、overload() L500 三处
+            「默认返回管理器支持链式」承诺直接矛盾。现默认返回 self，
+            需要原函数语义请显式 export_mode=ExportAsFunction。
         """
         eff_export_mode = export_mode if export_mode is not None else self.export_mode
 
@@ -314,8 +328,11 @@ class OverloadManager:
             eff_priority = priority if priority is not None else 0
             self._register_function(f, priority=eff_priority)
 
-            # 默认：不改变原函数，返回 f
-            if eff_export_mode is None or eff_export_mode is ExportAsFunction:
+            # BUG-227: 默认返回管理器（链式/同名注册风格不再打断 dispatch）；
+            # ExportAsFunction 显式值保留"返回原函数"给主动选择的调用方。
+            if eff_export_mode is None:
+                return self
+            if eff_export_mode is ExportAsFunction:
                 return f
 
             # ParentMode / ExportAsManager：创建子管理器并返回
