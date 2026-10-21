@@ -4221,3 +4221,36 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 - reported_by: agent-vools-hardening
 - task_id: T0r708
 
+
+
+## BUG-252 [2026-10-21T21:10:00Z] [medium] FIXED
+- summary: control._retry_decorator 参数校验缺失：tries=0、delay/backoff 非数字、logger 非 Logger 实例时装饰阶段静默通过，首次重试才崩溃
+- detail: vools/decorators/control.py 的 _retry_decorator 入口对 tries/delay/backoff/logger 不校验：
+  - tries=0 或浮点数 → 装饰时通过，运行时才因 while 循环不执行或类型错误崩溃
+  - delay='abc' → 装饰时通过，time.sleep('abc') 运行时崩溃
+  - logger='str' → 装饰时通过，logger.info 运行时 AttributeError
+  - 所有校验延迟到首次调用被装饰函数才暴露，违反"配置错误尽早抛出"原则。
+- reported_by: agent-bug-hunt-fp
+- task_id: T0r709
+
+### FIXED(2026-10-21T21:18:00Z / BUG-252)
+- evidence: vools/decorators/control.py 在 _retry_decorator 入口处新增前置校验（BUG-252）：
+  - tries: isinstance(int) 且 >= 1 → ValueError("tries 必须为正整数")
+  - delay/backoff: isinstance(int/float) 且 >= 0 → ValueError("delay/backoff 必须为非负数")
+  - logger: 非 None 且无 .info 属性 → TypeError("logger 必须为 logging.Logger 实例或 None")
+  - 新增回归 tests/decorators/test_retry_params_validation.py 24 项 GREEN：覆盖 tries=0/-1/1.5/'abc'、delay='abc'/-1、backoff='abc'/-1、logger='str'/123/None/real Logger、@retry(...) 装饰器路径、合法用法（basic success / check_func / exception propagation / logic='and'）全正常；tests/decorators/ + tests/functional/ + tests/oop/ + tests/cache/ + tests/curried/ 全 GREEN（EXIT=0）。
+
+
+## BUG-254 [2026-10-21T21:12:00Z] [medium] FIXED
+- summary: curry_delay.DelayCurried 对超出函数签名数量的位置参数静默接受，不抛 TypeError
+- detail: vools/decorators/curry_delay.py 的 DelayCurried.__call__ 在绑定参数前不校验 args_len 是否超出函数签名的可绑定位置数。例如 def add(a, b) 被 delay_curry 包装后：
+  - add(1, 2, 3) → 静默接受 3 个参数，返回 DelayCurried（is_ready=True），而非 TypeError
+  - add(1)(2, 3) → 链式调用时多余参数同样被静默吞掉
+  - 带 *args 的函数不受影响（max_args_count=inf 跳过校验）
+- reported_by: agent-bug-hunt-fp
+- task_id: T0r710
+
+### FIXED(2026-10-21T21:18:00Z / BUG-254)
+- evidence: vools/decorators/curry_delay.py DelayCurried.__call__ 入口新增 BUG-254 校验：
+  - if not self._has_var_positional: bindable = 剩余未绑定的 POSITIONAL_OR_KEYWORD 参数数；args_len > bindable → TypeError("Too many positional arguments: expected at most {bindable}, got {args_len}")
+  - 新增回归 tests/decorators/test_delay_curry_extra_args.py 11 项 GREEN：覆盖多余参数单调用/链式/部分绑定后超量、*args 函数正常接受、关键字重复赋值、合法链式调用（全链/部分绑定后全满/关键字链）全正常；tests/decorators/ + tests/functional/ 全 GREEN（EXIT=0）。

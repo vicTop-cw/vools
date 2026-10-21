@@ -353,6 +353,16 @@ def _retry_decorator(
     logger: Optional[logging.Logger] = None
 ) -> Callable:
     """内部函数：创建 retry 装饰器"""
+    # BUG-252: 参数校验前置，避免装饰时静默通过、运行时才崩溃
+    if not isinstance(tries, int) or tries < 1:
+        raise ValueError(f"tries 必须为正整数，当前值: {tries!r}")
+    if not isinstance(delay, (int, float)) or delay < 0:
+        raise ValueError(f"delay 必须为非负数，当前值: {delay!r}")
+    if not isinstance(backoff, (int, float)) or backoff < 0:
+        raise ValueError(f"backoff 必须为非负数，当前值: {backoff!r}")
+    if logger is not None and not hasattr(logger, 'info'):
+        raise TypeError(f"logger 必须为 logging.Logger 实例或 None，当前类型: {type(logger).__name__}")
+
     # 验证逻辑参数
     valid_logics = {'or', '|', '||', 'and', '&', '&&', 'xor', '^'}
     if logic not in valid_logics:

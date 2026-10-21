@@ -322,6 +322,19 @@ class DelayCurried:
         
         if not args_len and not kwargs_len and not self.is_ready:
             return self
+
+        # BUG-254: 参数数量校验前置，避免多余位置参数被静默接受
+        if not self._has_var_positional:
+            # 当前可继续绑定的非可变参数位置数
+            bindable = sum(
+                1 for name, param in self.sig.parameters.items()
+                if param.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.POSITIONAL_ONLY)
+                and name not in self.bound_args
+            )
+            if args_len > bindable:
+                raise TypeError(
+                    f"Too many positional arguments: expected at most {bindable}, got {args_len}"
+                )
         
         wrapped_args = [lazy(arg) for arg in args]
         wrapped_kwargs = {k: lazy(v) for k, v in kwargs.items()}
