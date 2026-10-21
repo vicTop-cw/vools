@@ -762,14 +762,16 @@ class Qax(Table):
         Args:
             col: 源列名
             start: 起始位置（从1开始）
-            length: 截取长度（可选）
+            length: 截取长度（可选；0 表示空串，None 表示取到末尾）
             new_col: 目标列名（可选，默认同 col）
 
         Returns:
             self（支持链式）
         """
         to_field = new_col or col
-        end_pos = start + length - 1 if length else None
+        # BUG-249: 原 `if length else None` 是假值陷阱——length=0 被当成
+        # 「不限制」返回整条尾部字符串；改用 is not None 区分。
+        end_pos = start + length - 1 if length is not None else None
         return self.substr(to_field, col, start_pos=start, end_pos=end_pos)
 
     def QAXSplit(self, col, sep, new_cols):
@@ -791,22 +793,12 @@ class Qax(Table):
         Args:
             cols: 要拼接的列名列表
             new_col: 目标列名
-            sep: 分隔符
+            sep: 分隔符（空字段保留占位，None 视为空串）
 
         Returns:
             self（支持链式）
         """
         if sep:
-            temp_cols = []
-            for i, c in enumerate(cols):
-                temp_col = '__concat_temp_' + str(i)
-                self.add_col(temp_col, '')
-                temp_cols.append(temp_col)
-                col_idx = self._get_col_index(c)
-                temp_idx = self._get_col_index(temp_col)
-                for row in self._data:
-                    row[temp_idx] = str(row[col_idx]) if row[col_idx] is not None else ''
-
             result_col = new_col
             if result_col not in self._columns:
                 self._columns.append(result_col)
@@ -814,18 +806,15 @@ class Qax(Table):
                     row.append('')
 
             result_idx = self._get_col_index(result_col)
+            indices = [self._get_col_index(c) for c in cols]
             for row in self._data:
-                parts = []
-                for i, c in enumerate(cols):
-                    col_idx = self._get_col_index(c)
-                    val = row[col_idx]
-                    if val is not None and val != '':
-                        parts.append(str(val))
+                # BUG-249: 原实现过滤空字符串字段导致分隔符错位
+                # （('a','','c') + '-' -> 'a-c' 而非 'a--c'）；本实现逐列
+                # 保留占位，None 渲染为空串。同时删除原「临时列」死代码
+                # （建列→拷贝→最终循环又从原列读→del_col，临时值从未使用）。
+                parts = [('' if row[idx] is None else str(row[idx]))
+                         for idx in indices]
                 row[result_idx] = sep.join(parts)
-
-            for temp_col in temp_cols:
-                self.del_col(temp_col)
-
             return self
         else:
             return self.concat(new_col, cols)
