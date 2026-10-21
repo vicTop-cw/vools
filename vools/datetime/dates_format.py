@@ -733,21 +733,26 @@ class EnhancedDateFormatter:
         try:
             parts = expr_part.split(';')
             result = None
-            
+            # BUG-239: 副本求值、成功才提交——原实现边解析边写 self.context，
+            # 后续步骤失败被 catch-all 吞成原文返回，部分变量已生效（脏状态）
+            # 且真实错误静默。用 staged 副本保持"同串内先赋值后引用可见"的
+            # 既有语义（{x <- 10 ; y <- 20 ; x + y} == 30），全部成功后再落地。
+            staged = dict(self.context)
+
             for i, part in enumerate(parts):
                 part = part.strip()
                 if not part:
                     continue
-                
+
                 if '<-' in part:
                     # 变量赋值部分: var <- value
                     var_name, var_value = part.split('<-', 1)
                     var_name = var_name.strip()
                     var_value = var_value.strip()
-                    
+
                     # 解析值（支持字符串、数字、列表、字典等）
                     parsed_value = self._parse_value(var_value)
-                    self.context[var_name] = parsed_value
+                    staged[var_name] = parsed_value
                     # 保存最后一个赋值的值作为结果（当所有部分都是赋值时返回）
                     result = parsed_value
                 else:
@@ -758,12 +763,14 @@ class EnhancedDateFormatter:
                         result = date_result
                     else:
                         # BUG-101: 改用安全求值
-                        result = safe_eval_expression(part, vars=self.context)
-            
+                        result = safe_eval_expression(part, vars=staged)
+
+            # 全部步骤成功，才把整批更新提交到上下文（原子性）
+            self.context.update(staged)
             return result if result is not None else ""
-            
+
         except Exception as e:
-            # 如果解析失败，返回原始表达式
+            # 如果解析失败，返回原始表达式（既有占位符可见行为，且不污染上下文）
             return f"{{{expr_part}}}"
 
     def _parse_value(self, value_str: str) -> Any:
