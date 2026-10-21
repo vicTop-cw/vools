@@ -6,9 +6,64 @@ vools.sql.spark.connection - Spark SQL 连接实现
 """
 
 from typing import Any, Optional, Sequence, List, Tuple
+import datetime as _dt
+import re as _re
 
 from ..core.connection import Connection
 from ..core.result import ResultSet, Row
+
+
+# BUG-234: Spark SQL 没有服务端参数绑定，原实现用 ``sql % tuple(params)``
+# 裸插值——字符串参数不加引号/不转义（同代码在 sqlite/pg 由驱动绑定安全，
+# 迁到 spark 后端后语法坏或注入），SQL 字面量 ``%``（如 LIKE '%abc%'）也被
+# %-格式化误伤。改为只替换 ``%s`` 占位符并逐个安全代值。
+_SQL_PLACEHOLDER_RE = _re.compile(r'%s')
+
+
+def _quote_sql_literal(value: Any) -> str:
+    """把参数值安全转成 SQL 字面量（无服务端绑定时的等价保护）。"""
+    if value is None:
+        return 'NULL'
+    if isinstance(value, bool):
+        return 'TRUE' if value else 'FALSE'
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, (bytes, bytearray)):
+        return "'" + bytes(value).hex() + "'"
+    if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
+        return "'" + value.isoformat().replace("'", "''") + "'"
+    if isinstance(value, str):
+        return "'" + value.replace("'", "''") + "'"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _format_sql_params(sql: str, params: Sequence) -> str:
+    """把 params 逐个安全代入 ``%s`` 占位符（BUG-234）。
+
+    只匹配 ``%s``：SQL 中其它 ``%``（LIKE 模式、格式化串）原样保留；
+    字符串值加引号并把 ``'`` 转义为 ``''``；数量不匹配抛带语义的 ValueError。
+    """
+    values = list(params)
+    out: List[str] = []
+    idx = 0
+    used = 0
+    for m in _SQL_PLACEHOLDER_RE.finditer(sql):
+        out.append(sql[idx:m.start()])
+        if used >= len(values):
+            raise ValueError(
+                "SQL 占位符数量多于参数数量（%s 需要至少 %d 个参数）"
+                % (sql, used + 1)
+            )
+        out.append(_quote_sql_literal(values[used]))
+        used += 1
+        idx = m.end()
+    out.append(sql[idx:])
+    if used < len(values):
+        raise ValueError(
+            "参数数量多于 SQL 占位符数量（SQL 含 %d 个 %%s，提供了 %d 个参数）"
+            % (used, len(values))
+        )
+    return ''.join(out)
 
 
 class SparkConnection(Connection):
@@ -165,7 +220,8 @@ class SparkConnection(Connection):
             raise RuntimeError('Spark connection is not established')
 
         if params is not None:
-            sql = sql % tuple(params)
+            # BUG-234: 安全代值（引号化/转义/数量校验），不再裸 % 插值
+            sql = _format_sql_params(sql, params)
 
         df = self._spark.sql(sql)
         columns = [field.name for field in df.schema.fields]
@@ -200,7 +256,8 @@ class SparkConnection(Connection):
 
         count = 0
         for params in seq_of_params:
-            formatted_sql = sql % tuple(params)
+            # BUG-234: 同 execute——安全代值（引号化/转义/数量校验）
+            formatted_sql = _format_sql_params(sql, params)
             self._spark.sql(formatted_sql)
             count += 1
 
