@@ -88,7 +88,9 @@ class PostgresConnection(Connection):
 
         try:
             import psycopg2
-            self._driver_name = 'psycopg2'
+            # BUG-237: _driver_name 只在连接成功后置位——原实现先置名再
+            # connect，认证/网络失败时残留驱动名，违背 driver_name 的
+            # 「未连接时为 None」文档契约、误导状态判断。
             self._conn = psycopg2.connect(
                 host=host,
                 port=port,
@@ -97,6 +99,7 @@ class PostgresConnection(Connection):
                 dbname=database,
                 **extra_kwargs,
             )
+            self._driver_name = 'psycopg2'
             self._connected = True
             return
         except ImportError:
@@ -104,7 +107,6 @@ class PostgresConnection(Connection):
 
         try:
             import psycopg
-            self._driver_name = 'psycopg'
             self._conn = psycopg.connect(
                 host=host,
                 port=port,
@@ -113,6 +115,7 @@ class PostgresConnection(Connection):
                 dbname=database,
                 **extra_kwargs,
             )
+            self._driver_name = 'psycopg'
             self._connected = True
             return
         except ImportError:
