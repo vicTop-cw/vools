@@ -130,6 +130,8 @@ class TaskStorage:
 
         使用UPDATE ... RETURNING确保原子性，同时处理过期租约的任务
         """
+        # BUG-F 修复：强制转换 lease_seconds 为 int，避免 multiprocessing 传字符串导致 TypeError
+        lease_seconds = int(lease_seconds)
         lease_timeout = (datetime.now() + timedelta(seconds=lease_seconds)).isoformat()
         now = datetime.now().isoformat()
 

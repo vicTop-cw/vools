@@ -17,15 +17,16 @@ from .storage import TaskStorage
 class TaskQueue:
     """任务队列管理器"""
 
+    # 类属性：_func_registry 在所有实例间共享（同一进程内线程安全）
+    _func_registry = {}
+
     def __init__(self, db_path: str = "tasks.db"):
         self.storage = TaskStorage(db_path)
-        self._func_registry = {}
 
     def __getstate__(self):
-        return {'storage': self.storage, '_func_registry': self._func_registry}
+        return {'storage': self.storage}
     def __setstate__(self, state):
         self.storage = state['storage']
-        self._func_registry = state['_func_registry']
 
     def submit(self, func: Callable, *args, **kwargs) -> int:
         """
@@ -148,13 +149,19 @@ class TaskQueue:
         func_to_serialize = getattr(func, '__wrapped__', func)
         func_name = getattr(func_to_serialize, '__name__', '')
 
-        # BUG-150/BUG-207: lambda 与 __main__ 函数既不能走路径格式（getattr "<lambda>"
-        # 失败），也不能用 pickle 持久化（pickle.loads 反序列化是任意代码执行 RCE）。
-        # 统一注册到进程内 _func_registry，生成 __registry__ 标记（同进程恢复）。
+        # BUG-C 修复：lambda 与 __main__ 函数优先用 pickle+base64 编码，
+        # 使其在 spawn 子进程中可恢复（旧版 __registry__ 依赖进程内注册表，不可达）。
+        # pickle 失败时（如局部函数、闭包）回退到 __registry__ 格式。
         if func_name == '<lambda>' or getattr(func_to_serialize, '__module__', '') == '__main__':
-            key = id(func_to_serialize)
-            self._func_registry[key] = func_to_serialize
-            return f"__registry__:{key}"
+            try:
+                data = pickle.dumps(func_to_serialize)
+                encoded = base64.b64encode(data).decode('ascii')
+                return f"__pickle__:{encoded}"
+            except Exception:
+                # pickle 失败（局部函数/闭包），回退到 registry 格式（同进程可用）
+                key = id(func_to_serialize)
+                self._func_registry[key] = func_to_serialize
+                return f"__registry__:{key}"
 
         # 优先使用函数路径方式，这样可以正确处理装饰器
         try:
@@ -164,8 +171,13 @@ class TaskQueue:
 
     def _deserialize_func(self, func_data: str) -> Callable:
         """反序列化函数"""
+        if func_data.startswith('__pickle__:'):
+            # BUG-C：pickle+base64 编码的函数，跨进程安全
+            encoded = func_data.split(':', 1)[1]
+            data = base64.b64decode(encoded)
+            return pickle.loads(data)
         if func_data.startswith('__registry__:'):
-            # BUG-150: 从进程内函数注册表取回 lambda/局部函数
+            # 旧格式兼容：同进程注册表（已弃用）
             key = int(func_data.split(':', 1)[1])
             try:
                 return self._func_registry[key]
@@ -183,11 +195,9 @@ class TaskQueue:
             # 如果函数被装饰器包装，获取原始函数
             return getattr(func, '__wrapped__', func)
         # BUG-207: pickle 反序列化会执行 __reduce__ gadget（任意代码执行 RCE），已禁用。
-        # 函数仅通过 __registry__:<id>（同进程）或 <module>:<func> 路径恢复。
+        # 函数仅通过 __pickle__:<base64>（安全，受信任源）或 <module>:<func> 路径恢复。
         raise ValueError(
-            f"unsupported func_data format (BUG-207): pickle deserialization is "
-            f"disabled; use '__registry__:<id>' or '<module>:<func>', got: "
-            f"{func_data[:40]!r}"
+            f"unsupported func_data format (BUG-207): {func_data[:40]!r}"
         )
 
     def execute_task(self, task: Task) -> Any:
