@@ -312,7 +312,11 @@ class Qax(Table):
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: 行号不在 1..行数 范围内（BUG-246）
         """
+        row = self._check_1based(row, len(self._data), '行')
         return self.del_row(row - 1)
 
     def DelCol(self, col):
@@ -323,10 +327,39 @@ class Qax(Table):
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: 列号不在 1..列数 范围内（BUG-246）
         """
         if isinstance(col, int):
-            col = col - 1
+            col = self._check_1based(col, len(self._columns), '列') - 1
         return self.del_col(col)
+
+    def _check_1based(self, pos, limit, what):
+        """校验 1-based 索引落在 1..limit 内（BUG-246）。
+
+        原实现直接把 1-based 位置减 1 交给 Python 列表操作：0/负数会被
+        负索引语义静默解释为「从末尾数」，造成插入到错误位置或删错列，
+        而不是报错。
+        """
+        if not isinstance(pos, int) or isinstance(pos, bool):
+            raise TypeError(f"{what}号必须是整数（从1开始），收到 {type(pos).__name__}: {pos!r}")
+        if pos < 1 or pos > limit:
+            raise IndexError(
+                f"{what}号必须在 1..{limit} 范围内（从1开始），收到 {pos!r}")
+        return pos
+
+    def _fit_row_data(self, data):
+        """把列表行数据对齐到列数（BUG-246）。"""
+        row_data = list(data)
+        n_cols = len(self._columns)
+        if len(row_data) > n_cols:
+            raise ValueError(
+                f"行数据有 {len(row_data)} 个字段，超过列数 {n_cols}；"
+                f"多出的字段会破坏表格矩形性，请先 AddCol 或截断数据")
+        while len(row_data) < n_cols:
+            row_data.append(None)
+        return row_data
 
     def NewRow(self, data=None):
         """新增行（对应 NewRow）
@@ -336,14 +369,15 @@ class Qax(Table):
 
         Returns:
             self（支持链式）
+
+        Raises:
+            ValueError: 列表行数据字段数超过列数（BUG-246）
         """
         if data is not None:
             if isinstance(data, dict):
                 row_data = [data.get(c) for c in self._columns]
             else:
-                row_data = list(data)
-                while len(row_data) < len(self._columns):
-                    row_data.append(None)
+                row_data = self._fit_row_data(data)
             self._data.append(row_data)
             return self
         else:
@@ -366,18 +400,21 @@ class Qax(Table):
         """插入行（对应 InsertRow）
 
         Args:
-            row: 插入位置（从1开始）
+            row: 插入位置（从1开始，允许 1..行数+1）
             data: 行数据
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: 插入位置超出 1..行数+1（BUG-246）
+            ValueError: 列表行数据字段数超过列数（BUG-246）
         """
+        row = self._check_1based(row, len(self._data) + 1, '行')
         if isinstance(data, dict):
             row_data = [data.get(c) for c in self._columns]
         elif data is not None:
-            row_data = list(data)
-            while len(row_data) < len(self._columns):
-                row_data.append(None)
+            row_data = self._fit_row_data(data)
         else:
             row_data = [None] * len(self._columns)
         self._data.insert(row - 1, row_data)
@@ -387,13 +424,17 @@ class Qax(Table):
         """插入列（对应 InsertCol）
 
         Args:
-            col: 插入位置（从1开始）
+            col: 插入位置（从1开始，允许 1..列数+1）
             colName: 列名
             default: 默认值
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: 插入位置超出 1..列数+1（BUG-246）
         """
+        col = self._check_1based(col, len(self._columns) + 1, '列')
         col_idx = col - 1
         self._columns.insert(col_idx, colName)
         for row in self._data:
