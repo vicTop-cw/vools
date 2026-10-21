@@ -4254,3 +4254,74 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 - evidence: vools/decorators/curry_delay.py DelayCurried.__call__ 入口新增 BUG-254 校验：
   - if not self._has_var_positional: bindable = 剩余未绑定的 POSITIONAL_OR_KEYWORD 参数数；args_len > bindable → TypeError("Too many positional arguments: expected at most {bindable}, got {args_len}")
   - 新增回归 tests/decorators/test_delay_curry_extra_args.py 11 项 GREEN：覆盖多余参数单调用/链式/部分绑定后超量、*args 函数正常接受、关键字重复赋值、合法链式调用（全链/部分绑定后全满/关键字链）全正常；tests/decorators/ + tests/functional/ 全 GREEN（EXIT=0）。
+## BUG-255 [2026-10-21T12:19:02Z] [medium] FIXED
+- summary: 假值陷阱族（task 子系统，重新上报）：三后端 acquire(states=[]) 静默换成默认状态越权领任务；worker_engine interval=0/timeout_min=0 被静默替换为默认值
+- detail: 系统扫描 param-or-default 模式后实测的假值陷阱（BUG-172/193/223/249 同族）。注：原上报编号 BUG-252 被并发 agent 的同号条目（control._retry_decorator 参数校验）覆盖，本条为重新上报；本轮范围限定 task 子系统（table.py 的 from_file 因该文件正被并发 agent 修改而延后单独处理）。
+
+① task 三后端 acquire(states)：states = states or [READY, RETRY_PENDING]（vools/task/backends/memory_backend.py L111、sqlite_backend.py L163、pg.py L189 同形）——调用方显式传空列表（= 不领取任何状态）时被替换为默认状态：
+   实测 MemoryTaskBackend：submit 一个 READY 任务后首次 acquire('w1', states=[]) -> 返回该任务并置 RUNNING（领走了调用方明确排除的任务）；acquire('w1', states=['DONE']) -> None（正确）。动态计算状态列表得到 [] 的调度器会静默越权领任务。
+② task/core/worker_engine.py run_until_done/run_once（L103/104、L145）：timeout_min = timeout_min or self.timeout_min、interval = interval or self.interval——interval=0 是合法语义（轮询间不睡眠/忙轮询），被静默换成引擎默认间隔；timeout_min=0 同理。
+
+影响：显式 0/空过滤被静默替换为默认行为——调度器越权领任务、忙轮询被强制限速。
+
+修复方向：全部改 is None 判断（states is None、interval is None、timeout_min is None），空列表/0 按调用方意图生效。
+- reported_by: agent-vools-hardening
+
+
+
+
+### FIXED(2026-10-21T12:23:05Z / BUG-255)
+- evidence: vools/task/backends/{memory_backend,sqlite_backend,pg}.py 三处 acquire 的 `states = states or [...]` 改为 `if states is None: states = [...]`；vools/task/core/worker_engine.py run_until_done 的 timeout_min/interval 与 run_once 的 timeout_min 均改为 is None 判断。修复前实测：MemoryTaskBackend submit 后首次 acquire(states=[]) -> 领走 READY 任务并置 RUNNING（越权）；acquire(states=['DONE']) -> None（正确）；worker_engine interval=0 被替换为默认间隔。修复后严格回归（首次领取即空列表）memory+sqlite 均返回 None 且任务仍 READY；run_once/run_until_done 的 timeout_min=0 参数原样传给 backend.acquire；新增 tests/test_bug252_states_empty_strict_regression.py 6 项 GREEN，tests/task/ 50 项 GREEN（EXIT=0）。注：Table.from_file(rows=0) 同类假值陷阱因 table.py 正被并发 agent 修改而延后单独处理。commit 56c35ce 已推送 gitcode master。
+## BUG-256 [2026-10-21T20:21:55Z] [medium] FIXED
+- summary: Table.max/min 在无匹配数据（空表/非数字列）时返回 Table(empty) 而非 None，@rself 装饰器把 None→self 转成空表，丧失 None 可判性
+- detail: 现象：Table([], columns=['a','b']).max('a') → Table(empty)（is None = False），调用方无法区分「无数据」与「空表对象」。
+根因：Table 继承 @rself 装饰器，max/min 在无匹配数据时返回 None，@rself 的 None→self 兜底把 None 转成 Table(empty)。
+影响面：空表/非数字列的 max/min 返回 Table(empty)，与 sum/avg（返回 0 或 None）语义不一致；调用方 ``if t.max('a') is None:`` 判断失效。
+修法：Table._rself_exclude = ('max', 'min') + Qax._rself_exclude = ('max','min','QAXMax','QAXMin')，让 max/min/QAXMax/QAXMin 走原生 None 路径。
+- reported_by: agent-bug-hunt-data
+
+### FIXED(2026-10-21T20:21:55Z / BUG-256)
+- evidence: vools/data/table.py 类内声明 _rself_exclude = ('max', 'min')；vools/data/qax.py 子类显式覆盖 _rself_exclude = ('max', 'min', 'QAXMax', 'QAXMin')。判据：① Table([], columns=['a']).max('a') 由 Table(empty) 转为 None；② Qax([], columns=['a']).QAXMax('a') 由 Table(empty) 转为 None；③ 新增 regression 覆盖 max/min/QAXMax/QAXMin 在空表/非数字列下均返回 None。
+
+
+## BUG-257 [2026-10-21T20:21:55Z] [medium] FIXED
+- summary: Table._get_col_index(int col) 对负索引/越界索引静默放行，导致 to_num/to_str/to_date/del_col 等所有 int-col 入口错列或无反应
+- detail: 现象：Table._get_col_index(-1) → -1（Python 负索引命中最后一列），Table._get_col_index(99) → 99（越界），下游 ``if col_idx < len(row)`` 静默 no-op，调用方传错列无错误信号。
+根因：_get_col_index 对 int col 直接 return col，无范围校验。
+影响面：to_num(-1) 把最后一列当目标静默转数字、to_num(99) 越界无反应、del_col(-1) 经 Python 负索引删错列。所有 int-col 入口的越界行为与 Qax 1-based 越界抛 IndexError 不一致。
+修法：_get_col_index 对 int col 校验 0..n-1 范围，越界抛 IndexError。
+- reported_by: agent-bug-hunt-data
+
+### FIXED(2026-10-21T20:21:55Z / BUG-257)
+- evidence: vools/data/table.py _get_col_index 新增 BUG-257 校验：
+  - if col < 0 or col >= len(self._columns): raise IndexError(...)
+  - 新增 regression 覆盖 to_num(-1)/to_num(3)、to_str(-1)/to_str(3)、to_date(-1)/to_date(1)、del_col(-1)/del_col(3) 均抛 IndexError；to_num(0) 等合法路径正常。
+
+
+## BUG-258 [2026-10-21T20:21:55Z] [medium] FIXED
+- summary: Table.set_col_name 对负索引静默 no-op，越界同样无错误信号
+- detail: 现象：Table([[1,2,3]], columns=['a','b','c']).set_col_name(-1, 'x') → ['a','b','c']（静默 no-op，列名未改）；set_col_name(3, 'x') → 同样 no-op。
+根因：原实现 ``if 0 <= col_num < n: 改名`` 让 col_num=-1（本意是 Python 负索引命中 c 列）不满足条件 → 静默跳过。
+影响面：调用方传错 col_num 无错误信号，列名未改但不感知。
+修法：显式校验 col_num 范围，越界抛 IndexError。
+- reported_by: agent-bug-hunt-data
+
+### FIXED(2026-10-21T20:21:55Z / BUG-258)
+- evidence: vools/data/table.py set_col_name 入口新增 BUG-258 校验：
+  - if col_num < 0 or col_num >= len(self._columns): raise IndexError(...)
+  - 新增 regression 覆盖 set_col_name(-1)、set_col_name(3) 均抛 IndexError；set_col_name(0, 'x') 正常改名。
+
+
+## BUG-259 [2026-10-21T20:21:55Z] [medium] FIXED
+- summary: Table.set_ordinal 对越界 ordinal 静默钳制（max(0, min(ordinal, n-1))），调用方传错位置无错误信号
+- detail: 现象：Table([[1,2,3]], columns=['a','b','c']).set_ordinal('a', -1) → ['a','b','c']（钳到 0 位，与原位同则不动）；set_ordinal('a', 99) → ['b','c','a']（钳到末尾）。
+根因：原实现 ``new_idx = max(0, min(ordinal, len-1))`` 静默钳制，越界 ordinal 不按调用方意图而是自动纠偏。
+影响面：调用方传错 ordinal 无错误信号，列序与预期不符但难以排查。
+修法：显式校验 ordinal 范围，越界抛 IndexError；移除静默钳制逻辑。
+- reported_by: agent-bug-hunt-data
+
+### FIXED(2026-10-21T20:21:55Z / BUG-259)
+- evidence: vools/data/table.py set_ordinal 入口新增 BUG-259 校验：
+  - if ordinal < 0 or ordinal >= len(self._columns): raise IndexError(...)
+  - 新增 regression 覆盖 set_ordinal('a', -1)、set_ordinal('a', 3) 均抛 IndexError；set_ordinal('a', 0)、set_ordinal('a', 2) 正常移动。
+

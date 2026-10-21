@@ -382,6 +382,11 @@ class Column(Seq):
 
 @rself
 class Table(Seq):
+    # BUG-252: max/min 在无匹配数据时返回 None，@rself 的 None→self 兜底会把
+    # None 转成 Table(empty)，使「空表 max/min 语义」与 sum/avg（返回 0）一致
+    # 却丧失了 None 可判性；把 max/min 加入 _rself_exclude，让它走原生 None 路径。
+    _rself_exclude = ('max', 'min')
+
     """二维表格数据结构
 
     示例::
@@ -849,48 +854,68 @@ class Table(Seq):
     
     def set_col_name(self, col_num: int, new_col_name: str) -> 'Table':
         """修改列名 (对应 SetColName)
-        
+
         Args:
             col_num: 列索引 (从0开始)
             new_col_name: 新列名
-        
+
         Returns:
             self (支持链式)
+
+        Raises:
+            IndexError: col_num 越界（BUG-254）
         """
-        if 0 <= col_num < len(self._columns):
-            self._columns[col_num] = new_col_name
-            self._row_index.clear()
+        # BUG-254: 原实现 `if 0 <= col_num < n: 改名; else: return self`，
+        # col_num=-1 经 Python 负索引命中 len-1 列却**不**满足条件 → 静默 no-op，
+        # 调用方无错误信号但列名未改。先校验范围再赋值。
+        if col_num < 0 or col_num >= len(self._columns):
+            raise IndexError(
+                f"列索引必须在 0..{len(self._columns) - 1} 范围内（从0开始），收到 {col_num}"
+            )
+        self._columns[col_num] = new_col_name
+        self._row_index.clear()
         return self
     
     def set_ordinal(self, col_name: str, ordinal: int) -> 'Table':
         """修改列位置 (对应 SetOrdinal)
-        
+
         Args:
             col_name: 列名
-            ordinal: 新位置 (从0开始)
-        
+            ordinal: 新位置 (从0开始，0 <= ordinal < 列数)
+
         Returns:
             self (支持链式)
+
+        Raises:
+            IndexError: ordinal 越界（BUG-255）
         """
         if col_name not in self._columns:
             return self
-        
+
+        # BUG-255: 原实现 `new_idx = max(0, min(ordinal, n-1))` 静默钳制——
+        # ordinal=0 移到最前（与旧 idx 同则不动）、ordinal=-1 钳到 0，
+        # 调用方传错位置无错误信号，列序可能与预期不符。先校验范围。
+        if ordinal < 0 or ordinal >= len(self._columns):
+            raise IndexError(
+                f"新位置必须在 0..{len(self._columns) - 1} 范围内（从0开始），收到 {ordinal}"
+            )
+
         old_idx = self._columns.index(col_name)
-        new_idx = max(0, min(ordinal, len(self._columns) - 1))
-        
+        new_idx = ordinal
+
         if old_idx == new_idx:
             return self
-        
+
         # 移动列名
         self._columns.pop(old_idx)
         self._columns.insert(new_idx, col_name)
-        
+
         # 移动数据
         for row in self._data:
             if old_idx < len(row):
                 val = row.pop(old_idx)
                 row.insert(new_idx, val)
-        
+
         self._row_index.clear()
         return self
 
@@ -980,8 +1005,27 @@ class Table(Seq):
         return self
 
     def _get_col_index(self, col) -> int:
-        """获取列索引"""
+        """获取列索引
+
+        Args:
+            col: 列名或列索引（从0开始）
+
+        Returns:
+            列索引整数
+
+        Raises:
+            IndexError: col 为整数且不在 0..列数-1 范围内（BUG-253）
+            KeyError: col 为字符串且列名不存在
+        """
         if isinstance(col, int):
+            # BUG-253: 原实现直接 `return col`，负索引（col=-1）命中最后一列、
+            # 越界索引（col>=len）在下游 `if col_idx < len(row)` 里静默 no-op。
+            # 现统一校验 0..n-1 范围，让 to_num/to_str/to_date/del_col 等所有 int-col
+            # 入口在越界时抛 IndexError 而非静默错列 / 无反应。
+            if col < 0 or col >= len(self._columns):
+                raise IndexError(
+                    f"列索引必须在 0..{len(self._columns) - 1} 范围内（从0开始），收到 {col}"
+                )
             return col
         if col in self._row_index:
             return self._row_index[col]
