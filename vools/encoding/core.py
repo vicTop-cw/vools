@@ -524,9 +524,16 @@ class Encoder(metaclass=EncoderMeta):
     
     @staticmethod
     def _urlencode(data: Any, encoding: str = 'utf-8') -> str:
+        # BUG-222: 原实现非 str 输入 `return data` 静默透传（bytes/dict/int
+        # 什么都不做还记 history=['url'] 虚假成功），与同场 base64/gzip 对
+        # 非法输入明确抛 ValueError 的口径不一。bytes 本可正确编码
+        # （quote_from_bytes），其余类型抛 TypeError 交由 _apply 统一包装。
         if isinstance(data, str):
             return urllib.parse.quote(data, encoding=encoding)
-        return data
+        if isinstance(data, (bytes, bytearray)):
+            return urllib.parse.quote_from_bytes(bytes(data))
+        raise TypeError(
+            f"url encode expects str/bytes, got {type(data).__name__}")
     
     @staticmethod
     def _gzip_compress(data: Any, level: int = 9) -> bytes:
@@ -799,9 +806,13 @@ class Decoder(metaclass=EncoderMeta):
     
     @staticmethod
     def _urldecode(data: Any, encoding: str = 'utf-8') -> str:
-        if isinstance(data, str):
+        # BUG-222: 同 _urlencode——非 str 静默透传改显式口径。unquote 原生
+        # 支持 str 与 bytes-like（py3.6+），其余类型抛 TypeError 交 _apply
+        # 包装成 ValueError，对齐 base64/gzip 等同类算子。
+        if isinstance(data, (str, bytes, bytearray)):
             return urllib.parse.unquote(data, encoding=encoding)
-        return data
+        raise TypeError(
+            f"url decode expects str/bytes, got {type(data).__name__}")
     
     @staticmethod
     def _gzip_decompress(data: Any) -> bytes:
