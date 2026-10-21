@@ -230,9 +230,10 @@ actus workflow run my_workflow.yaml
 
 ## 依赖
 
-- Python >= 3.6
+- Python >= 3.7（与 pyproject.toml `requires-python` 一致；3.7 引入 PEP 563，
+  publisher/repo/scattered/semver/sigma 模块依赖）
 - vools >= 0.7.0
 
 ## 许可证
 
-MIT
+Apache License 2.0（与 actus/LICENSE 及 pyproject.toml classifier 一致）
