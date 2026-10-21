@@ -782,54 +782,85 @@ def _process_result_shells(shell_configs: Dict[str, Any], new_cls: type, env: Di
             # 跳过特殊方法（可选，根据需求调整）
             if method_name.startswith('__') and method_name.endswith('__'):
                 continue
-                
-            original_method = getattr(new_cls, method_name)
-            if not callable(original_method):
+
+            # BUG-244: 用 getattr_static 取**原始描述符**——原实现用
+            # getattr(new_cls, name) 拿到已绑定的 staticmethod/classmethod
+            # （classmethod 绑定 cls、staticmethod 返回裸函数），包装体再传
+            # self 就多传一个位置参数，实例调用直接 TypeError。按描述符类型
+            # 分别包装与调用，并以同名描述符写回。
+            try:
+                raw = inspect.getattr_static(new_cls, method_name)
+            except AttributeError:
                 continue
-                
-            def create_shelled_method(orig_method, name, shell_func):
-                def shelled_method(self, *args, **kwargs):
-                    # 准备环境
-                    local_env = env.copy()
-                    local_env.update({
-                        'self': self,
-                        'cls': type(self),
-                        'super': super(type(self), self),
-                        'args': args,
-                        'kwargs': kwargs
-                    })
-                    
-                    # 调用原始方法
-                    original_result = orig_method(self, *args, **kwargs)
-                    local_env['result'] = original_result
-                    
-                    # 应用shell函数
-                    if callable(shell_func):
-                        try:
-                            # 如果shell_func接受dir_filter参数
-                            sig = get_signature(shell_func)
-                            if 'dir_filter' in sig.parameters:
-                                new_result = shell_func(original_result, dir_filter=dir_filter)
-                            else:
-                                new_result = shell_func(original_result)
-                        except Exception as e:
-                            print(f"Warning: Shell function failed for {name}: {e}")
-                            new_result = original_result
-                    else:
+
+            if isinstance(raw, staticmethod):
+                orig_func, kind = raw.__func__, 'static'
+            elif isinstance(raw, classmethod):
+                orig_func, kind = raw.__func__, 'class'
+            else:
+                orig_func, kind = raw, 'instance'
+                if not callable(orig_func):
+                    continue
+
+            def _apply_shell(slf, args, kwargs, _orig=orig_func, _kind=kind,
+                             _name=method_name, _shell=shell_func,
+                             _filter=dir_filter):
+                """调用原方法、套 shell、必要时求值 "=>" 表达式（BUG-244 抽出）。"""
+                if slf is None:
+                    meta = {'self': None, 'cls': new_cls, 'super': None}
+                elif isinstance(slf, type):
+                    try:
+                        meta = {'self': slf, 'cls': slf, 'super': super(slf, slf)}
+                    except Exception:
+                        meta = {'self': slf, 'cls': slf, 'super': None}
+                else:
+                    meta = {'self': slf, 'cls': type(slf),
+                            'super': super(type(slf), slf)}
+                local_env = env.copy()
+                local_env.update(meta)
+                local_env.update({'args': args, 'kwargs': kwargs})
+
+                if _kind == 'static':
+                    original_result = _orig(*args, **kwargs)
+                elif _kind == 'class':
+                    original_result = _orig(slf, *args, **kwargs)
+                else:
+                    original_result = _orig(slf, *args, **kwargs)
+                local_env['result'] = original_result
+
+                if callable(_shell):
+                    try:
+                        sig = get_signature(_shell)
+                        if 'dir_filter' in sig.parameters:
+                            new_result = _shell(original_result, dir_filter=_filter)
+                        else:
+                            new_result = _shell(original_result)
+                    except Exception as e:
+                        print(f"Warning: Shell function failed for {_name}: {e}")
                         new_result = original_result
-                    
-                    # 处理返回值为表达式的情况（支持分号）
-                    if isinstance(new_result, str) and new_result.startswith('=>'):
-                        try:
-                            new_result = _eval_expr_with_semicolon(new_result[2:].strip(), local_env)
-                        except Exception as e:
-                            print(f"Warning: Failed to evaluate shell result expression for {name}: {e}")
-                    
-                    return new_result
-                
-                return shelled_method
-            
-            # 替换方法
-            shelled_method = create_shelled_method(original_method, method_name, shell_func)
-            setattr(new_cls, method_name, shelled_method)
+                else:
+                    new_result = original_result
+
+                # 处理返回值为表达式的情况（支持分号）
+                if isinstance(new_result, str) and new_result.startswith('=>'):
+                    try:
+                        new_result = _eval_expr_with_semicolon(
+                            new_result[2:].strip(), local_env)
+                    except Exception as e:
+                        print(f"Warning: Failed to evaluate shell result "
+                              f"expression for {_name}: {e}")
+                return new_result
+
+            if kind == 'static':
+                def shelled_static(*args, _apply=_apply_shell, **kwargs):
+                    return _apply(None, args, kwargs)
+                setattr(new_cls, method_name, staticmethod(shelled_static))
+            elif kind == 'class':
+                def shelled_class(cls_, *args, _apply=_apply_shell, **kwargs):
+                    return _apply(cls_, args, kwargs)
+                setattr(new_cls, method_name, classmethod(shelled_class))
+            else:
+                def shelled_instance(self_, *args, _apply=_apply_shell, **kwargs):
+                    return _apply(self_, args, kwargs)
+                setattr(new_cls, method_name, shelled_instance)
             processed_methods.add(method_name)
