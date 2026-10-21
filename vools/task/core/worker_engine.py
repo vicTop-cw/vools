@@ -100,8 +100,12 @@ class WorkerEngine:
 
         返回执行任务数。
         """
-        timeout_min = timeout_min or self.timeout_min
-        interval = interval or self.interval
+        # BUG-255: 原 `X or self.X` 是假值陷阱——interval=0（忙轮询）/
+        # timeout_min=0 被静默替换为引擎默认值。
+        if timeout_min is None:
+            timeout_min = self.timeout_min
+        if interval is None:
+            interval = self.interval
         self._running = True
         executed = 0
         idle = 0
@@ -142,7 +146,9 @@ class WorkerEngine:
     def run_once(self, timeout_min: Optional[int] = None,
                  states: Optional[list] = None) -> Optional[Dict[str, Any]]:
         """跑一轮（领一个任务并执行）。无任务返回 None。"""
-        timeout_min = timeout_min or self.timeout_min
+        # BUG-255: 同上，显式 0 不再被吞。
+        if timeout_min is None:
+            timeout_min = self.timeout_min
         task = self.backend.acquire(self.worker_id, timeout_min=timeout_min, states=states)
         if task is None:
             return None
