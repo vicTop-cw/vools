@@ -672,6 +672,29 @@ class Stuff:
         bounds = self.curried.bound_args.copy()
         l = len(bounds)
 
+        # BUG-230: 消费 StuffConfig 文档化的 debug/strict 开关（此前两字段
+        # 全库零读取，纯装饰——同名族的 cache_duration/max_workers 均有真实
+        # 消费，用户无法判断哪个配置有效）。
+        if self.config.debug:
+            print(
+                "[stuff] evaluate %s: bound=%s max_workers=%s"
+                % (getattr(self.main_func, '__name__', self.main_func),
+                   list(bounds.keys()), self.config.max_workers)
+            )
+        if self.config.strict:
+            _missing = [
+                _n for _n, _p in self.sig.parameters.items()
+                if _p.default is Parameter.empty
+                and _p.kind not in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD)
+                and _n not in bounds
+                and _n not in ('self', 'cls')
+            ]
+            if _missing:
+                raise StuffExecutionError(
+                    "strict 模式：以下必需参数未提供 "
+                    f"{_missing}（{getattr(self.main_func, '__name__', self.main_func)}）"
+                )
+
         @vic_execute(max_workers=self.config.max_workers, use_process=0)
         def compute(v):
             return v()
