@@ -252,10 +252,22 @@ def bridge(lang: str, symbol: str, fallback: Optional[Callable] = None):
         
         def _call_fallback(*fargs, **fkwargs):
             # fallback 可能是 async 函数：直接调用会返回未 await 的 coroutine
-            # object。同步装饰器承诺同步返回结果，故在此用 asyncio.run 驱动它
-            # （BUG-198）。
+            # object。同步装饰器承诺同步返回结果，故在此驱动它。
+            # BUG-198: 基础 async 支持。
+            # BUG-254: asyncio.run() 在已有运行中的 event loop 内会 RuntimeError
+            # （"Jupyter/嵌套事件循环"场景）。此时在新线程里启动独立 loop 驱动。
             result = fallback(*fargs, **fkwargs)
             if inspect.iscoroutine(result):
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None:
+                    # 已有运行中的 loop（Jupyter/嵌套场景），不能 asyncio.run；
+                    # 在新线程中启动独立 event loop 驱动 coroutine。
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        return pool.submit(lambda: asyncio.run(result)).result()
                 return asyncio.run(result)
             return result
         

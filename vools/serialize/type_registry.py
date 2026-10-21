@@ -167,19 +167,36 @@ def _deserialize_fraction(state: Dict[str, Any]) -> fractions.Fraction:
 def _serialize_enum(obj: enum.Enum) -> Dict[str, Any]:
     # BUG-204：模块路径与嵌套 __qualname__ 都含 '.'，不能拼成一个 'type' 串再用
     # rsplit 切开（嵌套 enum 会被误切）。module / qualname 分开存储，避免歧义。
+    # BUG-255：函数内 enum 的 qualname 含 '<locals>'（如 'make.<locals>.Color'），
+    # 反序列化时无法通过 getattr 链找到该类（函数局部作用域不可见）。
+    # 检测到此标记时退化保存 name+value 并标记 local_enum，反序列化端据此退化
+    # 返回值，保证不崩溃、数据不丢失。
+    qualname = type(obj).__qualname__
+    if '<locals>' in qualname:
+        return {
+            'type': f'{type(obj).__module__}.{qualname}',
+            'module': type(obj).__module__,
+            'qualname': qualname,
+            'name': obj.name,
+            'value': obj.value,
+            'local_enum': True,
+        }
     return {
-        'type': f'{type(obj).__module__}.{type(obj).__qualname__}',
+        'type': f'{type(obj).__module__}.{qualname}',
         'module': type(obj).__module__,
-        'qualname': type(obj).__qualname__,
+        'qualname': qualname,
         'name': obj.name,
         'value': obj.value,
     }
 
 
-# BUG-96/BUG-100: 反序列化 enum 前必须校验模块路径，
+# BUG-96/BUG-100/BUG-253: 反序列化 enum 前必须校验模块路径，
 # 仅允许 enum 所在的标准模块，禁止导入 os/subprocess 等危险模块（导入即副作用）。
+# BUG-253: __main__ 也必须放行——用户脚本/notebook/CLI 里定义的 enum 是可信代码，
+# 否则 `python script.py` 里任何含 enum 的 JSON 往返都 ValueError。
 _ALLOWED_ENUM_MODULES = frozenset({
     'enum',
+    '__main__',
 })
 # 允许 vools/tests 前缀模块内的 enum 定义
 # (tests 前缀仅覆盖仓库内测试代码，属可信代码)
@@ -198,6 +215,11 @@ def _is_allowed_enum_module(module_path: str) -> bool:
 
 def _deserialize_enum(state: Dict[str, Any]) -> Any:
     type_name = state['type']
+    # BUG-255: 序列化端标记 local_enum=True 表示函数内 enum（qualname 含
+    # '<locals>'），函数局部作用域不可见于 getattr 链。直接退化返回 name+value，
+    # 保证不崩溃、数据不丢失。
+    if state.get('local_enum'):
+        return state['value']
     # BUG-204: 优先使用序列化时单独存储的 module / qualname（module 与嵌套
     # __qualname__ 都含 '.'，用 rsplit 切 'type' 串会误切嵌套 enum）。
     module_path = state.get('module')
