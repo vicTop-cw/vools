@@ -1002,6 +1002,83 @@ class PipeBuilder(Generic[T]):
             raise ValueError("Observable did not emit any value")
         return result[0]
 
+    # ── RDD 风格算子（分区/批量处理） ──
+
+    def map_partitions(self, mapper, partition_size=None) -> "PipeBuilder[T]":
+        """代理到 ops.map_partitions"""
+        from ..operators.rdd_operators import map_partitions
+        return self._add_operator(map_partitions(mapper, partition_size))
+
+    def map_partitions_with_index(self, mapper, partition_size=None) -> "PipeBuilder[T]":
+        """代理到 ops.map_partitions_with_index"""
+        from ..operators.rdd_operators import map_partitions_with_index
+        return self._add_operator(map_partitions_with_index(mapper, partition_size))
+
+    def glom(self) -> "PipeBuilder[T]":
+        """代理到 ops.glom"""
+        from ..operators.rdd_operators import glom
+        return self._add_operator(glom())
+
+    def coalesce(self, num_partitions) -> "PipeBuilder[T]":
+        """代理到 ops.coalesce"""
+        from ..operators.rdd_operators import coalesce
+        return self._add_operator(coalesce(num_partitions))
+
+    def repartition(self, num_partitions) -> "PipeBuilder[T]":
+        """代理到 ops.repartition"""
+        from ..operators.rdd_operators import repartition
+        return self._add_operator(repartition(num_partitions))
+
+    def group_by_key(self, key_fn=None) -> "PipeBuilder[T]":
+        """代理到 ops.group_by_key"""
+        from ..operators.rdd_operators import group_by_key
+        return self._add_operator(group_by_key(key_fn))
+
+    def reduce_by_key(self, func, key_fn=None) -> "PipeBuilder[T]":
+        """代理到 ops.reduce_by_key"""
+        from ..operators.rdd_operators import reduce_by_key
+        return self._add_operator(reduce_by_key(func, key_fn))
+
+    def aggregate_by_key(self, zero_value, seq_op, comb_op=None, key_fn=None) -> "PipeBuilder[T]":
+        """代理到 ops.aggregate_by_key"""
+        from ..operators.rdd_operators import aggregate_by_key
+        return self._add_operator(aggregate_by_key(zero_value, seq_op, comb_op, key_fn))
+
+    def sort_by(self, key_fn=None, reverse: bool = False) -> "PipeBuilder[T]":
+        """代理到 ops.sort_by"""
+        from ..operators.rdd_operators import sort_by
+        return self._add_operator(sort_by(key_fn, reverse))
+
+    def sort_by_key(self, key_fn=None, reverse: bool = False) -> "PipeBuilder[T]":
+        """代理到 ops.sort_by_key"""
+        from ..operators.rdd_operators import sort_by_key
+        return self._add_operator(sort_by_key(key_fn, reverse))
+
+    def intersection(self, other) -> "PipeBuilder[T]":
+        """代理到 ops.intersection"""
+        from ..operators.rdd_operators import intersection
+        return self._add_operator(intersection(self._source, other))
+
+    def rdd_subtract(self, other) -> "PipeBuilder[T]":
+        """代理到 ops.subtract"""
+        from ..operators.rdd_operators import subtract
+        return self._add_operator(subtract(self._source, other))
+
+    def cartesian(self, other) -> "PipeBuilder[T]":
+        """代理到 ops.cartesian"""
+        from ..operators.rdd_operators import cartesian
+        return self._add_operator(cartesian(self._source, other))
+
+    def zip_with_index(self) -> "PipeBuilder[T]":
+        """代理到 ops.zip_with_index"""
+        from ..operators.rdd_operators import zip_with_index
+        return self._add_operator(zip_with_index())
+
+    def zip_with_unique_id(self) -> "PipeBuilder[T]":
+        """代理到 ops.zip_with_unique_id"""
+        from ..operators.rdd_operators import zip_with_unique_id
+        return self._add_operator(zip_with_unique_id())
+
 
 class Observable(Generic[T]):
     """Observable 核心类
