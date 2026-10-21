@@ -41,6 +41,14 @@ _RUN_SAFE_NAMESPACE = {'__builtins__': _RUN_SAFE_BUILTINS}
 class VText(str):
     """链式文本类，继承自 str"""
 
+    # BUG-220: regexp_substr 文档承诺「无匹配时 None」（Optional[str]），但
+    # @rself 的链式兜底会把 None 转成 self(整条原文)、str 转成 VText——
+    # `is None` 未命中判断永假，调用方在错误数据上静默继续链式计算。
+    # 走 _rself_exclude 官方逃生门（BUG-200 先例：VDate.date()），令其
+    # 与底层 vools/utils/tools.regexp_substr 契约一致：命中返回原生 str、
+    # 未命中返回 None。
+    _rself_exclude = ('regexp_substr',)
+
     def __new__(cls, text: str = "", *args: Any, **kwargs: Any) -> 'VText':
         """创建新的 VText 实例。
 
@@ -272,7 +280,15 @@ class VText(str):
             occurrence: 第几个匹配（0 起）
 
         Returns:
-            匹配子串，无匹配时 None
+            匹配子串（原生 str），无匹配时 None。
+            BUG-220: 本方法在 ``_rself_exclude`` 中声明——不走 @rself 的
+            None→self 链式兜底，保证「无匹配=None」契约真实可判。
+
+        Example:
+            >>> VText("abc123").regexp_substr(r'\\d+')
+            '123'
+            >>> VText("abc123").regexp_substr(r'xyz') is None
+            True
         """
         from ..utils.tools import regexp_substr as _f
         return _f(pattern, str(self), flags, occurrence)
