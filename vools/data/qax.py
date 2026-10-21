@@ -226,7 +226,12 @@ class Qax(Table):
 
         Returns:
             单元格值
+
+        Raises:
+            IndexError: row 或 col 越界（BUG-248）
         """
+        row = self._check_1based(row, len(self._data), '行')
+        col = self._check_1based(col, len(self._columns), '列')
         return self.get_cell(row - 1, col - 1)
 
     def GetCell2(self, colName, row):
@@ -238,7 +243,11 @@ class Qax(Table):
 
         Returns:
             单元格值
+
+        Raises:
+            IndexError: row 越界（BUG-248）
         """
+        row = self._check_1based(row, len(self._data), '行')
         return self.get_cell2(row - 1, colName)
 
     def GetRow(self, row):
@@ -249,7 +258,11 @@ class Qax(Table):
 
         Returns:
             行数据字典
+
+        Raises:
+            IndexError: 行号越界（BUG-248）
         """
+        row = self._check_1based(row, len(self._data), '行')
         return self.row(row - 1)
 
     def GetCol(self, col):
@@ -260,9 +273,12 @@ class Qax(Table):
 
         Returns:
             列数据列表
+
+        Raises:
+            IndexError: 列号越界（BUG-248）
         """
         if isinstance(col, int):
-            col = col - 1
+            col = self._check_1based(col, len(self._columns), '列') - 1
         return self.column(col)
 
     def GetCols(self, cols):
@@ -288,7 +304,12 @@ class Qax(Table):
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: row 或 col 越界（BUG-248）
         """
+        row = self._check_1based(row, len(self._data), '行')
+        col = self._check_1based(col, len(self._columns), '列')
         return self.set_cell(row - 1, col - 1, value)
 
     def SetCell2(self, colName, row, value):
@@ -301,7 +322,11 @@ class Qax(Table):
 
         Returns:
             self（支持链式）
+
+        Raises:
+            IndexError: row 越界（BUG-248）
         """
+        row = self._check_1based(row, len(self._data), '行')
         return self.set_cell2(row - 1, colName, value)
 
     def DelRow(self, row):
