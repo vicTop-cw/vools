@@ -244,6 +244,10 @@ def _make_sql_wrapper(func, dialect=None, connection=None, sql=None,
             remaining_args = converted + list(remaining_args[num_convert:])
 
         sql_stmt = sql
+        # BUG-235: 预初始化——静态 sql 模板 + 无连接时原实现 result 从未
+        # 赋值，落到下面转换/返回处抛 UnboundLocalError（内部错误，用户看
+        # 不出真正原因是「缺连接」）。
+        result = None
         if sql_stmt is None:
             if self_arg is not None:
                 result = func(self_arg, *remaining_args, **remaining_kwargs)
@@ -265,6 +269,15 @@ def _make_sql_wrapper(func, dialect=None, connection=None, sql=None,
         if conn is not None and isinstance(sql_stmt, str):
             exec_params = params if params else None
             result = conn.execute(sql_stmt, exec_params)
+        elif conn is None and sql is not None:
+            # BUG-235: 静态模板必须有连接才能执行——给出可操作指引，而不是
+            # 让 result 悬空后在下方抛 UnboundLocalError。
+            raise RuntimeError(
+                "sql_function: 提供了静态 SQL 模板但未提供数据库连接，无法执行。"
+                "请通过第一个位置参数传 Connection 实例、关键字参数 "
+                "connection=...，或在装饰器上指定 connection=...。SQL: %r"
+                % (sql_stmt[:120],)
+            )
 
         if auto_convert and return_type is not None:
             result = _convert_result(result, return_type)
