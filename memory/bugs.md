@@ -4470,7 +4470,7 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 ### FIXED(2026-10-21T23:15:00Z / BUG-271)
 - evidence: vdate_class.py 两条时间正则加 `(?:\.\d+)?` + 解析小数秒构造 microsecond 参数；utils.py vDate() 同步修。新增 tests/test_datetime_microsecond_string_regression.py（'yyyy-MM-dd HH:MM:SS.ffffff' / 'yyyyMMdd HH:MM:SS.fff' / 无毫秒对照共 8 项）。tests/datetime 全 GREEN。
 
-## BUG-272 [2026-10-21T12:42:32Z] [high] OPEN
+## BUG-272 [2026-10-21T12:42:32Z] [high] FIXED
 - summary: sys.dll @dll 在 PEP 563 字符串注解下生成错误 ctypes 签名：str 注解被映射为 c_int（应 c_char_p，指针参数变整数可崩溃），-> str 返回值不解码；_extract_annotations 未解析字符串注解
 - detail: vools/sys/dll.py `@dll` 装饰器在 PEP 563 字符串注解（from __future__ import annotations 或 py3.6 字符串注解写法）下解析错误：
 
@@ -4485,4 +4485,8 @@ _extract_annotations（L122-148）直接取 inspect 的 `param.annotation` / `si
 
 修复方向：_extract_annotations 优先用 typing.get_type_hints(func) 解析字符串注解（失败回退原始注解），并在 _map_py_to_ctype 增加按名称的防御性映射（'str'/'int'/'float'/'bytes' 等）。
 - reported_by: agent-vools-hardening
+
+
+### FIXED(2026-10-21T23:30:00Z / BUG-272)
+- evidence: vools/sys/dll.py 三处修复：① _extract_annotations 优先用 typing.get_type_hints(func) 解析字符串注解（失败回退 inspect.signature 原始注解）；② _map_py_to_ctype 增加字符串名称防御性映射（'str'/'int'/'float'/'bytes'/'bool'）；③ _convert_result 兼容字符串 'str'/'bytes' 作为 ret_py_type。修复前实测：_extract_annotations -> ['str','int']（字符串）→ _map_py_to_ctype('str') -> c_long（应为 c_char_p），_convert_result(b'hello', None, 'str') -> b'hello'（未解码）。修复后 probe 全对：arg_types=[str,int]（类型对象）、ret_type=str、map('str')->c_char_p、convert(b'hello',None,str)->'hello'。新增回归 tests/test_dll_pep563_regression.py 19 项 GREEN；tests/test_sys_dll.py 原有测试全 GREEN。
 
