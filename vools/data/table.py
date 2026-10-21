@@ -1694,7 +1694,9 @@ class Table(Seq):
                 val = str(row[col_idx])
                 # Python 索引从0开始，所以 start_pos-1
                 start = max(0, start_pos - 1)
-                if end_pos:
+                # BUG-249: 原 `if end_pos:` 是假值判断——end_pos=0（截 0 个字符）
+                # 会退回「取到尾」，合法 0 长度被当成不限制。
+                if end_pos is not None:
                     row[to_idx] = val[start:end_pos]
                 else:
                     row[to_idx] = val[start:]

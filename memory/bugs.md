@@ -4063,3 +4063,161 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 
 ### FIXED(2026-10-21T08:04:23Z / BUG-240)
 - evidence: vools/datetime/utils.py `get_week` 两处 assert 改显式 ValueError（注释点名 BUG-240/BUG-7 同族）：`if not (1 <= weekday <= 7): raise ValueError("weekday 必须在 1-7 之间（周一=1），收到 ...")`、`if l not in (8, 10): raise ValueError("日期字符串长度必须为 8 或 10（yyyyMMdd / yyyy-MM-dd），收到长度 N: ...")`。修复前实测：`python -O -c "...get_week('20240101', weekday=0)"` → 返回 '20231231'（assert 被剥离、非法 weekday 静默算出偏移一日的错误周起点、无异常）；非 -O 下抛 AssertionError（不便业务捕获）。修复后验证：常规模式 7 项 probe 全对（weekday 0/8/-1/100 → ValueError、长度 7 → ValueError、None → None、正常 20240101→'20240101'、2024-01-03→'2024-01-01'、num=1→'20231225'）；`-O` 模式子进程验证 4 项非法输入全部仍抛 ValueError（**校验在优化模式下存活**）。全库 assert 扫描：23 处命中中仅此两处是生产入参校验，其余均在 docstring 示例或模块内自测函数（oop/calltype L283、utils/stuff L863、curry_decorator L360+ 均为测试代码）→ 记录不报。同轮记录：`get_week(dt, weekday=7)` 返回同 ISO 周内周日（2024-01-03→2024-01-07）——实现的是「同一 ISO 周内的指定星期几」语义，与 docstring「一周的开始」措辞歧义但默认 weekday=1 两读法皆正确，判非缺陷。新增回归 tests/test_get_week_assert_validation_regression.py 13 项 GREEN（常规校验 6 + -O 子进程校验 1 + 合法路径 5 等）；tests/datetime/ + test_utils_tools.py + 回归 GREEN（EXIT=0）。commit 0861148 推送 gitcode master（path-limited commit，仅 2 文件）。
+## BUG-241 [2026-10-21T09:50:50Z] [medium] FIXED
+- summary: sys.cmd @cmd 命令构建器参数值无引号/转义：含空格路径被拆词、; | & 元字符注入内层 shell；非下划线参数为 None 时渲染字面 "None"
+- detail: vools/sys/cmd.py _build_command 两处缺陷（修复已提交 7ecd9db）：
+① 所有参数值 str(v) 直拼进命令串，无引号/转义——含空格的路径/消息被拆成多个参数；含 ; & | $(...) 的值直接注入内层 shell（bash 下 'a; echo INJECTED' 会执行新命令）。
+② 非下划线位置参数为 None（未提供的可选参数）时被渲染成字面 'None'——例：@cmd('ping') def ping(host, _n=None) 调 ping('x') 生成 'ping x None'。
+
+修复：新增 _quote_arg 按目标 shell 规则加引号（bash/sh/wsl 用 shlex.quote；powershell/pwsh 单引号双写；cmd 用 subprocess.list2cmdline），_build_command 增 shell 参数（默认 powershell 保持既有测试兼容），简单值输出 byte-identical；None 跳过不渲染。实测：bash 下 'hello world' 成为单参数、'a; echo INJECTED' 被引号消解为字面参数；19 项回归 + 既有 test_sys_cmd.py(41)/test_sys_exe.py(25) 全 GREEN。
+- reported_by: agent-vools-hardening
+- task_id: T0r700
+
+
+
+### FIXED(2026-10-21T09:55:20Z / BUG-241)
+- evidence: vools/sys/cmd.py 修复（commit 7ecd9db）：_quote_arg 按 shell 规则加引号（bash/sh/wsl shlex.quote；powershell/pwsh 单引号双写；cmd subprocess.list2cmdline）+ _build_command 增 shell 参数透传 + None 位置参数跳过不渲染。修复前实测：('hello world') 拆两参、('a; echo INJECTED') 注入、None→'ping -n 4 None'。修复后 probe 10 项全对（含真实 bash 执行单参数与注入消解）；回归 19 项 + test_sys_cmd 41 + test_sys_exe 25 全 GREEN。commit 7ecd9db 推送 gitcode master。
+## BUG-242 [2026-10-21T09:55:21Z] [medium] FIXED
+- summary: [恢复补录] VDate：__sub__ 拒绝签名/docstring 承诺的 timedelta（TypeError，与 __add__ 不对称）；__add__/__sub__ 用 datetime 构造致算术结果 fmt 带时间、同日期 str 不一致而 == 为 True
+- detail: vools/datetime/vdate_class.py VDate 算术运算符两处缺陷（修复 commit f1cc1bb；原条目在账本并发写入中丢失，本条为恢复补录）：
+① __sub__ 缺 timedelta 分支——类型注解 Union[timedelta,int,float,datetime,VDate]、docstring 承诺「timedelta 减法返回新的 VDate 实例」，实现落到 else raise TypeError（只能对整数和日期执行减法操作）；__add__ 支持 timedelta，不对称。
+② __add__/__sub__ 用 datetime 构造结果 → fmt 推断为 '%Y-%m-%d %H:%M:%S'，同日期 str 不一致（'2024-02-01' vs '2024-02-01 00:00:00'）而 == 为 True。
+修复：补 timedelta 分支 + 统一 fmt=self.fmt；13 项 probe + 15 项回归 GREEN。
+- reported_by: agent-vools-hardening
+- task_id: T0r701
+
+
+### FIXED(2026-10-21T09:56:18Z / BUG-242)
+- evidence: vools/datetime/vdate_class.py 修复（commit f1cc1bb）：__sub__ 补 timedelta 分支（与 __add__ 对称）、__add__/__sub__ 的 VDate 构造统一传 fmt=self.fmt（同日期 str 与构造一致：'2024-02-01' == str(VDate('2024-01-31')+1)）；add_days/add_months/add_years 不变。13 项 probe 全对（含 compact fmt 源、带时间源、leap year）+ tests/test_vdate_arithmetic_contract_regression.py 15 项 GREEN + tests/datetime/ 全 GREEN。commit f1cc1bb 已推送。
+## BUG-243 [2026-10-21T09:55:21Z] [medium] FIXED
+- summary: [恢复补录] core.datetime_compat py3.6 分支 fromisoformat 静默丢弃时区：Z/±HH:MM 被当 naive（同一 UTC 时刻算 8 小时差）、time+tz 直接 ValueError
+- detail: vools/core/datetime_compat.py py3.6 兼容分支（修复 commit b2ae2e6；原条目在账本并发写入中丢失，本条为恢复补录）：正则允许 Z/±HH:MM 后缀却从不构造 tzinfo → 带时区输入变 naive、同一 UTC 时刻相减得 8 小时差（stdlib 为 0）、time_fromisoformat('10:30:00+08:00') ValueError（stdlib 接受）。修复：_parse_tzinfo + datetime/time 解析器传 tzinfo，与 stdlib 14 项逐字节对拍一致；15 项回归 GREEN（AST 提取 py3.6 分支测试夹具）。
+- reported_by: agent-vools-hardening
+- task_id: T0r702
+
+
+
+
+### FIXED(2026-10-21T09:56:19Z / BUG-243)
+- evidence: vools/core/datetime_compat.py py3.6 分支修复（commit b2ae2e6）：_DATETIME_RE/_TIME_RE 捕获时区组 + 新增 _parse_tzinfo（Z→UTC、±HH:MM→timezone）+ 两解析器传 tzinfo。与 stdlib fromisoformat 逐项对拍 14 项全一致（naive/+08:00/-05:30/Z/微秒/time 变体/非法拒绝）；同一 UTC 时刻差值 0；15 项回归 GREEN（AST 提取 py3.6 分支夹具）。commit b2ae2e6 已推送。
+## BUG-244 [2026-10-21T10:29:10Z] [medium] FIXED
+- summary: oop.extend result_shell 套壳破坏 staticmethod/classmethod：getattr 取到已绑定方法后又传 self，实例调用 TypeError takes 1 positional but 2 given；另 dir_filter 闭包晚期绑定
+- detail: vools/oop/extend.py _process_result_shells（L750-835，clone/extend 的 result_shell 批量套壳）两处缺陷：
+① 用 original_method = getattr(new_cls, method_name) 取方法后，包装体调用 orig_method(self, *args, **kwargs)——但 getattr 对 staticmethod 返回裸函数、对 classmethod 返回已绑定 cls 的 bound method，再传 self 即多传一个位置参数：
+   实测 @clone(None, result_shell=((lambda r: r), lambda m: not m.startswith('__'))) 修饰含 staticmethod stat(x)/classmethod clsm() 的类后：
+     b.stat(5) -> TypeError: Base.stat() takes 1 positional argument but 2 were given
+     b.clsm()  -> TypeError: Base.clsm() takes 1 positional argument but 2 were given
+     Base.clsm() -> TypeError
+   （未套壳对照类全部正常）。dir_filter 可排除特殊方法，但默认（不传 filter）会包住所有非 dunder 方法 → 带 static/class 方法的类经 result_shell 后方法集体失效。
+② shelled_method 内 dir_filter 引用外层循环变量（L762/765 每次迭代重赋值）——当提供 result_shell + result_shell1 等多组且 shell_func 带 dir_filter 形参（docstring L57 明示支持 func(result,/,*,dir_filter=None)）时，先前套壳的方法会用最后一轮的 dir_filter。
+
+修复方向：用 inspect.getattr_static 取原始描述符，按 staticmethod/classmethod/普通方法分别构造包装与调用（staticmethod -> 裸函数无 self；classmethod -> 以 cls 调用；普通 -> self），并以对应描述符 setattr 回去；dir_filter/shell_func 用默认参数固化避免晚期绑定。
+- reported_by: agent-vools-hardening
+- task_id: T0r703
+
+
+
+### FIXED(2026-10-21T10:52:05Z / BUG-244)
+- evidence: vools/oop/extend.py _process_result_shells 重写（commit 7bf1f1e 前的 HEAD~1 提交）：inspect.getattr_static 取原始描述符 → staticmethod 用裸函数调用并 staticmethod() 写回、classmethod 以 cls 调用并 classmethod() 写回、普通方法传 self；_apply_shell 统一处理 env/result/shell/'=>' 求值，shell_func 与 dir_filter 用默认参数固化（修晚期绑定）。修复前实测 @clone(result_shell=...) 后 b.stat(5)/b.clsm()/Base.clsm() 均 TypeError: takes 1 positional argument but 2 were given；修复后 static/class/instance 三形态实例与类调用全正常（classmethod 返回克隆类名验证 cls 绑定正确）、'=>' self 表达式 shell 正常、多组 result_shell 各自 dir_filter 隔离。新增回归 tests/test_extend_result_shell_special_methods_regression.py 12 项 GREEN；tests/oop/ 105 项 GREEN。commit 已推送 gitcode master。
+## BUG-245 [2026-10-21T10:52:05Z] [medium] FIXED
+- summary: [自曝回归] BUG-227/228 修复方向错误：overload.register 默认返回值被改为管理器，打破 tests/oop 锁定的「export_mode=None 返回原函数」契约——已回滚并改为修正误导性文档
+- detail: BUG-227 我在修复时依据模块头 L9/示例注释 L17/overload() L500 三处「默认返回管理器」表述，把 register 的默认分支从 eturn f 改为 eturn self；BUG-228 又把 ExportAsFunction 哨兵从 None 改为 'function'。这两处改动实际打破了**测试锁定**的真实契约：tests/oop/test_overload_new.py::TestExportModes::test_export_none_original_function 明确断言 export_mode=None 时 add_int 是原函数（not hasattr is_overload_manager），且 register 自身 docstring 原本即写「None (默认)：返回原函数」——当时我只跑了 tests/decorators/（186 GREEN）而漏跑 tests/oop/，未发现回归。
+
+核实后：模块头/示例/overload() 三处「默认返回管理器」才是**错误表述**（模块头示例用异名 add_int 注册，能跑通恰恰因为默认返回原函数——decoration 只重绑 add_int 自己的名字）；同时发现 BUG-227 证据里的同名注册 g() 报 missing 1 属**用户误用**（正确用法是异名注册，示例即如此）。
+
+修正（commit f144a97）：register 默认分支/哨兵/文档全部回滚到测试锁定语义——None 与 ExportAsFunction（=None 别名）均返回原函数、ParentMode/ExportAsManager 返回管理器；模块头 L9、示例注释、overload() L500 三处表述改为「默认返回原函数，注册应使用异名；需要管理器用 ParentMode」，register docstring 补同名注册陷阱说明。验证：tests/oop/test_overload_new.py 原失败测试恢复 GREEN；tests/test_overload_register_contract_regression.py 重写为契约正方向 11 项；tests/decorators/(186) + tests/oop/(105) + overload doctest 共 309 项 GREEN。
+
+教训：修复前应先跑**全部相关测试套件**（含 tests/oop 这类跨包测试），并以「测试锁定行为」优先于松散文档表述。
+- reported_by: agent-vools-hardening
+- task_id: T0r704
+
+
+
+### FIXED(2026-10-21T10:52:06Z / BUG-245)
+- evidence: commit f144a97：vools/decorators/overload.py 回滚 register 默认分支为 if eff_export_mode is None or eff_export_mode is ExportAsFunction: return f、ExportAsFunction 还原 None 别名（ExportAsManager/ParentMode 不变）；模块头 L9 改「默认返回原函数，异名注册；需要管理器用 ParentMode/ExportAsManager」、示例注释同步、overload() export_mode 描述同步、register docstring 补同名注册陷阱 Note（BUG-245）。tests/test_overload_register_contract_regression.py 重写为契约正方向（默认返回原函数/ExportAsFunction is None 别名/异名注册 dispatch/同名重绑行为断言/docstring 陷阱断言）共 11 项；tests/oop/test_overload_new.py 原失败测试 test_export_none_original_function 恢复 GREEN；tests/decorators/ + tests/oop/ + overload doctest 共 309 项 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-246 [2026-10-21T11:05:09Z] [medium] FIXED
+- summary: data.qax 1-based 行列 API 越界静默错值：InsertRow(0)/InsertCol(0) 经 list.insert(-1) 插到倒数位置、DelCol(0) 静默删掉最后一列、NewRow 超长行破坏矩形；且 DelRow 越界静默 no-op 与 DelCol(5) IndexError 不一致
+- detail: vools/data/qax.py 的 Qax 行列操作按文档是 1-based（InsertRow「插入位置（从1开始）」、InsertCol、DelRow「行号（从1开始）」、DelCol「列名或列号（从1开始）」），但实现无任何范围校验，0/负数经 Python 负索引语义变成**另一位置的静默写入/删除**：
+
+实测（3 行 3 列 id/name/v 的 Qax）：
+- Qax.InsertRow(0, [...]) -> list.insert(-1) → 新行插到**倒数第一行之前**（第3行位），且无异常；InsertRow(-1) 同。
+- Qax.InsertCol(0, ...) -> 新列插到倒数第一列之前（成为第3列）；InsertCol(-1) 成为第2列。
+- Qax.DelCol(0) -> Table._get_col_index(int) 直通 -1 -> 静默删除**最后一列 v**（应报错而非删错列）。
+- Qax.DelCol(5) -> IndexError: list index out of range（与 DelRow 行为不一致）。
+- Qax.DelRow(0/-1/5) -> Table.del_row 的 if 0 <= rownum < len 守卫 → **静默 no-op**。
+- Qax.NewRow(['a','b','c','d','e']) -> 行宽 5 而列为 3，矩形性破坏（后续 select/group/ToArray 按列索引取值会取到错位/多余数据）。
+
+影响：越界/0 基调用者不会得到错误，而是得到「删错列/插错位/多出一列数据的畸形表」——静默数据损坏。tests/data/test_qax.py 只用合法位置（InsertRow(2)/InsertCol(2)/DelRow(3)/DelCol('gender')），不锁定越界行为。
+
+修复方向：Qax 层加 1-based 范围校验（InsertRow/InsertCol 允许 1..len+1，DelRow/DelCol 允许 1..len，越界抛 IndexError 带明确消息），NewRow/InsertRow 列表数据宽于列数时抛 ValueError（当前仅补短不截长）。
+- reported_by: agent-vools-hardening
+- task_id: T0r705
+
+
+
+### FIXED(2026-10-21T11:10:34Z / BUG-246)
+- evidence: vools/data/qax.py 修复（commit 719a692）：新增 Qax._check_1based(pos, limit, what)（非 int/bool 抛 TypeError；越界抛 IndexError 带 1..limit 消息）与 _fit_row_data（列表超宽抛 ValueError，窄行补 None）。InsertRow 校验 1..行数+1、InsertCol 校验 1..列数+1、DelRow 校验 1..行数（先校验再 del_row(row-1)）、DelCol(int) 校验 1..列数（str 列名路径不变）。修复前实测：InsertRow(0)/InsertCol(0) 经 list.insert(-1) 插到倒数位置静默成功、DelCol(0) 静默删除最后一列、DelRow(0/5) 静默 no-op、NewRow 5 字段行宽 5>列数 3。修复后 probe 20 项全对：12 类非法输入均抛 IndexError/ValueError；合法路径 unchanged（InsertRow(1)/末尾=len+1、InsertCol(1)/末尾、DelRow(1)、DelCol(1)、DelCol('name') 按名删列、NewRow 短列表补 None 且矩形性保持）。新增回归 tests/test_qax_index_bounds_regression.py 19 项 GREEN；tests/data/ 288 项 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-247 [2026-10-21T11:14:38Z] [medium] FIXED
+- summary: data.qax/QAXReplace 1-based 列号无校验（col=0 静默写最后一列、col=5 静默 no-op）+ Table.limit/QAXTop 负数 n 静默丢最后一行（min(offset+n,len) 负切片）
+- detail: BUG-246 同族残留（同轮修复后复查相邻 API 发现）：
+
+① vools/data/qax.py QAXReplace(col=int)（原 L706-711）：docstring 明示「col: 列名或列号（从1开始）」，实现 col_idx = col - 1 无校验直接传给 Table.replace。实测 3 列 id/name/v 表：
+   QAXReplace(10, 999, col=0) -> v 列首行被改成 999（写到**最后一列**，静默错列）
+   QAXReplace(10, 888, col=-1) -> 同（-1 直通）
+   QAXReplace(10, 777, col=5) -> 静默 no-op（base replace 的 col_num < len(row) 守卫）
+② vools/data/table.py Table.limit(n, offset)（L1149-1163）：nd = min(offset + n, len(self._data))，n 为负数时 self._data[offset:end] 是负切片：
+   limit(-1) -> 返回 len-1 行（**静默丢掉最后一行**，应为报错或空）
+   limit(-1, offset=1) -> 0 行
+   QAXTop(-1)（docstring「取前n行」）-> 同 limit(-1) 错行
+③ Table.replace(col_num)（L1556-1570）：col_num=-1 直接命中 ow[-1]（最后一列）；col_num>=len 静默 no-op——0 基内部 API 但对外可见。
+
+影响：调用方拿到**被改错的列**或**少一行**的结果而不报错（静默数据损坏）。tests 只覆盖正数（QAXTop(2)、limit(2, offset=1)），不锁定越界/负数行为。内部调用者：Table.limit 仅 table.py 的查询 kwargs 路径（调用方可直接传负数）、Table.replace 仅 QAXReplace 一处。
+
+修复方向：QAXReplace(int) 复用 BUG-246 的 _check_1based(1..列数)；Table.limit 对 n<0 / offset<0 抛 ValueError；Table.replace 对 col_num 越界抛 IndexError。
+- reported_by: agent-vools-hardening
+- task_id: T0r706
+
+
+
+### FIXED(2026-10-21T11:20:15Z / BUG-247)
+- evidence: commit fb26f0a 三处修复：① vools/data/qax.py QAXReplace(int) 改用 self._check_1based(col, 列数, '列')-1（docstring 补 Raises）；② vools/data/table.py Table.limit 对 n<0 / offset<0 抛 ValueError（docstring 补 Raises）；③ Table.replace 对非 int 抛 TypeError、col_num 越界抛 IndexError（docstring 补 Raises）。修复前实测：QAXReplace(10,999,col=0) -> v 列首行变 999（改最后一列）、col=5 静默 no-op；limit(-1) -> 2 行（丢最后一行）、limit(-1,offset=1) -> 0 行、QAXTop(-1) 同；Table.replace(-1,...) 命中 row[-1]。修复后 probe 19 项全对：非法输入全 IndexError/ValueError/TypeError，合法路径 unchanged（QAXReplace(col=3)/col='v'/全列、limit(2)/limit(0)/limit(2,offset=1)/QAXTop(2)、Table.replace(1)）；新增回归 tests/test_qax_replace_limit_bounds_regression.py 19 项 GREEN；tests/data/ + tests/sql/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-248 [2026-10-21T11:23:07Z] [medium] FIXED
+- summary: data.qax 访问/写入类 1-based API 越界静默错值（BUG-246/247 同族）：GetRow(0) 返回最后一行、GetCol(0) 返回最后一列、SetCell(0,...)/SetCell2(name,0,...) 静默改写最后一行；GetCell(row) 越界静默返回 None
+- detail: vools/data/qax.py 的 Qax 访问/修改类方法（docstring 均明示 1-based）延续 BUG-246/247 同族缺陷：裸 ow - 1 / col - 1 无校验，0/负数经 Python 负索引命中**最后一行/列**。
+
+实测（3 行 3 列 id/name/v 表）：
+- GetRow(0) -> base row(-1) -> 返回**最后一行**字典（静默错行；同理 GetRow(-1)）
+- GetCol(0) -> base column(-1) -> 返回**最后一列**数据（静默错列）
+- SetCell(0, 1, 'X') -> base set_cell(-1,0,...)：while len <= -1 不补行、self._data[-1] -> **静默改写最后一行的第一列**（数据损坏，最严重）
+- SetCell2('name', 0, 'Y') -> set_cell(-1, 'name', ...) -> 同上静默改最后一行
+- GetCell(0, 1) / GetCell2('name', 0) -> base get_cell(-1,...) 命中 ow_index < 0 守卫 -> **静默返回 None**（base 的 default_value 语义虽文档化，但 Qax 1-based 层 docstring 未声明默认返回）
+- SetCell(5,...)（超行数）-> base 自动补行（确保有足够的行），属文档化扩展行为，保留。
+
+影响：读取得到错误行列、写入静默污染最后一行数据，调用方无任何错误信号。tests/data/test_qax.py 只用合法 1-based 坐标（GetCell(1,1)、SetCell(1,2,26) 等），不锁定越界行为。
+
+修复方向：GetRow/GetCol(int)/SetCell/SetCell2 与 GetCell/GetCell2 的 row/col 入参复用 BUG-246 的 _check_1based 校验（1..行数 / 1..列数 → IndexError），列名字符串路径与 base 的补行/默认值语义保持不变。
+- reported_by: agent-vools-hardening
+- task_id: T0r707
+
+
+
+### FIXED(2026-10-21T11:27:20Z / BUG-248)
+- evidence: vools/data/qax.py 六方法加 _check_1based 校验（commit 963c1a7）：GetCell(row,col)、GetCell2(colName,row)、GetRow(row)、GetCol(int col)、SetCell(row,col,value)、SetCell2(colName,row,value) 全部按 1..行数/1..列数 校验，越界抛 IndexError（docstring 补 Raises）。修复前实测：GetRow(0)->最后一行字典、GetCol(0)->最后一列 ['a','b','c'] 值域 [10,20,30]、SetCell(0,1,'X') 静默改写最后一行第一列、SetCell2('name',0,'Y') 同、GetCell(0,1)->None。修复后 probe 23 项全对：6 方法 × 0/-1/越界 全 IndexError，合法路径 unchanged（GetRow(1)/(3)、GetCol(2)/('v')、GetCell(1,1)/(3,3)、GetCell2('name',2)、SetCell(1,2,26) 且未波及其它行、SetCell2 合法、GetCol/GetCell 列名路径）；新增回归 tests/test_qax_access_bounds_regression.py 23 项 GREEN；tests/data/ 全 GREEN（EXIT=0）。注：base set_cell 的「行超界自动补行」语义现不可经 Qax.SetCell 触达（Qax 层严格校验，新增行请用 NewRow）；commit 已推送 gitcode master。
+## BUG-249 [2026-10-21T11:31:09Z] [medium] OPEN
+- summary: data.qax 字符串操作两缺陷：QAXSubstr(length=0) 假值陷阱返回全尾串（应空串，start=2 时返回 'bcdef'）；QAXConcat(sep=...) 跳过空字符串字段致分隔符错位（'a','','c'' 拼成 a-c 而非 a--c）
+- detail: vools/data/qax.py 与 vools/data/table.py 字符串操作两处缺陷（修复前实测）：
+
+① QAXSubstr（qax.py L759-773）length 假值陷阱：nd_pos = start + length - 1 if length else None——length=0 走 else 分支 end_pos=None，base substr 再 al[start:] 取到尾：
+   QAXSubstr('s', 1, 0) -> 'abcdef'（期望 ''）
+   QAXSubstr('s', 2, 0) -> 'bcdef'（期望 ''）
+   连带 base Table.substr（table.py L1697）if end_pos: 也是假值判断——即便上层算出 end_pos=0 也会退回取尾。合法 0 长度被静默当成「不限制长度」（BUG-172/193/223 同族）。
+
+② QAXConcat(sep=...)（qax.py L788-831）拼接时过滤空字段：if val is not None and val != '': 才 append——空字符串字段被跳过，分隔符数量与列数脱钩：
+   行 ('a', '', 'c') + sep='-' -> 'a-c'（期望 'a--c'，中间列的位置被吞掉，后续按分隔符 split 会列错位）
+   对照 base Table.concat（无 sep 版本）跳过空值无位置语义问题（无分隔符）。
+③ 附带：QAXConcat 的 sep 分支先为每列建 __concat_temp_i 临时列并拷贝值（L800-808），随后最终循环仍从原列读取、临时列从未被使用，最后再 del_col 清理——纯死代码+无谓增删列。
+
+修复方向：QAXSubstr 用 length is not None 判断并算 end_pos=start+length-1（length=0 → end_pos=start-1 → 空串）；base substr 用 nd_pos is not None；QAXConcat sep 分支对每列都 append（None→''，空串保留），并删除死代码临时列逻辑。
+- reported_by: agent-vools-hardening
+- task_id: T0r708
+
