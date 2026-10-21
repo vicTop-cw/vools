@@ -4418,7 +4418,7 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 - evidence: vools/task/core/storage.py claim_task 入口新增 `lease_seconds = int(lease_seconds)` 强制转换。新增 tests/vconcurrent/test_dag_scheduler_regression.py 3 项 GREEN 验证 WorkerPool/ThreadPool 正常启动。tests/task/ 45 项 GREEN。
 
 
-## BUG-268 [2026-10-21T12:30:24Z] [low] OPEN
+## BUG-268 [2026-10-21T12:30:24Z] [low] FIXED
 - summary: Table.from_file 假值陷阱收尾：rows=0 读全文件（已由并发改动修复待提交）；cols=[] 残留表头未过滤 → 3 列名 + 空数据行的畸形表
 - detail: vools/data/table.py Table.from_file 的假值陷阱（BUG-255 报告中已注明的延后项，现 table.py 空闲后处理）：参数 rows/cols 用真值判断，显式 0/空列表被当成「未提供」：
 
@@ -4431,6 +4431,9 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 - reported_by: agent-vools-hardening
 
 
+
+### FIXED(2026-10-21T12:35:48Z / BUG-268)
+- evidence: vools/data/table.py Table.from_file 修复（commits 72a5d3f + bb21430）：rows/cols 全部改 is None/is not None——行截断 `if rows is not None and i >= rows`、两处行取列 `if cols is not None`、表头过滤 `if columns and cols is not None`。修复前实测（3 列/2 数据行 CSV）：from_file(rows=0) -> 3 行（读全文件，期望 0）；from_file(cols=[]) -> rows=3、列名=['a','b','c']、首行=[]（3 列名 + 空数据行的畸形表）。修复后 probe 7 项全对：rows=0 -> 0 行、rows=2 -> 2、rows=None -> 3；cols=[] -> 0 列且各行为空、cols=None -> 3 列、cols=[0,2] -> ['a','c']（数据行 ['1','3']）。新增回归 tests/test_table_from_file_falsy_regression.py 6 项 GREEN（含 from_file 表头行作为数据第 0 行的既有语义注释）；他方 tests/test_bug252_falsy_trap_regression.py 9 项 + tests/data/ 全 GREEN（EXIT=0）。commits 已推送 gitcode master（HEAD bb21430）。
 ## BUG-269 [2026-10-21T23:10:00Z] [medium] FIXED
 - summary: get_week num 方向反转——正数指向过去，与文档「正数=未来」相反
 - detail: vools/datetime/utils.py 函数 get_week 与 vools/datetime/vdate_class.py VDate.get_week 实现均为 `w0 - timedelta(days=num * 7)`——正 num 返回更早日期，与 docstring/文档「正数=未来」相反。
@@ -4466,3 +4469,20 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 
 ### FIXED(2026-10-21T23:15:00Z / BUG-271)
 - evidence: vdate_class.py 两条时间正则加 `(?:\.\d+)?` + 解析小数秒构造 microsecond 参数；utils.py vDate() 同步修。新增 tests/test_datetime_microsecond_string_regression.py（'yyyy-MM-dd HH:MM:SS.ffffff' / 'yyyyMMdd HH:MM:SS.fff' / 无毫秒对照共 8 项）。tests/datetime 全 GREEN。
+
+## BUG-272 [2026-10-21T12:42:32Z] [high] OPEN
+- summary: sys.dll @dll 在 PEP 563 字符串注解下生成错误 ctypes 签名：str 注解被映射为 c_int（应 c_char_p，指针参数变整数可崩溃），-> str 返回值不解码；_extract_annotations 未解析字符串注解
+- detail: vools/sys/dll.py `@dll` 装饰器在 PEP 563 字符串注解（from __future__ import annotations 或 py3.6 字符串注解写法）下解析错误：
+
+_extract_annotations（L122-148）直接取 inspect 的 `param.annotation` / `sig.return_annotation`，不做字符串解析；随后 _map_py_to_ctype（L49-62）用 `_PY_TO_CTYPES.get(py_type, ctypes.c_int)` 查表——表的键是**类型对象**，字符串 'str'/'int' 查不到 → 一律回落 `c_int`。
+
+实测（临时模块带 from __future__ import annotations）：
+- `def c_func(s: str, n: int) -> str`: _extract_annotations -> 参数注解 ['str','int']（字符串）、返回注解 'str'
+- _map_py_to_ctype(str 类型) -> c_char_p（正确）；_map_py_to_ctype('str' 字符串) -> c_long（Windows 上 c_int=c_long）——**应为指针的参数被声明成整数**
+- _convert_result(b'hello', None, 'str') -> b'hello'（ret_py_type is str 判断对字符串 'str' 为 False，**返回值不解码**）
+
+影响：现代代码常用 from __future__ import annotations（PEP 563），此时 @dll 生成的 ctypes 签名错误（str→int）——调用真实 C 函数时按整数传指针，可能**崩溃/内存踩踏**；字符串返回值静默保持 bytes。同一问题的 py_bytes 返回注解同样是字符串 'bytes'，导致 _convert_result 的 bytes 分支也失效。
+
+修复方向：_extract_annotations 优先用 typing.get_type_hints(func) 解析字符串注解（失败回退原始注解），并在 _map_py_to_ctype 增加按名称的防御性映射（'str'/'int'/'float'/'bytes' 等）。
+- reported_by: agent-vools-hardening
+
