@@ -21,6 +21,7 @@ vools.sys.cmd - 命令行装饰器模块
 """
 
 import os
+import re
 import sys
 import ast
 import subprocess
@@ -40,6 +41,10 @@ from ..core.ast_compat import is_none_literal
 _executor = None
 
 
+# BUG-243: 无需引号的简单参数（无空白与 shell 元字符）；其余按 shell 规则加引号
+_SIMPLE_ARG_RE = re.compile(r'[A-Za-z0-9_@%+=:,./\\-]+')
+
+
 def _get_executor() -> ThreadPoolExecutor:
     global _executor
     if _executor is None:
@@ -47,20 +52,47 @@ def _get_executor() -> ThreadPoolExecutor:
     return _executor
 
 
-def _build_command(cmd_str: str, func: Callable, args: tuple, kwargs: dict) -> str:
+def _quote_arg(value: str, shell: str) -> str:
+    """按目标 shell 规则为单个命令行参数加引号（BUG-243）。
+
+    原实现把所有参数值 ``str(v)`` 直拼进命令串：含空格的路径/消息被拆成
+    多个参数、含 ``;``/``&``/``|``/``$(...)`` 的值直接注入内层 shell。
+    此处仅对"需要引号"的值处理，简单值原样返回以保持既有输出兼容。
+    """
+    shell_l = (shell or '').lower()
+    if shell_l in ('bash', 'sh', 'wsl'):
+        import shlex
+        return shlex.quote(value)
+    if shell_l in ('powershell', 'ps', 'pwsh'):
+        if _SIMPLE_ARG_RE.fullmatch(value):
+            return value
+        return "'" + value.replace("'", "''") + "'"
+    # cmd / 默认：交给 Windows 命令行引号规则（CommandLineToArgvW）
+    if _SIMPLE_ARG_RE.fullmatch(value):
+        return value
+    return subprocess.list2cmdline([value])
+
+
+def _build_command(cmd_str: str, func: Callable, args: tuple, kwargs: dict,
+                   shell: str = 'powershell') -> str:
     """根据函数签名和调用参数构建完整命令字符串。
 
     参数映射规则：
         - 单下划线前缀 ``_f`` → 短选项 ``-f value``（值为 None 时只有 ``-f``）
         - 双下划线前缀 ``__path`` → 长选项 ``--path value``（值为 None 时只有 ``--path``）
         - 无特殊前缀的参数 → 按顺序追加到命令末尾作为位置参数
+          （BUG-243：值为 None 时跳过，不再渲染成字面 "None"）
         - ``*args`` 可变位置参数 → 按顺序追加到命令末尾
+
+    所有参数值按 ``shell`` 规则加引号（BUG-243）：含空格/元字符的值不再被
+    拆词或注入内层 shell。
 
     Args:
         cmd_str: 基础命令字符串。
         func: 被装饰的函数对象，用于获取参数签名。
         args: 调用时的位置参数元组。
         kwargs: 调用时的关键字参数字典。
+        shell: 目标 shell 类型（决定参数引号规则，默认 powershell）。
 
     Returns:
         str: 构建好的完整命令字符串。
@@ -94,9 +126,9 @@ def _build_command(cmd_str: str, func: Callable, args: tuple, kwargs: dict) -> s
         if param.kind == inspect.Parameter.VAR_POSITIONAL:
             if isinstance(value, (tuple, list)):
                 for v in value:
-                    positional_args.append(str(v))
+                    positional_args.append(_quote_arg(str(v), shell))
             else:
-                positional_args.append(str(value))
+                positional_args.append(_quote_arg(str(value), shell))
             continue
 
         if name.startswith('__'):
@@ -106,7 +138,7 @@ def _build_command(cmd_str: str, func: Callable, args: tuple, kwargs: dict) -> s
                 cmd_parts.append(option)
             else:
                 cmd_parts.append(option)
-                cmd_parts.append(str(value))
+                cmd_parts.append(_quote_arg(str(value), shell))
         elif name.startswith('_'):
             option_name = name[1:]
             option = f'-{option_name}'
@@ -114,9 +146,11 @@ def _build_command(cmd_str: str, func: Callable, args: tuple, kwargs: dict) -> s
                 cmd_parts.append(option)
             else:
                 cmd_parts.append(option)
-                cmd_parts.append(str(value))
+                cmd_parts.append(_quote_arg(str(value), shell))
         else:
-            positional_args.append(str(value))
+            # BUG-243: None 值（未提供的可选参数）不渲染成字面 "None"
+            if value is not None:
+                positional_args.append(_quote_arg(str(value), shell))
 
     cmd_parts.extend(positional_args)
     return ' '.join(cmd_parts)
@@ -384,7 +418,8 @@ def _run_sync(
         Tuple[int, str, str]: 三元组 ``(returncode, stdout, stderr)``。
     """
     try:
-        full_cmd = _build_command(cmd_str, func, args, kwargs)
+        # BUG-243: 传入 shell 以便按目标 shell 规则给参数加引号
+        full_cmd = _build_command(cmd_str, func, args, kwargs, shell=shell)
         return _run_command(full_cmd, shell)
     except Exception:
         if fallback:
