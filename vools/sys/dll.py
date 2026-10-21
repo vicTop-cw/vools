@@ -418,7 +418,7 @@ async def _run_async(
         Any: DLL 函数的返回值（已转换为 Python 类型），或 fallback 的返回值。
     """
     executor = _get_executor()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         executor,
         lambda: _run_sync(

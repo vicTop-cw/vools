@@ -328,7 +328,7 @@ async def _run_async(
         Tuple[int, str, str]: 三元组 ``(returncode, stdout, stderr)``。
     """
     executor = _get_executor()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         executor,
         lambda: _run_sync(func, exe_path, args, kwargs, fallback),

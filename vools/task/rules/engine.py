@@ -236,10 +236,7 @@ class RuleEngine:
             Result: 同 evaluate()
         """
         import asyncio
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         sorted_rules = sorted(self._rules, key=lambda r: -r.priority)
         if not sorted_rules:
