@@ -121,10 +121,18 @@ def get_week(dt, num: int = 0, weekday: int = 1):
         return None
     if num is None:
         num = 0
-    assert(1 <= weekday <= 7)
+    # BUG-240: 原用 assert 做入参校验——python -O 会剥离 assert，优化部署下
+    # 校验整体消失（非法 weekday=0 静默算出错误周起始日）；且 AssertionError
+    # 不便调用方可编程捕获。改为显式 ValueError（BUG-7 同族收口）。
+    if not (1 <= weekday <= 7):
+        raise ValueError(
+            f"weekday 必须在 1-7 之间（周一=1），收到 {weekday!r}")
     dt = str(dt)[:10].strip()
     l = len(dt)
-    assert(l in (8, 10))
+    if l not in (8, 10):
+        raise ValueError(
+            f"日期字符串长度必须为 8 或 10（yyyyMMdd / yyyy-MM-dd），"
+            f"收到长度 {l}: {dt!r}")
     fmt = '%Y-%m-%d' if l == 10 else '%Y%m%d'
     dt = datetime.strptime(dt, fmt)
     w0 = dt - timedelta(days=(int(dt.strftime('%u')) - weekday))
