@@ -174,7 +174,9 @@ class VThread(threading.Thread):
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
-        self.join()
+        # BUG-xxx 修复：使用带超时的 join 避免目标函数不退出时永久阻塞。
+        # 默认超时 30s，超时后放弃等待（线程继续运行，daemon=True 时随主进程退出）。
+        self.join(timeout=30)
         return False
 
     def __repr__(self) -> str:
@@ -236,13 +238,21 @@ class VLock:
         Returns:
             是否成功获取。
         """
-        return self._lock.acquire(timeout=timeout)
+        ok = self._lock.acquire(timeout=timeout)
+        if ok:
+            self._count += 1
+        return ok
 
     def release(self) -> None:
-        """释放一次锁。"""
+        """释放一次锁。
+
+        Raises:
+            RuntimeError: 当锁未被持有时释放（count == 0）。
+        """
+        if self._count <= 0:
+            raise RuntimeError("cannot release un-acquired lock")
         self._lock.release()
-        if self._count > 0:
-            self._count -= 1
+        self._count -= 1
 
     @property
     def count(self) -> int:

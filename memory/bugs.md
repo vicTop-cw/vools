@@ -4203,7 +4203,7 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 
 ### FIXED(2026-10-21T11:27:20Z / BUG-248)
 - evidence: vools/data/qax.py 六方法加 _check_1based 校验（commit 963c1a7）：GetCell(row,col)、GetCell2(colName,row)、GetRow(row)、GetCol(int col)、SetCell(row,col,value)、SetCell2(colName,row,value) 全部按 1..行数/1..列数 校验，越界抛 IndexError（docstring 补 Raises）。修复前实测：GetRow(0)->最后一行字典、GetCol(0)->最后一列 ['a','b','c'] 值域 [10,20,30]、SetCell(0,1,'X') 静默改写最后一行第一列、SetCell2('name',0,'Y') 同、GetCell(0,1)->None。修复后 probe 23 项全对：6 方法 × 0/-1/越界 全 IndexError，合法路径 unchanged（GetRow(1)/(3)、GetCol(2)/('v')、GetCell(1,1)/(3,3)、GetCell2('name',2)、SetCell(1,2,26) 且未波及其它行、SetCell2 合法、GetCol/GetCell 列名路径）；新增回归 tests/test_qax_access_bounds_regression.py 23 项 GREEN；tests/data/ 全 GREEN（EXIT=0）。注：base set_cell 的「行超界自动补行」语义现不可经 Qax.SetCell 触达（Qax 层严格校验，新增行请用 NewRow）；commit 已推送 gitcode master。
-## BUG-249 [2026-10-21T11:31:09Z] [medium] OPEN
+## BUG-249 [2026-10-21T11:31:09Z] [medium] FIXED
 - summary: data.qax 字符串操作两缺陷：QAXSubstr(length=0) 假值陷阱返回全尾串（应空串，start=2 时返回 'bcdef'）；QAXConcat(sep=...) 跳过空字符串字段致分隔符错位（'a','','c'' 拼成 a-c 而非 a--c）
 - detail: vools/data/qax.py 与 vools/data/table.py 字符串操作两处缺陷（修复前实测）：
 
@@ -4223,6 +4223,9 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 
 
 
+
+### FIXED(2026-10-21T12:27:19Z / BUG-249)
+- evidence: 代码修复在 HEAD（commit 73a7737 收纳，vools/data/qax.py 的 QAXSubstr length is not None 与 QAXConcat 逐列保留占位、vools/data/table.py 的 end_pos is not None）；账本状态因并发写入回退为 OPEN，此处补闭环。回归 tests/test_qax_substr_concat_regression.py 10 项 + tests/data/ 全 GREEN。
 ## BUG-252 [2026-10-21T21:10:00Z] [medium] FIXED
 - summary: control._retry_decorator 参数校验缺失：tries=0、delay/backoff 非数字、logger 非 Logger 实例时装饰阶段静默通过，首次重试才崩溃
 - detail: vools/decorators/control.py 的 _retry_decorator 入口对 tries/delay/backoff/logger 不校验：
@@ -4413,4 +4416,5 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 
 ### FIXED(2026-10-21T23:00:00Z / BUG-264)
 - evidence: vools/task/core/storage.py claim_task 入口新增 `lease_seconds = int(lease_seconds)` 强制转换。新增 tests/vconcurrent/test_dag_scheduler_regression.py 3 项 GREEN 验证 WorkerPool/ThreadPool 正常启动。tests/task/ 45 项 GREEN。
+
 
