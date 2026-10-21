@@ -65,6 +65,14 @@ class PgTaskBackend:
         task = backend.acquire(worker_id="w1", timeout_min=5)
         ...
         backend.complete(tid, worker_id="w1", back_info={"stdout": "hello"})
+
+    Args:
+        dsn: PostgreSQL 连接串。
+        table: 主表名。
+        max_retries: 单任务最大重试次数。
+        retry_delay_min: **当前仅为 API 兼容占位，不影响重试时序**——失败任务
+            立即进入可领取状态，无退避等待（BUG-231）。
+        autocommit: 是否自动提交事务。
     """
 
     def __init__(self, dsn: str, table: str = "vic_tasks_task",

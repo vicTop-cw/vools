@@ -18,7 +18,15 @@ from . import _dag
 
 
 class SqliteTaskBackend:
-    """SQLite 任务队列后端。"""
+    """SQLite 任务队列后端。
+
+    Args:
+        db_path: SQLite 数据库文件路径。
+        table: 主表名（边表为 ``<table>_edges``）。
+        max_retries: 单任务最大重试次数。
+        retry_delay_min: **当前仅为 API 兼容占位，不影响重试时序**——失败任务
+            立即进入可领取状态，无退避等待（BUG-231）。
+    """
 
     def __init__(self, db_path: str = "tasks_queue.db", table: str = "vic_tasks_task",
                  max_retries: int = 3, retry_delay_min: int = 5):
