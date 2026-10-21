@@ -6,7 +6,7 @@
 
 from collections import namedtuple
 from enum import IntFlag
-from functools import partial, lru_cache
+from functools import partial
 from typing import Any, List, Optional, Tuple, Union, Callable, Type
 
 __all__ = ['Mixer', 'Mixer_', 'attr_Enum']
@@ -236,15 +236,22 @@ class Mixer_:
         return self
 
     # ===== 缓存优化 =====
-    @lru_cache(maxsize=256)
     def _get_cached_attr(self, name: str) -> Any:
-        """LRU缓存优化方法（内部使用）。
-        
+        """属性缓存读取（内部使用）。
+
         Args:
             name: 属性名
-            
+
         Returns:
             属性的值
+
+        Note:
+            BUG-226: 原实现用 @lru_cache 装饰实例方法——缓存键含 self，
+            类级 lru 对 self 强引用致实例（连同混合组件）永不回收，实测
+            del+gc 后弱引用仍存活；且与实例级 _attr_cache（__getattr__
+            L381 写入、remove/add_extra_code 联动失效）构成双层缓存，
+            lru 层不感知属性变更必返回 stale 值。现直接委托 __getattr__
+            ——其自身已实现正确的实例级缓存与失效，双层合一。
         """
         return self.__getattr__(name)
 
