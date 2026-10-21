@@ -113,7 +113,7 @@ class VDate(datetime):
         """获取指定星期对应的日期。
         
         Args:
-            num: 周数偏移，0表示本周，正数向前，负数向后
+            num: 周偏移，正数=未来，负数=过去
             weekday: 星期几，1-7（1=周一，7=周日）
             
         Returns:
@@ -123,12 +123,14 @@ class VDate(datetime):
             ValueError: weekday 不在 1-7 范围内
         """
         if not weekday in range(1, 8):
-            raise ValueError("param weekday must in 1 to 7 , 1 is MonDay !!!")
+            raise ValueError(
+                f"weekday 必须在 1-7 之间（周一=1），收到 {weekday!r}")
         w0 = self - (int(self.strftime('%u')) - weekday)
         if num == 0:
             return w0.strftime(self.fmt)
         else:
-            return (w0 - num * 7).strftime(self.fmt)
+            # BUG-242: 原 `w0 - num * 7` 使正数指向过去，与文档"正数=未来"相反。
+            return (w0 + num * 7).strftime(self.fmt)
 
     def get_month(self, num: int = 0, last_day=False):
         """获取指定月份对应的日期。
@@ -447,16 +449,30 @@ class VDate(datetime):
             elif re.match(r"^\d{4}-\d{2}-\d{2}$", dt):
                 dt = dt.replace('-', '')
                 result = super().__new__(cls, int(dt[:4]), int(dt[4:6]), int(dt[6:]))
-            elif re.match(r"^\d{4}-\d{2}-\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9]$", dt):
+            elif re.match(r"^\d{4}-\d{2}-\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9](?:\.\d+)?$", dt):
                 tm = dt.split(" ")[1].split(":")
                 dt = dt.split(" ")[0].replace('-', '')
-                result = super().__new__(cls, int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), int(tm[2]))
-            elif re.match(r"^\d{4}\d{2}\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9]$", dt):
+                sec_part = tm[2]
+                if '.' in sec_part:
+                    sec_str, frac = sec_part.split('.', 1)
+                    sec = int(sec_str)
+                    us = int(frac.ljust(6, '0')[:6])
+                else:
+                    sec = int(sec_part)
+                    us = 0
+                result = super().__new__(cls, int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), sec, us)
+            elif re.match(r"^\d{4}\d{2}\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9](?:\.\d+)?$", dt):
                 tm = dt.split(" ")[1].split(":")
-                # 与 vools/datetime/utils.py 同步修：本分支原先漏掉
-                # `dt = dt.split(" ")[0]`，dt[6:] 会带上 ' 13:45:30' → int() 崩。
                 dt = dt.split(" ")[0]
-                result = super().__new__(cls, int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), int(tm[2]))
+                sec_part = tm[2]
+                if '.' in sec_part:
+                    sec_str, frac = sec_part.split('.', 1)
+                    sec = int(sec_str)
+                    us = int(frac.ljust(6, '0')[:6])
+                else:
+                    sec = int(sec_part)
+                    us = 0
+                result = super().__new__(cls, int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), sec, us)
             else:
                 if fmt is None:
                     raise ValueError("需要指定日期格式")
@@ -611,12 +627,12 @@ class VDate(datetime):
             TypeError: 不支持的类型
         """
         if isinstance(other, timedelta):
-            new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second) + other
+            new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second, self.microsecond) + other
             # BUG-241: 沿用源实例格式，避免算术结果 str 与构造结果不一致
             #（datetime 输入会被推断成 '%Y-%m-%d %H:%M:%S'）
             return VDate(new_datetime, fmt=self.fmt)
         elif isinstance(other, (int, float)):
-            new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second) + timedelta(days=other)
+            new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second, self.microsecond) + timedelta(days=other)
             return VDate(new_datetime, fmt=self.fmt)
         else:
             raise TypeError("只能对整数或 timedelta 执行加法操作")
@@ -636,12 +652,12 @@ class VDate(datetime):
             TypeError: 不支持的类型
         """
         if isinstance(other, (int, float)):
-            new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second) - timedelta(days=other)
+            new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second, self.microsecond) - timedelta(days=other)
             return VDate(new_datetime, fmt=self.fmt)
         elif isinstance(other, timedelta):
             # BUG-241: docstring/类型注解承诺支持 timedelta（"timedelta 减法返回
             # 新的 VDate 实例"），原实现缺失该分支 → 落到 else 抛 TypeError。
-            new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second) - other
+            new_datetime = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second, self.microsecond) - other
             return VDate(new_datetime, fmt=self.fmt)
         elif isinstance(other, (datetime, VDate)):
             diff = self.timestamp() - other.timestamp()

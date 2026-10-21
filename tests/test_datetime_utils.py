@@ -101,8 +101,9 @@ class TestGetWeek:
         assert result == "20240108"
 
     def test_num_offset(self):
+        # BUG-242: 正数=未来，2024-01-10 周三 + 1 周 = 2024-01-15（下周一）
         result = get_week("2024-01-10", num=1)
-        assert result == "2024-01-01"
+        assert result == "2024-01-15"
 
     def test_bad_weekday(self):
         with pytest.raises(ValueError):

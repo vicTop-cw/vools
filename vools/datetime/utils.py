@@ -77,17 +77,30 @@ def vDate(dt=None, fmt=None, diffDays: Union[float, int] = 0):
         elif re.search(r"^\d{4}-\d{2}-\d{2}$", dt):
             dt = dt.replace('-','')
             result = datetime(int(dt[:4]), int(dt[4:6]), int(dt[6:]))
-        elif re.search(r"^\d{4}-\d{2}-\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9]$", dt):
+        elif re.search(r"^\d{4}-\d{2}-\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9](?:\.\d+)?$", dt):
             tm = dt.split(" ")[1].split(":")
             dt = dt.split(" ")[0].replace('-','')
-            result = datetime(int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), int(tm[2]))
-        elif re.search(r"^\d{4}\d{2}\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9]$", dt):
+            sec_part = tm[2]
+            if '.' in sec_part:
+                sec_str, frac = sec_part.split('.', 1)
+                sec = int(sec_str)
+                us = int(frac.ljust(6, '0')[:6])
+            else:
+                sec = int(sec_part)
+                us = 0
+            result = datetime(int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), sec, us)
+        elif re.search(r"^\d{4}\d{2}\d{2} [0|1|2][0-9]:[0-5][0-9]:[0-5][0-9](?:\.\d+)?$", dt):
             tm = dt.split(" ")[1].split(":")
-            # 本分支漏了上一分支的 `dt = dt.split(" ")[0]`：dt 仍是整串
-            # '20240102 13:45:30'，int(dt[6:]) == int('02 13:45:30') 必 ValueError
-            # —— 命中本分支正则的输入【100% 崩溃】（2026-10-17 寻虫实测）。
             dt = dt.split(" ")[0]
-            result = datetime(int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), int(tm[2]))
+            sec_part = tm[2]
+            if '.' in sec_part:
+                sec_str, frac = sec_part.split('.', 1)
+                sec = int(sec_str)
+                us = int(frac.ljust(6, '0')[:6])
+            else:
+                sec = int(sec_part)
+                us = 0
+            result = datetime(int(dt[:4]), int(dt[4:6]), int(dt[6:]), int(tm[0]), int(tm[1]), sec, us)
         else:
             if fmt is None:
                 raise ValueError("需要指定日期格式")
@@ -139,7 +152,8 @@ def get_week(dt, num: int = 0, weekday: int = 1):
     if num == 0:
         return w0.strftime(fmt)
     else:
-        return (w0 - timedelta(days=num * 7)).strftime(fmt)
+        # BUG-242: 原减法使正数指向过去，改为加法匹配文档'正数=未来'
+        return (w0 + timedelta(days=num * 7)).strftime(fmt)
 
 
 def get_month(dt: str, num: int = 0, is_lastday: bool = False) -> str:
