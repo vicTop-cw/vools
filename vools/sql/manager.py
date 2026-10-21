@@ -420,11 +420,17 @@ def _make_cache_key(kwargs: Dict[str, Any]) -> str:
 
     返回：
         缓存键字符串
+
+    BUG-233: 原实现用无转义的 ``k=v`` 逗号拼接——值中含 ``,`` 或 ``k=v``
+    形态即键碰撞（``create_dialect(a='x,b=y')`` 与 ``(a='x', b='y')`` 生成
+    同一键，后调用方静默拿到前者的方言实例/连接参数）。现用 ``repr`` 对
+    排序后的 (key, value) 列表做无歧义序列化——字符串值自带引号与转义，
+    ``,``/``=`` 不再混淆。
     """
     if not kwargs:
         return 'default'
     sorted_items = sorted(kwargs.items(), key=lambda x: x[0])
-    return ','.join(f"{k}={v}" for k, v in sorted_items)
+    return repr(sorted_items)
 
 
 # ============================================================================
