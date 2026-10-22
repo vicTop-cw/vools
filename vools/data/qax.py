@@ -592,10 +592,15 @@ class Qax(Table):
 
         Args:
             group_cols: 分组列名或列名列表
-            agg_spec: 聚合规格字典 {列名: 聚合方法}
+            agg_spec: 聚合规格字典 {列名: 聚合方法}；聚合方法支持
+                ``'sum'`` / ``'avg'`` / ``'mean'`` / ``'count'`` / ``'min'`` /
+                ``'max'``，或任意可调用对象（接收该组的值列表，返回聚合值）
 
         Returns:
             分组后的 Qax
+
+        Raises:
+            ValueError: agg_spec 中出现不支持的聚合方法名（BUG-284）
         """
         if isinstance(group_cols, str):
             group_cols = [group_cols]
@@ -644,7 +649,14 @@ class Qax(Table):
                 elif func == 'max':
                     row.append(group_table.max(col))
                 else:
-                    row.append(None)
+                    # BUG-284: 原 `row.append(None)` 静默填 None——聚合方法名
+                    # 拼错（'avgg'/'maxx'/任意未知串）时不报错，整列静默变空，
+                    # 调用方无法区分「无结果」与「方法名写错」。与 BUG-129 同
+                    # 形收口：显式报错并列出支持集合。
+                    raise ValueError(
+                        f"QaxGroup: 不支持的聚合方法 {func!r}（列 {col!r}）；"
+                        f"支持 'sum' / 'avg' / 'mean' / 'count' / 'min' / "
+                        f"'max'，或可调用对象")
             result_data.append(row)
 
         return Qax(result_data, columns=result_columns, name=self._name)
