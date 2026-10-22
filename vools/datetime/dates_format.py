@@ -752,6 +752,18 @@ class EnhancedDateFormatter:
 
                     # 解析值（支持字符串、数字、列表、字典等）
                     parsed_value = self._parse_value(var_value)
+                    # BUG-299: RHS 可能是引用已有变量/算术的「表达式」——
+                    # _parse_value 只做字面量解析，会把 'x+1' 原样存成字符串，
+                    # 下游算术静默退化为字符串运算（y*2 -> 'x+1x+1'）。
+                    # _parse_value 返回字符串时再尝试按表达式求值（失败保留原值，
+                    # 带引号的字符串字面量求值结果与原值一致，不受影响）。
+                    if isinstance(parsed_value, str):
+                        try:
+                            evaled = safe_eval_expression(var_value, vars=dict(staged))
+                        except Exception:
+                            evaled = parsed_value
+                        if not (isinstance(evaled, str) and evaled == var_value):
+                            parsed_value = evaled
                     staged[var_name] = parsed_value
                     # 保存最后一个赋值的值作为结果（当所有部分都是赋值时返回）
                     result = parsed_value
