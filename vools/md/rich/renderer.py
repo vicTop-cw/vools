@@ -14,6 +14,7 @@ vools.md.rich.renderer — 富内容渲染器（BRIDGES_MD_RICH_CONTENT_PLAN P1�
 from ..parser import parse
 from ..html import _escape
 from .scanner import scan_rich
+from .sanitizer import sanitize_svg, SVGSanitizerError
 from typing import Optional, Dict, Any
 import re
 
@@ -79,13 +80,16 @@ def render_svg(svg_content: str,
         directive: #!rich 指令（控制 svg-sanitize）
 
     Returns:
-        SVG HTML 字符串
+        SVG HTML 字符串；净化失败时返回空串
     """
     dir = directive or {}
     sanitize = dir.get('svg-sanitize', True)
 
     if sanitize:
-        svg_content = _sanitize_svg(svg_content)
+        try:
+            svg_content = sanitize_svg(svg_content)
+        except SVGSanitizerError:
+            return ''
 
     return svg_content
 
@@ -103,26 +107,6 @@ def render_html(html_content: str, language: str = '',
         HTML 字符串
     """
     return html_content
-
-
-def _sanitize_svg(svg_content: str) -> str:
-    """SVG 净化（基础版：移除 script 标签和 on* 事件）。
-
-    P1 范围：基础净化，完整白名单在 P2 实现。
-    """
-    # 移除 <script>...</script>
-    svg_content = re.sub(
-        r'<script[^>]*>.*?</script>', '', svg_content,
-        flags=re.DOTALL | re.IGNORECASE)
-    # 移除 on* 事件属性
-    svg_content = re.sub(
-        r'\son\w+\s*=\s*("[^"]*"|\'[^\']*\')', '', svg_content,
-        flags=re.IGNORECASE)
-    # 移除外部引用（xlink:href / href 指向 http）
-    svg_content = re.sub(
-        r'(xlink:href|href)\s*=\s*("https?://[^"]*"|\'https?://[^\']*\')',
-        '', svg_content, flags=re.IGNORECASE)
-    return svg_content
 
 
 def render_rich_doc(doc) -> str:
