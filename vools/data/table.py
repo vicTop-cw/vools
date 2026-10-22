@@ -1850,12 +1850,21 @@ class Table(Seq):
         return self.rows()
 
     def sum(self, col: str) -> Union[int, float]:
-        """求和"""
+        """求和（仅统计 int/float）
+
+        BUG-285: 数字字符串（如 ``Table.from_file`` 读取 CSV 得到的单元格）
+        与 None 会被**静默忽略**——整列都是字符串时返回 0。数字字符串列请先
+        用 :meth:`to_num` 转换再求和。
+        """
         values = self.column(col)
         return sum(v for v in values if isinstance(v, (int, float)))
 
     def avg(self, col: str) -> float:
-        """平均值"""
+        """平均值（仅统计 int/float）
+
+        BUG-285: 同 :meth:`sum`——数字字符串与 None 被静默忽略，整列字符串时
+        返回 0。数字字符串列请先用 :meth:`to_num` 转换。
+        """
         values = self.column(col)
         nums = [v for v in values if isinstance(v, (int, float))]
         return sum(nums) / len(nums) if nums else 0
