@@ -18,7 +18,24 @@ _FM_CLOSE = '---'
 # AIGC 合规块的特征键（区域 0）——strip_frontmatter 只剥这一块，
 # 不再无差别剥首个 front-matter（存量 bug：单 front-matter 的 .actus.schema.md
 # 会被剥掉唯一元数据块，导致 parse_action_metadata 拿到空 meta）。
-_AIGC_KEYS = ('AIGC', 'aigc', 'generated-by', 'generated-by-at')
+# V-13/V-14（寻虫 2026-10-22）两处修正：
+#   ① 判别键必须出现在**第 0 列**（块顶层键）。旧实现 strip 后 startswith——
+#     元数据块内嵌套的合法子键（ai: 下的 generated-by: claude，docs/10 §D.4
+#     形态）会把整个唯一元数据块误判成 AIGC 直接剥掉，model 层实测炸
+#     "缺少必填字段: id"——注释声明已修的存量 bug 换个入口回归。
+#   ② 判别面补齐声明面列出的 generated-by-at，并覆盖 AIGC 国密块的实际键
+#     （ContentProducer/ProduceID 等，第 0 列出现即合规块）。
+_AIGC_MARKERS = ('AIGC:', 'aigc:', 'generated-by:', 'generated-by-at:')
+
+
+def _looks_like_aigc_block(yaml_text: str) -> bool:
+    """块是否为 AIGC 合规块：任一判别键出现在第 0 列（即块顶层键）。"""
+    for ln in yaml_text.split('\n'):
+        if not ln or ln[0] in (' ', '\t'):
+            continue                      # 缩进行是嵌套子键，不是块顶层
+        if ln.startswith(_AIGC_MARKERS):
+            return True
+    return False
 
 
 def _split_frontmatter_blocks(text: str):
@@ -43,12 +60,9 @@ def _split_frontmatter_blocks(text: str):
         if end_idx is None:
             break  # 无闭合 → 不当 front-matter（交给下游按规范报错）
         yaml_text = '\n'.join(lines[i + 1:end_idx])
-        # 判别：任一行以 AIGC:/aigc:/generated-by: 起始 → AIGC 合规块，否则元数据块
-        kind = 'meta'
-        for ln in yaml_text.split('\n'):
-            if ln.strip().startswith(('AIGC:', 'aigc:', 'generated-by:')):
-                kind = 'aigc'
-                break
+        # 判别：第 0 列出现 AIGC:/aigc:/generated-by:/generated-by-at: 任一
+        # → AIGC 合规块，否则元数据块（V-13/V-14：缩进嵌套子键不算顶层判别）
+        kind = 'aigc' if _looks_like_aigc_block(yaml_text) else 'meta'
         blocks.append((kind, yaml_text))
         i = end_idx + 1
     return blocks, '\n'.join(lines[i:]).lstrip('\n')
@@ -57,7 +71,9 @@ def _split_frontmatter_blocks(text: str):
 def strip_frontmatter(text: str) -> str:
     """剥离区域 0（AIGC 合规留痕），返回其余正文（含区域 1 元数据 front-matter）。
 
-    - 文件不以 --- 开头 → 原样返回；
+    - 文件（跳过前导空行后）不以 --- 开头 → 原样返回（仅去除开头空行）；
+      （V-15 口径修正：文档此前写"文件不以 --- 开头 → 原样返回"，实现允许
+      前导空行——BOM/编辑器残留空行不该让合规块漏剥，行为可辩护，措辞对齐。）
     - 只有开头的 --- 无闭合 → 原样返回（交给下游按规范报错）；
     - **只剥 AIGC 特征块**：元数据块（含 id/name/... 等动作字段）原样保留，
       供 parse_action_metadata 解析（存量 bug 修复：此前无差别剥首个块，

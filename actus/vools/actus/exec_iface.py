@@ -151,26 +151,38 @@ def _classify_error(stderr: str, returncode: int) -> str:
 
 
 # executor.py 的 error.code → ERROR_KINDS 闭集映射（docs/03 §7.2 出参契约）。
-# 未知 code 映射 runtime（闭集内兜底），绝不丢弃原 code（写进 ExecResult.error 原文）。
+# V-01（寻虫 2026-10-22）：映射真源对齐 errors.ERROR_CODES（docs/08 §5）+
+# executor 实发码（internal/omega_*/entry_no_output/deps_*）。每个码要么有
+# 非 runtime 归宿，要么是显式豁免（注释标注）——旧表拿虚构键凑覆盖率，
+# 实发码反而全漏。未知 code 映射 runtime 兜底，原码写进 error 原文不丢。
 _ERROR_CODE_MAP = {
-    # auth：认证/信任/审批
-    'auth_required': 'auth', 'auth': 'auth', 'trust_denied': 'auth',
-    'approval_required': 'auth',
-    # quota：限流/并发上限
-    'quota_exceeded': 'quota', 'rate_limited': 'quota',
-    'max_instances': 'quota',
-    # invalid：入参/契约/动作不存在
+    # auth：认证/信任/审批（docs/08 §5.2 trust_rejected/visibility_denied 属授权面；
+    # trust_denied 为旧别名保留）
+    'auth_required': 'auth', 'trust_rejected': 'auth', 'trust_denied': 'auth',
+    'visibility_denied': 'auth', 'approval_required': 'auth',
+    # quota：限流/并发上限（executor 并发闸门实发 concurrency_limit）
+    'concurrency_limit': 'quota', 'quota_exceeded': 'quota',
+    'rate_limited': 'quota',
+    # invalid：入参/契约/动作不存在/定义错误
     'param_invalid': 'invalid', 'action_invalid': 'invalid',
     'action_not_found': 'invalid', 'args_invalid': 'invalid',
     'contract_invalid': 'invalid', 'schema_invalid': 'invalid',
-    # timeout
+    'entry_no_output': 'invalid',            # 入口块无输出=契约违约（docs/38 §1）
+    'omega_spec_invalid': 'invalid',         # Ω 契约坏（金条八：spec_error）
+    'dependency_cycle': 'invalid',           # 动作定义错误（环是写出来的）
+    # timeout（executor 实发 confirmation_timeout：等人工确认超时）
     'timeout': 'timeout', 'exec_timeout': 'timeout',
-    # unreachable：路径/网络不可达
+    'confirmation_timeout': 'timeout',
+    # unreachable：依赖/目标/语言不可达
     'path_not_found': 'unreachable', 'unreachable': 'unreachable',
-    'dep_missing': 'unreachable',
-    # resource：资源/权限/沙箱
+    'dependency_missing': 'unreachable', 'dep_missing': 'unreachable',
+    'deps_missing': 'unreachable',
+    'language_unavailable': 'unreachable',
+    # resource：权限/沙箱/资源
     'permission_denied': 'resource', 'sandbox_violation': 'resource',
     'resource_exhausted': 'resource',
+    # 显式豁免：internal（executor 块失败兜底码）与 omega_gate_failed
+    # （验证不过，语义随动作）保留 runtime——不假装知道根因。
 }
 
 
@@ -180,15 +192,20 @@ def _map_error_code(code: str) -> str:
 
 
 def _classify_exception(exc: Exception) -> str:
-    """从异常类型推断 error_kind。"""
+    """从异常类型推断 error_kind。
+
+    V-02（寻虫 2026-10-22）：ActionError 一律先走 _map_error_code(code)——
+    旧实现内置 6 码白名单，与 dict 路径结论相反（ActionError('timeout')
+    异常路→runtime、dict 路→timeout），消费方按 error_kind 分流不可靠。
+    映射未命中再落启发式/兜底。
+    """
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
     if 'actionerror' in name:
         code = getattr(exc, 'code', '') or ''
-        if code in ('auth_required', 'auth'):
-            return 'auth'
-        if code in ('action_invalid', 'action_not_found', 'invalid'):
-            return 'invalid'
+        mapped = _map_error_code(code)
+        if mapped:
+            return mapped
         return 'runtime'
     if 'timeout' in name or 'timeout' in msg:
         return 'timeout'
@@ -229,21 +246,48 @@ class _ExecutorIface:
         except ImportError as exc:
             return ExecResult(status='error', error=f'executor 不可导入: {exc}',
                               error_kind='runtime')
+        # V-04（寻虫 2026-10-22）：dry_run 承诺"只预览不执行"。executor 源
+        # 走引擎 preview API（executor.preview = docs/06 §3 干跑：展示将执行
+        # 的块/指令/依赖/trust，不执行任何代码）——此前 dry_run=True 照样真跑。
+        if ctx.dry_run:
+            try:
+                prev = _executor_mod.preview(action.id, ctx.params or {})
+            except Exception as exc:  # noqa: BLE001
+                return result_from_exception(exc)
+            if isinstance(prev, dict) and prev.get('status') not in (None, 'ok'):
+                err = prev.get('error') or {}
+                return ExecResult(
+                    status='error', data=prev,
+                    error=str(err.get('message') if isinstance(err, dict) else err) or 'preview 失败',
+                    error_kind=_map_error_code(str(err.get('code') if isinstance(err, dict) else '')) or 'runtime')
+            return ExecResult(status='ok', data=prev)
         try:
             raw = _executor_mod.execute(action.id, ctx.params or {})
         except Exception as exc:  # noqa: BLE001 —— 统一出参契约：异常归一
             return result_from_exception(exc)
         # 引擎原生 execute 返回 docs/03 §7.2 结构化出参：
-        #   {'status': 'ok'|'failed', 'data': ..., 'error': None | {'code','message','details'}, 'artifacts': [...]}
+        #   {'status': 'ok'|'failed'|'awaiting_confirmation'|'cancelled',
+        #    'data': ..., 'error': None | {'code','message','details'}, 'artifacts': [...]}
         if isinstance(raw, dict):
-            ok = raw.get('status') == 'ok'
+            st = raw.get('status')
+            # V-03（寻虫 2026-10-22）：awaiting_confirmation 是 audit 动作的
+            # **正常业务态**（error=None、data 带 exec_id/hint），旧实现把
+            # 非 ok 一律归成 status='error'+error=''——违反本类"status=error
+            # 时 error 非空"契约，且 MCP/CLI 消费方会把"等人工确认"当 runtime
+            # 故障去重试/告警。归为 skipped 态（待确认=本次未执行、需 skip）。
+            if st == 'awaiting_confirmation':
+                return ExecResult(status='skipped', data=raw.get('data'),
+                                  error='', error_kind='',
+                                  artifacts=list(raw.get('artifacts') or []))
+            ok = st == 'ok'
             err = raw.get('error') or {}
             err_msg = (err.get('message') or err.get('code') or '') if isinstance(err, dict) else str(err)
             err_code = (err.get('code') or '') if isinstance(err, dict) else ''
             return ExecResult(
                 status='ok' if ok else 'error',
                 data=raw.get('data'),
-                error='' if ok else err_msg,
+                # 兜底文案：非 ok 且引擎没给 message（理论上不该发生）也要 error 非空
+                error='' if ok else (err_msg or f'执行失败（status={st!r}）'),
                 error_kind='' if ok else (_map_error_code(err_code) or 'runtime'),
                 artifacts=list(raw.get('artifacts') or []),
             )
@@ -269,14 +313,21 @@ class _AdapterIface:
 
         ref = action.meta.get('adapter')
         # 形态 2：内联 spec（dict）。AdapterSpec.from_dict 的既有契约是
-        # {'id':..., 'adapter': {type, command, ...}}（command 在 adapter 子对象里），
-        # 平铺写法（{'type': 'cli', 'command': 'echo'}）会被丢弃 command——
-        # 这里把平铺键收进 adapter 子对象再构造，两种写法都支持。
+        # {'id':..., 'name/output/params/trust': 顶层, 'adapter': {type,command,...}}。
+        # 寻虫 V-05（2026-10-22）：旧实现把平铺 dict **整体**塞进 adapter 子对象，
+        # from_dict 的顶层读取（output→output_type/output_path、params、name、trust）
+        # 全部落空——动作声明 'output': {type: file} 时产物静默蒸发、data=None。
+        # 按 from_dict 的字段归属拆分：顶层已知键留顶层，其余进 adapter 子对象。
         if isinstance(ref, dict):
+            _TOP_KEYS = ('id', 'name', 'description', 'version', 'author',
+                         'tags', 'params', 'output', 'trust')
             try:
-                adapter_block = dict(ref)
-                aid = adapter_block.pop('id', '') or action.meta.get('id') or 'inline'
-                spec = AdapterSpec.from_dict({'id': aid, 'adapter': adapter_block})
+                top = {k: v for k, v in ref.items() if k in _TOP_KEYS}
+                adapter_block = {k: v for k, v in ref.items() if k not in _TOP_KEYS}
+                spec = AdapterSpec.from_dict(
+                    {**{'id': top.get('id') or action.meta.get('id') or 'inline'},
+                     'adapter': adapter_block,
+                     **top})
                 registry = AdapterRegistry()
                 adapter = registry.create_adapter(spec)
                 raw = adapter.run(ctx.params or {})

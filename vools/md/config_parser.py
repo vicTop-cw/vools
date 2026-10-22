@@ -152,12 +152,24 @@ def _toml_parse_value(s: str) -> Any:
 
 
 def _split_array_items(s: str) -> List[str]:
-    """按逗号分割数组元素（处理嵌套括号）"""
+    """按逗号分割数组元素（处理嵌套括号**与引号内的逗号**）。
+
+    寻虫修复（2026-10-22）：旧实现只看括号深度，`'"a,b", "c"'` 会从
+    引号内部切开（实测 3 项），TOML 数组/内联表值含逗号即损坏。
+    """
     items = []
     depth = 0
+    quote = None
     current = ''
     for ch in s:
-        if ch in '([{':
+        if quote is not None:
+            current += ch
+            if ch == quote:
+                quote = None
+        elif ch in ('"', "'"):
+            quote = ch
+            current += ch
+        elif ch in '([{':
             depth += 1
             current += ch
         elif ch in ')]}':
@@ -277,8 +289,15 @@ def _yaml_parse_lines(lines: List[str], start: int, indent: int) -> tuple:
                     # 检查子内容是列表还是字典
                     next_stripped = lines[i + 1].strip()
                     if next_stripped.startswith('- '):
-                        # 列表
-                        current_list = []
+                        # 列表（寻虫修复 2026-10-22：原实现用共享变量
+                        # current_list 收集后又赋给 result[key]，但没把
+                        # current_list 置 None——函数末尾 _attach_list 会把
+                        # 同一个列表对象再附加一次，列表内容翻倍。
+                        # 且 '- name: a' 字典项被当纯文本、其缩进续行被
+                        # 丢弃/泄漏到外层。改为逐项解析：
+                        #   '- k: v' → 字典项（吸收更深缩进的续行）
+                        #   '- scalar' → 标量项
+                        items: List[Any] = []
                         j = i + 1
                         while j < len(lines):
                             if not lines[j].strip() or lines[j].strip().startswith('#'):
@@ -286,12 +305,33 @@ def _yaml_parse_lines(lines: List[str], start: int, indent: int) -> tuple:
                                 continue
                             if _get_indent(lines[j]) < child_indent:
                                 break
-                            if lines[j].strip().startswith('- '):
-                                current_list.append(_yaml_parse_scalar(lines[j].strip()[2:].strip()))
-                                j += 1
-                            else:
+                            item_line = lines[j].strip()
+                            if not item_line.startswith('- '):
                                 break
-                        result[key] = current_list
+                            item_body = item_line[2:].strip()
+                            item_col = _get_indent(lines[j]) + 2
+                            if ':' in item_body and not (
+                                    item_body.startswith('"') and item_body.endswith('"')):
+                                # 字典列表项：'- key: value'
+                                k, _, v = item_body.partition(':')
+                                entry = {k.strip(): _yaml_parse_scalar(v.strip() or '')}
+                                j += 1
+                                # 吸收同项的更深缩进续行（'  port: 1'）
+                                while j < len(lines):
+                                    if not lines[j].strip():
+                                        j += 1
+                                        continue
+                                    if _get_indent(lines[j]) >= item_col and ':' in lines[j] and not lines[j].strip().startswith('- '):
+                                        k2, _, v2 = lines[j].strip().partition(':')
+                                        entry[k2.strip()] = _yaml_parse_scalar(v2.strip() or '')
+                                        j += 1
+                                    else:
+                                        break
+                                items.append(entry)
+                            else:
+                                items.append(_yaml_parse_scalar(item_body))
+                                j += 1
+                        result[key] = items
                         i = j
                         continue
                     else:
@@ -531,12 +571,24 @@ def _parse_lua_value(s: str) -> Any:
 
 
 def _split_table_items(s: str) -> List[str]:
-    """按逗号分割 table 元素（处理嵌套大括号）"""
+    """按逗号分割 table 元素（处理嵌套大括号与引号内的逗号）。
+
+    寻虫修复（2026-10-22）：同 _split_array_items，旧实现不感知引号，
+    `key = "a,b"` 这类 Lua 值会从引号内切开。
+    """
     items = []
     depth = 0
+    quote = None
     current = ''
     for ch in s:
-        if ch == '{':
+        if quote is not None:
+            current += ch
+            if ch == quote:
+                quote = None
+        elif ch in ('"', "'"):
+            quote = ch
+            current += ch
+        elif ch == '{':
             depth += 1
             current += ch
         elif ch == '}':

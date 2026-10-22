@@ -334,19 +334,24 @@ def execute(action_id: str, params: dict = None,
         # best-effort：写指标失败绝不影响执行结果（与 calllog 设计一致）。
         # 落点与 call_log 同库（_meta/call_log.db 的 action_metrics 表），
         # popular_actions / trending_actions / quality_scale 全部消费此数据。
+        # V-20（寻虫 2026-10-22）：awaiting_confirmation 是「还没执行」的正常业务态，
+        # 不是执行结局——写成 ok=False 会把"面板每刷新一次待确认队列"记成一次假失败，
+        # success_rate 被不可逆污染（3 预览+1 真成功 → 0.25），quality 直接掉 bronze。
+        # 只有真实执行结局（ok/partial/failed/timeout/cancelled）才落指标。
         # caller 记调用来源：confirmed=True 的人工放行 vs False 的 MCP/CLI 自动调用，
         # 让 unique_callers 聚合能区分"哪个通道在用"（docs/03 §4.1）。
-        try:
-            from .calllog import write_action_metric
-            write_action_metric(
-                action_id,
-                ok=(result['status'] in ('ok', 'partial')),
-                runtime_ms=int((time.time() - _t_start) * 1000),
-                caller='confirmed' if confirmed else 'executor',
-                meta_dir=meta_dir,
-            )
-        except Exception:
-            pass  # best-effort：指标缺失不改变回执
+        if result['status'] in ('ok', 'partial', 'failed', 'timeout', 'cancelled'):
+            try:
+                from .calllog import write_action_metric
+                write_action_metric(
+                    action_id,
+                    ok=(result['status'] in ('ok', 'partial')),
+                    runtime_ms=int((time.time() - _t_start) * 1000),
+                    caller='confirmed' if confirmed else 'executor',
+                    meta_dir=meta_dir,
+                )
+            except Exception:
+                pass  # best-effort：指标缺失不改变回执
 
         # ── 事件总线通知 (Phase G5) ──
         try:

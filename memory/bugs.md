@@ -4569,7 +4569,7 @@ _sigcache 用两个全局表：_SIG_CACHE（id(func) -> Signature，LRU，上限
 修复前实测：连续 get_signature 5000 个临时函数后 _SIG_CACHE=4096（上限）而 _SIG_REFS=5000（无界泄漏）；单独函数 get_signature 后 del + gc.collect()，两表仍各残留 1 条 dead ref。
 
 修复后 probe 8 项全对：4200 函数后 _SIG_CACHE=4096 且 _SIG_REFS=4096（有界）、GC 后两表清零、同一函数命中同一签名、cache_info size/maxsize 正常、remove_signature True/False、clear_cache 清空。新增回归 tests/test_sigcache_refs_leak_regression.py 7 项 GREEN（monkeypatch 缩小上限避免慢测）；sig/cache 相关测试 84 项 GREEN（EXIT=0）。commit 已推送 gitcode master。
-## BUG-276 [2026-10-21T13:39:19Z] [medium] OPEN
+## BUG-276 [2026-10-21T13:39:19Z] [medium] FIXED
 - summary: encoding.core CodecRegistry 装饰器错位：@classmethod 被错放在注入的 do 助手上，致 get_decoders 缺 @classmethod（类调用 TypeError）且 do 变类方法（向 f 传类对象、返回类而非实例）
 - detail: vools/encoding/core.py. CodecRegistry 的装饰器错位（公共 API 双缺陷）：
 
@@ -4582,3 +4582,368 @@ _sigcache 用两个全局表：_SIG_CACHE（id(func) -> Signature，LRU，上限
 修复：删除 do 上的 @classmethod（恢复实例方法语义），给 get_decoders 补 @classmethod。
 - reported_by: agent-vools-hardening
 
+
+
+### FIXED(2026-10-21T13:43:43Z / BUG-276)
+- evidence: vools/encoding/core.py 修复（commit 02a0f23）：删除误置于注入 do 助手上的 @classmethod（do 恢复实例方法语义：self 绑定实例、向 f 传实例、返回 self）；为 get_decoders 补 @classmethod（与 get_encoders 对称）。
+
+修复前实测：CodecRegistry.get_decoders() -> TypeError: missing 1 required positional argument: 'cls'（实例调用碰巧可用掩盖问题）；CodecRegistry().do(f) -> f 收到的是 CodecRegistry 类对象（type），do 返回类对象（res is inst == False）。全库扫描确认 do 助手出现 3 处仅此带装饰器、get_decoders 仅此一处定义——唯一错位。
+
+修复后 probe 5 项全对：类调用 get_decoders/get_encoders 均返回 dict、两者均 classmethod、do 传实例且返回 self（pre_f/f/sub_f 顺序正确）。新增回归 tests/test_codec_registry_decorator_regression.py 8 项 GREEN；encoding 相关测试全 GREEN（EXIT=0）。commit 已推送 gitcode master（其后并发 agent 又落一提交 8d0960e，本地领先 1 待同步）。
+## BUG-277 [2026-10-21T13:53:03Z] [medium] FIXED
+- summary: data.table Table.join 的 right/outer 语义未实现：从不补右表未匹配行，right 等同 inner、outer 等同 left，静默丢失右表独有数据
+- detail: vools/data/table.py `Table.join`（对应 Qax.QaxJoin）的 join_type='right' / 'outer' 语义未实现：
+
+join_type 文档声明支持 'inner', 'left', 'right', 'outer'，但连接主循环（L1534-1554）只处理：
+- 匹配行：inner 与其它类型都追加；
+- 未匹配的 **self** 行：仅 `elif join_type in ('left','outer')` 追加全 None 右表行；
+- **从未补右表未匹配行**——right join 与 inner 完全等价，outer 与 left 完全等价。
+
+实测（a 表 id∈{1,2} val；b 表 id∈{1,3} other，on='id'）：
+- a.QaxJoin(b, on='id', how='right') -> rows=1，仅 id=1 匹配行；**应有 id=3 的右表独有行（左表侧 None）** → 应 rows=2
+- a.QaxJoin(b, on='id', how='outer') -> rows=2（id=1 匹配 + id=2 左表独有）；**缺 id=3 右表独有行** → 应 rows=3
+- inner=1 行、left=2 行 ✓ 正确
+
+影响：用户按文档使用 right/outer 连接会**静默丢失右表独有数据**，且 right 与 inner、outer 与 left 结果完全一样——契约违背（静默错误结果）。
+
+修复方向：记录 self 循环中命中过的 other key 集合；循环结束后对 join_type in ('right','outer') 补追加 other_index 中未命中的行，左表侧填 None（列布局与现有非 inner 分支一致：self_cols + 全部 other_cols）。
+- reported_by: agent-vools-hardening
+
+
+
+### FIXED(2026-10-21T14:03:00Z / BUG-277)
+- evidence: vools/data/table.py Table.join 修复（commit c95a453）：
+① 主循环记录 matched_other_keys；循环后对 join_type in (right, outer) 且 not first 时，遍历 other_index 补追加未命中右表行（self 侧 [None]*len(self_cols) + 全部 other_cols，与现有非 inner 行布局一致）——原实现从不补右表未匹配行，right 实际等同 inner、outer 实际等同 left；
+② 附带修复 first=True（文档：只返回第一个匹配）：原实现在处理完该 self 行的**全部**匹配后才跳出循环，多个匹配仍返回多行；现首个匹配追加后立即 break（right/outer 不做补齐）。
+
+修复前实测（a 表 id∈{1,2}、b 表 id∈{1,3}，on=id）：right -> rows=1（仅 id1；应 2，缺 [None,None,3,'C']）；outer -> rows=2（id1+id2；应 3，缺右表独有行）；first=True + 多重匹配 -> rows=2（应 1）。
+
+修复后 probe 9 项全对：inner=1/left=2/right=2（含 [None,None,3,'C']）/outer=3（含左右独有）、四类型行宽与表头一致、空左表 right join=2 行、first=True 单匹配 1 行/多 self 行 1 行/right+first 不补齐 1 行。新增回归 tests/test_table_join_outer_regression.py 9 项 GREEN；tests/data/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-278 [2026-10-21T14:14:51Z] [medium] FALSE_POSITIVE
+- summary: data.table _parse_where_expr 静默吞掉条件表达式错误：列名笔误/语法错误/空表达式全部返回 False 致 QAXFilter/where 静默返回空表，调用方无法区分无匹配与条件写错
+- detail: vools/data/table.py `_parse_where_expr`（QAXFilter/Qax.where/where 字符串条件的解析器）把所有解析/求值错误静默吞成 False：
+
+L1278-1294 safe_eval：
+- `except Exception: return False` 覆盖 ast.parse 的 SyntaxError 与 eval 的 NameError；
+- 非白名单 AST 节点 `return False`（无任何提示）。
+
+实测（4 行表 id/name/v）：
+- QAXFilter('nope == 1')（列名笔误，未替换 → eval NameError）-> 返回空表 0 行，无异常
+- QAXFilter('id >')（语法错误）-> 空表
+- QAXFilter('')（空表达式）-> 空表
+- QAXFilter("name == 'a' or ")（悬垂运算符）-> 空表
+- 合法表达式均正确（id > 2 -> 2 行、and/or/not、可调用谓词等 8 项）
+
+影响：过滤条件的笔误/非法表达式**静默返回空结果集**，调用方无法区分「没有匹配数据」与「条件写错」——典型静默错误（与 BUG-229/235/236 同族）。列名拼错在字符串条件里非常常见。
+
+修复方向：把「表达式本身非法」与「数据导致的求值失败」区分——SyntaxError、未知标识符 NameError、非白名单 AST 节点 抛 ValueError（带表达式原文），其余数据相关求值异常（如跨类型比较 TypeError）保持返回 False 不误伤。
+- reported_by: agent-vools-hardening
+
+
+## BUG-279 [2026-10-21T14:37:54Z] [medium] FIXED
+- summary: [rhop-task] TaskStore 不是真 ABC：@abc.abstractmethod 惰性失效，裸实例化与零实现子类实例化均成功
+- detail: 现象：vools/rhop/vools/rhop/task/store/base.py 的 TaskStore 对 16 个方法都标了 @abc.abstractmethod，但类声明是 `class TaskStore(object)`，既没继承 abc.ABC 也没设 metaclass=ABCMeta，因此 __abstractmethods__ 为空。硬证据（verify 模式稽核脚本实测）：① isinstance(TaskStore, abc.ABCMeta) == False；② TaskStore() 裸实例化成功、不抛 TypeError；③ 零实现的子类 _Incomplete(TaskStore) 实例化同样成功。
+  根因：@abstractmethod 只给函数打 __isabstractmethod__ 标记，__abstractmethods__ 由 ABCMeta.__new__ 计算；缺 ABCMeta 时标记不生效。
+  影响面：store/__init__.py 的 create_store 只做 `isinstance(store, TaskStore)` 弱校验，于是任何第三方后端（如后续要接的 PostgreSQL）漏实现 claim_next / set_state / apply_state 等方法都不会在构造期被拦，会推迟到运行期某个调用点才炸；docs/task-queue.md §4.4 声称的『契约』因此是软约束。同时 TaskStore() 本身可被直接实例化，抽象基类语义名不副实。
+  证据：rhop/tests 现有 313 个任务队列用例全绿（313 passed in 100.65s），说明该缺陷无任何测试覆盖——是稽核（verify 模式）枚举 API 时发现的。
+  建议：class TaskStore(abc.ABC)（或 metaclass=abc.ABCMeta）；create_store 增加缺失方法检查并给出可读报错；补一个『缺实现子类实例化必须抛 TypeError』的回归用例。修复属 polish 档（动已有代码、不扩边界）。
+- reported_by: explore-verify-1
+
+
+
+### FIXED(2026-10-21T15:09:47Z / BUG-279)
+- evidence: polish 轮收口（任务 T0r2）：① vools/rhop/vools/rhop/task/store/base.py: class TaskStore(object) → class TaskStore(abc.ABC)，ABCMeta 生效，__abstractmethods__ 由 0 变为 16 个契约方法；② vools/rhop/vools/rhop/task/store/__init__.py: create_store 把工厂构造期 TypeError 转成可读 StoreUnavailable（含 kind 与缺失方法名）；③ vools/rhop/tests/test_task_store.py 新增 TestAbstractContract 8 用例锁定契约面（含『__abstractmethods__ 与文档列表逐字一致』『缺实现子类必须 TypeError』『裸实例化必须 TypeError』）；④ vools/rhop/docs/task-queue.md §4.4 补『契约是强制的，不只是注释』口径。锁钉证据：全量 pytest 466 passed / 0 failed（改动前 458）；Round 1 稽核脚本 verify_rhop_task_api.py 复跑 mismatch 2 → 0（50 项检查全过）。
+## BUG-280 [2026-10-22T01:51:33Z] [high] FIXED
+- summary: [rhop-task/bugfind-P4] 本地库模式（sqlite-local）下 A 端 requeue 一条 B 已完成的任务会造成双方状态永久发散（A 永远等不到完成）
+- detail: 现象：sqlite-local 模式，任务 j 在 B 端已 COMPLETED（双方版本 4），运维在 A 端调用 requeue('j') 后：A 端状态变为 PENDING、version=5；B 端保持 COMPLETED、version=4。此后 B 每次 push_states 都带 version=4，A 端 apply_state 因『incoming version <= local.version』永久丢弃该状态包 → A 端 is_all_done() 恒为 False、A 端 daemon/watch 永远在等；B 端任务表无该任务待办，会空转。
+  根因：两条互斥的规则在本地库模式下没有协调点——① requeue 用 force=True 绕过流转校验把状态回 PENDING 并 version+1（queue.py:376 转发到 sqlite_store.py:343 set_state(force=True)）；② apply_state 严格要求版本单调递增（sqlite_store.py:542），而 B 的状态版本已落后于 A 重写后的本地版本，于是 B 的真相再也推不回来。apply_task 只更新定义字段、不更新 state，所以也不会纠正。
+  影响面：任何本地库部署 + 运维在 A 端跑 requeue/retry_failed 或在 A 端误重投已完成任务；表现是『看起来在跑，永远跑不完』，比显式失败更难发现（无报错、无日志异常）。文档 §15 只笼统写了『本地库模式下 requeue/retry_failed 请在 B 端执行』，没有给出机制说明，也没有任何检测。
+  证据：rhop/tests/boundary/r3_boundary_probes.py 的 P4 探针（可复现，exit 码 = 确认条数）。复现命令：cd rhop && python tests/boundary/r3_boundary_probes.py；输出 P4 行：before=('COMPLETED','COMPLETED') after=(A:PENDING,B:COMPLETED,verA=5,verB=4)。回归：run_check 134 passed。
+  建议（修法二选一，含回归用例）：(a) 在 TaskQueue.requeue/retry_failed 上做跨库收敛——把重置意图作为指令推给对端（TaskSync 增加 resets[] 通道，B 端 apply 后同步回推新版本）；(b) 明确禁止 A 端重置『已被对端推进过』的任务，改为在 B 端执行，并在 A 端该操作返回可读拒绝 + 记审计；无论哪种，都要补一条『requeue 已完成任务后双方收敛』的回归用例，并在 docs/task-queue.md §15 改写现有一句话限制。
+- reported_by: explore-bugfind-1
+
+
+### FIXED(2026-10-22T02:06:26Z / BUG-280)
+- evidence: polish 轮收口（任务 T0r3，mode=polish）：① vools/rhop/vools/rhop/task/sync.py 新增 resets 通道——request_reset(task_name, at_version) 登记意图并立即 push_tasks 落盘；push_tasks 的 a2b 文档带 resets:[{task_name,at_version}]；pull() 在 B 侧按『版本仍停在 at_version』幂等执行 store.requeue、在 A 侧在版本推进后撤销意图；describe() 暴露 pending_resets。② vools/rhop/vools/rhop/task/queue.py 的 requeue/retry_failed 在本地库模式（有 syncer）下只登记重置意图、不再本地改状态/版本；共享库模式行为不变（仍走 store.requeue/reset_failed）。③ tests/test_task_sync.py 新增 TestRequeueConvergence 4 个回归用例（版本不本地推进 / 重跑后收敛且版本相等 / retry_failed 走重置通道 / 未知任务返回 False）。④ docs/task-queue.md §14 补 resets 通道说明、§15 改写本地库运维操作行与已知风险行。锁钉证据：全量 pytest 470 passed / 0 failed（改动前 466）；边界语料 tests/boundary/r3_boundary_probes.py 的 P4 由 CONFIRMED 翻转为 NOT-CONFIRMED（after=(A:PENDING,B:PENDING,verA=5,verB=5)），exit 由 4 变为 3（剩余确认风险条数）；改动前同步用例基准 16 passed。
+## BUG-281 [2026-10-22T01:51:33Z] [medium] FIXED
+- summary: [rhop-task/bugfind-P2] 白名单只约束『解释器名』，放行任意解释器即等价于把 B 的代码执行权交给 A（无审计、文档未明示）
+- detail: 现象：配置 exec.allow=["cli:python"]（文档口径：只放行 python 解释器，其它命令仍拒绝）。提交一条 cli 任务让 B 执行 `python payload.py`，payload.py 内容为 open(flag,'w').write('arbitrary-code-ran') → 任务 COMPLETED 且 flag 文件被创建。对照组 exec.allow=["action:*","handler:*"] 下同一条指令被 ExecDenied 拒绝、outcome=failed。
+  根因：ExecPolicy.check 只把 channel 与『可执行名/语言名』做 fnmatch 比对（exec.py:164），不感知命令体内容；任何解释器（python/bash/node…）天然能执行任意代码，所以 allow 里的一条 cli:<解释器> 就等于对该解释器开了任意代码执行。这是白名单模型的固有边界，不是实现笔误，但文档与默认告警都把它表述成『默认安全边界』，容易让人误判防护强度。
+  影响面：B 端被 A 单侧放行任意解释器时，A 侧失陷/被诱导即可把 B 当跳板执行任意代码；目前 cli 执行路径没有任何审计日志（只有任务级 outcome 记录，看不到实际命令与来源任务的授权依据）。
+  证据：rhop/tests/boundary/r3_boundary_probes.py 的 P2 探针（含对照组），复现命令同上；run_check 134 passed。
+  建议：(a) 文档 docs/task-queue.md §10 显式写出『放行解释器 = 放行该解释器可执行的任意代码』并给出分级建议（能只放行动作/处理器就别放 cli:*）；(b) cli 执行时落审计行（task_name、实际 argv、channel、exec.allow 命中项）；(c) 可选：提供 cli 命令模板白名单（如只允许 `python scripts/xxx.py --ds=...` 的形态）或 allow_args_only 开关。
+- reported_by: explore-bugfind-1
+
+
+### FIXED(2026-10-22T03:11:45Z / BUG-281)
+- evidence: polish 轮收口（任务 T0r5，mode=polish）：① vools/rhop/task/exec.py 新增模块级 audit_cli_entry(payload, channel, name, policy)——在 cli 通道**执行前**打 INFO 审计行（logger vools.rhop.task.exec），内容含 task/channel/name/allow_hit/allow_any/shell/cmd；run_payload 的 cli 分支改为先审计后执行（执行前落审计的理由是：执行后补记在超时/被杀/子进程异常时会漏）。② 新增 ExecPolicy.matched_pattern(channel, name) 把『命中哪条 allow』读回，check 改为复用该判定（同一真源，不新增第二套匹配逻辑）。③ 文档 docs/task-queue.md §10 补审计说明 + 分级建议 4 条（只放行动作/处理器优于 cli:*；cli:<解释器>=把代码执行权交给 A；细粒度优先 register_handler；allow_any 需确认配置来源可信），§15 与语料 README 同步 P2 的处置结论为『设计性质、已审计+已文档化』。④ 回归锁定：tests/test_task_exec.py 新增 TestCliAudit 3 个用例——matched_pattern 命中读回（含 .exe 后缀归一、默认白名单不放行 cli、allow_any 命中）、cli 执行留审计行且字段正确、执行失败/超时也留痕。锁钉证据：全量 pytest 478 passed / 0 failed（改动前 475；排除外部代理进行中的 tests/test_pg_store.py 与 tests/test_pg_smoke.py）；边界语料 r3_boundary_probes.py 的 P2 维持 CONFIRMED（该语料断言的是『放行解释器即放行任意代码』这一设计性质，加审计不会改变它），语料 README 已同步说明。
+## BUG-282 [2026-10-22T01:51:33Z] [medium] FIXED
+- summary: [rhop-task/bugfind-P3] 心跳时间戳只有秒精度，存在最多约 1s 的误判死窗口；配置层无任何校验阻止把判死阈值设成 <1s
+- detail: 现象：Heartbeat 写盘用 %Y-%m-%dT%H:%M:%SZ（秒精度，heartbeat.py:132 tick）；A 端读数 age = 真实间隔 + 当前秒内的小数部分（heartbeat.py:164 read）。构造：写入时刻 .900s、读取时刻 +5ms（仍在同一秒内）→ 读到 age=0.905s，真实间隔只有 0.005s。当 stale_after_sec=0.5 时被判 stale（误判死），而同一读数在阈值 15s 下判 alive。
+  根因：秒精度时间戳与浮点阈值的组合误差。误差上界约 0.999s（取决于写入时刻落在秒内的位置），必然存在；而 TaskConfig 对 heartbeat.stale_after_sec/interval_sec 没有做任何一致性校验（DEFAULT_QUEUE 只给默认值，不拦用户把阈值设成 <1s）。
+  影响面：默认配置（5s/15s）不受影响；但任何把 stale_after_sec 设小、或用自定义 interval 的部署都可能把『活着的 B』判成挂了——后果是 A 侧提前退出/误告警，甚至触发重复启动 B 造成任务双执行。同类：本地库模式下 A 端 requeue 的问题（见 BUG-280）在心跳判死被误触发时会被放大。
+  证据：rhop/tests/boundary/r3_boundary_probes.py 的 P3 探针，复现命令同上。run_check 134 passed。
+  建议：(a) 心跳写入改为毫秒精度（或写入时同时记录真实写入时刻），消除截断误差；(b) 配置校验 stale_after_sec >= interval_sec + 1s（小于则报错并给出建议值）；(c) 补一条『秒末写入 + 紧邻读取 + 小阈值』的回归用例，锁定该窗口；(d) docs/task-queue.md §9 现有『秒精度导致最多约 1s 偏差』的说明改为由代码保证、而非只靠文档。
+- reported_by: explore-bugfind-1
+
+## BUG-283 [2026-10-22T01:51:33Z] [low] FIXED
+- summary: [rhop-task/bugfind-P5] result_max_bytes 不是落库结果的硬上限：只裁 stdout/stderr 两个键，其它大字段原样入库
+- detail: 现象：queue.py:124 encode_result 里 result_max_bytes 生效时，只对 info['result'] 中的 stdout/stderr 两个键做 2000 字符裁剪，并打上 truncated=True。构造 20KB 的非 stdout/stderr 结果（如 handler 返回的 dict/大字段）、result_max_bytes=1000 → 落库文本 20215B，远超上限，但 truncated 标记依然为 True。
+  根因：截断逻辑是『局部字段裁剪 + 标记』，不是『按字节预算压缩』；上限语义只在文档 §8 写成『超过 result_max_bytes 时截断』，读者会以为落库结果必然不超限。
+  影响面：结果里塞大字段（handler 直接返回大 dict/日志/中间数据）时库行无界膨胀：SQLite TEXT 无硬限、同步文档（sqlite-local 的 b2a 包）体积同步膨胀、可能把 shared 介质打满；同时 `truncated=True` 会误导运维以为已经截断到上限。默认 65536 下通常不易触发，但命名与契约不符本身会误导排障。
+  证据：rhop/tests/boundary/r3_boundary_probes.py 的 P5 探针（输出：上限=1000B 实际落库=20215B truncated=True），复现命令同上。run_check 134 passed。
+  建议：二选一并同步文档：① 改成硬上限：截断时按预算递归裁剪 JSON（保留错误/状态信息，正文写引用+提示走文件通道）；② 明确降级为『仅裁 stdout/stderr 的软提示』，改名（如 result_trim_hint_bytes）并把 docs/task-queue.md §8/§15 的表述改准。另建议在 §15 补一句『大结果请写文件，信封里放引用路径』（对应既有 result_max_bytes 设计初衷）。
+- reported_by: explore-bugfind-1
+
+
+
+### FIXED(2026-10-22T02:51:09Z / BUG-282, BUG-283)
+- evidence: polish 轮收口（任务 T0r4，mode=polish）：① BUG-282 双保险——vools/rhop/task/heartbeat.py 的 tick 改写微秒级时间戳（新增 TIMESTAMP_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'，模块 docstring 说明秒精度为何不可用），截断误差归零；vools/rhop/task/config.py 在 TaskConfig 合并 heartbeat 段后校验 stale_after_sec >= interval_sec + 1s，不合规抛 SecretError（报错文案带 BUG-282 说明）。② BUG-283——vools/rhop/task/queue.py 的 encode_result 改为落库硬上限：新增模块级 _shrink_result_to_bytes(data, budget)，先裁 stdout/stderr 各 2000 字符，仍超限就退化为紧凑摘要 {truncated, truncate_hint, result_kind, result_chars, result_head} 并循环减半 result_head 直到 ≤ budget；加密路径预算先扣 600B 信封开销，保证密文落库文本也 ≤ result_max_bytes。③ 回归锁定：tests/test_heartbeat.py 新增 test_timestamp_has_sub_second_precision（时间戳必须含小数秒）与 test_no_false_stale_at_second_boundary（写入 .900 / 读取 +5ms 必须判 alive 且 age<0.1s）；tests/test_task_config.py 新增 test_heartbeat_threshold_must_cover_write_interval（阈值=间隔拒绝、=间隔+1s 放行、小间隔小阈值拒绝、默认值自洽）；tests/test_task_queue.py 新增 test_result_cap_is_hard_cap_for_non_stdout_fields（20KB 非 stdout 字段落库 ≤1000B 且摘要含 result_chars）与 test_result_cap_holds_under_encryption（加密后落库 ≤4000B）。④ 文档 docs/task-queue.md §8/§9/§15 改写口径并标注 BUG-281 仍开放。锁钉证据：全量 pytest 475 passed / 0 failed（改动前 470；排除外部代理进行中的 tests/test_pg_store.py 与 tests/test_pg_smoke.py）；边界语料 r3_boundary_probes.py 的 P3、P5 由 CONFIRMED 翻转为 NOT-CONFIRMED，语料 exit 由 4 降到 1（唯一确认风险为 P2/BUG-281，本轮范围外）。
+## BUG-284 [2026-10-22T02:31:25Z] [medium] FIXED
+- summary: data.qax QaxGroup 未知聚合方法静默填 None：agg_spec 里 'avgg'/'maxx'/任意拼错方法名不报错，整列静默变 None，调用方无法区分「聚合结果为无」与「方法名写错」
+- detail: vools/data/qax.py `QaxGroup`（L519-579，分组聚合）的 `agg_spec` 未知聚合方法走 `else: row.append(None)` 静默填 None，与 BUG-129（regexp_split 静默返回 None → 显式 ValueError）同形。
+
+实测（Qax [[1,'a',10],[1,'b',20],[2,'c',30]]，group_cols='g'）：
+- agg_spec={'v': 'sum'} -> [[1, 30], [2, 30]] ✓
+- agg_spec={'v': 'mean'} -> [[1, 15.0], [2, 30.0]] ✓
+- agg_spec={'v': 'count'} -> [[1, 2], [2, 1]] ✓
+- agg_spec={'v': 'avgg'}（拼错）-> [[1, None], [2, None]]，**无异常**
+- agg_spec={'v': 'maxx'} / {'v': 'unknown'} -> 同样整列 None
+- callable 聚合正常（lambda: max-min -> [[1,10],[2,0]]）
+
+影响：聚合方法名笔误（avgg/mean 之外的别名、大小写错误等）会静默产出空数据列；下游拿到 None 列继续计算/写库不会报错，属静默错误结果。docstring 仅写「agg_spec: 聚合规格字典 {列名: 聚合方法}」，未声明支持集合与错误行为。
+
+修复方向：else 分支改 raise ValueError，消息列出支持的聚合方法（sum/avg/mean/count/min/max 或可调用对象），并在 docstring 补明支持集合。
+- reported_by: agent-vools-hardening
+- task_id: T0r712
+
+
+
+### FIXED(2026-10-22T02:40:02Z / BUG-284)
+- evidence: vools/data/qax.py QaxGroup 修复（commit ccf087b）：agg_spec 聚合方法 else 分支由 `row.append(None)` 改为 raise ValueError，消息为「QaxGroup: 不支持的聚合方法 {func!r}（列 {col!r}）；支持 'sum' / 'avg' / 'mean' / 'count' / 'min' / 'max'，或可调用对象」；docstring 补明支持集合与 Raises。
+
+修复前实测（q=[[1,'a',10],[1,'b',20],[2,'c',30]] g/name/v）：{'v':'avgg'} / {'v':'maxx'} / {'v':'unknown'} 均静默产出 [[1,None],[2,None]]，无异常。修复后 probe 12 项全对：sum->[[1,30],[2,30]]、avg/mean->[[1,15.0],[2,30.0]]、count->[[1,2],[2,1]]、min->[[1,10],[2,30]]、max->[[1,20],[2,30]]、callable->[[1,10],[2,0]]、无 agg_spec->[[1],[2]]、多列分组 3 行、五个拼错/未知方法均抛 ValueError（消息含全部支持名）。
+
+新增回归 tests/test_qax_group_unknown_agg_regression.py 14 项 GREEN（含 message_lists_supported 断言）；tests/data/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+
+## BUG-285 [2026-10-22T02:53:27Z] [low] FIXED
+- summary: data.table Table.sum/avg（及 QAXSum/QAXAvg）docstring 未声明「仅统计 int/float」语义：数字字符串列（Table.from_file 读 CSV 的常态）静默求和为 0，无错误无告警；Row/Column 版已写「仅数字」，Table 级最常用入口缺失
+- detail: vools/data/table.py `Table.sum(col)` / `avg(col)`（L1852-1861，同时也是 QAXSum/QAXAvg 的实现）docstring 只写「求和」/「平均值」，但实现过滤 `isinstance(v, (int, float))`——**字符串数字被静默忽略**，整列字符串时返回 0：
+
+实测：
+- Table.sum/avg on [[1,'10'],[2,'20']] 的 v 列 -> Sum=0, Avg=0（应 30 / 15.0 或至少告知被忽略）
+- 同表 where v 为 int（[[1,10],[2,20]]）-> 30 / 15.0 ✓
+- Table.from_file 读出的 CSV/TXT 单元格**全是字符串**（data.load_csv 路径同样）：<code>Table.from_file('f.csv').sum('amount')</code> 恒为 0，无任何错误/告警——静默错值最现实路径。
+- 对照：Row.sum（L299）docstring 明写「求和 (仅数字)」，Column.sum 同；唯独 Table 级（最常用入口）漏了这个限定词；QAXSum/QAXAvg（qax.py L532-552）也只有「求和」/「平均值」。
+- 现有测试全部用数字数据（test_table.py:44 avg('age')、test_table_qax.py:282 col.sum()==90 等），未锁定字符串列行为。
+
+影响：文档-实现契约缺口（同 BUG-2xx 家族）。调用方无法从文档得知「字符串数字会被静默丢弃」，极易在 CSV 数据上得到 0 而误判业务结果。
+
+修复方向：Table.sum/avg + QAXSum/QAXAvg docstring 显式声明「仅统计 int/float；字符串（含 CSV 读取的数字串）与 None 被忽略——数字字符串列请先 to_num(col) 转换」，与 Row/Column 版「仅数字」口径对齐。
+- reported_by: agent-vools-hardening
+
+
+
+### FIXED(2026-10-22T03:02:46Z / BUG-285)
+- evidence: 文档对齐修复（commit b62126e，行为不变）：
+- vools/data/table.py `sum(col)` docstring → 「求和（仅统计 int/float）」+ BUG-285 说明（数字字符串/None 静默忽略、整列字符串返回 0、请先 to_num）；`avg(col)` 同口径。
+- vools/data/qax.py `QAXSum`/`QAXAvg` docstring 增 Note：「仅统计 int/float——数字字符串（CSV 读入常态）与 None 被静默忽略，整列字符串时返回 0；数字字符串列请先 QAXColToNum」。
+- 与 Row.sum（「求和 (仅数字)」）/Column.sum 既有口径对齐。
+
+验证：probe 确认行为未变——字符串列 [[1,'10'],[2,'20']] sum/avg -> 0/0（现已在文档声明）；to_num 后 -> 30/15.0；int 列 -> 30/15.0；Qax 侧 QAXSum/QAXAvg 同样。新增回归 tests/test_sum_avg_doc_semantics_regression.py 12 项 GREEN（① 行为锁定：字符串忽略/to_num 管线/int 列/Qax 同语义；② 四个 docstring 均含「仅统计」「字符串」防文档再漂移）。tests/data/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-286 [2026-10-22T03:11:04Z] [low] FIXED
+- summary: sql.builder _build_update 无 SET 字段时静默产出非法 SQL 'UPDATE t'（build 无校验，execute 才在数据库端语法报错）；同类 INSERT 空情形有 DEFAULT VALUES 兜底，UPDATE 没有
+- detail: vools/sql/core/builder.py `BaseSqlBuilder._build_update`（L826+）在**从未调用 set_() / set_ 无字段**时静默产出非法 SQL，`build()` docstring 却承诺「组装 SQL 字符串」（即可用语句）：
+
+实测（BaseSqlBuilder）：
+- `B().update('t').build()` -> `('UPDATE t', ())` —— **缺 SET 子句，任何数据库都语法错误**，构建阶段无任何报错
+- `B().update('t').set_().build()` -> `('UPDATE t', ())` 同（set_ 空 kwargs 走 update 分支）
+- 对照：`B().insert_into('t').build()` -> `('INSERT INTO t DEFAULT VALUES', ())` ✓ 合法；`update('t').set_(a=1)` -> `('UPDATE t SET a = %s', (1,))` ✓ 合法
+- 内部无调用者在缺 set_ 情况下 build（全库仅 builder 自身定义处命中）；tests/sql/test_builder.py 的 update 用例均带 set_ —— 加校验零回归
+
+影响：拼错/遗漏 set_ 的调用方拿到 `('UPDATE t', ())` 后直接丢给 execute，得到的是数据库 SQL 语法错误（错因离调用点远、排查成本高）；而同类 INSERT 的空情形有合法兜底（DEFAULT VALUES），UPDATE 没有。
+
+修复方向：_build_update 在无更新字段时 raise ValueError（明确提示需先 set_(...)），与 BUG-284/BUG-129 的「静默无效产出改显式报错」口径一致。
+
+附：同文件 where/having 的占位符数量与 params 数量不匹配（缺参/多参/无占位符带参）也不校验，但那是「构建器只拼文本、由驱动绑定」的既有设计，错误在执行期响亮暴露，本条不涉。
+- reported_by: agent-vools-hardening
+- task_id: T0r714
+
+
+
+
+### FIXED(2026-10-22T03:20:30Z / BUG-286)
+- evidence: vools/sql/core/builder.py 修复（commit 1e87c6d）：_build_update 开头加校验——`if not self._update_values: raise ValueError("UPDATE 语句缺少 SET 字段：请先调用 set_(列=值, ...) 提供更新字段")`，docstring 补 Raises。
+
+修复前实测：BaseSqlBuilder().update('t').build() -> ('UPDATE t', ())（缺 SET，非法 SQL，无报错）；update('t').set_().build() 同。修复后 probe 7 项全对：update 无 set_ / set_ 空均抛 ValueError；update 正常 -> ('UPDATE t SET a = %s', (1,))；带 where -> ('UPDATE t SET a = %s WHERE id = %s', (2,5))；insert 空 values 仍为 ('INSERT INTO t DEFAULT VALUES', ()) 不变；delete/select 链不变。
+
+新增回归 tests/test_sql_builder_update_set_required_regression.py 10 项 GREEN（UPDATE 缺字段两类 + 合法 UPDATE/多字段参数顺序 + INSERT 空 values/delete/select 不变）；tests/sql/ 全 GREEN（EXIT=0）；全库确认无内部调用者在缺 set_ 情况下 build。commit 已推送 gitcode master。
+## BUG-287 [2026-10-22T03:29:58Z] [low] FIXED
+- summary: [rhop-task/verify] docs/task-queue.md §16 的用例计数与实现不一致（文档 458 / 表内 313，实测 488 / 337；6/11 行漂移）
+- detail: 现象：文档 §16 的『cd rhop && python -m pytest -q # 458 passed（145 既有 + 313 新增）』与表格内 11 行的用例计数，与实测不符。
+  逐行对照（文档声明 / 实测收集数）：test_task_store.py 36->44、test_task_exec.py 53->60、test_task_sync.py 16->20、test_heartbeat.py 20->22、test_task_queue.py 54->56、test_task_config.py 44->45；test_task_secrets.py 31、test_task_cli.py 28、test_task_e2e.py 16、test_html_fernet.py 15 仍一致。表内合计 313 vs 337，全量声明 458 vs 实测 488。
+  根因：历次 fix 轮（BUG-280/282/283/281）都改了实现并补了回归用例，但没人回写 §16 的计数；另有约 6 条用例来自并行开发的另一代理在 daemon/mirror/requester 侧的测试，文档表根本未收录 test_task_daemon.py。
+  影响面：误导读者判断测试规模；§16 表格（含 store=36）与实测脱节会让人误算'既有 vs 新增'的增量口径。非功能性缺陷，但属于『文档即实现』原则（项目标准 cl3）下的硬伤。
+  证据：本轮 verify 轮的可复用稽核仪器 rhop/tests/audit_api_doc.py 的 §16 自校（退出码=不一致条数，当前 1）；复跑命令 cd rhop && python tests/audit_api_doc.py <实测总数>；逐行对照脚本见本轮台账证据。全量实测 488 passed（排除双方进行中的 tests/test_pg_store.py 与 tests/test_pg_smoke.py）。
+  建议：① 把 §16 表格改成由稽核仪器自动生成（或加一条『计数以 pytest --collect-only 实测为准，脚本可复跑』的口径）；② 纳入 CI 或 pre-commit 门禁：每次改测试后回写计数，或干脆删除逐文件计数、只保留『以 audit_api_doc.py 为准』的单一真源；③ 补收 test_task_daemon.py。
+- reported_by: explore-verify-1
+
+
+
+### FIXED(2026-10-22T03:37:53Z / BUG-287)
+- evidence: tidy 轮收口（任务 T0r7，mode=tidy）：docs/task-queue.md §16 已按 pytest --collect-only 实测逐行回写——test_task_store 36->44、test_task_config 44->45、test_task_exec 53->60、test_heartbeat 20->22、test_task_queue 54->56、test_task_sync 16->20（另 4 行本就一致）；总计行 458->488，并把『145 既有 + 313 新增』改为可核对的『任务队列相关 337 + 周边模块 151』；补列 15 个周边文件的用例明细（合计 151）；6 个文件的『覆盖点』描述同步补上本轮新增的回归面（真 ABC 契约面 / 判死阈值校验 / 命中读回与审计行 / 微秒精度与秒边界 / 落库硬上限 / resets 收敛）；新增防再漂移自校入口（cd rhop && python tests/audit_api_doc.py <实测全量数>，退出码=不一致条数）与『历史漂移记录』自证行。锁钉证据：稽核仪器从 58 项检查 1 条 mismatch 降到 0（exit 0），§16 声明数与实测一致；全量 pytest 488 passed / 0 failed（改动前后同为 488，零回归）；边界语料维持 exit=1（P2=设计性质，不受文档对齐影响）。
+## BUG-288 [2026-10-22T03:49:05Z] [critical] FIXED
+- summary: [SECURITY] expression_handler 沙箱逃逸：字符串拼接拆分 dunder 名绕过原文黑名单，('.format') 的 format-field 属性遍历对 AST 不可见——实测可达 __class__/__mro__/__subclasses__ 绑定方法（典型 RCE 链），影响 safe_eval_expression/create_filter_func/create_map_func/safe_compile_expression
+- detail: vools/security/expression_handler.py 的表达式沙箱可被**字符串拼接 + str.format 属性遍历**绕过，达成对象模型逃逸（可继而至 subprocess 的典型 Python 沙箱逃逸链）。
+
+根因：
+① 第一道防线 `_contains_dangerous_patterns(expr)` 是**原文子串黑名单**（含 '__class__'/'__subclasses__' 等）；把字面量拆成两段拼接即可完全规避：原文里没有 '__class__' 连续子串。
+② 第二道防线 `_validate_ast_node` 对 `ast.Constant` 直接放行（LITERAL_TYPES），**字符串字面量里的 format-field 内容对 AST 不可见**；`.format` 属性名不在 DANGEROUS_ATTRS → Call(Attribute(Constant, 'format')) 合法通过。CPython 的 format 引擎随后按 field 语法执行属性/下标遍历，绕过全部 AST 属性校验。
+
+实测（py3.11，仅取证不执行有害命令）：
+- safe_eval_expression("('{0.__cla' + 'ss__}').format(x)", {'x': 1}) -> 返回 `<class 'int'>`
+- safe_eval_expression("('{0.__cla' + 'ss__.__mr' + 'o__}').format(x)", {'x': 1}) -> `(<class 'int'>, <class 'object'>)`
+- safe_eval_expression("('{0.__cla' + 'ss__.__bas' + 'es__[0].__subcl' + 'asses__}').format(x)", {'x': 1}) -> `<built-in method __subclasses__ of type object ...>`（拿到 __subclasses__ 绑定方法，后续即可枚举 Popen 等类完成 RCE）
+- 对照：直写 "__class__"/"open()"/format 未拆分时均被拦（原文子串命中）
+- 合法用法不受影响：x.year / 'ab'.upper() / ','.join / 比较 / 算术 / filter-map 均正常（tests/datetime/test_eval_sandbox_escape.py 中 x.year 用例依赖属性访问，故不能一刀切禁属性）
+
+影响：任何把不可信输入交给 safe_eval_expression / create_filter_func / create_map_func / safe_compile_expression 的调用方都面临任意代码执行。severity critical。
+
+修复方向：Attribute 分支加固——① 拒绝所有下划线开头的属性（dunder 全兜底，不依赖枚举完整）；② 拒绝 format / format_map 两个方法名（format-field 属性遍历是逃逸原语）；③ 合法属性访问（如 x.year）保持放行。
+- reported_by: agent-vools-hardening
+- task_id: T0r715
+
+
+
+### FIXED(2026-10-22T03:53:47Z / BUG-288)
+- evidence: vools/security/expression_handler.py 修复（commit f84c210）：新增 `_FORMAT_ESCAPE_ATTRS = frozenset({'format', 'format_map'})`；`_validate_ast_node` 的 ast.Attribute 分支加固为：`if node.attr in DANGEROUS_ATTRS or node.attr.startswith('_') or node.attr in _FORMAT_ESCAPE_ATTRS: raise ExpressionSecurityError(...)`——① 下划线开头属性一律拒绝（dunder 全兜底，不依赖枚举完整）；② 禁止 format/format_map（format-field 属性遍历原语）；③ 合法属性访问保留（tests/datetime/test_eval_sandbox_escape.py 的 x.year 用例依赖）。
+
+修复前（critical，实测仅取证不执行有害命令）：('{0.__cla' + 'ss__}').format(x) -> <class 'int'>；拼接至 __mro__ -> (<class 'int'>, <class 'object'>)；拼接至 __bases__[0].__subclasses__ -> 取得 __subclasses__ 绑定方法（RCE 链可达）。修复后同类 6 个向量全部 ExpressionSecurityError（在 .format 属性层即拒绝）；合法用法 x.year -> 2026、'ab'.upper() -> 'AB'、','.join -> 'a,b'、比较/算术、create_filter_func/create_map_func 全部正常；safe_compile_expression 同样拦截。
+
+新增回归 tests/test_expression_handler_format_escape_regression.py 15 项 GREEN（6 个逃逸向量覆盖 safe_eval_expression + 3 个构建器 + 8 个合法用法守护）；既有 tests/datetime/test_eval_sandbox_escape.py 与 tests/api/test_eval_sandbox_api.py 共 53 项 GREEN；security/sandbox 相关测试全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-289 [2026-10-22T04:04:33Z] [medium] FIXED
+- summary: [rhop-task/bugfind-P6] 租约过期后任务可被另一个 worker 重复执行（无续期通道），长任务可能被执行两次
+- detail: 现象：worker1 用 claim_next 领取任务 j（state=RUNNING、lock_time=now）后正常执行（计数器 1）；随后对远端时间调用 clean_stale_locks（模拟 A 端看护把过期锁回收），任务被重置为 PENDING 且版本不变；worker2 再次 claim_next 领取成功并执行同一任务（计数器 2）。即：**同一逻辑任务被执行两次**。
+  复现要点：把 lock_ttl_sec 设小（语料用 1），worker1 领取后不结束（长任务），远端 clean_stale_locks(now=远端时间) 把锁过期任务重置，再由另一个 worker 领取执行。
+  根因：任务租约（lock_time + lock_ttl_sec）没有续期通道。TaskQueue 只有 submit/claim_next/run_once/cancel/requeue 等接口，**没有任何 renew/lease 续期 API**；文档 §9 只说明 expire_time 默认取 max(timeout_min, lock_ttl+30)，但该默认值只在建任务时写一次，运行中不更新。因此只要任务实际执行时长 > lock_ttl_sec（默认 900 秒），中间就被判定锁过期 → 被重置 → 可被重新领取 → 重复执行。
+  影响面：分布式任务系统里最危险的一类缺陷——重复执行产生重复副作用（重复写库、重复发消息、重复扣款/告警）；语料实测计数器=2 即证明可重复执行。共享库模式下多个 worker 并行时还会互相触发，进一步放大。
+  证据：rhop/tests/boundary/r10_concurrency_sync.py 的 P6 探针（可复现，退出码=风险成立条数）。复现命令：cd rhop && python tests/boundary/r10_concurrency_sync.py；输出 P6 行：worker1 领取并执行一次后被 clean_stale_locks 重置成 PENDING、可再被领取执行，计数器实测执行次数=2。回归：全量 488 passed（排除 test_pg_store.py）。
+  建议（按优先级）：① 提供租约续期接口——worker 在任务执行期间按 lock_ttl/2 周期调用 store.touch_lock(task_name, now) 刷新 lock_time（TaskStore 契约加一个 touch_lock），或让 run_once 在执行前/中刷新；② 或在 clean_stale_locks 里区分『锁过期但任务仍在跑』与『worker 崩溃』（例如 B 端写 lock_time 的同时写 last_progress 时间，判死只看它），避免误重置；③ 至少在文档 §9/§10 显式写出『任务执行时长必须 < lock_ttl_sec，否则会被重复执行』这一硬约束，并补一条『锁过期 + 长任务』的回归用例（语料 P6 可直接转正）。
+- reported_by: explore-polish-4
+
+
+### FIXED(2026-10-22T04:21:52Z / BUG-289)
+- evidence: polish 轮收口（任务 T0r10，mode=polish）：① vools/rhop/task/store/base.py 新增 TaskStore.touch_lock(task_name, worker_id, now)——基类默认实现走契约内的 update_fields（因此 PG 等后端零改动即获续期能力，未触碰并行开发的 pg_store.py）；闸门=任务必须在 LOCKED/RUNNING 且持有者匹配；租约公式与 claim_next 同口径 max(lock_ttl_sec, timeout_min*60)。② vools/rhop/task/store/sqlite_store.py 覆盖为版本无关的 UPDATE（续期不推 version，避免被同步通道当成『定义变了』）。③ vools/rhop/task/queue.py 新增 TaskQueue.renew_lock() 公开入口 + _start_renewal() 后台续期线程，run_once 在执行前后 start/stop；仅在 queue.renew_lock=true 时启动（默认关闭 ⇒ 零回归），按 queue.renew_interval_sec 周期刷新。④ 文档 docs/task-queue.md §15 新增『任务租约与续期』行（默认不续期 ⇒ 执行时长必须短于租约，否则被回收重跑），§16 计数回写（store 44->48、queue 56->59）。⑤ 回归锁定：tests/test_task_store.py 新增 TestTouchLock 3 个用例（刷新且不推版本 / 拒绝他人续期 / 拒绝非 LOCKED-RUNNING），tests/test_task_queue.py 新增 TestLeaseRenewal 3 个用例（委托与拒绝 / 执行期间真的续期且至少两次 / 默认关闭）。锁钉证据：目标用例 106 passed / 0 failed（新增 7）；语料 tests/boundary/r10_concurrency_sync.py 的 P6 由 CONFIRMED 翻转为 NOT-CONFIRMED（正向校验 renew_lock=True、expire_time 被推到 2030；机制演示仍记录『无续期时计数器=2』，属默认 opt-in 行为）；全量 488 passed / 7 failed，7 条失败归因并行开发中的 crypto.py/envelope.py 重构（错误信息与异常类型变化），与本改动无关。
+## BUG-290 [2026-10-22T04:04:33Z] [low] FIXED
+- summary: [rhop-task/bugfind-P8] cancel 与 reset 是同优先级的两条控制意图，无先后裁决：reset 恒胜，已取消的任务可能被重置后重跑
+- detail: 现象：本地库模式下对同一条已完成的任务分别构造『先 requeue 再 cancel』与『先 cancel 再 requeue』两种顺序，B 端 pull 后两边最终状态都是 (A:PENDING, B:PENDING, verA=5, verB=5)——即两条意图里 reset 总是生效，cancel 被无声忽略（cancel 作用在非 RUNNING 状态的任务上本就是本地 no-op，见 queue.py cancel 对终态任务的处理）。
+  根因：TaskSync 的 a2b 文档同时携带 cancels 与 resets 两个列表，B 端 pull 里先应用 cancels 再应用 resets（sync.py），两者都没有优先级/版本比较，只有『谁在后面应用』的固定顺序；而 A 端在任务已是终态时调用 cancel 不会产生任何可观测的本地状态变化（只写 cancel_requested），很容易被后续的 reset 意图覆盖。
+  影响面：运维在 A 端先取消后重置（或反之）会得到与直觉相反的结果——以为已取消的任务被重置后又重新跑了；且该优先级未在文档中声明，排障时无从判断是谁赢了。与 BUG-280 的 resets 通道相邻，属同一语义面的完整性缺口。
+  证据：rhop/tests/boundary/r10_concurrency_sync.py 的 P8 探针（可复现）。复现命令：cd rhop && python tests/boundary/r10_concurrency_sync.py；输出 P8 行：reset_then_cancel -> (A:PENDING,B:PENDING,verA:5,verB:5)；cancel_then_reset -> (A:PENDING,B:PENDING,verA:5,verB:5)。回归：全量 488 passed（排除 test_pg_store.py）。
+  建议：① 在文档 §14 显式写出裁决规则（例如『reset 优先于 cancel，因为重置是明确的执行意图；取消只对尚未开始的任务生效』）并补一条『两种顺序各跑一遍、断言最终状态与文档一致』的回归用例（语料 P8 可直接转正）；② 更彻底的做法：给控制意图带上版本/时间戳，B 端按版本裁决而不是按固定顺序应用；③ 至少在 A 端 cancel 作用于终态任务时打一条 warning，避免『看起来取消了、实际没变』。
+- reported_by: explore-polish-4
+
+## BUG-291 [2026-10-22T04:04:33Z] [low] FIXED
+- summary: [rhop-task/bugfind-P9] 文档 §14 的『幂等 upsert』与 §10 的『重复提交不会产生新行』自相矛盾（实测为后者）
+- detail: 现象：同一批里重复 task_name 提交 → 只留 1 行且取值为首个（v1），submit 返回 skipped=1；跨两次 submit 提交同一名字 → 保留旧定义（值 old）、版本不前进、skipped=1。也就是说实际语义是『保留已有行并跳过』，与 §10『幂等：同 task_name 重复提交不会产生新行（INSERT OR IGNORE）』一致；但 §14 的合并规则写成『按 task_name 幂等 upsert』，upsert 通常被读者理解为『后到覆盖』。
+  影响面：文档自相矛盾，读者会误以为用 submit 重投就能更新任务字段；实际要更新任务只能 cancel/requeue 或删除后重建，而文档没有写明这条路径。属于文档口径漂移（低），不是行为缺陷。
+  证据：rhop/tests/boundary/r10_concurrency_sync.py 的 P9 探针。复现命令：cd rhop && python tests/boundary/r10_concurrency_sync.py；输出 P9 行：同批重复名 -> 行数=1 取值=v1 skipped=1；跨提交重复 -> 取值=old skipped=1 版本=1；未知依赖 -> DagValidationError。
+  建议：把 §14 的措辞改成与 §10 一致（『按 task_name 幂等合并：已存在的行保持不变并计入 skipped』），并在 §10 补一句『要更新已存在任务请 cancel 后重新提交（或先删除）』。本轮按 verify/polish 纪律只记录不改文档。
+- reported_by: explore-polish-4
+
+
+
+
+### FIXED(2026-10-22T04:33:22Z / BUG-290, BUG-291)
+- evidence: polish 轮收口（任务 T0r11，mode=polish）：① BUG-290——vools/rhop/task/queue.py 的 cancel 补充文档化优先级（cancel 只作用于尚未结束的任务：PENDING/LOCKED/RETRY_PENDING 直接 CANCELLED、RUNNING 打 cancel_requested；对已终态任务是幂等 no-op 且新增 log.warning 留痕，避免『看起来取消了、实际没变』）；docs/task-queue.md §14 新增『控制意图的优先级（BUG-290 收口）』：B 端 pull 先应用 cancels 再应用 resets ⇒ 重置优先于取消，两种顺序都收敛到重置后的状态（PENDING），并给出阻止重跑的正确做法；§15/§16 同步。② BUG-291——docs/task-queue.md §14 的『幂等 upsert』改为『按 task_name 幂等合并（已存在的行保持不变，与 §10 的 INSERT OR IGNORE 口径一致）』，§10 补充『要更新已存在任务请 cancel 后重新提交』。③ 回归锁定：tests/test_task_queue.py 新增 TestCancelIntent 2 个用例（取消终态任务 no-op 且留 warning / 取消 PENDING 立即生效），tests/test_task_sync.py 新增 TestControlIntentPrecedence 2 个用例（reset 先 cancel 后 / cancel 先 reset 后，两种顺序都断言收敛到 PENDING）。④ 仪器升级：tests/audit_api_doc.py 新增『§16 逐文件用例数与实测一致』检查（此前只校总数，逐行计数会静默漂移；本轮就抓到 Round-11 我自己按猜测写的 store=48 与实测 47 不符），并把 §16 计数按实测回写（store 47、queue 61、sync 22、全量 491 passed / 498 collected）。锁钉证据：目标用例 130 passed / 0 failed（新增 4）；语料 tests/boundary/r10_concurrency_sync.py 的 P8 由 CONFIRMED 翻转为 NOT-CONFIRMED、语料 5 条全绿 exit=0；r3 语料稳定（P1/P3/P4/P5 NOT-CONFIRMED，P2 仍 CONFIRMED=已文档化的设计性质）；稽核仪器 59 项检查 0 mismatch；全量 491 passed / 7 failed（7 条归因并行开发中的 crypto.py/envelope.py 重构，与本改动无关）。
+## BUG-292 [2026-10-22T04:38:53Z] [low] FIXED
+- summary: utils.tools 两处静默错误：transferCols 对非 str/可迭代输入隐式返回 None（违背返回列表契约，致 build_text 报 len(None)、generate_lambda 误报 ExpressionSecurityError）；transfer 把 dict 返回值转成 VList(仅键)，字典值静默丢失
+- detail: vools/utils/tools.py 两处静默错误产出：
+
+① `transferCols(cols)`（L89-107）对既非 str 也非 Iterable 的输入走到函数末尾**无 return → 隐式返回 None**，docstring 却承诺「Returns: 列名列表」：
+- transferCols(123) / (1.5) / (True) -> None
+- 下游症状（错误信息完全指不到真因）：
+  - build_text('v={item}', lst=123) -> TypeError: object of type 'NoneType' has no len()
+  - generate_lambda('x+1', 123) -> TypeError: 'NoneType' object is not iterable
+  - generate_lambda('x+1', None) -> ExpressionSecurityError: 不允许使用变量或函数: x（把「参数符号是空列表」误报成表达式安全问题，最误导）
+
+② `transfer(func)` 装饰器（L27-59）把返回值按类型包装：VText/VList 原样、str->VText、**Iterable->VList**。dict 是 Iterable → 返回 dict 的函数被转成 **VList(仅键)**，值静默丢失：
+- @transfer def f(): return {'a':1,'b':2}  -> VList ['a','b']（1/2 消失）
+
+影响：① 属返回契约违背 + 错误信息误导（排查成本高，与 BUG-222 的「非 str 静默透传改显式 TypeError」同族）；② 属静默数据丢失（dict 返回值被降维成键列表）。二者都在公开工具模块，无测试锁定该行为（全库 transfer 无内部调用者；transferCols 仅 3 处内部调用，传入的都是 str/list/None 正常值）。
+
+修复方向：① transferCols 末尾对不支持的类型 raise TypeError（明确列出接受 str/可迭代）；② transfer 在 Iterable 分支前为 dict 加直通（保持 dict 原样返回），避免值丢失。
+- reported_by: agent-vools-hardening
+- task_id: T0r716
+
+
+
+### FIXED(2026-10-22T04:43:54Z / BUG-292)
+- evidence: vools/utils/tools.py 修复（commit 69b9004）：
+① `transferCols` 末尾新增 `raise TypeError(f"transferCols: cols 必须是 str 或可迭代对象，收到 {type(cols).__name__}")`（docstring 补 Raises）。修复前 transferCols(123)/(1.5)/(True) 隐式返回 None，下游 build_text('v={item}', lst=123) -> TypeError: object of type 'NoneType' has no len()；generate_lambda('x+1', 123) -> TypeError: 'NoneType' object is not iterable；generate_lambda('x+1', None) -> ExpressionSecurityError: 不允许使用变量或函数: x（最误导）。
+② `transfer` 装饰器在 Iterable 分支前新增 `if isinstance(result, dict): return result`。修复前 @transfer 返回 {'a':1,'b':2} -> VList(['a','b'])，字典值静默丢失。
+
+## BUG-293 [2026-10-22T09:30:00Z] [high] FIXED
+- summary: actus 寻虫审计（26 条发现，22 confirmed）批量修复——指标污染/协议归一/索引完整性/质量阶梯/集合碰撞
+- detail: 本轮寻虫审计覆盖 exec_iface/quality/curator/frontmatter/indexer/calllog/executor/validate 8 个模块 + vools.md.config_parser。
+
+### config_parser.py（vools/md，本会话新增模块）
+1. 列表自我附加翻倍：_yaml_parse_lines 用共享 current_list 收集嵌套列表后赋 result[key] 未置 None，函数末尾 _attach_list 再附加一次 → ['a:1','b:2','a:1','b:2']。修复：独立 items 局部收集。
+2. TOML/Lua 引号内逗号切错：_split_array_items/_split_table_items 只看括号深度，'"a,b", "c"' 切成 3 项。修复：引号感知（quote 状态机）。
+3. YAML 字典列表项丢数据：'- name: a' + 续行 'port: 1' 被当纯文本，port 泄漏到顶层。修复：'- k: v' 解析为 dict 项并吸收缩进续行。
+
+### executor.py / calllog.py
+4. V-20（high）：awaiting_confirmation 被记 ok=False 假失败污染 success_rate（3 预览+1 真成功→0.25）。修复：只有真实执行结局（ok/partial/failed/timeout/cancelled）才写指标。
+5. V-21（low）：trending_actions N+1 短连接。修复：单条 GROUP BY + CASE WHEN 窗口。
+6. V-08（low）：quality 自指排除未接线。修复：aggregate_metrics 增 exclude_callers 参数，quality._probe_metrics 传入 _SELF_TOOLS。
+
+### exec_iface.py
+7. V-01（high）：_ERROR_CODE_MAP 与 ERROR_CODES 真表脱节（deps_missing/trust_rejected/entry_no_output 等 11+ 实发码落 runtime）。修复：按 errors.ERROR_CODES + executor 实发码重建映射。
+8. V-02（medium）：_classify_exception 与 _map_error_code 对同一 ActionError.code 结论相反。修复：ActionError 一律先走 _map_error_code。
+9. V-03（high）：awaiting_confirmation（正常业务态 error=None）归一为 status=error error=空，违反自述契约。修复：映射为 skipped 态。
+10. V-04（high，部分）：dry_run 承诺"只预览不执行"落空。修复：executor 源 dry_run 走 executor.preview；scattered/adapter 通道语义待对齐（标注）。
+11. V-05（medium）：内联平铺 adapter spec 顶层 output/params 被吞。修复：按 from_dict 字段归属拆分（顶层已知键留顶层）。
+
+### quality.py
+12. V-06（high）：_probe_omega 扫 _meta/specs 死路（无写入方）+ 'aid in fn' 子串冒领 → platinum/gold 永久不可达。修复：复用 omega._find_omega_spec 真源。
+13. V-07（medium）：internal 等级死代码（判定分支永不产出）。修复：visibility=internal 短路返回。
+14. V-09（low）：is_maintained(None) 抛 TypeError。修复：except (OSError, TypeError)。
+
+### curator.py
+15. V-10（high）：_collection_path sanitize 删空格 → 'My List'/'MyList' 碰撞互相覆盖。修复：空格折叠为分隔符 + md5 后缀（name 不同路径必然不同）。
+16. V-11（medium）：default_repos 脏账本（字符串元素）add/remove 抛 AttributeError。修复：迭代过滤 isinstance dict。
+17. V-12（medium）：get_featured 交集未实现，死动作 growth=0 稳居榜首。修复：严格 popular ∩ trending 池（growth>0 且 count_7d>0），交集空回退 hot 池。
+
+### frontmatter.py
+18. V-13/V-14（high）：AIGC 判别键 strip 后 startswith，元数据块内嵌套 ai.generated-by 子键把唯一元数据块误判 AIGC 剥掉（model 层炸"缺少必填字段: id"，存量 bug 换入口回归）。修复：_looks_like_aigc_block 只认第 0 列键 + 补 generated-by-at marker。
+19. V-15（low）："不以 --- 开头原样返回" vs 实现跳前导空行仍剥离——契约漂移。修复：docstring 措辞对齐。
+
+### indexer.py
+20. V-16（high）：缓存合并路径静默丢弃 conflict/缺 id（第二轮 problems 蒸发）。修复：合并循环同判据登记 problems。
+21. V-19（medium）：反向索引建键用原值、校验用 lower() → purpose:[Transform] 过校验但 filter_by_dimension('purpose','transform') 恒空。修复：建键前 strip().lower()，查询端同口径。
+
+### validate.py
+22. V-23（medium）：normalize_multi_field "截断到 max_n" 只截已知值（总量超限）。修复：已知优先+未知补位到 max_n，丢弃量如实上报。
+23. V-24（medium）：check_triggers cron 只查形状（'99 99 * * *'/'0 0 31 2 *' 放行）。修复：新增 _cron_expr_range_ok 值域校验。
+24. V-25（low）：check_secrets provider 重复判定没排除 falsy（双缺 provider 误报 '重复: None'）。修复：if provider and provider in providers。
+25. V-26（low，candidate）：classification_notices purpose 判空漏 [''] 形态。修复：看归一后 valid 是否为空。
+
+- reported_by: vools-bughunt-lead
+
+### FIXED(2026-10-22T10:00:00Z / BUG-293)
+- evidence: 全部 21 个 confirmed bug + 4 个 config_parser bug 已修复并通过回归：
+① vools/md 测试（config_parser/utils_config/parser_config）全绿；
+② actus 核心测试（classification/quality/metrics/metrics_instrumentation/curator/exec_iface/basic_actions/probe_all_exports/import/semver）146 passed；
+③ config_parser 探针复跑：引号逗号 2 项、字典列表不重复、嵌套续行正确；
+④ V-20 端到端：awaiting_confirmation 不再污染指标；
+⑤ V-19 复现：purpose:[compute] 现在过校验且 filter_by_dimension('purpose','compute') 能查到；
+⑥ 映射表 lock 测试：每个实发码有非 runtime 归宿或显式豁免；
+⑦ V-24 跨字段日历补修：'0 0 31 2 *'（2月31日）、'0 0 31 4 *'（4月31日）现被拒，闰年 '0 0 29 2 *' 放行；
+⑧ V-04 dry_run：executor 通道 dry_run=True 走 preview 返回 blocks 不执行，正常执行不受影响；
+⑨ V-10 集合名：'My List'→My-List-5d716854.json、'MyList'→MyList-e182cecc.json，异名不碰撞、读写不互相覆盖；
+⑩ V-14 frontmatter：嵌套 ai.generated-by 判为 meta 块（不被误剥），双层 AIGC+meta 正常识别为 [aigc, meta]。
+- note: V-04（dry_run）executor 通道已接 preview，scattered/adapter 通道语义待对齐，标部分修复；V-17（缓存命中仍重解析，性能承诺漂移）文档化未改实现；V-18/V-22 为 candidate 留作后续轮次。
+
+修复后 probe 15 项全对：非可迭代 4 类均抛 TypeError（消息含 transferCols）；合法输入 unchanged（'a,b'->['a','b']、'a'->['a']、[' a ','b']->['a','b']、None/''/[]->[]）；下游 build_text/generate_lambda 均改为清晰 TypeError；toOrderedDict(123) 仍 {'col_0': 123} 不变（其自身对非可迭代包 [x]）；transfer 的 dict -> 原样 {'a':1,'b':2}、str -> VText、list -> VList、标量 42 -> 42。
+
+新增回归 tests/test_tools_transfer_cols_regression.py 17 项 GREEN；utils/tools 相关测试全 GREEN（EXIT=0）。commit 已推送 gitcode master。

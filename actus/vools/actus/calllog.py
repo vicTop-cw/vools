@@ -365,8 +365,25 @@ def write_action_metric(action_id: str, ok: bool = True,
         return False
 
 
-def aggregate_metrics(action_id: str, meta_dir: Optional[str] = None) -> dict:
+def _metrics_exclusions(exclude_callers: List[str]):
+    """自指排除 SQL 片段：剔除 caller 命中名单的行（无名单 → 不过滤）。
+
+    V-08（寻虫 2026-10-22）：quality_scale 自身执行时也会经 executor 落
+    一条 metrics（caller='executor'），当它给自己算质量时把这条当真实使用
+    就虚报 exec_count。调用方传质量计算的调用者名单（quality/mcp 通道）
+    剔除之。
+    """
+    if not exclude_callers:
+        return '', []
+    placeholders = ', '.join('?' for _ in exclude_callers)
+    return f'AND caller NOT IN ({placeholders})', list(exclude_callers)
+
+
+def aggregate_metrics(action_id: str, meta_dir: Optional[str] = None,
+                      exclude_callers: List[str] = None) -> dict:
     """聚合单动作执行指标（docs/03 §5.1）。
+
+    exclude_callers: 从聚合里剔除的 caller 名单（自指排除接线）。
 
     Returns:
         {total, last_7d, last_30d, success_rate, avg_runtime_ms, unique_callers}
@@ -376,6 +393,7 @@ def aggregate_metrics(action_id: str, meta_dir: Optional[str] = None) -> dict:
         'total': 0, 'last_7d': 0, 'last_30d': 0,
         'success_rate': 0.0, 'avg_runtime_ms': 0, 'unique_callers': 0,
     }
+    excl_clause, excl_params = _metrics_exclusions(exclude_callers)
     try:
         db = _metrics_connect(meta_dir)
         try:
@@ -384,9 +402,10 @@ def aggregate_metrics(action_id: str, meta_dir: Optional[str] = None) -> dict:
             d30 = (now - timedelta(days=30)).isoformat(timespec='seconds')
 
             row = db.execute(
-                "SELECT COUNT(*), AVG(ok), AVG(runtime_ms), "
-                "COUNT(DISTINCT caller) FROM action_metrics WHERE action_id = ?",
-                (action_id,)).fetchone()
+                f"SELECT COUNT(*), AVG(ok), AVG(runtime_ms), "
+                f"COUNT(DISTINCT caller) FROM action_metrics "
+                f"WHERE action_id = ? {excl_clause}",
+                (action_id, *excl_params)).fetchone()
             if row and row[0]:
                 total = int(row[0])
                 out['total'] = total
@@ -396,9 +415,9 @@ def aggregate_metrics(action_id: str, meta_dir: Optional[str] = None) -> dict:
 
             for key, cutoff in (('last_7d', d7), ('last_30d', d30)):
                 r = db.execute(
-                    "SELECT COUNT(*) FROM action_metrics "
-                    "WHERE action_id = ? AND ts >= ?",
-                    (action_id, cutoff)).fetchone()
+                    f"SELECT COUNT(*) FROM action_metrics "
+                    f"WHERE action_id = ? AND ts >= ? {excl_clause}",
+                    (action_id, cutoff, *excl_params)).fetchone()
                 out[key] = int(r[0]) if r and r[0] else 0
         finally:
             db.close()
@@ -408,7 +427,8 @@ def aggregate_metrics(action_id: str, meta_dir: Optional[str] = None) -> dict:
 
 
 def popular_actions(limit: int = 10, period_days: int = 30,
-                    meta_dir: Optional[str] = None) -> List[dict]:
+                    meta_dir: Optional[str] = None,
+                    exclude_callers: List[str] = None) -> List[dict]:
     """按执行计数 top-N（docs/03 §5.1 popular）。
 
     Returns:
@@ -416,16 +436,17 @@ def popular_actions(limit: int = 10, period_days: int = 30,
     """
     limit = max(1, int(limit or 10))
     out: List[dict] = []
+    excl_clause, excl_params = _metrics_exclusions(exclude_callers)
     try:
         db = _metrics_connect(meta_dir)
         try:
             cutoff = (datetime.now(_TZ) - timedelta(days=period_days)).isoformat(
                 timespec='seconds')
             rows = db.execute(
-                "SELECT action_id, COUNT(*) AS c, AVG(ok) AS sr "
-                "FROM action_metrics WHERE ts >= ? "
-                "GROUP BY action_id ORDER BY c DESC LIMIT ?",
-                (cutoff, limit)).fetchall()
+                f"SELECT action_id, COUNT(*) AS c, AVG(ok) AS sr "
+                f"FROM action_metrics WHERE ts >= ? {excl_clause} "
+                f"GROUP BY action_id ORDER BY c DESC LIMIT ?",
+                (cutoff, *excl_params, limit)).fetchall()
             for (aid, c, sr) in rows:
                 out.append({'action_id': aid, 'count': int(c),
                             'success_rate': round(float(sr or 0), 4)})
@@ -436,26 +457,38 @@ def popular_actions(limit: int = 10, period_days: int = 30,
     return out
 
 
-def trending_actions(limit: int = 10, meta_dir: Optional[str] = None) -> List[dict]:
+def trending_actions(limit: int = 10, meta_dir: Optional[str] = None,
+                     exclude_callers: List[str] = None) -> List[dict]:
     """按 7 日相对 30 日增长率排序（docs/03 §5.1 trending）。
 
     增长率 = (last_7d / 7) / (last_30d / 30)，近 7 日占比越高越"热"。
+
+    V-21（寻虫 2026-10-22）：原实现每命中一个 action_id 就调
+    aggregate_metrics 一次（N+1：短连接×4 SQL×动作数）。改为单条
+    GROUP BY + CASE WHEN 窗口（1 条 SQL、一次连接）。
     """
     limit = max(1, int(limit or 10))
-    scored: List[dict] = []
+    excl_clause, excl_params = _metrics_exclusions(exclude_callers)
     try:
         db = _metrics_connect(meta_dir)
         try:
-            d30 = (datetime.now(_TZ) - timedelta(days=30)).isoformat(
-                timespec='seconds')
+            now = datetime.now(_TZ)
+            d30 = (now - timedelta(days=30)).isoformat(timespec='seconds')
+            d7 = (now - timedelta(days=7)).isoformat(timespec='seconds')
+
+            # 一次聚合取齐 30d 计数与 7d 计数（CASE WHEN 窗口，同一条 SQL）
             rows = db.execute(
-                "SELECT action_id, COUNT(*) FROM action_metrics WHERE ts >= ? "
-                "GROUP BY action_id", (d30,)).fetchall()
+                f"SELECT action_id, COUNT(*) AS c30, "
+                f"SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS c7 "
+                f"FROM action_metrics WHERE ts >= ? {excl_clause} "
+                f"GROUP BY action_id",
+                (d7, d30, *excl_params)).fetchall()
         finally:
             db.close()
-        for (aid, c30) in rows:
-            agg = aggregate_metrics(aid, meta_dir=meta_dir)
-            c7 = agg.get('last_7d', 0)
+        scored: List[dict] = []
+        for (aid, c30, c7) in rows:
+            c30 = int(c30 or 0)
+            c7 = int(c7 or 0)
             daily30 = c30 / 30.0
             daily7 = c7 / 7.0
             growth = (daily7 / daily30) if daily30 > 0 else (2.0 if daily7 > 0 else 0.0)

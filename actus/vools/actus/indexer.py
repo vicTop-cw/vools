@@ -168,11 +168,21 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
                 changed_files.append(rel)
 
     # 合并缓存命中
-    for rel, action in cached_actions.items():
+    # V-16（寻虫 2026-10-22）：旧实现 `if aid and aid not in actions` 静默丢弃
+    # 重复 id / 缺 id 的缓存命中——第二轮全命中时 problems 蒸发（首轮 2 条、
+    # 次轮 {}），同一本库的"问题名单"随缓存冷热抖动，重复动作隐身。
+    # 与新鲜路径同判据登记（冲突按 rel 身份比较，跨根同 id 也报得出）。
+    for rel in sorted(cached_actions):
+        action = cached_actions[rel]
         aid = action.meta.get('id')
-        if aid and aid not in actions:
-            action.meta['_path'] = _inject_cached_path(rel, roots)
-            actions[aid] = action
+        if not aid:
+            problems[rel] = 'parse: 缺少 id（缓存命中）'
+            continue
+        if aid in actions:
+            problems[rel] = f'conflict: id 与 {actions[aid].path} 重复'
+            continue
+        action.meta['_path'] = _inject_cached_path(rel, roots)
+        actions[aid] = action
 
     # ── 保存 mtime 缓存 ──
     if use_cache and new_mtimes:
@@ -276,12 +286,17 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
     for aid, brief in entries.items():
         if aid.startswith('_invalid:'):
             continue
-        kind = brief.get('kind') or 'exec'
+        # V-19（寻虫 2026-10-22）：建键必须归一（strip+lower）——校验端
+        # normalize_multi_field/is_known_* 用 lower() 判合法，purpose/industry
+        # 不在 schema enum（fallback 环境 kind 也不拦），'Transform' 能全绿入库；
+        # 而建键用原值 → by_purpose 只有 'Transform' 键，
+        # filter_by_dimension('purpose','transform') 恒空（动作从维度索引消失）。
+        kind = str(brief.get('kind') or 'exec').strip().lower()
         by_kind.setdefault(kind, []).append(aid)
         for p in (brief.get('purpose') or ['utility']):
-            by_purpose.setdefault(p, []).append(aid)
+            by_purpose.setdefault(str(p).strip().lower(), []).append(aid)
         for ind in (brief.get('industry') or ['general']):
-            by_industry.setdefault(ind, []).append(aid)
+            by_industry.setdefault(str(ind).strip().lower(), []).append(aid)
         # by_name：brief.name 小写归一 → 多命中保留全部
         name_val = str(brief.get('name') or '').strip().lower()
         if name_val:
@@ -353,4 +368,5 @@ def filter_by_dimension(dimension: str, value: str, meta_dir: str = None) -> lis
     index = load_index(meta_dir=meta_dir)
     key = f'by_{dimension}'
     reverse = index.get(key) or {}
-    return list(reverse.get(value) or [])
+    # V-19：查询端与建键端同口径归一（'Transform'/'transform' 命中同一键）
+    return list(reverse.get(str(value).strip().lower()) or [])
