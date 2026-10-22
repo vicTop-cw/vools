@@ -87,7 +87,13 @@ def _memoize_impl(func: Callable, maxsize: int) -> Callable:
 
     @wraps(func)
     def memoized(*args, **kwargs):
-        key = (args, tuple(sorted(kwargs.items())))
+        # BUG-306: 原实现 key = (args, tuple(sorted(kwargs.items()))) 对
+        # list/dict/set 等不可哈希参数抛 TypeError。与 core.memoize 同族修复。
+        try:
+            key = (args, tuple(sorted(kwargs.items())))
+            hash(key)
+        except TypeError:
+            key = (repr(args), repr(sorted(kwargs.items())))
         result = cache.get(key, sentinel)
         if result is not sentinel:
             return result
