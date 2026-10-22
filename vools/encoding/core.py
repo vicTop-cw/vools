@@ -324,8 +324,10 @@ class Encoder(metaclass=EncoderMeta):
     - lzma(): LZMA 压缩
     - json(**kwargs): JSON 序列化
     - pickle(protocol=None): Pickle 序列化
-    - encode(encoding='utf-8', errors='strict'): 字符串转字节
+    - to_bytes(encoding='utf-8', errors='strict'): 字符串转字节
     - encode(format_name, **kwargs): 使用已注册的自定义编码器
+      （format_name 也可传 Python 编码名如 'utf-8'/'gbk'，等价 to_bytes；
+       BUG-312 修正：原文档把本能力写成 encode(encoding=...)，实际方法名是 to_bytes）
     
     Example:
         # 基本使用
@@ -505,8 +507,17 @@ class Encoder(metaclass=EncoderMeta):
         """
         encoder = CodecRegistry.get_encoder(format_name)
         if encoder is None:
-            raise ValueError(f"Unknown encoder format: {format_name}. "
-                           f"Supported formats: {CodecRegistry.supported_formats()}")
+            # BUG-312: 类文档曾承诺 encode(encoding='utf-8')「字符串转字节」，
+            # 实现却只认注册格式名。此处对合法 Python 编码名回退到 to_bytes，
+            # 两种文档写法都成立；非法名仍抛错并同时列出可用编码名。
+            import codecs as _codecs
+            try:
+                _codecs.lookup(format_name)
+            except Exception:
+                raise ValueError(
+                    f"Unknown encoder format: {format_name}. "
+                    f"Supported formats: {CodecRegistry.supported_formats()}")
+            return self.to_bytes(format_name, **kwargs)
         
         def wrapper(data, **kw):
             return encoder(data, **kw)
@@ -618,8 +629,10 @@ class Decoder(metaclass=EncoderMeta):
     - lzma(): LZMA 解压
     - json(): JSON 反序列化
     - pickle(): Pickle 反序列化
-    - decode(encoding='utf-8', errors='strict'): 字节转字符串
+    - to_str(encoding='utf-8', errors='strict'): 字节转字符串
     - decode(format_name, **kwargs): 使用已注册的自定义解码器
+      （format_name 也可传 Python 编码名如 'utf-8'/'gbk'，等价 to_str；
+       BUG-312 修正：原文档把本能力写成 decode(encoding=...)，实际方法名是 to_str）
     
     Example:
         # 基本使用
@@ -787,8 +800,15 @@ class Decoder(metaclass=EncoderMeta):
         """
         decoder = CodecRegistry.get_decoder(format_name)
         if decoder is None:
-            raise ValueError(f"Unknown decoder format: {format_name}. "
-                           f"Supported formats: {CodecRegistry.supported_formats()}")
+            # BUG-312: 与 Encoder.encode 对称——合法 Python 编码名回退 to_str。
+            import codecs as _codecs
+            try:
+                _codecs.lookup(format_name)
+            except Exception:
+                raise ValueError(
+                    f"Unknown decoder format: {format_name}. "
+                    f"Supported formats: {CodecRegistry.supported_formats()}")
+            return self.to_str(format_name, **kwargs)
         
         def wrapper(data, **kw):
             return decoder(data, **kw)
