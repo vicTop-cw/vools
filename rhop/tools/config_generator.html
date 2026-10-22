@@ -239,9 +239,13 @@ handler:*</textarea></div>
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  var DERIVE_INFO = "vools.rhop.mvp.crypto.v1";
+  // 运行时口径（vools.data.vtext.VText）：Fernet 密钥 =
+  //   PBKDF2-HMAC-SHA256(key, salt=sha256(key)[:16], iterations=200000, dkLen=32) → urlsafe base64。
+  // 页面必须与运行时**逐字节一致**，否则页面生成的密文到运行时解不开
+  // （test_html_fernet 的 JS↔Python 互通用例就是钉这一点的）。
   var SECRET_PREFIX = "RHOP-ENC:";
-  var PBKDF2_ITERATIONS = 100000;
+  var PBKDF2_ITERATIONS = 200000;
+  var FERNET_SALT_BYTES = 16;
 
   // ---- 字节工具 ----
   function utf8(text) {
@@ -516,7 +520,9 @@ handler:*</textarea></div>
   // 而是 base64url( 0x80|ts8 | iv16 | ciphertext | hmac32 )——HMAC 后置拼进同一个
   // base64 串。这里必须与 Python 侧字节一致，否则跨端解不开。
   function deriveFernetKey(secretText) {
-    var digest = pbkdf2Sha256(utf8(String(secretText)), utf8(DERIVE_INFO), PBKDF2_ITERATIONS, 32);
+    var keyBytes = utf8(String(secretText));
+    var salt = sha256(keyBytes).slice(0, FERNET_SALT_BYTES);
+    var digest = pbkdf2Sha256(keyBytes, salt, PBKDF2_ITERATIONS, 32);
     return b64urlEncode(digest);
   }
   function fernetEncrypt(keyB64, plainBytes) {
@@ -547,7 +553,11 @@ handler:*</textarea></div>
   }
   function encryptSecret(secretText, plaintext) {
     if (plaintext === null || plaintext === undefined || plaintext === "") { return ""; }
-    return SECRET_PREFIX + fernetEncrypt(deriveFernetKey(secretText), utf8(String(plaintext)));
+    var token = fernetEncrypt(deriveFernetKey(secretText), utf8(String(plaintext)));
+    // 运行时口径（VText / secret CLI）：RHOP-ENC: 后接 urlsafe_b64( utf8( FernetToken ) )。
+    // fernetEncrypt 返回的已是 urlsafe base64 文本，这里只需再包一层（把这段文本当字节做 urlsafe base64）。
+    // 少这一层会导致页面生成的密文到运行时解不开（test_html_fernet 实测）。
+    return SECRET_PREFIX + b64urlEncode(utf8(token));
   }
   function decryptSecret(secretText, cipherText) {
     var text = String(cipherText || "").trim();
@@ -555,7 +565,8 @@ handler:*</textarea></div>
     if (text.indexOf(SECRET_PREFIX) !== 0) {
       throw new Error("不是 rhop 密文（应以 " + SECRET_PREFIX + " 开头）");
     }
-    return toUtf8(fernetDecrypt(deriveFernetKey(secretText), text.slice(SECRET_PREFIX.length)));
+    var inner = toUtf8(b64urlDecode(text.slice(SECRET_PREFIX.length)));
+    return toUtf8(fernetDecrypt(deriveFernetKey(secretText), inner));
   }
   function selfTest(secretText) {
     var sample = "rhop-selftest-中文-0123456789";
@@ -566,8 +577,8 @@ handler:*</textarea></div>
 
   return {
     SECRET_PREFIX: SECRET_PREFIX,
-    DERIVE_INFO: DERIVE_INFO,
     PBKDF2_ITERATIONS: PBKDF2_ITERATIONS,
+    FERNET_SALT_BYTES: FERNET_SALT_BYTES,
     sha256: sha256, hmacSha256: hmacSha256, pbkdf2Sha256: pbkdf2Sha256,
     b64urlEncode: b64urlEncode, b64urlDecode: b64urlDecode,
     fernetEncrypt: fernetEncrypt, fernetDecrypt: fernetDecrypt,

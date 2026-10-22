@@ -540,20 +540,20 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 ## 16. 测试与验证
 
 ```bash
-cd rhop && python -m pytest -q --ignore=tests/test_pg_store.py
-        # 504 passed（509 collected；5 failed 来自并行开发中的 crypto/envelope 重构，非任务队列）
+cd rhop && python -m pytest -q
+        # 598 passed（598 collected，0 failed）
 ```
 
-> 全量 554 条中另有 38 条来自 `test_pg_store.py`（PostgreSQL 后端，需真实 PG 服务），
-> 故默认排除。另外当前工作区有 7 条失败来自**并行开发中的 `crypto.py`/`envelope.py` 重构**
-> （错误信息由「HMAC 校验」改为「Fernet 版本字节不合法」、畸形密文不再抛 `SecretError`），
-> 与任务队列无关，修复方不在本节。
+> 全量 598 条**包含** `test_pg_store.py` 的 38 条（PostgreSQL 后端）。
+> 本机 PG 在 **WSL Ubuntu 22.04** 里运行，Windows 侧通过 `127.0.0.1:5432` 可达，
+> 连接串 `postgres / 123456`（与测试里硬编码一致），因此默认命令**不再需要**排除它。
+> 早先写的「需真实 PG 服务、故默认排除」是**没去连**得出的结论，已更正。
 > 下表的计数**以实测为准**，可用稽核仪器随时自校：
 > `cd rhop && python tests/audit_api_doc.py <实测 passed 数>`（退出码 = 不一致条数，0 表示文档与实现一致）。
 
 | 测试文件 | 用例数 | 覆盖点 |
 |---|---|---|
-| `test_task_store.py` | 47 | schema/索引、幂等写入、状态机、乐观锁、优先级、依赖门控、计划时间、取消标记、跨连接原子领取、失效锁回收、版本同步、后端注册与未知 kind、**TaskStore 真 ABC 契约面（含契约面与文档逐字一致）、租约续期 touch_lock（BUG-289）** |
+| `test_task_store.py` | 53 | schema/索引、幂等写入、状态机、乐观锁、优先级、依赖门控、计划时间、取消标记、跨连接原子领取、失效锁回收、版本同步、后端注册与未知 kind、**TaskStore 真 ABC 契约面（含契约面与文档逐字一致）、租约续期 touch_lock（BUG-289）、共享库落点校验（BUG-302）** |
 | `test_task_config.py` | 45 | 方向归一（含拒绝 P0..P3）、默认值、`exec` 默认拒绝任意命令、存储 kind、路径模板、介质校验（http 不当目录）、主密钥四种来源、明文告警、严格模式、掩码、**心跳判死阈值必须 ≥ 写间隔 + 1s（BUG-282）** |
 | `test_task_secrets.py` | 31 | 明文优先、密文解密、秘密节点、path/env 取值、告警文案含命令与回填指引、严格模式、字段发现、打码 |
 | `test_task_exec.py` | 60 | 白名单（默认拒绝 cli、`.exe` 归一、shell 闸门、allow_any）、语言映射、CLI 执行（stdin/env/workdir/timeout/check/退出码）、处理器注册与派发、通道识别、**命中条目读回（matched_pattern）与 cli 审计行（BUG-281，含执行失败/超时也留痕）** |

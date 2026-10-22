@@ -188,8 +188,13 @@ class TestCryptoInterop:
         import hashlib
         out = _run_node(js_env["driver"], js_env["module"],
                         {"mode": "derive", "items": [{"name": "k", "key": KEY}]})
-        digest = hashlib.pbkdf2_hmac("sha256", KEY.encode("utf-8"),
-                                     b"vools.rhop.mvp.crypto.v1", 100000, 32)
+        # 与运行时 vools.data.vtext.VText 的 Fernet 派生逐字节一致：
+        #   PBKDF2-HMAC-SHA256(key, salt=sha256(key)[:16], iterations=200000, dkLen=32)
+        # 页面必须对齐运行时（运行时才是解密方），否则页面生成的密文运行时解不开。
+        key_bytes = KEY.encode("utf-8")
+        digest = hashlib.pbkdf2_hmac("sha256", key_bytes,
+                                     hashlib.sha256(key_bytes).digest()[:16],
+                                     200000, 32)
         expected = base64.urlsafe_b64encode(digest).decode("ascii")
         assert out["results"][0]["derived"] == expected
 
