@@ -7,6 +7,7 @@ vools.sql.spark.connection - Spark SQL 连接实现
 
 from typing import Any, Optional, Sequence, List, Tuple
 import datetime as _dt
+import decimal as _decimal
 import re as _re
 
 from ..core.connection import Connection
@@ -28,6 +29,11 @@ def _quote_sql_literal(value: Any) -> str:
         return 'TRUE' if value else 'FALSE'
     if isinstance(value, (int, float)):
         return repr(value)
+    # BUG-315: Decimal 是数值类型，原实现落到末尾 fallback 被加引号成字符串
+    # （Decimal('1.25') -> '1.25' 含引号），使比较依赖隐式 cast、算术/INSERT
+    # 失效并改变列类型语义。用 str 而非 repr（repr 会产出 Decimal('1.25')）。
+    if isinstance(value, _decimal.Decimal):
+        return str(value)
     if isinstance(value, (bytes, bytearray)):
         return "'" + bytes(value).hex() + "'"
     if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
