@@ -68,7 +68,8 @@ class VList(Seq, metaclass=ListLikeMeta):
     # 走 _rself_exclude 官方逃生门（先例：VDate._rself_exclude={'date'}
     # BUG-200、VText=('regexp_substr',) BUG-220），弹出语义对齐内置 list：
     # 空列表返回 None、非空返回原始元素。
-    _rself_exclude = ('pop', 'shift')
+    # BUG-314: map(func=None) 文档承诺返回 None（打印模式），不能被兜底成 self。
+    _rself_exclude = ('pop', 'shift', 'map')
 
     def __init__(self, *origins: Any) -> None:
         """初始化 VList。

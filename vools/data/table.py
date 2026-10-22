@@ -53,6 +53,8 @@ class Row(Seq):
         # Seq 风格操作
         row.map(str).filter(lambda x: x)
     """
+    # BUG-314: map(func=None) 返回 None（打印模式），不能被 rself 兜底成 self。
+    _rself_exclude = ('map',)
     
     def __init__(self, *args, **kwargs):
         self._table = None
@@ -205,6 +207,8 @@ class Column(Seq):
         # Seq 风格操作
         col.map(str).filter(lambda x: x)
     """
+    # BUG-314: map(func=None) 返回 None（打印模式），不能被 rself 兜底成 self。
+    _rself_exclude = ('map',)
     
     def __init__(self, *args, **kwargs):
         self._table = None
@@ -388,7 +392,9 @@ class Table(Seq):
     # BUG-313: get_cell/get_cell2 的默认 default_value=None 是**有意义的返回值**
     # （文档：越界/空值返回 default_value），@rself 的 None→self 兜底会把它们
     # 变成整个 Table 对象，破坏 `v is None` 判断。与 BUG-252 的 max/min 同理。
-    _rself_exclude = ('max', 'min', 'get_cell', 'get_cell2')
+    # BUG-314: compute 未匹配表达式/全非数值列时返回 default_value(None)，
+    # 被 rself 兜底成 self 会把「算不出来」伪装成「返回整个表」。
+    _rself_exclude = ('max', 'min', 'get_cell', 'get_cell2', 'compute')
 
     """二维表格数据结构
 
