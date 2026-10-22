@@ -14,6 +14,10 @@ from .renderer import (
     render_image, render_svg, render_html,
     render_rich_doc, render_with_rich,
 )
+from .linker import (
+    FileLink, FileLinkRouter, extract_file_links,
+    can_open_file, open_file,
+)
 
 __all__ = [
     # 扫描器（P0）
@@ -22,4 +26,7 @@ __all__ = [
     # 渲染器（P1）
     'render_image', 'render_svg', 'render_html',
     'render_rich_doc', 'render_with_rich',
+    # 文件链接（P4）
+    'FileLink', 'FileLinkRouter', 'extract_file_links',
+    'can_open_file', 'open_file',
 ]
