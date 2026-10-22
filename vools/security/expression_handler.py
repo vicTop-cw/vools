@@ -85,6 +85,9 @@ DANGEROUS_ATTRS = frozenset({
     '__call__', '__func__', '__self__',
 })
 
+_FORMAT_ESCAPE_ATTRS = frozenset({'format', 'format_map'})
+"""BUG-287: format-field 属性遍历逃逸原语——字符串字面量内的 {0.__class__} 对 AST 不可见，必须在属性层禁止这两个方法。"""
+
 
 class ExpressionSecurityError(Exception):
     """表达式安全异常"""
@@ -245,9 +248,17 @@ def _validate_ast_node(node: ast.AST, allowed_names: Optional[set] = None) -> No
     
     elif isinstance(node, ast.Attribute):
         # BUG-101: 校验属性名，禁止对象模型逃逸（__class__/__base__ 等）
-        if node.attr in DANGEROUS_ATTRS:
+        # BUG-287: 两处加固——① 下划线开头的属性一律拒绝（dunder 逃逸全兜底，
+        # 不依赖 DANGEROUS_ATTRS 枚举完整）；② 拒绝 format/format_map：
+        # `('{0.__cla' + 'ss__}').format(x)` 这类拼接可绕过原文子串黑名单，
+        # 而 format-field 内的属性遍历(" {0.__class__}"）对 AST 不可见——
+        # 实测可抵达 <class 'int'>、乃至 __subclasses__ 绑定方法（沙箱逃逸）。
+        if (node.attr in DANGEROUS_ATTRS
+                or node.attr.startswith('_')
+                or node.attr in _FORMAT_ESCAPE_ATTRS):
             raise ExpressionSecurityError(
-                f"不允许访问属性: {node.attr}（BUG-101 对象模型逃逸防护）"
+                f"不允许访问属性: {node.attr}"
+                f"（BUG-101/BUG-287 对象模型与 format 逃逸防护）"
             )
         _validate_ast_node(node.value, allowed_names)
         return
