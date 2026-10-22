@@ -385,6 +385,13 @@ def aggregate_metrics(action_id: str, meta_dir: Optional[str] = None,
 
     exclude_callers: 从聚合里剔除的 caller 名单（自指排除接线）。
 
+    V-22（寻虫 2026-10-22，candidate）：ts 窗口比较是字典序字符串比较，
+    正确性完全依赖"所有写入方都用 _now_iso()（+08:00、timespec=seconds
+    定长 iso）"。当前仓内无混写方（全部经 _now_iso），字典序=时间序。
+    若未来混入 +00:00 或其它偏移的行，同日时间戳会失真（跨偏移即错）。
+    彻底修复需改存 epoch 秒或统一 UTC Z 格式（影响数据兼容性），
+    留待数据迁移窗口。
+
     Returns:
         {total, last_7d, last_30d, success_rate, avg_runtime_ms, unique_callers}
         无记录时全部为 0（不伪造数据）。
