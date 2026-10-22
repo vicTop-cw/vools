@@ -829,7 +829,17 @@ class BaseSqlBuilder(SqlBuilder):
 
         返回：
             (sql_string, params) 元组
+
+        Raises:
+            ValueError: 未设置任何更新字段（BUG-286）
         """
+        # BUG-286: 原实现无 SET 字段时静默产出非法 SQL 'UPDATE t'——build()
+        # 承诺组装可用语句，缺 SET 的 UPDATE 在任何数据库都语法错误，且错误
+        # 暴露在被 distant 的 execute 端。与 BUG-284/BUG-129 同口径显式报错。
+        if not self._update_values:
+            raise ValueError(
+                "UPDATE 语句缺少 SET 字段：请先调用 set_(列=值, ...) 提供更新字段")
+
         parts = [f"UPDATE {self._update_table}"]
         self._params = []
 
