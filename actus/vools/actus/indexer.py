@@ -96,8 +96,13 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
     - id 重复或解析失败的动作记入 problems（附着在函数属性上，供索引展示），
       不中断其余动作的发现；
     - validate=True 时逐个做契约校验（失败标记 invalid 而非中断扫描）。
-    - use_cache=True（默认）：基于文件 mtime 增量缓存，仅重解析变更文件，
-      冷启动从 ~2.4s 降至 ~0.3s（首次后）。
+    - use_cache=True（默认）：mtime 缓存（_meta/actions.mtimes.json）判定
+      "文件是否变更"——变更文件重解析，未变更文件走缓存分支；
+      V-17（寻虫 2026-10-22）：缓存分支当前仍调用 parse_cfg_from_file 全量
+      重解析（缓存只决定是否登记 problems，不省解析开销）。docstring 此前
+      写"仅重解析变更文件、冷启动 2.4s→0.3s"与实现不符——此处措辞对齐实现。
+      真实现"命中免解析"需序列化 Action 元数据，且会激活 V-18 跨根污染
+      （缓存键无 actions_dir 身份），故暂不实现，只对齐文档。
     """
     roots = _action_roots(actions_dir)
     actions: Dict[str, Action] = {}
