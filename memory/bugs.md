@@ -4125,7 +4125,9 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 - evidence: vools/oop/extend.py _process_result_shells 重写（commit 7bf1f1e 前的 HEAD~1 提交）：inspect.getattr_static 取原始描述符 → staticmethod 用裸函数调用并 staticmethod() 写回、classmethod 以 cls 调用并 classmethod() 写回、普通方法传 self；_apply_shell 统一处理 env/result/shell/'=>' 求值，shell_func 与 dir_filter 用默认参数固化（修晚期绑定）。修复前实测 @clone(result_shell=...) 后 b.stat(5)/b.clsm()/Base.clsm() 均 TypeError: takes 1 positional argument but 2 were given；修复后 static/class/instance 三形态实例与类调用全正常（classmethod 返回克隆类名验证 cls 绑定正确）、'=>' self 表达式 shell 正常、多组 result_shell 各自 dir_filter 隔离。新增回归 tests/test_extend_result_shell_special_methods_regression.py 12 项 GREEN；tests/oop/ 105 项 GREEN。commit 已推送 gitcode master。
 ## BUG-245 [2026-10-21T10:52:05Z] [medium] FIXED
 - summary: [自曝回归] BUG-227/228 修复方向错误：overload.register 默认返回值被改为管理器，打破 tests/oop 锁定的「export_mode=None 返回原函数」契约——已回滚并改为修正误导性文档
-- detail: BUG-227 我在修复时依据模块头 L9/示例注释 L17/overload() L500 三处「默认返回管理器」表述，把 register 的默认分支从 eturn f 改为 eturn self；BUG-228 又把 ExportAsFunction 哨兵从 None 改为 'function'。这两处改动实际打破了**测试锁定**的真实契约：tests/oop/test_overload_new.py::TestExportModes::test_export_none_original_function 明确断言 export_mode=None 时 add_int 是原函数（not hasattr is_overload_manager），且 register 自身 docstring 原本即写「None (默认)：返回原函数」——当时我只跑了 tests/decorators/（186 GREEN）而漏跑 tests/oop/，未发现回归。
+- detail: BUG-227 我在修复时依据模块头 L9/示例注释 L17/overload() L500 三处「默认返回管理器」表述，把 register 的默认分支从 
+eturn f 改为 
+eturn self；BUG-228 又把 ExportAsFunction 哨兵从 None 改为 'function'。这两处改动实际打破了**测试锁定**的真实契约：tests/oop/test_overload_new.py::TestExportModes::test_export_none_original_function 明确断言 export_mode=None 时 add_int 是原函数（not hasattr is_overload_manager），且 register 自身 docstring 原本即写「None (默认)：返回原函数」——当时我只跑了 tests/decorators/（186 GREEN）而漏跑 tests/oop/，未发现回归。
 
 核实后：模块头/示例/overload() 三处「默认返回管理器」才是**错误表述**（模块头示例用异名 add_int 注册，能跑通恰恰因为默认返回原函数——decoration 只重绑 add_int 自己的名字）；同时发现 BUG-227 证据里的同名注册 g() 报 missing 1 属**用户误用**（正确用法是异名注册，示例即如此）。
 
@@ -4173,7 +4175,8 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
    limit(-1) -> 返回 len-1 行（**静默丢掉最后一行**，应为报错或空）
    limit(-1, offset=1) -> 0 行
    QAXTop(-1)（docstring「取前n行」）-> 同 limit(-1) 错行
-③ Table.replace(col_num)（L1556-1570）：col_num=-1 直接命中 ow[-1]（最后一列）；col_num>=len 静默 no-op——0 基内部 API 但对外可见。
+③ Table.replace(col_num)（L1556-1570）：col_num=-1 直接命中 
+ow[-1]（最后一列）；col_num>=len 静默 no-op——0 基内部 API 但对外可见。
 
 影响：调用方拿到**被改错的列**或**少一行**的结果而不报错（静默数据损坏）。tests 只覆盖正数（QAXTop(2)、limit(2, offset=1)），不锁定越界/负数行为。内部调用者：Table.limit 仅 table.py 的查询 kwargs 路径（调用方可直接传负数）、Table.replace 仅 QAXReplace 一处。
 
@@ -4187,14 +4190,16 @@ python -O -c "from vools.datetime.utils import get_week; print(get_week('2024010
 - evidence: commit fb26f0a 三处修复：① vools/data/qax.py QAXReplace(int) 改用 self._check_1based(col, 列数, '列')-1（docstring 补 Raises）；② vools/data/table.py Table.limit 对 n<0 / offset<0 抛 ValueError（docstring 补 Raises）；③ Table.replace 对非 int 抛 TypeError、col_num 越界抛 IndexError（docstring 补 Raises）。修复前实测：QAXReplace(10,999,col=0) -> v 列首行变 999（改最后一列）、col=5 静默 no-op；limit(-1) -> 2 行（丢最后一行）、limit(-1,offset=1) -> 0 行、QAXTop(-1) 同；Table.replace(-1,...) 命中 row[-1]。修复后 probe 19 项全对：非法输入全 IndexError/ValueError/TypeError，合法路径 unchanged（QAXReplace(col=3)/col='v'/全列、limit(2)/limit(0)/limit(2,offset=1)/QAXTop(2)、Table.replace(1)）；新增回归 tests/test_qax_replace_limit_bounds_regression.py 19 项 GREEN；tests/data/ + tests/sql/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
 ## BUG-248 [2026-10-21T11:23:07Z] [medium] FIXED
 - summary: data.qax 访问/写入类 1-based API 越界静默错值（BUG-246/247 同族）：GetRow(0) 返回最后一行、GetCol(0) 返回最后一列、SetCell(0,...)/SetCell2(name,0,...) 静默改写最后一行；GetCell(row) 越界静默返回 None
-- detail: vools/data/qax.py 的 Qax 访问/修改类方法（docstring 均明示 1-based）延续 BUG-246/247 同族缺陷：裸 ow - 1 / col - 1 无校验，0/负数经 Python 负索引命中**最后一行/列**。
+- detail: vools/data/qax.py 的 Qax 访问/修改类方法（docstring 均明示 1-based）延续 BUG-246/247 同族缺陷：裸 
+ow - 1 / col - 1 无校验，0/负数经 Python 负索引命中**最后一行/列**。
 
 实测（3 行 3 列 id/name/v 表）：
 - GetRow(0) -> base row(-1) -> 返回**最后一行**字典（静默错行；同理 GetRow(-1)）
 - GetCol(0) -> base column(-1) -> 返回**最后一列**数据（静默错列）
 - SetCell(0, 1, 'X') -> base set_cell(-1,0,...)：while len <= -1 不补行、self._data[-1] -> **静默改写最后一行的第一列**（数据损坏，最严重）
 - SetCell2('name', 0, 'Y') -> set_cell(-1, 'name', ...) -> 同上静默改最后一行
-- GetCell(0, 1) / GetCell2('name', 0) -> base get_cell(-1,...) 命中 ow_index < 0 守卫 -> **静默返回 None**（base 的 default_value 语义虽文档化，但 Qax 1-based 层 docstring 未声明默认返回）
+- GetCell(0, 1) / GetCell2('name', 0) -> base get_cell(-1,...) 命中 
+ow_index < 0 守卫 -> **静默返回 None**（base 的 default_value 语义虽文档化，但 Qax 1-based 层 docstring 未声明默认返回）
 - SetCell(5,...)（超行数）-> base 自动补行（确保有足够的行），属文档化扩展行为，保留。
 
 影响：读取得到错误行列、写入静默污染最后一行数据，调用方无任何错误信号。tests/data/test_qax.py 只用合法 1-based 坐标（GetCell(1,1)、SetCell(1,2,26) 等），不锁定越界行为。
@@ -5214,3 +5219,107 @@ L747-757：
 - evidence: vools/serialize/backends/vb_json_backend.py `_stringify` L525-533 改为 raise TypeError（消息含类型名+后端建议），不再静默 'null'。复现脚本验证：dumps(uuid) → TypeError ✓；dumps(Custom()) → TypeError ✓；dumps({"id": uuid}) → TypeError ✓；合法类型 {"name":"test","count":42,"active":True} 往返正常 ✓。commit 11182ef。
 - reported_by: vools-bughunt-lead
 
+
+
+### FIXED(2026-10-22T07:48:57Z / BUG-303)
+- evidence: vools/serialize/backends/vb_json_backend.py 修复（commit 11182ef）：`_stringify` 末尾 `return 'null'` 改为 `raise TypeError("Object of type {类型名} is not serializable by VBJsonBackend（vb_json 支持 str/int/float/bool/None/dict/list/tuple；请改用 pickle 后端或先转换为受支持类型）")`。
+
+修复前实测：dumps(uuid.UUID(...), backend='vb_json') -> b'null'，loads -> None（数据无声丢失）；dumps(Custom(), 'vb_json') -> b'null' -> None；嵌套 {'id': uuid} -> {'id': null}。对照同库 json 后端对 Custom 抛 TypeError、pickle 后端 uuid/Custom 完整往返。
+
+修复后 probe 15 项全对：uuid/custom/datetime/嵌套 uuid 的 dumps 均抛 TypeError（消息含类型名）；基础类型往返不变（42/3.14/'txt'/True/None/[1,2]/{'a':{'b':[1,None]}} 全等）；非有限浮点 inf 仍正确往返（BUG-203 面不回归）；json 后端对 Custom 仍 TypeError、pickle 后端 Custom 正常。
+
+新增回归 tests/test_serialize_vb_json_unknown_type_regression.py 13 项 GREEN；既有 tests/serialize/（含 test_vb_json.py）+ tests/test_serialize_vb_json.py + test_vb_json_scalar_regression.py 共 234 项 GREEN（EXIT=0，确认无测试依赖 None 回退）。commit 已推送 gitcode master。
+
+## BUG-304 [2026-10-22T08:00:00Z] [medium] FIXED
+- summary: curried.memoize 对不可哈希参数（list/dict/set）抛 TypeError，无法用于常见场景
+- detail: vools/curried/core.py `memoize` 缓存键 = (args, tuple(sorted(kwargs.items())))，
+对 list/dict/set 等不可哈希参数抛 TypeError。
+
+实测：
+- @memoize def concat(a,b): return a+b; concat([1,2],[3,4]) → TypeError: unhashable type: 'list'
+- @memoize def merge(d1,d2): return {**d1,**d2}; merge({"a":1},{"b":2}) → TypeError: unhashable type: 'dict'
+
+修复：try/except 降级——可哈希时用原键，不可哈希时用 repr(args) 做键。
+保留缓存命中能力（repr 相同的不可哈希参数仍命中缓存）。
+
+- reported_by: vools-bughunt-lead
+
+### FIXED(2026-10-22T08:00:00Z / BUG-304)
+- evidence: vools/curried/core.py `memoize` 缓存键改为 try/except 降级策略。
+复现脚本验证：list/dict/set/嵌套不可哈希参数均正常工作；可哈希/不可哈希缓存命中均验证。
+回归测试 tests/test_memoize_unhashable_regression.py 7 用例全绿。commit 3fa2ffd。
+- reported_by: vools-bughunt-lead
+
+## BUG-305 [2026-10-22T08:10:00Z] [medium] FIXED
+- summary: curried.keep 用 filter(identity) 做谓词，把 0/False/空字符串等 falsy 值也过滤掉
+- detail: vools/curried/iteration.py `keep` 原实现 filter(identity, iterable)，
+identity(x) 返回 x 本身，filter 把 falsy 值也过滤掉了。docstring 承诺「移除 None 值」。
+
+实测：
+- keep([0, None, 2]) -> [2]（0 被误删）
+- keep([False, None, True]) -> [True]（False 被误删）
+- keep(['', None, 'hello']) -> ['hello']（空字符串被误删）
+
+修复：filter(lambda x: x is not None, iterable)——只移除 None。
+
+- reported_by: vools-bughunt-lead
+
+### FIXED(2026-10-22T08:10:00Z / BUG-305)
+- evidence: vools/curried/iteration.py `keep` 改为 filter(lambda x: x is not None, iterable)。
+回归测试 tests/test_keep_falsy_regression.py 7 用例全绿。commit 99d7cdf。
+- reported_by: vools-bughunt-lead
+
+## BUG-306 [2026-10-22T08:15:00Z] [medium] FIXED
+- summary: curried.composition._memoize_impl 对不可哈希参数抛 TypeError（与 BUG-304 同族）
+- detail: vools/curried/composition.py `_memoize_impl` 缓存键 (args, tuple(sorted(kwargs.items())))
+对 list/dict/set 等不可哈希参数抛 TypeError。
+
+修复：try/except 降级——可哈希时用原键，不可哈希时用 repr(args) 做键。
+与 BUG-304 同策略。
+
+- reported_by: vools-bughunt-lead
+
+### FIXED(2026-10-22T08:15:00Z / BUG-306)
+- evidence: vools/curried/composition.py `_memoize_impl` 缓存键改为 try/except 降级。
+复现脚本验证：list/dict 参数均正常工作。curried 全套 182 测试全绿。commit a1a5776。
+- reported_by: vools-bughunt-lead
+## BUG-307 [2026-10-22T08:23:26Z] [high] FIXED
+- summary: [SECURITY] placeholder._IndexHolder.__setstate__ 对 state 中 '__module__:xxx' 无条件 import_module —— 经 codec.vools_object_hook/_reconstruct_object（vools. 白名单放行）可由不可信 JSON 触发任意模块导入（实测 env 装入 os/sys 模块对象），绕过 BUG-98/99 模块白名单，配合攻击者可控 expr 构成潜在 RCE 链
+- detail: vools/functional/placeholder.py `_IndexHolder.__setstate__`（L427-451）对 state 中的 env 值无条件 importlib.import_module，构成**不可信反序列化下的任意模块导入 gadget**，绕过 codec.py 的模块白名单（BUG-98/99）：
+
+    def __setstate__(self, state):
+        import importlib as _il
+        for k, v in state.items():
+            ...
+            if k == 'env' and isinstance(v, dict):
+                for ek, ev in v.items():
+                    if isinstance(ev, str) and ev.startswith('__module__:'):
+                        mod_name = ev[len('__module__:'):]
+                        env_restored[ek] = _il.import_module(mod_name)   # ← 任意模块名
+
+可达链路（实测成立）：
+1. `vools.serialize.codec.vools_object_hook` 识别 `{'__vools_obj__': True, 'type': '...', 'state': {...}}`；
+2. `_reconstruct_object` 用 `_import_class(type_name)` 导入类——白名单 `_ALLOWED_IMPORT_MODULES`/`vools.` 前缀放行 `vools.functional.placeholder._IndexHolder`；
+3. 随后 `obj.__setstate__(state)` 执行，state 完全由输入 JSON 控制（无校验）；
+4. env 中值写成字符串 `'__module__:os'` 即触发 `import_module('os')`。
+
+实测（py3.11，仅取证）：
+    payload = {'__vools_obj__': True, 'type': 'vools.functional.placeholder._IndexHolder',
+               'state': {'expr': '1+1', 'env': {'os': '__module__:os', 'sys': '__module__:sys'}}}
+    obj = vools.serialize.loads(json.dumps(payload).encode(), backend='json')
+→ 返回 `_IndexHolder`，`obj.env` 含 **os / sys 模块对象**（type=module）；`vools_object_hook(payload)` 直接调用同样成立。
+
+危害：反序列化侧出现「任意模块导入」原语（import 副作用 + 拿到模块对象），且攻击者同时控制 `expr`；_IndexHolder 的表达式求值允许非 dunder 属性（如 `os.system`），后续任何 evaluate/call 即构成 RCE 链。这与同库 `_import_class`/`_is_allowed_module`（BUG-98：限制可导入模块，防 gadget 链）的防护意图直接冲突——白名单被 __setstate__ 绕过。severity high（反序列化 gadget / 边界绕过）。
+
+修复方向：`__setstate__` 的模块恢复改为**固定白名单**（占位符默认 env 仅 math/builtins/operator/random；可含 datetime），非白名单模块名不导入、保留原字符串（无 import 副作用）。
+- reported_by: agent-vools-hardening
+- task_id: T0r723
+
+
+### FIXED(2026-10-22T08:30:00Z / BUG-307)
+- evidence: vools/functional/placeholder.py 新增模块级 _SAFE_ENV_MODULES 白名单
+（math/re/json/datetime/collections/vools.functional.placeholder），
+__setstate__ 只对白名单模块名执行 import_module，非白名单保留原字符串。
+复现脚本验证：白名单 math → 模块对象 ✓；非白名单 os/sys → 保留字符串 ✓。
+functional/placeholder/serialize 全套测试 exit 0。commit 6812d5f。
+- reported_by: vools-bughunt-lead
