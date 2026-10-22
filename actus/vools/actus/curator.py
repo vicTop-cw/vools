@@ -19,6 +19,7 @@ __all__ = [
 
 import json
 import os
+import re  # V-10 集合名 sanitize（按空白折叠）
 from typing import Dict, List, Optional
 
 _CONFIG_DIR = os.path.join(os.path.expanduser('~'), '.actus', 'config')
@@ -53,10 +54,16 @@ def _write_json(path: str, data) -> bool:
 # ═══════════════════════════════════════════════════════════════
 
 def add_default_repo(repo_url: str, name: str = '') -> bool:
-    """追加默认仓（幂等：已存在返回 False，不重复添加）。"""
+    """追加默认仓（幂等：已存在返回 False，不重复添加）。
+
+    V-11（寻虫 2026-10-22）：脏账本（元素为字符串等非 dict 形态，
+    手工编辑/旧版本残留）此前 `r.get('url')` 直接 AttributeError，
+    违反模块头"best-effort 不抛出"承诺。统一迭代过滤 dict 元素。
+    """
     repos = _read_json(_DEFAULT_REPOS_FILE, [])
     if not isinstance(repos, list):
         repos = []
+    repos = [r for r in repos if isinstance(r, dict)]
     if any(r.get('url') == repo_url for r in repos):
         return False
     repos.append({'url': repo_url, 'name': name or repo_url.rsplit('/', 1)[-1]})
@@ -68,6 +75,7 @@ def remove_default_repo(repo_url: str) -> bool:
     repos = _read_json(_DEFAULT_REPOS_FILE, [])
     if not isinstance(repos, list):
         return False
+    repos = [r for r in repos if isinstance(r, dict)]
     filtered = [r for r in repos if r.get('url') != repo_url]
     if len(filtered) == len(repos):
         return False
@@ -85,8 +93,20 @@ def list_default_repos() -> List[dict]:
 # ═══════════════════════════════════════════════════════════════
 
 def _collection_path(name: str) -> str:
-    safe = ''.join(c for c in (name or '') if c.isalnum() or c in '-_.')
-    return os.path.join(_COLLECTIONS_DIR, f'{safe or "unnamed"}.json')
+    """集合文件路径（V-10 修复：防异名碰撞静默覆盖）。
+
+    旧 sanitize 删除空格——'My List' 与 'MyList' 落同一文件，异名集合
+    互相覆盖丢数据（实测 'My List' create 后 list_collections 只剩一份）。
+    修复：空格折叠为分隔符，且文件名附原始名的 md5 后缀——只要 name 不同
+    路径必然不同（碰撞面归零；md5 碰撞概率 1/2^32 可忽略，且仍可读回，
+    因为路径由同一函数从同一 name 计算）。
+    """
+    import hashlib
+    raw = name or ''
+    safe = '-'.join(''.join(c for c in part if c.isalnum() or c in '-_.')
+                    for part in re.split(r'[\s/]+', raw))
+    digest = hashlib.md5(raw.encode('utf-8')).hexdigest()[:8]
+    return os.path.join(_COLLECTIONS_DIR, f'{safe or "unnamed"}-{digest}.json')
 
 
 def create_collection(name: str, action_ids: List[str],
@@ -155,28 +175,49 @@ def get_featured(limit: int = 10, meta_dir: Optional[str] = None) -> List[dict]:
 
     两条腿走路：popular 保证"被广泛使用"，trending 保证"近期活跃"——
     避免纯安装量榜单把死动作顶在前面。无指标数据时返回空列表（不伪造）。
+
+    V-12（寻虫 2026-10-22）：旧实现把 popular 全量入榜，不在 trending 的
+    growth=0——实测 100 次执行全在 20 天前的死动作 growth=0 仍以 score=3.23
+    稳居第一，压过 11 个当天活跃动作，与"避免死动作顶前面"的承诺反向成立。
+    修复：
+      1. trending 池取 growth>0（近 7 日有真实活跃）且 count_7d>0；
+      2. 严格交集 popular ∩ trending_池，popular 命中但池外（即死动作）剔除；
+      3. 交集为空 → 回退 trending 池（至少近期活跃，仍优于死动作）；
+      4. 排序：growth 为主（近期活跃），count 为辅（对数压缩防头部垄断）。
     """
     from .calllog import popular_actions, trending_actions
 
-    popular = popular_actions(limit=max(limit * 2, 10), meta_dir=meta_dir)
-    trending = {t['action_id']: t for t in trending_actions(limit=max(limit * 2, 10),
-                                                            meta_dir=meta_dir)}
-    if not popular:
-        return []
+    pool_n = max(limit * 4, 40)  # 交集候选池需大于 trending 榜单 limit 本身
+    trending_raw = trending_actions(limit=pool_n, meta_dir=meta_dir)
 
+    # trending 池：近 7 日有真实活跃（growth>0 且 count_7d>0）
+    hot = {t['action_id']: t for t in trending_raw
+           if t['growth'] > 0 and t['count_7d'] > 0}
+    if not hot:
+        return []  # 全部死动作 → 无精选，不伪造
+
+    popular = popular_actions(limit=pool_n, meta_dir=meta_dir)
+    popular_ids = {p['action_id'] for p in popular}
+
+    # 交集：先取 trending_池，再保留其中 popular 命中的
+    intersect = [aid for aid in hot if aid in popular_ids]
+    pool_ids = intersect or list(hot)  # 交集空 → 回退 hot 池（至少近期活跃）
+
+    count_by_id = {p['action_id']: p for p in popular}
+    import math
     scored = []
-    for p in popular:
-        aid = p['action_id']
-        t = trending.get(aid)
-        growth = t['growth'] if t else 0.0
-        # 综合分：执行计数为主，增长率为辅（对数压缩防头部垄断）
-        import math
-        score = math.log1p(p['count']) * 0.7 + growth * 0.3
+    for aid in pool_ids:
+        t = hot[aid]
+        p = count_by_id.get(aid, {})
+        growth = t['growth']
+        count = p.get('count', 0)
+        score = growth * 0.7 + math.log1p(count) * 0.3
         scored.append({
             'action_id': aid,
-            'count': p['count'],
+            'count': count,
+            'count_7d': t['count_7d'],
             'growth': growth,
-            'success_rate': p['success_rate'],
+            'success_rate': p.get('success_rate', 0.0),
             'score': round(score, 4),
         })
     scored.sort(key=lambda r: -r['score'])

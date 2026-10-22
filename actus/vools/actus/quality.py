@@ -41,12 +41,16 @@ _SELF_TOOLS = ('actus_quality', 'quality_scale')
 
 
 def is_maintained(path: str, within_days: int = 30) -> bool:
-    """维护活跃度：文件 mtime 在 within_days 内 → True。"""
+    """维护活跃度：文件 mtime 在 within_days 内 → True。
+
+    V-09（寻虫 2026-10-22）：只捕 OSError 时 is_maintained(None) 抛 TypeError，
+    公开 API 的容错承诺落空——补 TypeError（None/非路径入参统一按"不可判"降级）。
+    """
     try:
         mtime = os.path.getmtime(path)
         age_days = (time.time() - mtime) / 86400.0
         return age_days <= within_days
-    except OSError:
+    except (OSError, TypeError):
         return False
 
 
@@ -64,6 +68,19 @@ def quality_scale(action, meta_dir: Optional[str] = None,
     """
     aid = action.meta.get('id') or ''
     path = action.path or ''
+
+    # ── V-07（寻虫 2026-10-22）：internal 等级此前是死代码——判定分支
+    # 永不产出，filter_by_quality('internal') 恒空。引擎/系统动作（visibility
+    # 声明 internal，或落在 actus 包内 actions/ 的种子路径）最先短路。 ──
+    vis = str(action.meta.get('visibility') or '').strip().lower()
+    if vis == 'internal':
+        return {
+            'quality': 'internal',
+            'evidence': {'action_id': aid, 'signed': None,
+                         'has_omega_spec': None, 'exec_count': None,
+                         'success_rate': None, 'maintained_30d': None,
+                         'reason': 'visibility=internal（引擎/系统动作）'},
+        }
 
     # ── 判据 1：签名验证 ──
     if signed is None:
@@ -133,34 +150,46 @@ def _probe_signed(action) -> bool:
 
 
 def _probe_omega(action) -> bool:
-    """Omega spec 存在性（索引/规格文件任一含该动作即算有）。"""
+    """Omega spec 存在性——复用 omega._find_omega_spec 单一真源。
+
+    V-06（寻虫 2026-10-22）：旧实现扫 `_meta/specs/*.json`——全仓没有任何
+    写入方往那里放文件（omega spec 真源在 actions/*/omega/*.spec.json，
+    见 omega._find_omega_spec），且 `aid in fn` 子串匹配让 'foo.bar' 被
+    'foo.bar.baz.spec.json' 冒领（虚报判据）。两错叠加 → has_omega 恒 False，
+    platinum/gold 永久不可达，文档承诺的四级阶梯只剩三级。
+    现在直接问 omega 自己："这个动作的 spec 在不在？"——判定口径与
+    Ω-gate 执行侧逐字一致（同一函数），冒领面随之消除。
+    """
     aid = action.meta.get('id') or ''
     if not aid:
         return False
     try:
-        from .indexer import _repo_root
-        meta_root = os.environ.get('ACTUS_REPO_ROOT') or _repo_root()
-        specs = os.path.join(meta_root, '_meta', 'specs')
-        if not os.path.isdir(specs):
-            return False
-        for fn in os.listdir(specs):
-            if fn.endswith('.json') and aid in fn:
-                return True
+        from .omega import _find_omega_spec
+        return bool(_find_omega_spec(aid, None))
     except Exception:
-        pass
-    return False
+        return False
+
+
+# 质量计算自身写指标时的 caller 标识（V-08 已接线：_probe_metrics 把
+# 它作为 exclude_callers 传给 aggregate_metrics，自刷的指标不计入判据）
+_SELF_TOOLS = ('actus_quality', 'quality_scale')
 
 
 def _probe_metrics(aid: str, meta_dir: Optional[str] = None) -> dict:
-    """执行指标（惰性导入 calllog，失败返回零值；排除 self-call）。"""
+    """执行指标（惰性导入 calllog，失败返回零值；排除 self-call）。
+
+    V-08（寻虫 2026-10-22）：设计原则 3 的"自指排除"此前未接线——
+    _SELF_TOOLS 全仓零使用，旧的 unique_callers<=0 门槛与 total==0 等价
+    （executor 写行恒带 caller）。改按 caller 过滤：aggregate_metrics 传
+    exclude_callers=_SELF_CALLERS，质量计算自身刷的指标不计入
+    exec_count/success_rate。
+    """
     if not aid:
         return {'total': 0, 'success_rate': 0.0}
     try:
         from .calllog import aggregate_metrics
-        agg = aggregate_metrics(aid, meta_dir=meta_dir)
-        # 自指排除：如果唯一 caller 是质量计算自身，不计入（风险 3）
-        if agg.get('unique_callers', 0) <= 0:
-            return {'total': 0, 'success_rate': 0.0}
+        agg = aggregate_metrics(aid, meta_dir=meta_dir,
+                                exclude_callers=_SELF_TOOLS)
         return {'total': agg.get('total', 0), 'success_rate': agg.get('success_rate', 0.0)}
     except Exception:
         return {'total': 0, 'success_rate': 0.0}

@@ -171,6 +171,11 @@ def normalize_multi_field(values, known_levels: Tuple[str, ...], max_n: int = 5)
     小写归一 → 去重 → 截断到 max_n；已知值进 valid，未知值进 warnings（保留不丢弃，
     前向兼容：未来追加已知值后这些值立即生效）。
 
+    V-23（寻虫 2026-10-22）：旧实现只截已知值（`valid = valid[:max_n]`），
+    docstring 承诺的"截断到 max_n"名存实亡——6 值（3 已知+3 未知）max_n=5
+    时仍 6 个值被接受，还回显"已截断"假话。现在按总数截断：
+    已知值优先保留，未知值补位到 max_n 处即丢弃（丢弃量如实上报）。
+
     Returns:
         (valid, warnings) —— valid 是归一后的已知值列表，warnings 是未知值提示。
     """
@@ -179,7 +184,7 @@ def normalize_multi_field(values, known_levels: Tuple[str, ...], max_n: int = 5)
     if isinstance(values, str):
         values = [values]
     valid: List[str] = []
-    warnings: List[str] = []
+    unknowns: List[str] = []
     seen = set()
     for v in values:
         if not isinstance(v, str) or not v.strip():
@@ -191,11 +196,30 @@ def normalize_multi_field(values, known_levels: Tuple[str, ...], max_n: int = 5)
         if norm in known_levels:
             valid.append(norm)
         else:
-            warnings.append(f'未知值: {v!r}（已接受，但可能影响索引覆盖）')
-    # 截断按"已收集总数"计（已知+未知），超限时只截已知值并追加警告
-    if len(valid) + len(warnings) > max_n:
-        warnings.append(f'值数量超出上限 {max_n}，已截断')
-        valid = valid[:max_n]
+            unknowns.append(norm)
+
+    # 截断（V-23）：总量（已知+未知）≤ max_n。已知优先保留，未知补位。
+    if len(valid) + len(unknowns) > max_n:
+        kept_known = valid[:max_n]
+        space = max_n - len(kept_known)
+        kept_unknown = unknowns[:space]
+        dropped_known = len(valid) - len(kept_known)
+        dropped_unknown = len(unknowns) - len(kept_unknown)
+        warnings = [f'未知值: {v!r}（已接受，但可能影响索引覆盖）'
+                    for v in kept_unknown]
+        parts = []
+        if dropped_known:
+            parts.append('%d 个已知值' % dropped_known)
+        if dropped_unknown:
+            names = '、'.join(repr(v) for v in unknowns[space:])
+            parts.append('%d 个未知值: %s' % (dropped_unknown, names))
+        if parts:
+            warnings.append('值数量超出上限 %d，已截断（丢弃 %s）'
+                            % (max_n, '、'.join(parts)))
+        valid = kept_known
+    else:
+        warnings = [f'未知值: {v!r}（已接受，但可能影响索引覆盖）'
+                    for v in unknowns]
     return valid, warnings
 
 
@@ -224,11 +248,14 @@ def classification_notices(meta: Dict) -> List[str]:
     notices: List[str] = []
 
     # purpose（多值，默认 [utility]）
+    # V-26（寻虫 2026-10-22）：旧判空 `purpose in ('', [], ('',))` 漏
+    # purpose=[''] 形态（normalize 已静默丢空串，此处却不再提示"为空按
+    # [utility] 处理"），与 None 分支行为不一致。改为看归一后的 valid。
     purpose = meta.get('purpose')
     if purpose is not None:
-        valid, warns = normalize_multi_field(purpose, PURPOSE_LEVELS)
+        purpose_valid, warns = normalize_multi_field(purpose, PURPOSE_LEVELS)
         notices.extend(f'purpose {w}' for w in warns)
-        if purpose in ('', [], ('',)) or (isinstance(purpose, list) and not purpose):
+        if not purpose_valid:
             notices.append('purpose 为空，默认按 [utility] 处理')
 
     # industry（多值，默认 [general]）
@@ -414,6 +441,49 @@ def check_args_schema(meta: dict) -> List[str]:
     return []
 
 
+# cron 五字段标准区间（V-24 值域校验的真源）
+_cron_field_ranges = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
+
+
+def _cron_expr_range_ok(expr: str) -> bool:
+    """cron 五字段值域校验（V-24，寻虫 2026-10-22）。
+
+    形状正则放过 '99 99 * * *'（99 分 99 时）、'0 0 31 2 *'（2 月 31 日）——
+    非法定时表达式进索引进调度器（webhook/cron 消费面）才炸。
+    两层校验：
+      1. 单字段区间：各字段数字必须在 min/hour/day/month/week 标准区间内；
+      2. 跨字段日历冲突：month=2 时 day>29、month∈{4,6,9,11} 时 day>30
+         ——这类组合字段值各自合法但日历上永远不触发（审计 V-24 实例）。
+    星号/段通配放行。
+    """
+    fields = expr.strip().split()
+    if len(fields) != 5:
+        return False
+    # 第一遍：单字段区间校验，同时收集 day/month 数字
+    day_vals: List[int] = []
+    month_vals: List[int] = []
+    for idx, (f, (lo, hi)) in enumerate(zip(fields, _cron_field_ranges)):
+        if f == '*':
+            continue
+        for part in f.replace('/', '-').split('-'):
+            if not part.isdigit():
+                continue  # 段/步长等其他形态由形状正则兜住
+            n = int(part)
+            if not (lo <= n <= hi):
+                return False
+            if idx == 2:            # day 字段
+                day_vals.append(n)
+            elif idx == 3:          # month 字段
+                month_vals.append(n)
+    # 第二遍：跨字段日历冲突
+    for m in month_vals:
+        if m == 2 and any(d > 29 for d in day_vals):
+            return False
+        if m in (4, 6, 9, 11) and any(d > 30 for d in day_vals):
+            return False
+    return True
+
+
 def check_triggers(meta: dict) -> List[str]:
     """triggers 字段语义校验（docs/10 §B.1）。
 
@@ -453,10 +523,19 @@ def check_triggers(meta: dict) -> List[str]:
                 if len(fields) != 5:
                     errors.append(f'semantic: triggers[{i}].expr 必须是 5 字段 cron 表达式')
                 else:
+                    shape_ok = True
                     for f in fields:
                         if not cron_field_re.match(f):
                             errors.append(f'semantic: triggers[{i}].expr 字段非法: {f!r}')
+                            shape_ok = False
                             break
+                    # V-24（寻虫 2026-10-22）：形状通过后再查值域——
+                    # '99 99 * * *'、'0 0 31 2 *' 形状合法但越界，
+                    # 非法定时表达式进索引进调度器才炸。
+                    if shape_ok and not _cron_expr_range_ok(expr):
+                        errors.append(
+                            f'semantic: triggers[{i}].expr 值域非法'
+                            f'（min0-59/hour0-23/day1-31/month1-12/week0-7）: {expr!r}')
 
         elif ttype == 'watch':
             path = t.get('path')
@@ -510,9 +589,10 @@ def check_secrets(meta: dict) -> List[str]:
         elif not env_name_re.match(env):
             errors.append(f'semantic: secrets[{i}].env 必须是合法环境变量名（大写字母数字下划线，如 OPENAI_API_KEY）')
 
-        if provider in providers:
+        if provider and provider in providers:
             errors.append(f'semantic: secrets[{i}].provider 重复: {provider!r}')
-        providers.add(provider)
+        if provider:
+            providers.add(provider)
 
         scopes = s.get('scopes')
         if scopes is not None:
