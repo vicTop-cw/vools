@@ -48,6 +48,10 @@ def transfer(func=None, w=None):
         if isinstance(result, str):
             from ..data.vtext import VText
             return VText(result)
+        # BUG-292: dict 是 Iterable，原实现会把它转成 VList(仅键)——
+        # 字典的值被静默丢弃。映射类型应原样返回。
+        if isinstance(result, dict):
+            return result
         if isinstance(result, Iterable):
             from ..data.vlist import VList
             return VList(result)
@@ -94,6 +98,9 @@ def transferCols(cols=None):
 
     Returns:
         列名列表
+
+    Raises:
+        TypeError: cols 既非 str 也不可迭代时（BUG-292）
     """
     if not bool(cols):
         return []
@@ -105,6 +112,11 @@ def transferCols(cols=None):
 
     if isinstance(cols, Iterable):
         return [str(c).strip() for c in cols]
+
+    # BUG-292: 原实现到头无 return → 隐式 None，违背「Returns: 列名列表」
+    # 契约；下游报 len(None) 或 'NoneType' not iterable，错误指不到真因。
+    raise TypeError(
+        f"transferCols: cols 必须是 str 或可迭代对象，收到 {type(cols).__name__}")
 
 
 # ============================================================================
