@@ -1160,9 +1160,34 @@ class Table(Seq):
 
         Returns:
             新的 Table
+
+        Raises:
+            ValueError: 排序列含 None 或类型不一致的值（无法比较，BUG-294）
+
+        注：Python 3 不允许 None 与 int/str 之间比较，本方法不擅自引入
+        NULL 排序策略——请先用 to_num / 填充缺失值清洗后再排序。
         """
         col_idx = self._columns.index(by)
-        sorted_data = sorted(self._data, key=lambda x: x[col_idx], reverse=reverse)
+        try:
+            sorted_data = sorted(self._data, key=lambda x: x[col_idx], reverse=reverse)
+        except TypeError as e:
+            # BUG-294: 原样抛出 'int' vs 'NoneType' 之类的比较错误，不带列名，
+            # 多列多表场景下无法定位；补上下文并保持「不可比较」语义不变。
+            offenders = []
+            for row in self._data:
+                v = row[col_idx] if col_idx < len(row) else None
+                if v is None or not isinstance(v, (int, float, str, bytes, bool)):
+                    offenders.append(type(v).__name__)
+                elif offenders and offenders[-1] != type(v).__name__:
+                    offenders.append(type(v).__name__)
+                if len(set(offenders)) > 3:
+                    break
+            kinds = '/'.join(sorted(set(offenders))) or '未知'
+            raise ValueError(
+                f"无法按列 {by!r} 排序：该列含 None 或类型不一致的值"
+                f"（涉及类型 {kinds}；原始错误 {type(e).__name__}: {e}）。"
+                f"请先用 to_num 转换或填充缺失值"
+            ) from e
         return Table([row[:] for row in sorted_data], columns=list(self._columns))
 
     def distinct(self) -> 'Table':
