@@ -264,7 +264,23 @@ def _make_sql_wrapper(func, dialect=None, connection=None, sql=None,
             else:
                 return result
         else:
-            params = remaining_args
+            # BUG-297: 静态模板下剩余的关键字参数同样是 SQL 绑定值——原实现
+            # 只取 remaining_args，kwargs 被静默丢弃（传 id=1 时 SQL 少绑定，
+            # DB 端报 Incorrect number of bindings，错误指不到真因）。
+            # 按函数签名参数顺序合并：位置参数在前，其余从 kwargs 补齐。
+            params = list(remaining_args)
+            if remaining_kwargs:
+                taken = set(param_names[:len(params)])
+                merged_extra = []
+                for name in param_names:
+                    if name in taken or name not in remaining_kwargs:
+                        continue
+                    params.append(remaining_kwargs.pop(name))
+                # 签名未声明的多余关键字（如 **kwargs）按提供顺序追加，
+                # 避免再次静默丢弃
+                merged_extra = list(remaining_kwargs.values())
+                if merged_extra:
+                    params.extend(merged_extra)
 
         if conn is not None and isinstance(sql_stmt, str):
             exec_params = params if params else None
