@@ -4942,8 +4942,37 @@ L1278-1294 safe_eval：
 ⑧ V-04 dry_run：executor 通道 dry_run=True 走 preview 返回 blocks 不执行，正常执行不受影响；
 ⑨ V-10 集合名：'My List'→My-List-5d716854.json、'MyList'→MyList-e182cecc.json，异名不碰撞、读写不互相覆盖；
 ⑩ V-14 frontmatter：嵌套 ai.generated-by 判为 meta 块（不被误剥），双层 AIGC+meta 正常识别为 [aigc, meta]。
-- note: V-04（dry_run）executor 通道已接 preview，scattered/adapter 通道语义待对齐，标部分修复；V-17（缓存命中仍重解析，性能承诺漂移）文档化未改实现；V-18/V-22 为 candidate 留作后续轮次。
+- note: V-04（dry_run）executor 通道已接 preview，scattered/adapter 通道语义待对齐，标部分修复；V-17（缓存命中仍重解析）docstring 已对齐实现（commit b5b88bb），真实现"命中免解析"会激活 V-18 跨根污染故暂不改实现；V-18/V-22 为 candidate 留作后续轮次。
 
 修复后 probe 15 项全对：非可迭代 4 类均抛 TypeError（消息含 transferCols）；合法输入 unchanged（'a,b'->['a','b']、'a'->['a']、[' a ','b']->['a','b']、None/''/[]->[]）；下游 build_text/generate_lambda 均改为清晰 TypeError；toOrderedDict(123) 仍 {'col_0': 123} 不变（其自身对非可迭代包 [x]）；transfer 的 dict -> 原样 {'a':1,'b':2}、str -> VText、list -> VList、标量 42 -> 42。
 
 新增回归 tests/test_tools_transfer_cols_regression.py 17 项 GREEN；utils/tools 相关测试全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-294 [2026-10-22T04:53:46Z] [low] FIXED
+- summary: data.table Table.sort（order_by 委托）对含 None 或混合类型列抛出的 TypeError 不含列名/表名，docstring 未声明限制——真实数据（DB 结果含 None、CSV 数字串混真数字）下排查困难，属内部错误掩盖真实原因族
+- detail: vools/data/table.py `Table.sort`（L1154-1166，`order_by` 直接委托它）对排序列含 None 或混合类型时抛出的 TypeError **完全不指向故障列**，且 docstring 未声明该限制：
+
+实现：`sorted_data = sorted(self._data, key=lambda x: x[col_idx], reverse=reverse)` —— 裸 key 取值，无 None/类型处理。
+
+实测：
+- Table([[1,None],[2,10],[3,5]], ['id','v']).sort('v') -> TypeError: '<' not supported between instances of 'int' and 'NoneType'
+- 同表 sort('v', reverse=True) -> TypeError: '<' not supported between instances of 'NoneType' and 'int'
+- Table([[1,'a'],[2,10]], ...).sort('v') -> TypeError: '<' not supported between instances of 'int' and 'str'
+- 纯字符串 / 纯数字列正常；order_by 同样症状（委托 sort）
+- 错误信息里**没有任何表名/列名/行号信息**——调用方在多列多表场景下只能逐个猜测是哪列、哪行；而「列里有 None（DB 结果、pandas 交互、手工构造数据常见）」或「混合类型（CSV 里数字串 + 真数字）」都是现实数据状态。
+
+现有测试（test_table_qax.py:171、test_table_sql.py:36/41/74/102、test_table.py:37）全部使用干净同类型数据，未锁定 None/混合类型行为；docstring 仅「排序 / Args: by 排序列名」。
+
+影响：属「内部错误掩盖真实原因」族（BUG-235 UnboundLocalError、BUG-236 空 ResultSet 同族）——用户看到的是 Python 比较运算符错误而非「哪一列有什么问题」，排查成本高。
+
+修复方向：sort 内捕获 TypeError/cls，重抛为 ValueError（或 TypeError），消息包含列名与提示（如「列 'v' 含 None 或类型不一致的值，无法排序：例如 (int, NoneType)；请先用 to_num 或填充缺失值」）。不改变排序语义（None 仍不可比较，避免擅自引入 NULL 排序策略）。
+- reported_by: agent-vools-hardening
+- task_id: T0r717
+
+
+
+### FIXED(2026-10-22T05:02:36Z / BUG-294)
+- evidence: vools/data/table.py Table.sort 修复（commit fd4968a）：sorted 调用包 try/except TypeError，重抛 ValueError——消息含「无法按列 {by!r} 排序：该列含 None 或类型不一致的值（涉及类型 {kinds}；原始错误 ...）。请先用 to_num 转换或填充缺失值」，异常链 `from e` 保留原始信息；docstring 补 Raises 与「不擅自引入 NULL 排序策略」说明。**排序语义不变**（None/混合类型仍不可比较）。
+
+修复前实测：Table([[1,None],[2,10],[3,5]], ['id','v']).sort('v') -> TypeError: '<' not supported between instances of 'int' and 'NoneType'（无列名）；reverse=True 同类；混合类型 'a'/10 同类；order_by 委托同样症状。
+
+修复后 probe 7 项全对：含 None 升/降序与混合类型、order_by 委托均抛 ValueError 且消息含 "'v'"/"None"；正常数字升序 [[1,10],[2,20],[3,30]]、降序 [[3,30],[2,20],[1,10]]、字符串排序不变。新增回归 tests/test_table_sort_error_diagnostics_regression.py 11 项 GREEN（错误消息含列名/清洗建议/docstring 声明 + 四类正常排序守护 + 未知列 ValueError）；tests/data/ 与 table/sort 相关测试全 GREEN（EXIT=0）。commit 已推送 gitcode master。

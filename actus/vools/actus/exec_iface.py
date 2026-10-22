@@ -311,6 +311,19 @@ class _AdapterIface:
             return ExecResult(status='error', error=f'adapter 不可导入: {exc}',
                               error_kind='runtime')
 
+        # V-04（寻虫 2026-10-22）：dry_run 承诺"只预览不执行"。
+        # adapter 通道旧实现完全无视 dry_run 真执行（实测）。
+        # dry_run=True 时不解析 ref、不创建适配器、不 run——返回预览态。
+        if ctx.dry_run:
+            ref = action.meta.get('adapter')
+            preview = {
+                'dry_run': True,
+                'action_id': action.meta.get('id'),
+                'adapter_ref': ref if isinstance(ref, str) else 'inline-spec',
+            }
+            return ExecResult(status='skipped', data=preview,
+                              error='', error_kind='')
+
         ref = action.meta.get('adapter')
         # 形态 2：内联 spec（dict）。AdapterSpec.from_dict 的既有契约是
         # {'id':..., 'name/output/params/trust': 顶层, 'adapter': {type,command,...}}。
@@ -374,9 +387,24 @@ class _ScatteredIface:
         except ImportError as exc:
             return ExecResult(status='error', error=f'scattered 不可导入: {exc}',
                               error_kind='runtime')
+        # V-04（寻虫 2026-10-22）：dry_run 承诺"只预览不执行"。
+        # 旧实现 confirmed=not ctx.dry_run 只是把确认位置 False——
+        # trusted 动作 confirmed=False 照样真跑落副作用（实测）。
+        # dry_run=True 时不执行 run_scattered，改走 check_scattered
+        # 返回预览态（含校验结果，不落任何副作用）。
+        if ctx.dry_run:
+            try:
+                chk = _scattered.check_scattered(action.path)
+                return ExecResult(
+                    status='skipped',
+                    data={'dry_run': True, 'action_id': action.id,
+                          'path': action.path, 'check': chk},
+                    error='', error_kind='')
+            except Exception as exc:  # noqa: BLE001 —— 统一出参契约：异常归一
+                return result_from_exception(exc)
         try:
             raw = _scattered.run_scattered(action.path, ctx.params or {},
-                                           confirmed=not ctx.dry_run)
+                                            confirmed=not ctx.dry_run)
         except Exception as exc:  # noqa: BLE001 —— 统一出参契约：异常归一
             return result_from_exception(exc)
         if isinstance(raw, dict):
