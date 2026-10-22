@@ -727,6 +727,13 @@ class BaseSqlBuilder(SqlBuilder):
 
         将多个条件用 AND 连接，同时收集所有参数。
 
+        BUG-298（寻虫 2026-10-22）：`param_offset` 原为局部变量，每次调用
+        从 0 开始——WHERE 和 HAVING 同时存在时，HAVING 的占位符编号会
+        从 :1 重新开始，但 `self._params` 是连续的（WHERE 参数在前）。
+        导致 numeric/named 风格的 HAVING 占位符指向错误参数，DB 报
+        Incorrect number of bindings。
+        修复：用 `len(self._params)` 作为起始偏移量，保证编号连续。
+
         参数：
             conditions: 条件列表，每个元素为 (condition_str, params_tuple)
 
@@ -738,7 +745,7 @@ class BaseSqlBuilder(SqlBuilder):
 
         condition_strs = []
         all_params = []
-        param_offset = 0
+        param_offset = len(self._params)  # BUG-298：从当前 params 长度开始编号
 
         for cond, params in conditions:
             def replace_placeholder(match):
