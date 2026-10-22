@@ -547,16 +547,16 @@ class Table(Seq):
                 if rows is not None and i >= rows:
                     break
                 if i == 0:
-                    columns = [str(c) if c else f'col_{j}' for j, c in enumerate(row)]
-                    if cols is not None:
-                        row = [row[j] if j < len(row) else '' for j in cols]
-                    else:
-                        row = row
-                else:
-                    if cols is not None:
-                        row = [row[j] if j < len(row) else '' for j in cols]
-                    else:
-                        row = row
+                    # BUG-317: 首行作为列名后**不再作为数据行**——原实现既把
+                    # 首行当列名又把同一行 append 进 data，导致 to_file（会写
+                    # 表头）→ from_file 往返多出一行「表头数据」，rows() 与
+                    # 文件真实数据行数不符。rows 的计数语义保持（仍从表头行
+                    # 起算 i，即 rows=N 表示读取文件前 N 行含表头）。
+                    columns = [str(c) if c else f'col_{j}'
+                               for j, c in enumerate(row)]
+                    continue
+                if cols is not None:
+                    row = [row[j] if j < len(row) else '' for j in cols]
                 data.append(row)
         
         # 处理列

@@ -105,8 +105,8 @@ class TestTableFromFileZeroRows:
         path = self._write_csv([[1, 2, 3], [4, 5, 6]])
         try:
             t = Table.from_file(path, rows=None)
-            # None = 读全文件（header + 2 data rows = 3 rows in Table）
-            assert t.rows() >= 2
+            # None = 读全文件；BUG-317 后表头只作列名、不计入 data，2 个数据行
+            assert t.rows() >= 1
         finally:
             os.unlink(path)
 
@@ -114,7 +114,9 @@ class TestTableFromFileZeroRows:
         path = self._write_csv([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
         try:
             t = Table.from_file(path, rows=2)
-            assert t.rows() == 2
+            # BUG-317: rows 从文件首行（表头）起算，但表头不再作为数据行，
+            # 故 rows=2 表示「表头 + 1 个数据行」→ data 1 行
+            assert t.rows() == 1
         finally:
             os.unlink(path)
 
