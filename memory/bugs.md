@@ -5415,3 +5415,23 @@ B. `VBJsonBackend._stringify` 在数字/字符串分支之前先判断 `isinstan
 ### FIXED(2026-10-22T09:30:00Z / BUG-310)
 - evidence: vools/serialize/type_registry.py `_deserialize_enum` 优先按 name 还原（cls[state['name']]），缺失 name 时回退 value；vools/serialize/backends/vb_json_backend.py `_stringify` 在 bool 检查后、int/float 前加 enum.Enum 检查，先走 vools_preprocess 标记化。复现脚本验证：TupleE.PAIR=(1,2) 三后端往返 ✓；IntFlagE.A=1 三后端往返 type 不降级 ✓。serialize/type_registry/vb_json/enum 全套 352 测试 exit 0。commit 0ed5acb。
 - reported_by: vools-bughunt-lead
+
+## BUG-311 [2026-10-22T09:40:00Z] [medium] FIXED
+- summary: placeholder._IndexHolder.call 缓存键只含 env 键名不含值，不同 env 值的 placeholder 共享缓存
+- detail: vools/functional/placeholder.py `_IndexHolder.call` 的缓存键 = (expr, tuple(sorted(env.keys())))，
+只含键名不含值——两个 expr 相同、env 键名相同但值不同的 placeholder 共享同一缓存条目。
+
+实测：
+- _IndexHolder(expr="x+1", env={"x":5}).call = 6
+- _IndexHolder(expr="x+1", env={"x":10}).call = 6（期望 11）
+
+修复：缓存键改为 (expr, tuple(sorted((k, repr(v)) for k,v in env.items())))，
+用 repr(v) 纳入值。
+
+- reported_by: vools-bughunt-lead
+
+### FIXED(2026-10-22T09:40:00Z / BUG-311)
+- evidence: vools/functional/placeholder.py `_IndexHolder.call` 缓存键改为含 env 值（repr(v)）。
+复现脚本验证：p1(x=5)->6, p2(x=10)->11, p3(x=5)->6（缓存命中）, p4(expr=x*2)->10。
+functional/placeholder 全套 351 测试 exit 0。commit 5d362b1。
+- reported_by: vools-bughunt-lead
