@@ -449,6 +449,40 @@ CREATE INDEX IF NOT EXISTS {ip}_queue       ON {table}(queue);
 
         return self._retry(_do, "领取任务")
 
+    def touch_lock(self, task_name: str, worker_id: Optional[str] = None,
+                   now: Optional[str] = None) -> bool:
+        """刷新租约（BUG-289 收口，版本无关）。
+
+        与基类的默认实现（走 ``update_fields``）相比，这里**不推 version**：
+        续期是 worker 存活期间的心跳式动作，不该被同步通道当成"任务定义变了"。
+        仍受两道闸门保护：任务必须仍是 RUNNING，且持有者必须匹配。
+        """
+        record = self.get_task(task_name)
+        if record is None or record.state not in (TaskState.LOCKED, TaskState.RUNNING):
+            return False
+        if worker_id and record.worker_id and record.worker_id != worker_id:
+            return False
+        now_iso = now or utcnow_iso()
+        # 与 claim_next 同口径：租约取「全局 lock_ttl」与「该任务自己的 timeout_min」的较大者
+        lease = max(self.lock_ttl_sec, float(record.timeout_min or 60) * 60.0)
+        expire_iso = iso_add_seconds(now_iso, lease)
+
+        def _do():
+            with self._write_tx() as conn:
+                sets = ["lock_time = ?", "expire_time = ?", "updated_at = ?"]
+                params = [now_iso, expire_iso, now_iso]
+                where = ["task_name = ?", "state IN (?, ?)"]
+                params += [task_name, TaskState.LOCKED, TaskState.RUNNING]
+                if worker_id:
+                    where.append("worker_id = ?")
+                    params.append(worker_id)
+                cur = conn.execute(
+                    "UPDATE %s SET %s WHERE %s" % (self.table, ", ".join(sets),
+                                                  " AND ".join(where)), params)
+                return cur.rowcount == 1
+
+        return self._retry(_do, "刷新租约(%s)" % task_name)
+
     def clean_stale_locks(self, now: Optional[str] = None,
                           lock_timeout_sec: Optional[float] = None) -> int:
         """回收失效锁（LOCKED→PENDING，RUNNING→RETRY_PENDING）。
@@ -634,9 +668,33 @@ __all__ = ["SqliteTaskStore", "resolve_shared_db_path"]
 
 
 def resolve_shared_db_path(spec: dict, ctx: dict) -> str:
-    """为 sqlite-shared 解析共享库文件路径（缺省 <shared>/rhop-tasks.db）。"""
+    """为 sqlite-shared 解析共享库文件路径（缺省 <shared>/rhop-tasks.db）。
+
+    **相对路径一律相对共享根解析**（BUG-302 收口）：早期实现把相对 ``store.path``
+    原样交给 ``os.path.abspath``，于是它按**进程 cwd** 解析——共享库落到共享介质之外，
+    A/B 实际读写不同的库（任务状态互相看不见，静默发散）。现在相对路径先拼到共享根上，
+    再校验落点必须在共享根之内，越界直接抛可读的 ``StoreUnavailable``（不静默回退）。
+
+    **绝对路径的条件化校验**：绝对路径无 cwd 歧义，双方显式指定即一致；但当共享根
+    可用时仍做越界校验（防止共享库落在共享介质之外）；共享根缺失时绝对路径直接放行
+    （``test_explicit_path_needs_no_shared``）。
+    """
     template = str((spec or {}).get("path") or "")
+    root = str(ctx.get("shared_root") or "")
     if not template:
-        root = require_shared_root(ctx)
+        root = require_shared_root(ctx)  # 缺省路径必须落在共享根下
         return os.path.join(root, "rhop-%s.db" % str(ctx.get("name") or "tasks"))
-    return resolve_path_template(template, ctx)
+    path = resolve_path_template(template, ctx)
+    if not os.path.isabs(path):
+        root = require_shared_root(ctx)  # 相对路径必须相对共享根解析
+        path = os.path.normpath(os.path.join(root, path))
+    if root:
+        real_root = os.path.realpath(root)
+        real_path = os.path.realpath(path)
+        if real_path != real_root and not real_path.startswith(real_root + os.sep):
+            raise StoreUnavailable(
+                "sqlite-shared 的 store.path=%r 解析为 %s，不在共享根 %s 之内。"
+                "共享库必须落在双方共同可达的介质里（否则 A/B 会读写不同的库）。"
+                "请把 path 写成共享根下的相对路径（如 'rhop-tasks.db'）或共享根内的绝对路径。"
+                % (template, real_path, real_root))
+    return path

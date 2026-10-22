@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, List, Optional
 from ..errors import StoreUnavailable
 from .base import TaskStore, resolve_path_template, require_shared_root
 from .sqlite_store import SqliteTaskStore, resolve_shared_db_path
+from .pg_store import PgTaskStore
 
 #: 默认存储后端（单一共享库：双方读写同一份任务状态）
 DEFAULT_STORE_KIND = "sqlite-shared"
@@ -75,6 +76,14 @@ def register_store(kind: str, factory: Optional[Callable[[dict, dict], TaskStore
 def available_store_kinds() -> List[str]:
     """已注册的存储后端 kind 列表（报错提示用）。"""
     return sorted(_REGISTRY.keys())
+
+
+def _build_postgres(spec: dict, ctx: dict) -> TaskStore:
+    """PostgreSQL 后端工厂：从 spec 读取连接参数。"""
+    return PgTaskStore(spec, ctx)
+
+
+register_store("postgres", _build_postgres)
 
 
 def create_store(spec: Optional[dict] = None, ctx: Optional[dict] = None) -> TaskStore:
@@ -157,6 +166,7 @@ __all__ = [
     "DEFAULT_STORE_KIND",
     "TaskStore",
     "SqliteTaskStore",
+    "PgTaskStore",
     "create_store",
     "register_store",
     "available_store_kinds",

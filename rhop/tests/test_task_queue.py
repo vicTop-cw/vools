@@ -8,8 +8,8 @@ import pytest
 
 from vools.rhop.crypto import RhopCrypto
 from vools.rhop.task.config import TaskConfig
-from vools.rhop.task.errors import DagValidationError, ExecDenied, PayloadError
-from vools.rhop.task.models import TaskState
+from vools.rhop.task.errors import DagValidationError, ExecDenied, PayloadError, SecretError
+from vools.rhop.task.models import TaskRecord, TaskState
 from vools.rhop.task.queue import TaskQueue, payload_sha
 
 PY = sys.executable.replace("\\", "/")
@@ -490,6 +490,303 @@ class TestResultEncoding:
         finally:
             qa.close()
             qb.close()
+
+    def test_result_cap_is_hard_cap_for_non_stdout_fields(self, tmp_path):
+        """BUG-283 收口：result_max_bytes 是落库硬上限，非 stdout/stderr 的大字段也要被压。"""
+        cfg = TaskConfig.from_dict({"name": "n", "role": "B", "key": "k",
+                                    "queue": {"store": {"kind": "sqlite-local"},
+                                              "encrypt_result": False,
+                                              "result_max_bytes": 1000}},
+                                   base_dir=str(tmp_path), warn_plaintext=False)
+        q = TaskQueue(cfg)
+        try:
+            encoded = q.encode_result({"result": {"blob": "y" * 20000},
+                                       "channel": "handler", "name": "n"})
+            assert len(encoded.encode("utf-8")) <= 1000, "落库文本必须不超过上限"
+            decoded = json.loads(encoded)
+            assert decoded["truncated"] is True
+            assert decoded["result_chars"] >= 20000   # 摘要记的是 str(dict) 长度（含引号/括号）
+            assert "result_head" in decoded
+        finally:
+            q.close()
+
+    def test_result_cap_holds_under_encryption(self, tmp_path):
+        """BUG-283 收口（加密路径）：预留 Fernet 信封开销后，落库密文也必须 ≤ 上限。"""
+        cfg = TaskConfig.from_dict({"name": "n", "role": "B", "key": "k",
+                                    "queue": {"store": {"kind": "sqlite-local"},
+                                              "encrypt_result": True,
+                                              "result_max_bytes": 4000}},
+                                   base_dir=str(tmp_path), warn_plaintext=False)
+        q = TaskQueue(cfg)
+        try:
+            encoded = q.encode_result({"result": {"blob": "z" * 50000},
+                                       "channel": "cli", "name": "python"})
+            assert len(encoded.encode("utf-8")) <= 4000, "加密后的落库文本也必须不超过上限"
+            assert q.decode_result(encoded)["truncated"] is True
+        finally:
+            q.close()
+
+
+class TestLeaseRenewal:
+    """BUG-289 收口：renew_lock 委托给 store，且开启后长任务执行期间真的续期。"""
+
+    def test_renew_lock_delegates_and_refuses_non_running(self, tmp_path):
+        share = os.path.join(str(tmp_path), "share")
+        os.makedirs(share)
+        q = TaskQueue(_cfg("B", share, queue={"store": {"kind": "sqlite-shared"},
+                                              "lock_ttl_sec": 1}))
+        try:
+            assert q.renew_lock("ghost") is False
+            q.submit([{"task_name": "j", "value": "x"}])
+            assert q.renew_lock("j") is False                    # 未领取（PENDING）
+            assert q.store.claim_next("w1") is not None
+            assert q.renew_lock("j", worker_id="w1") is True
+            assert q.renew_lock("j", worker_id="w2") is False    # 非持有者
+        finally:
+            q.close()
+
+    def test_renewal_thread_refreshes_during_execution(self, tmp_path):
+        share = os.path.join(str(tmp_path), "share")
+        os.makedirs(share)
+        q = TaskQueue(_cfg("B", share, queue={"store": {"kind": "sqlite-shared"},
+                                              "lock_ttl_sec": 1,
+                                              "renew_lock": True,
+                                              "renew_interval_sec": 0.2}))
+        calls = []
+        original = q.store.touch_lock
+
+        def _spy(name, worker_id=None, now=None):
+            calls.append(name)
+            return original(name, worker_id=worker_id, now=now)
+
+        q.store.touch_lock = _spy
+        try:
+            script = os.path.join(str(tmp_path), "wait.py")
+            with open(script, "w", encoding="utf-8") as fh:
+                fh.write("import time; time.sleep(1.2); print('done')\n")
+            cmd = '"%s" "%s"' % (sys.executable.replace("\\", "/"),
+                                 script.replace("\\", "/"))
+            q.submit([{"task_name": "long", "cli": {"cmd": cmd}, "timeout_min": 30}])
+            assert q.run_once()["action"] == "completed"
+            assert "long" in calls, "开启 renew_lock 后，长任务执行期间必须真的续期（BUG-289）"
+            assert len(calls) >= 2, "1.2s 的任务按 0.2s 间隔应至少续期两次"
+        finally:
+            q.close()
+
+    def test_renewal_off_by_default(self, tmp_path):
+        share = os.path.join(str(tmp_path), "share")
+        os.makedirs(share)
+        q = TaskQueue(_cfg("B", share, queue={"store": {"kind": "sqlite-shared"},
+                                              "lock_ttl_sec": 1}))
+        try:
+            assert q.config.queue.get("renew_lock") is not True   # 默认关闭 ⇒ 零回归
+            fake = type("R", (), {"task_name": "j"})()
+            assert q._start_renewal(fake, "w1") is None
+        finally:
+            q.close()
+
+
+class TestCancelIntent:
+    """BUG-290 收口：取消终态任务是幂等 no-op，但必须留痕（warning），不许静默。"""
+
+    def test_cancel_on_terminal_task_is_noop_with_warning(self, tmp_path, caplog):
+        import logging
+        share = os.path.join(str(tmp_path), "share")
+        os.makedirs(share)
+        q = TaskQueue(_cfg("A", share, queue={"store": {"kind": "sqlite-shared"}}))
+        try:
+            q.submit([{"task_name": "done", "value": "v"}])
+            assert q.store.set_state("done", TaskState.COMPLETED, force=True) is True
+            with caplog.at_level(logging.WARNING, logger="vools.rhop.task.queue"):
+                out = q.cancel("done")
+            assert out["pending"] is False
+            assert out["state"] == TaskState.COMPLETED
+            assert q.get_task("done").state == TaskState.COMPLETED
+            assert any("已处于终态" in r.getMessage() for r in caplog.records), \
+                "取消终态任务必须留痕（BUG-290）"
+        finally:
+            q.close()
+
+    def test_cancel_pending_task_cancels_immediately(self, tmp_path):
+        share = os.path.join(str(tmp_path), "share")
+        os.makedirs(share)
+        q = TaskQueue(_cfg("A", share, queue={"store": {"kind": "sqlite-shared"}}))
+        try:
+            q.submit([{"task_name": "p", "value": "v"}])
+            out = q.cancel("p")
+            assert out["pending"] is False
+            assert q.get_task("p").state == TaskState.CANCELLED
+        finally:
+            q.close()
+
+
+class TestFileChannel:
+    """大载荷文件通道（advance 轮）：超阈值落文件 + 引用读回 + 清理；默认关闭 ⇒ 零回归。"""
+
+    def _cfg(self, tmp_path, file_channel=None, **queue_overrides):
+        fc = {"enabled": True, "dir": os.path.join(str(tmp_path), "files"),
+              "max_bytes": 500, "keep_days": 7}
+        fc.update(file_channel or {})
+        queue = {"store": {"kind": "sqlite-local"}, "file_channel": fc}
+        queue.update(queue_overrides)
+        return TaskConfig.from_dict(
+            {"name": "n", "role": "B", "key": "k", "queue": queue},
+            base_dir=str(tmp_path), warn_plaintext=False)
+
+    def test_disabled_by_default(self, tmp_path):
+        cfg = TaskConfig.from_dict(
+            {"name": "n", "role": "B", "key": "k",
+             "queue": {"store": {"kind": "sqlite-local"}}},
+            base_dir=str(tmp_path), warn_plaintext=False)
+        assert cfg.queue["file_channel"]["enabled"] is False
+
+    def test_offload_and_readback(self, tmp_path):
+        q = TaskQueue(self._cfg(tmp_path))
+        try:
+            big = {"result": {"blob": "x" * 4000}, "channel": "handler", "name": "n"}
+            encoded = q.encode_result(big)
+            # 信封里只回引用（读信封拿 file_ref）
+            node = q.crypto.decrypt_verify(encoded).payload if q.crypto else json.loads(encoded)
+            ref = node["file_ref"]
+            assert os.path.isfile(ref["path"]), "超阈值时必须落文件"
+            assert ref["bytes"] > 500
+            assert len(open(ref["path"], encoding="utf-8").read().encode("utf-8")) > 500
+            # 按引用应能读回完整结果（返回的是完整内容，不是信封）
+            decoded = q.decode_result(encoded)
+            assert decoded["result"]["blob"] == "x" * 4000, "按引用应能读回完整结果"
+        finally:
+            q.close()
+
+    def test_under_threshold_not_offloaded(self, tmp_path):
+        q = TaskQueue(self._cfg(tmp_path, file_channel={"max_bytes": 50000}))
+        try:
+            small = {"result": {"blob": "y" * 100}, "channel": "handler", "name": "n"}
+            decoded = q.decode_result(q.encode_result(small))
+            assert "file_ref" not in decoded
+            assert decoded["result"]["blob"] == "y" * 100
+        finally:
+            q.close()
+
+    def test_missing_file_is_graceful(self, tmp_path):
+        q = TaskQueue(self._cfg(tmp_path))
+        try:
+            encoded = q.encode_result({"result": {"blob": "z" * 4000},
+                                       "channel": "n", "name": "n"})
+            node = q.crypto.decrypt_verify(encoded).payload if q.crypto else json.loads(encoded)
+            os.remove(node["file_ref"]["path"])          # 文件被清理 / 丢失
+            out = q.decode_result(encoded)
+            assert "__file_missing__" in out, "引用失效必须可区分地返回，而不是抛错"
+        finally:
+            q.close()
+
+    def test_sha_mismatch_is_graceful(self, tmp_path):
+        q = TaskQueue(self._cfg(tmp_path, encrypt_result=False))
+        try:
+            encoded = q.encode_result({"result": {"blob": "z" * 4000},
+                                       "channel": "n", "name": "n"})
+            node = json.loads(encoded)
+            node["file_ref"]["sha256"] = "0" * 64
+            out = q.decode_result(json.dumps(node, ensure_ascii=False))
+            assert "__file_sha_mismatch__" in out
+        finally:
+            q.close()
+
+    def test_cleanup_removes_old_files_only(self, tmp_path):
+        import time
+        files_dir = os.path.join(str(tmp_path), "files")
+        os.makedirs(files_dir, exist_ok=True)
+        # 结果文件命名规则：<UTC时间戳>-<sha8>.json（与 _maybe_offload_result 一致）
+        old = os.path.join(files_dir, "20200101T000000-deadbeef.json")
+        new = os.path.join(files_dir, "20300101T000000-deadbeef.json")
+        for path in (old, new):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("{}")
+        os.utime(old, (time.time() - 30 * 86400, time.time() - 30 * 86400))
+        q = TaskQueue(self._cfg(tmp_path, keep_days=7))
+        try:
+            assert q.cleanup_result_files() == 1
+            assert not os.path.exists(old)
+            assert os.path.exists(new)
+        finally:
+            q.close()
+
+    def test_cleanup_keeps_non_result_files(self, tmp_path):
+        """BUG-296 收口：同目录的非结果文件（运维说明等）不得被清理误删。"""
+        import time
+        files_dir = os.path.join(str(tmp_path), "files")
+        os.makedirs(files_dir, exist_ok=True)
+        ops = os.path.join(files_dir, "README-ops.txt")
+        with open(ops, "w", encoding="utf-8") as fh:
+            fh.write("运维说明，请勿删除")
+        os.utime(ops, (time.time() - 30 * 86400, time.time() - 30 * 86400))
+        q = TaskQueue(self._cfg(tmp_path, keep_days=7))
+        try:
+            assert q.cleanup_result_files() == 0
+            assert os.path.exists(ops), "非结果文件必须保留"
+        finally:
+            q.close()
+
+    def test_dir_must_stay_inside_allowed_roots(self, tmp_path):
+        """BUG-295 收口：file_channel.dir 逃逸出 base_dir 必须报错拒绝，且不落盘。"""
+        cfg = TaskConfig.from_dict(
+            {"name": "n", "role": "B", "key": "k",
+             "queue": {"store": {"kind": "sqlite-local"},
+                       "file_channel": {"enabled": True, "dir": "../escaped",
+                                        "max_bytes": 100, "keep_days": 7}}},
+            base_dir=str(tmp_path), warn_plaintext=False)
+        q = TaskQueue(cfg)
+        try:
+            with pytest.raises(SecretError):
+                q.encode_result({"result": {"blob": "z" * 3000}, "channel": "n", "name": "n"})
+            assert not os.path.exists(os.path.join(str(tmp_path), os.pardir, "escaped")), \
+                "校验失败时不得在 base_dir 之外建目录"
+        finally:
+            q.close()
+
+    def test_payload_offload_roundtrip(self, tmp_path):
+        """载荷侧落文件：超阈值时 payload_enc 是引用信封，B 端按引用读回完整载荷。"""
+        q = TaskQueue(self._cfg(tmp_path,
+                                file_channel={"enabled": True, "payload_max_bytes": 500}))
+        try:
+            payload = {"cmd": "x" * 3000, "env": {"A": "1"}}
+            encoded = q.encrypt_payload(payload)
+            node = json.loads(encoded["payload_enc"])
+            assert node.get("kind") == "rhop-payload-file", "超阈值载荷必须落文件"
+            assert os.path.isfile(node["file_ref"]["path"])
+            rec = TaskRecord(task_name="t", payload_enc=encoded["payload_enc"],
+                             payload_sha=encoded["payload_sha"])
+            assert q.decrypt_payload(rec) == payload
+        finally:
+            q.close()
+
+    def test_payload_offload_disabled_by_default(self, tmp_path):
+        q = TaskQueue(self._cfg(tmp_path))
+        try:
+            payload = {"cmd": "x" * 3000}
+            encoded = q.encrypt_payload(payload)
+            assert "rhop-payload-file" not in encoded["payload_enc"], "默认关闭 ⇒ 载荷仍整条入队"
+            rec = TaskRecord(task_name="t", payload_enc=encoded["payload_enc"],
+                             payload_sha=encoded["payload_sha"])
+            assert q.decrypt_payload(rec) == payload
+        finally:
+            q.close()
+
+    def test_payload_offload_missing_file_raises(self, tmp_path):
+        """引用失效必须抛可读的 PayloadError，而不是静默返回空载荷。"""
+        q = TaskQueue(self._cfg(tmp_path,
+                                file_channel={"enabled": True, "payload_max_bytes": 500}))
+        try:
+            payload = {"cmd": "x" * 3000}
+            encoded = q.encrypt_payload(payload)
+            node = json.loads(encoded["payload_enc"])
+            os.remove(node["file_ref"]["path"])
+            rec = TaskRecord(task_name="t", payload_enc=encoded["payload_enc"],
+                             payload_sha=encoded["payload_sha"])
+            with pytest.raises(PayloadError) as exc:
+                q.decrypt_payload(rec)
+            assert "载荷文件缺失" in str(exc.value)
+        finally:
+            q.close()
 
     def test_decode_encrypted_without_key(self, queues):
         qa, qb = queues

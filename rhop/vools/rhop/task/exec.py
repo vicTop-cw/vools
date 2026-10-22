@@ -19,6 +19,7 @@ B 端拿到解密后的 JSON 指令，按下面的顺序派发（与 look_upon �
 from __future__ import absolute_import
 
 import fnmatch
+import logging
 import os
 import shlex
 import shutil
@@ -28,6 +29,8 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from .errors import ExecDenied
+
+log = logging.getLogger("vools.rhop.task.exec")
 
 #: 各语言默认命令前缀（与 look_upon 保持一致，无枚举限制）
 LANGUAGE_DEFAULT_CMD = {
@@ -161,14 +164,14 @@ class ExecPolicy(object):
             shell=bool(data.get("shell")),
         )
 
-    def check(self, channel: str, name: str) -> None:
-        """校验某个通道/名字是否被放行，未放行抛 ExecDenied。
+    def matched_pattern(self, channel: str, name: str) -> Optional[str]:
+        """返回命中的 allow 条目（未命中返回 None）——``check`` 与审计共用同一判定。
 
         名字匹配同时尝试「原样」与「去掉 .exe/.bat/.cmd 后缀的可执行名」，
         因此 ``cli:python`` 既能放行 ``python``，也能放行 ``python.exe``。
         """
         if self.allow_any:
-            return
+            return "allow_any"
         names = [str(name or "")]
         stem, ext = os.path.splitext(str(name or ""))
         if stem and ext.lower() in (".exe", ".bat", ".cmd", ".py"):
@@ -177,7 +180,13 @@ class ExecPolicy(object):
             candidate = "%s:%s" % (channel, candidate_name)
             for pattern in self.allow:
                 if pattern == "*" or fnmatch.fnmatchcase(candidate, str(pattern)):
-                    return
+                    return str(pattern)
+        return None
+
+    def check(self, channel: str, name: str) -> None:
+        """校验某个通道/名字是否被放行，未放行抛 ExecDenied。"""
+        if self.matched_pattern(channel, name) is not None:
+            return
         candidate = "%s:%s" % (channel, str(name or ""))
         raise ExecDenied(
             "执行被白名单拒绝：%s。当前允许: %s。"
@@ -429,6 +438,7 @@ def run_payload(payload: dict, policy: Optional[ExecPolicy] = None,
             raise ExecDenied(
                 "cli.shell=true 被拒绝：需要 exec.allow 里显式放行 'cli:shell'，"
                 "或设置 exec.allow_any=true。")
+        audit_cli_entry(payload, channel, name, policy)
         result = cli_execute(payload, policy=policy)
         return {"ok": bool(result.get("ok")), "channel": channel, "name": name,
                 "result": result, "error": result.get("error")}
@@ -445,6 +455,22 @@ def run_payload(payload: dict, policy: Optional[ExecPolicy] = None,
     return {"ok": True, "channel": "handler", "name": name, "result": value, "error": None}
 
 
+def audit_cli_entry(payload: dict, channel: str, name: str, policy: "ExecPolicy") -> None:
+    """cli 通道执行前的审计行（BUG-281 收口）。
+
+    必须**在执行前**落日志：cli 是唯一能把 B 当跳板跑任意代码的通道，执行后补记在超时、
+    被杀、子进程异常时就漏掉了。审计内容：哪条任务、哪个通道/名字、命中的 allow 条目、
+    是否 allow_any、是否 shell、实际命令（或 lang/script/script_path）。
+    """
+    cli = payload.get("cli") or {}
+    cmd = cli.get("cmd") or cli.get("script") or cli.get("script_path") \
+        or "(lang=%s)" % cli.get("lang")
+    log.info(
+        "rhop cli 审计: task=%s channel=%s name=%s allow_hit=%s allow_any=%s shell=%s cmd=%s",
+        payload.get("task_name") or payload.get("value"), channel, name,
+        policy.matched_pattern(channel, name), policy.allow_any, bool(cli.get("shell")), cmd)
+
+
 __all__ = [
     "ExecPolicy",
     "ExecDenied",
@@ -456,6 +482,7 @@ __all__ = [
     "cli_execute",
     "resolve_channel",
     "run_payload",
+    "audit_cli_entry",
     "LANGUAGE_DEFAULT_CMD",
     "LANGUAGE_EXTENSIONS",
 ]

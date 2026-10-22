@@ -17,11 +17,14 @@ from __future__ import absolute_import
 import hashlib
 import json
 import logging
+import os
+import re
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
 from .config import TaskConfig
-from .errors import DagValidationError, ExecDenied, PayloadError, RhopTaskError
+from .errors import DagValidationError, ExecDenied, PayloadError, RhopTaskError, SecretError
 from .exec import ExecPolicy, HANDLERS, run_payload
 from .models import (
     DEFINITION_FIELDS,
@@ -39,6 +42,14 @@ INSTRUCTION_KEYS = ("action", "cli", "handler", "args", "payload")
 
 #: 非重试型失败（确定性错误，重试没意义）
 _NON_RETRYABLE_PREFIX = ("载荷", "执行被白名单拒绝", "无法识别指令", "指令", "workdir", "处理器")
+
+#: 结果文件命名规则（``_maybe_offload_result`` / ``_write_file_ref`` 写出）：
+#: ``<UTC时间戳>-<内容sha前8位>.json``。``cleanup_result_files`` 只认这个模式，
+#: 避免误删同目录里的其它文件（BUG-296 收口）。结果与载荷共用同一命名规则。
+RESULT_FILE_RE = re.compile(r"^\d{8}T\d{6}-[0-9a-f]{8}\.json$")
+
+#: 载荷落文件的引用信封标记（payload_enc 里用它区分「加密载荷」与「引用信封」）
+PAYLOAD_FILE_KIND = "rhop-payload-file"
 
 
 def _canonical_json(data: Any) -> str:
@@ -59,6 +70,54 @@ def _first_present(sources: Any, key: str, cast: Any, fallback: Any) -> Any:
             except (TypeError, ValueError):
                 continue
     return fallback
+
+
+def _shrink_result_to_bytes(data: Any, budget: int) -> str:
+    """把结果压到 ``budget`` 字节以内（BUG-283 收口：真正的硬上限）。
+
+    两步降级，保证最终落库文本不超预算：
+    1. 字段级裁剪：结果里的 ``stdout`` / ``stderr`` 各裁到 2000 字符，其它结构保留；
+    2. 仍超预算 ⇒ 退化为**紧凑摘要**：只留结构类型、字符数、开头片段与提示，正文不再整条入库。
+
+    Args:
+        data:   要编码的结果（dict 或任意值）
+        budget: 目标字节上限
+
+    Returns:
+        str: 落库用的 JSON 文本（长度 ≤ budget，除非预算小到连最小摘要都放不下）
+    """
+    node = dict(data) if isinstance(data, dict) else {"result": data}
+    node["truncated"] = True
+    node["truncate_hint"] = (
+        "结果超过 result_max_bytes，已截断；大结果请写文件并用 payload 里的引用路径回传。")
+    inner = node.get("result")
+    if isinstance(inner, dict):
+        inner = dict(inner)
+        for key in ("stdout", "stderr"):
+            value = inner.get(key)
+            if isinstance(value, str) and len(value) > 2000:
+                inner[key] = value[:2000] + "\n...[截断]"
+        node["result"] = inner
+
+    text = _canonical_json(node)
+    if len(text.encode("utf-8")) <= budget:
+        return text
+
+    head = str(node.get("result") if isinstance(node, dict) else node)
+    summary = {
+        "truncated": True,
+        "truncate_hint": node.get("truncate_hint"),
+        "result_kind": type(node.get("result")).__name__,
+        "result_chars": len(head),
+        "result_head": head[: max(0, budget - 200)],
+    }
+    while True:
+        text = _canonical_json(summary)
+        if len(text.encode("utf-8")) <= budget:
+            return text
+        if not summary.get("result_head"):
+            return text          # 已是能表达的最小形态
+        summary["result_head"] = summary["result_head"][: len(summary["result_head"]) // 2]
 
 
 def payload_sha(payload: Any) -> str:
@@ -95,19 +154,78 @@ class TaskQueue(object):
         return self.crypto
 
     def encrypt_payload(self, payload: Any) -> Dict[str, Any]:
-        """把明文载荷加密成可入库的 (payload_enc, payload_sha)。"""
+        """把明文载荷加密成可入库的 (payload_enc, payload_sha)。
+
+        **大载荷载荷侧落文件**（advance 轮新增，默认关闭）：``file_channel.payload_max_bytes > 0``
+        且载荷超过阈值时，把**已加密的载荷**写进结果文件目录，``payload_enc`` 只存引用信封
+        ``{"kind": "rhop-payload-file", "file_ref": {...}}``——这样 A 侧的大指令不会整条进队列与
+        同步文档；B 端解密时按引用读回并校验完整性。文件里存的是密文，共享目录不会泄露明文。
+        """
         if payload is None or payload == {}:
             return {"payload_enc": None, "payload_sha": None}
         crypto = self._require_crypto("加密任务载荷")
-        return {"payload_enc": crypto.encrypt_json(payload),
-                "payload_sha": payload_sha(payload)}
+        encrypted = crypto.encrypt_json(payload)
+        ref = self._maybe_offload_payload(encrypted)
+        if ref is not None:
+            return {"payload_enc": json.dumps(
+                        {"kind": PAYLOAD_FILE_KIND, "file_ref": ref}, ensure_ascii=False),
+                    "payload_sha": payload_sha(payload)}
+        return {"payload_enc": encrypted, "payload_sha": payload_sha(payload)}
+
+    def _maybe_offload_payload(self, encrypted_text: str) -> Optional[Dict[str, Any]]:
+        """载荷（已加密）超过 ``file_channel.payload_max_bytes`` 时落文件并返回引用。"""
+        fc = self.config.queue.get("file_channel") or {}
+        threshold = int(fc.get("payload_max_bytes") or 0)
+        if threshold <= 0 or len(encrypted_text.encode("utf-8")) <= threshold:
+            return None
+        return self._write_file_ref(encrypted_text)
+
+    def _payload_file_ref(self, text: str) -> Optional[Dict[str, Any]]:
+        """``payload_enc`` 是否是「载荷落文件」的引用信封（不是普通密文）。"""
+        stripped = str(text).lstrip()
+        if not stripped.startswith("{"):
+            return None
+        try:
+            node = json.loads(stripped)
+        except (ValueError, TypeError):
+            return None
+        if isinstance(node, dict) and node.get("kind") == PAYLOAD_FILE_KIND:
+            ref = node.get("file_ref")
+            return ref if isinstance(ref, dict) else None
+        return None
+
+    def _read_payload_file(self, ref: Dict[str, Any], task_name: str) -> str:
+        """按引用读回**已加密**的载荷文本；失效时抛可读的 ``PayloadError``。"""
+        path = ref.get("path")
+        if not path or not os.path.isfile(path):
+            raise PayloadError(
+                "任务 %s 载荷文件缺失：%s（大载荷落文件需双方共享 file_channel.dir）"
+                % (task_name, path))
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError as exc:
+            raise PayloadError("任务 %s 载荷文件不可读：%s（%s）" % (task_name, path, exc))
+        actual = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if ref.get("sha256") and actual != ref.get("sha256"):
+            raise PayloadError(
+                "任务 %s 载荷文件完整性校验失败：期望 %s 实际 %s"
+                % (task_name, ref.get("sha256"), actual))
+        return text
 
     def decrypt_payload(self, record: TaskRecord) -> dict:
-        """解密任务载荷并按 payload_sha 校验完整性。"""
+        """解密任务载荷并按 payload_sha 校验完整性。
+
+        支持大载荷载荷侧落文件：``payload_enc`` 可能是引用信封，此时按引用读回已加密的载荷
+        再解密；引用失效（文件缺失/不可读/sha 不匹配）抛可读的 ``PayloadError``。
+        """
         if not record.payload_enc:
             return {}
         crypto = self._require_crypto("解密任务载荷(%s)" % record.task_name)
-        result = crypto.decrypt_verify(record.payload_enc)
+        text = str(record.payload_enc)
+        ref = self._payload_file_ref(text)
+        encrypted = self._read_payload_file(ref, record.task_name) if ref is not None else text
+        result = crypto.decrypt_verify(encrypted)
         if not result.ok:
             raise PayloadError(
                 "任务 %s 载荷解密失败：%s（密钥是否一致？密文是否被篡改？）" % (
@@ -122,30 +240,166 @@ class TaskQueue(object):
         return payload
 
     def encode_result(self, data: Any) -> Optional[str]:
-        """把结果编码入库（按配置决定是否加密 + 超长截断）。"""
+        """把结果编码入库（按配置决定是否加密 + **落库硬上限**截断，BUG-283 收口）。
+
+        ``result_max_bytes`` 是**落库文本**的硬上限：
+        - 明文存储时，落库文本 ≤ 上限；
+        - 结果加密时，Fernet 信封有固定开销（版本/时间戳/IV/HMAC + base64，约 600B），
+          因此先按 ``limit - 600`` 给明文预算，保证加密后的落库文本也 ≤ 上限。
+
+        压不下来时退化为紧凑摘要（保留结构类型 / 字符数 / 开头片段 / 提示），不再整条入库。
+
+        另外支持**大载荷文件通道**（``queue.file_channel.enabled``，默认关闭）：
+        结果超过 ``file_channel.max_bytes`` 时把完整结果落文件，信封里只回
+        ``file_ref``（路径 + sha256 + 字节数），B 端按引用读回——这样既守住
+        ``result_max_bytes`` 的落库上限，又不会丢掉大结果的内容。
+        """
         if data is None:
             return None
-        text = _canonical_json(data)
         limit = int(self.config.queue.get("result_max_bytes") or 0)
-        if limit and len(text.encode("utf-8")) > limit:
-            trimmed = dict(data) if isinstance(data, dict) else {"result": data}
-            inner = trimmed.get("result")
-            if isinstance(inner, dict):
-                inner = dict(inner)
-                for key in ("stdout", "stderr"):
-                    if isinstance(inner.get(key), str) and len(inner[key]) > 2000:
-                        inner[key] = inner[key][:2000] + "\n...[截断：结果超过 result_max_bytes，完整内容请走文件通道]"
-                trimmed["result"] = inner
-            trimmed["truncated"] = True
-            trimmed["truncate_hint"] = (
-                "结果超过 result_max_bytes=%d，已截断；大结果请写文件并用 payload 里的引用路径回传。" % limit)
-            text = _canonical_json(trimmed)
-        if self.config.queue.get("encrypt_result", True) and self.crypto is not None:
-            return self.crypto.encrypt_json(json.loads(text))
-        return text
+        want_encrypt = bool(self.config.queue.get("encrypt_result", True)) \
+            and self.crypto is not None
+        body = _canonical_json(data)
+
+        file_ref = self._maybe_offload_result(data, body)
+        if file_ref is not None:
+            node = dict(data) if isinstance(data, dict) else {"result": data}
+            node["file_ref"] = file_ref
+            node["truncated"] = True
+            node["truncate_hint"] = (
+                "结果超过 file_channel.max_bytes，已落文件；完整内容请按 file_ref 读取。")
+            body = _canonical_json(node)
+        elif limit > 0:
+            budget = max(128, limit - 600) if want_encrypt else limit
+            if len(body.encode("utf-8")) > budget:
+                body = _shrink_result_to_bytes(data, budget)
+        if want_encrypt:
+            return self.crypto.encrypt_json(json.loads(body))
+        return body
+
+    # ------------------------------------------------------------------
+    # 大载荷文件通道（advance 轮新增）
+    # ------------------------------------------------------------------
+
+    def _write_file_ref(self, body: str) -> Dict[str, Any]:
+        """把 body 原子写入结果文件目录并返回 file_ref（结果与载荷共用）。
+
+        落点取 ``file_channel.dir``（缺省 base_dir 下的 ``rhop-files``），**双方必须共享**
+        （否则对端按引用读不到）；写入用「临时文件 + rename」保证原子性；文件名含内容 sha，
+        因此同内容并发写会落到同一个文件（幂等，见语料 F2）。
+        """
+        directory = self._result_file_dir()
+        name = "%s-%s.json" % (
+            time.strftime("%Y%m%dT%H%M%S", time.gmtime()),
+            hashlib.sha256(body.encode("utf-8")).hexdigest()[:8])
+        final = os.path.join(directory, name)
+        tmp = final + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        os.replace(tmp, final)
+        return {"path": final, "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                "bytes": os.path.getsize(final), "kind": "rhop-result-file"}
+
+    def _maybe_offload_result(self, data: Any, body: str) -> Optional[Dict[str, Any]]:
+        """结果超过阈值且通道开启时落文件，返回引用；否则返回 None。"""
+        fc = self.config.queue.get("file_channel") or {}
+        if not fc.get("enabled"):
+            return None
+        threshold = int(fc.get("max_bytes") or 0)
+        if threshold <= 0 or len(body.encode("utf-8")) <= threshold:
+            return None
+        return self._write_file_ref(body)
+
+    def _allowed_file_roots(self) -> List[str]:
+        """允许写结果文件的根目录（绝对路径 + realpath 归一，去掉重复与空值）。"""
+        roots = []
+        for candidate in (self.config.base_dir, getattr(self.config, "shared_write", None),
+                          getattr(self.config, "shared_read", None)):
+            if not candidate:
+                continue
+            real = os.path.realpath(os.path.abspath(candidate))
+            if real not in roots:
+                roots.append(real)
+        return roots
+
+    def _result_file_dir(self) -> str:
+        """结果文件目录（建目录、返回绝对路径；**带路径校验**，BUG-295 收口）。
+
+        ``file_channel.dir`` 先相对 ``base_dir`` 解析为绝对路径，再 realpath 归一，
+        **必须落在 base_dir 或 shared 路径之内**——否则抛 ``SecretError`` 拒绝开启文件通道。
+        这样配置写错（或配置来自不可信来源）时不会把任务结果写到项目/共享目录之外。
+        """
+        fc = self.config.queue.get("file_channel") or {}
+        raw = fc.get("dir") or "rhop-files"
+        base = self.config.base_dir or "."
+        directory = os.path.realpath(os.path.abspath(os.path.join(base, raw)))
+        roots = self._allowed_file_roots()
+        if roots and not any(directory == r or directory.startswith(r + os.sep) for r in roots):
+            raise SecretError(
+                "file_channel.dir=%r 解析为 %s，不在允许的根目录内（%s）。"
+                "为防止结果文件写到项目/共享目录之外，请把 dir 设成 base_dir 或 shared 路径下的子目录。"
+                % (raw, directory, "、".join(roots)))
+        os.makedirs(directory, exist_ok=True)
+        return directory
+
+    def _read_result_file(self, ref: Any) -> Any:
+        """按 file_ref 读回完整结果；缺文件/校验失败返回带原因的标记（不抛错）。"""
+        if not isinstance(ref, dict):
+            return {"__file_ref_invalid__": ref}
+        path = ref.get("path")
+        if not path or not os.path.isfile(path):
+            return {"__file_missing__": path}
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError as exc:
+            return {"__file_unreadable__": "%s: %s" % (path, exc)}
+        actual = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if ref.get("sha256") and actual != ref.get("sha256"):
+            return {"__file_sha_mismatch__": "期望 %s 实际 %s" % (ref.get("sha256"), actual)}
+        try:
+            return json.loads(text)
+        except (ValueError, TypeError):
+            return {"__file_not_json__": path}
+
+    def cleanup_result_files(self, now: Optional[str] = None) -> int:
+        """清理过期的结果文件（按 ``file_channel.keep_days``，缺省 7 天）。
+
+        **只删本通道写出的结果文件**（文件名匹配 ``RESULT_FILE_RE``，BUG-296 收口）——
+        同目录里的其它文件（运维说明、配置副本、别的程序的产物）一律不碰；
+        每次删除记一条 info 日志便于审计。返回删除数；目录不存在返回 0。
+        """
+        fc = self.config.queue.get("file_channel") or {}
+        raw = fc.get("dir") or "rhop-files"
+        base = self.config.base_dir or "."
+        directory = os.path.realpath(os.path.abspath(os.path.join(base, raw)))
+        if not os.path.isdir(directory):
+            return 0
+        keep_days = float(fc.get("keep_days") or 7)
+        cutoff_ts = time.time() - keep_days * 86400.0
+        removed = 0
+        for name in os.listdir(directory):
+            if not RESULT_FILE_RE.match(name):
+                continue                       # 不认文件身份 ⇒ 不删
+            path = os.path.join(directory, name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                if os.path.getmtime(path) < cutoff_ts:
+                    os.remove(path)
+                    removed += 1
+                    self.log.info("清理过期结果文件: %s", path)
+            except OSError:
+                continue
+        return removed
 
     def decode_result(self, raw: Any) -> Any:
-        """把库里的结果解出来（密文自动解密；失败返回 None 而不是抛错）。"""
+        """把库里的结果解出来（密文自动解密；失败返回 None 而不是抛错）。
+
+        若信封里带 ``file_ref``（大载荷文件通道），按引用读回完整结果；
+        引用失效时返回带原因的标记字典（``__file_missing__`` / ``__file_sha_mismatch__`` …），
+        而不是抛错——调用方仍能区分「结果为空」与「结果读不回来」。
+        """
         if raw is None or raw == "":
             return None
         text = str(raw)
@@ -158,7 +412,12 @@ class TaskQueue(object):
                 if self.crypto is None:
                     return {"__encrypted__": True}
                 result = self.crypto.decrypt_verify(text)
-                return result.payload if result.ok else {"__decrypt_failed__": result.reason}
+                payload = result.payload if result.ok else {"__decrypt_failed__": result.reason}
+                if isinstance(payload, dict) and payload.get("file_ref"):
+                    return self._read_result_file(payload["file_ref"])
+                return payload
+            if isinstance(node, dict) and node.get("file_ref"):
+                return self._read_result_file(node["file_ref"])
             return node
         return text
 
@@ -358,7 +617,15 @@ class TaskQueue(object):
     # ------------------------------------------------------------------
 
     def cancel(self, task_name: str) -> Dict[str, Any]:
-        """取消任务：PENDING/LOCKED 直接 CANCELLED；RUNNING 打取消标记等其收尾。"""
+        """取消任务：PENDING/LOCKED 直接 CANCELLED；RUNNING 打取消标记等其收尾。
+
+        **与 reset 的优先级（BUG-290 收口）**：`cancel` 只作用于「尚未结束」的任务
+        （PENDING / LOCKED / RETRY_PENDING / RUNNING）；对已经终态（COMPLETED/FAILED/
+        CANCELLED）的任务是**幂等 no-op**，并且会打一条 warning 留痕——否则「看起来取消了、
+        实际没变」在运维侧无从发现。而 `requeue`/`retry_failed` 的重置意图（resets 通道）
+        是**执行意图**，优先级高于取消：B 端先应用 cancels 再应用 resets，因此
+        「已完成任务先取消后重置」与「先重置后取消」都会收敛到重置后的状态（PENDING，待重跑）。
+        """
         rec = self.store.require_task(task_name)
         now = utcnow_iso()
         if rec.state in (TaskState.PENDING, TaskState.LOCKED, TaskState.RETRY_PENDING):
@@ -370,21 +637,86 @@ class TaskQueue(object):
             self.store.set_cancel_requested(task_name, True, now=now)
             self._sync("push")
             return {"task_name": task_name, "state": rec.state, "pending": True}
+        log.warning("取消请求被忽略：任务 %s 已处于终态 %s（reset 意图优先于 cancel，"
+                    "见 docs/task-queue.md §14）", task_name, rec.state)
         return {"task_name": task_name, "state": rec.state, "pending": False,
                 "reason": "任务已处于终态（%s），未做改动" % rec.state}
 
     def requeue(self, task_name: str) -> bool:
-        """把单个任务强制重置回 PENDING（清锁、清取消标记）。"""
+        """把单个任务强制重置回 PENDING（清锁、清取消标记）。
+
+        本地库模式（挂了 syncer）下**不在本地改状态**：重置意图走 ``TaskSync.resets`` 通道，
+        由 B 端真正重跑并回推状态。否则 A 本地 version+1 会把 B 的较新状态永久挡在
+        ``apply_state`` 的版本单调门之外，双方发散、A 永远等不到完成（BUG-280）。
+        """
+        if self.syncer is not None:
+            info = self.syncer.request_reset(task_name)
+            return bool(info.get("ok"))
         return bool(self.store.requeue(task_name))
 
     def retry_failed(self, state: Optional[str] = None) -> int:
-        """把 FAILED（或指定状态）重置回 PENDING，返回影响行数。"""
+        """把 FAILED（或指定状态）重置回 PENDING，返回影响行数。
+
+        本地库模式下同样只登记重置意图（交由 B 端重跑），不直接改本地状态。
+        """
         if state and str(state).upper() not in (TaskState.FAILED, TaskState.CANCELLED):
             names = [r.task_name for r in self.store.list_tasks(state=state)]
             for name in names:
-                self.store.requeue(name)
+                if self.syncer is not None:
+                    self.syncer.request_reset(name)
+                else:
+                    self.store.requeue(name)
+            return len(names)
+        if self.syncer is not None:
+            names = [r.task_name for r in self.store.list_tasks(state=TaskState.FAILED)]
+            for name in names:
+                self.syncer.request_reset(name)
             return len(names)
         return int(self.store.reset_failed())
+
+    # ------------------------------------------------------------------
+    # 租约续期（BUG-289 收口）
+    # ------------------------------------------------------------------
+
+    def renew_lock(self, task_name: str, worker_id: Optional[str] = None,
+                   now: Optional[str] = None) -> bool:
+        """刷新任务租约（BUG-289 收口）：任务仍在 RUNNING 且持有者匹配时，
+        把 ``lock_time`` / ``expire_time`` 推到现在，避免被 ``clean_stale_locks``
+        判死回收后又被别的 worker 重复领取执行。
+
+        Args:
+            task_name: 任务名
+            worker_id: 持有者（worker 循环里传自己的 id，防止已被回收的任务被旧 worker 续活）
+            now: 刷新时间（缺省当前时间）
+
+        Returns:
+            bool: 是否刷新成功（任务不存在 / 不在 RUNNING / 持有者不匹配都返回 False）
+        """
+        return bool(self.store.touch_lock(task_name, worker_id=worker_id, now=now))
+
+    def _start_renewal(self, record: TaskRecord, worker_id: str) -> Optional[Any]:
+        """按配置启动后台续期线程；未开启或不需要时返回 None。
+
+        只在 ``queue.renew_lock=true`` 时启用（默认关闭，零回归）：长任务（执行时长可能
+        超过锁 TTL）需要周期性刷新租约，否则会被判死回收后重复执行。间隔取
+        ``renew_interval_sec``（缺省 = 锁 TTL 的一半，且不超过 TTL）。
+        """
+        if not self.config.queue.get("renew_lock"):
+            return None
+        ttl = max(1.0, float(self.config.queue.get("lock_ttl_sec") or 900))
+        interval = float(self.config.queue.get("renew_interval_sec") or (ttl / 2.0))
+        interval = max(0.5, min(interval, ttl))
+        stop = threading.Event()
+
+        def _loop():
+            while not stop.wait(interval):
+                try:
+                    self.renew_lock(record.task_name, worker_id=worker_id)
+                except Exception as exc:
+                    self.log.warning("租约续期失败(%s): %s", record.task_name, exc)
+
+        threading.Thread(target=_loop, name="rhop-lease-renew", daemon=True).start()
+        return stop
 
     # ------------------------------------------------------------------
     # B 侧：执行
@@ -439,6 +771,10 @@ class TaskQueue(object):
         payload.setdefault("task_name", record.task_name)
         payload.setdefault("task_type", record.task_type)
 
+        # 租约续期（BUG-289 收口）：默认关闭（queue.renew_lock=false，零回归）；
+        # 开启后后台线程按间隔刷新 lock_time/expire_time，使执行时长可能超过锁 TTL
+        # 的长任务不会被 clean_stale_locks 判死回收、再被别的 worker 重复执行。
+        renewal = self._start_renewal(record, wid)
         try:
             outcome = run_payload(payload, policy=self.policy,
                                   action_cfg=self.config.rhop.action_cfg(),
@@ -451,6 +787,9 @@ class TaskQueue(object):
             result = self._finish_failure(record, "执行异常: %s" % exc, wid, retryable=True)
             self._sync("push")
             return result
+        finally:
+            if renewal is not None:
+                renewal.set()
 
         if outcome.get("ok"):
             result = self._finish_success(record, outcome, wid)

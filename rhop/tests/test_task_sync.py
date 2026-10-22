@@ -199,3 +199,165 @@ class TestErrors:
                 syncer.push_tasks([])
         finally:
             store.close()
+
+
+class TestRequeueConvergence:
+    """BUG-280 回归：本地库模式下 A 端 requeue/retry_failed 不得造成双方状态发散。
+
+    发散的旧路径：A 本地把已完成任务重置成 PENDING 且 version+1 → 版本超过 B →
+    B 之后的状态回推被 apply_state 的『版本必须严格递增』永久丢弃 → A 永远等不到完成。
+    新语义：A 只登记重置意图（TaskSync.resets），由 B 重跑并回推，A 再收敛。
+    """
+
+    def _wire(self, role, base, share):
+        cfg = TaskConfig.from_dict(
+            {"name": "link", "role": role, "key": "unit-key",
+             "shared": {"write": str(share)}, "queue": {"store": {"kind": "sqlite-local"}},
+             "exec": {"allow": ["cli:python"]}}, base_dir=str(base), warn_plaintext=False)
+        store = cfg.build_store()
+        syncer = TaskSync(store, cfg.build_crypto(), cfg.role,
+                          shared=cfg.build_shared(), name=cfg.name)
+        return TaskQueue(cfg, store=store, crypto=cfg.build_crypto(), syncer=syncer)
+
+    def _ok_cmd(self, work):
+        path = os.path.join(str(work), "ok.py")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("print('done')\n")
+        return '"%s" "%s"' % (PY.replace("\\", "/"), path.replace("\\", "/"))
+
+    def _completed_pair(self, qa, qb, work):
+        qa.submit([{"task_name": "j", "cli": {"cmd": self._ok_cmd(work)}}])
+        qb.pull_sync()
+        assert qb.run_once()["action"] == "completed"
+        qa.pull_sync()
+        assert qa.get_task("j").state == TaskState.COMPLETED
+
+    def test_requeue_does_not_advance_local_version(self, tmp_path):
+        share = tmp_path / "share"
+        share.mkdir()
+        qa = self._wire("A", tmp_path / "a", share)
+        qb = self._wire("B", tmp_path / "b", share)
+        try:
+            self._completed_pair(qa, qb, tmp_path)
+            version = qa.get_task("j").version
+            assert qa.requeue("j") is True
+            # A 端不得本地改状态/版本（发散根因）
+            assert qa.get_task("j").state == TaskState.COMPLETED
+            assert qa.get_task("j").version == version
+            # 重置意图已登记，且 B 拉取后真正重跑
+            assert "j" in qa.syncer._resets
+            qb.pull_sync()
+            assert qb.get_task("j").state == TaskState.PENDING
+            assert qb.get_task("j").version == version + 1
+        finally:
+            qa.close()
+            qb.close()
+
+    def test_requeue_converges_after_b_executes(self, tmp_path):
+        share = tmp_path / "share"
+        share.mkdir()
+        qa = self._wire("A", tmp_path / "a", share)
+        qb = self._wire("B", tmp_path / "b", share)
+        try:
+            self._completed_pair(qa, qb, tmp_path)
+            qa.requeue("j")
+            qb.pull_sync()
+            assert qb.run_once()["action"] == "completed"       # B 真的重跑了一遍
+            assert qb.get_task("j").state == TaskState.COMPLETED
+            qb.syncer.push_states()
+            qa.pull_sync()
+            a, b = qa.get_task("j"), qb.get_task("j")
+            assert a.state == TaskState.COMPLETED
+            assert a.version == b.version                        # 版本对齐 ⇒ 无发散
+            assert qa.is_all_done() is True
+            assert qa.syncer._resets == {}                       # 重置被消费，意图撤销
+        finally:
+            qa.close()
+            qb.close()
+
+    def test_retry_failed_sends_resets_in_local_mode(self, tmp_path):
+        share = tmp_path / "share"
+        share.mkdir()
+        qa = self._wire("A", tmp_path / "a", share)
+        qb = self._wire("B", tmp_path / "b", share)
+        try:
+            fail = '"%s" -c "import sys; sys.exit(1)"' % PY.replace("\\", "/")
+            qa.submit([{"task_name": "bad", "cli": {"cmd": fail}, "max_retries": 0}])
+            qb.pull_sync()
+            qb.run_once()
+            qa.pull_sync()
+            assert qa.get_task("bad").state == TaskState.FAILED
+            assert qa.retry_failed() == 1
+            assert qa.get_task("bad").state == TaskState.FAILED  # 本地不直接重置
+            assert "bad" in qa.syncer._resets
+            qb.pull_sync()
+            assert qb.get_task("bad").state == TaskState.PENDING  # 意图到了对端
+        finally:
+            qa.close()
+            qb.close()
+
+    def test_requeue_unknown_task_returns_false(self, tmp_path):
+        share = tmp_path / "share"
+        share.mkdir()
+        qa = self._wire("A", tmp_path / "a", share)
+        try:
+            assert qa.requeue("ghost") is False
+            assert qa.syncer._resets == {}
+        finally:
+            qa.close()
+
+
+class TestControlIntentPrecedence:
+    """BUG-290 收口：reset 优先于 cancel —— 两种顺序都应收敛到「重置后的状态」。
+
+    取消只作用于尚未结束的任务；对已完成任务的取消是 no-op（并留 warning）。
+    """
+
+    def _wire(self, role, base, share):
+        cfg = TaskConfig.from_dict(
+            {"name": "link", "role": role, "key": "unit-key",
+             "shared": {"write": str(share)}, "queue": {"store": {"kind": "sqlite-local"}},
+             "exec": {"allow": ["cli:python"]}}, base_dir=str(base), warn_plaintext=False)
+        store = cfg.build_store()
+        syncer = TaskSync(store, cfg.build_crypto(), cfg.role,
+                          shared=cfg.build_shared(), name=cfg.name)
+        return TaskQueue(cfg, store=store, crypto=cfg.build_crypto(), syncer=syncer)
+
+    def _run_order(self, order, tmp_path):
+        share = tmp_path / "share"
+        share.mkdir()
+        script = os.path.join(str(tmp_path), "ok.py")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write("print('done')\n")
+        qa = self._wire("A", tmp_path / "a", share)
+        qb = self._wire("B", tmp_path / "b", share)
+        try:
+            qa.submit([{"task_name": "j", "cli": {"cmd": self._ok(script)}, "timeout_min": 5}])
+            qb.pull_sync()
+            assert qb.run_once()["action"] == "completed"
+            qa.pull_sync()
+            assert qa.get_task("j").state == TaskState.COMPLETED
+
+            for action in order:
+                if action == "requeue":
+                    qa.requeue("j")
+                else:
+                    qa.cancel("j")
+            qb.pull_sync()
+            qb.syncer.push_states()
+            qa.pull_sync()
+            return (qa.get_task("j").state, qb.get_task("j").state)
+        finally:
+            qa.close()
+            qb.close()
+
+    def _ok(self, script):
+        return '"%s" "%s"' % (PY.replace("\\", "/"), script.replace("\\", "/"))
+
+    def test_reset_then_cancel_converges_to_reset(self, tmp_path):
+        assert self._run_order(["requeue", "cancel"], tmp_path) == \
+            (TaskState.PENDING, TaskState.PENDING)
+
+    def test_cancel_then_reset_converges_to_reset(self, tmp_path):
+        assert self._run_order(["cancel", "requeue"], tmp_path) == \
+            (TaskState.PENDING, TaskState.PENDING)

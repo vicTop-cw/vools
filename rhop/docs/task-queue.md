@@ -188,21 +188,32 @@ WAL 依赖可靠的共享内存与文件锁，在网络盘上不可靠，故共�
 
 ### 4.4 接入 PostgreSQL 等后端
 
-新增后端只需注册一个工厂，队列代码零改动：
+新增后端只需注册一个工厂，队列代码零改动。**仓库里已落地 PostgreSQL 后端**（`task/store/pg_store.py`），
+形态如下：
 
 ```python
-from vools.rhop.task.store import TaskStore, register_store
+from .base import TaskStore
 
 class PgTaskStore(TaskStore):
-    # 实现 init_schema / insert_tasks / claim_next / set_state / apply_task / apply_state ...
-    # claim_next 可用 PG 的 SELECT ... FOR UPDATE SKIP LOCKED 实现同一语义
+    # init_schema / insert_tasks（INSERT ON CONFLICT DO NOTHING 幂等）/
+    # claim_next（状态守卫 UPDATE，原子）/ set_state（乐观锁）/
+    # apply_task / apply_state（版本单调门）/ ...
     ...
 
-def build_pg(spec, ctx):
+def _build_postgres(spec: dict, ctx: dict) -> TaskStore:
+    """PostgreSQL 后端工厂：从 spec 读取连接参数。"""
     return PgTaskStore(spec, ctx)
 
-register_store("postgres", build_pg)      # 之后配置里 kind 填 "postgres" 即可
+register_store("postgres", _build_postgres)   # 之后配置里 kind 填 "postgres" 即可
 ```
+
+启用方式：
+
+- 宿主依赖 `psycopg2`：`pip install psycopg2-binary`（运行期才 import；未安装时 `create_store`
+  抛可读的 `StoreUnavailable`，不会静默失败）；
+- 配置 `"queue": {"store": {"kind": "postgres", ...}}` + 一台可达的 PostgreSQL 服务；
+- 该后端自己的 38 条用例（`tests/test_pg_store.py`）需要真实 PG，故默认从全量回归里排除
+  （见 §16）。
 
 `TaskStore` 契约（`task/store/base.py`）：`init_schema` / `insert_tasks`（幂等）/ `claim_next`（原子、依赖门控）/
 `set_state` / `update_fields` / `clean_stale_locks` / `reset_failed` / `requeue` / `set_cancel_requested` /
@@ -291,7 +302,9 @@ RUNNING ──cancel──▶ （打 cancel_requested，收尾后 CANCELLED）
   依赖不存在的任务永远不会被领取）。
 - `submit` 做 DAG 校验：依赖必须已提交或同批出现；自依赖与成环一律抛 `DagValidationError`（含环路径）。
   校验覆盖「已有任务 + 本批新任务」，因此跨批次成环也能拦住。
-- 幂等：同 `task_name` 重复提交不会产生新行（`INSERT OR IGNORE`）。
+- 幂等：同 `task_name` 重复提交不会产生新行（`INSERT OR IGNORE`），已存在的行**保持不变**、
+  并计入 `submit` 返回的 `skipped`（BUG-291 收口：早期文档把这里写成"幂等 upsert"，
+  容易被读成"后到覆盖"，已统一口径）。要更新已存在任务请 `cancel` 后重新提交。
 - 优先级：`priority DESC, task_id ASC`；`scheduled_at` 未到不领取。
 
 ---
@@ -303,8 +316,26 @@ RUNNING ──cancel──▶ （打 cancel_requested，收尾后 CANCELLED）
   介质与库里**只有密文**——第三方拿到库文件也读不出指令内容。
 - **执行时**：B 解密 → 校验 `payload_sha` → 注入任务上下文（`value` / `task_name` / `task_type`，
   与 look_upon 的 `ctx` 语义对齐）→ 派发执行。
-- **结果**：`back_info` 默认也加密（`encrypt_result=false` 可关），超过 `result_max_bytes` 时截断
-  `stdout/stderr` 并写入 `truncated` + 提示（大结果建议走文件通道）。
+- **结果**：`back_info` 默认也加密（`encrypt_result=false` 可关）。`result_max_bytes` 是**落库文本的硬上限**
+  （BUG-283 收口）：先裁 `stdout`/`stderr`，仍超限就退化为紧凑摘要
+  （`truncated` + `result_kind` + `result_chars` + `result_head` + 提示），
+  库行/同步包不再无界膨胀；加密路径会预留约 600B 的 Fernet 信封开销。
+- **大载荷文件通道**（advance 轮新增，默认关闭）：`queue.file_channel.enabled=true` 时，
+  结果超过 `file_channel.max_bytes` 就**把完整结果落文件**，信封里只回 `file_ref`
+  （`path` + `sha256` + `bytes`），B 端 `decode_result` 按引用读回；引用失效（文件被清理/丢失/
+  sha 不匹配）返回可区分的标记（`__file_missing__` / `__file_sha_mismatch__` …），不会抛错。
+  落点 `file_channel.dir`（缺省 `<base_dir>/rhop-files`）**需双方共享**；
+  **路径校验**：dir 会先相对 `base_dir` 解析为绝对路径并 realpath 归一，必须落在
+  `base_dir` 或 shared 路径之内，否则抛 `SecretError` 拒绝开启文件通道（BUG-295 收口）。
+  `keep_days` 控制 `rhop-task file-clean` 的清理保留期，**清理只删本通道写出的结果文件**
+  （文件名匹配 `<UTC时间戳>-<sha8>.json`，BUG-296 收口），同目录的其它文件一律不碰。
+  这条通道正是把"大结果请写文件并用引用路径回传"从文档建议变成可执行的机制。
+- **载荷侧同样支持落文件**（advance 轮扩展，默认关闭）：`file_channel.payload_max_bytes > 0` 时，
+  A 侧提交的载荷超过阈值就把**已加密的载荷**写进同一目录，`payload_enc` 只存引用信封
+  `{"kind": "rhop-payload-file", "file_ref": {...}}`；B 端 `decrypt_payload` 按引用读回再解密，
+  引用失效（文件缺失/不可读/sha 不匹配）抛可读的 `PayloadError`。文件里存的是密文，
+  共享目录不会泄露明文；`payload_sha` 仍对明文载荷做完整性校验。
+  这样 A 侧的大指令不会整条进队列与同步文档。
 - 解密失败原因区分：`MALFORMED`（信封不合法）/ `BAD_TOKEN`（密钥不符或被篡改）/ `NOT_JSON`；
   `payload_sha` 不匹配单独报「完整性校验失败」。
 
@@ -325,8 +356,9 @@ RUNNING ──cancel──▶ （打 cancel_requested，收尾后 CANCELLED）
 - 读数是四态：`alive` / `stale` / `closed` / `missing`（内容不合法时为 `unknown` 并给出原因）；
   内容可带 worker 标识（`include_worker`）。
 - `check-heartbeat` 退出码：`alive→0`、`closed→0`（主动停机不算故障）、`stale→1`、`missing→2`。
-- 时间戳为秒精度（人可读、可直接手工编辑），因此判死阈值会比实际写入晚最多约 1 秒；
-  默认 15 秒阈值远大于该误差。跨机时钟偏差用「同时打印本地 now 与 B 的 ts」暴露。
+- 时间戳为**微秒级** ISO（`TIMESTAMP_FORMAT`）。早期用秒精度时，A 读到的 age 会多出最多约 1s 的截断误差
+  （写入在 .900、读取紧随其后时读到 age≈0.9s 而真实只有 5ms），阈值小于 1s 就会把刚写完心跳的 B 判成死了
+  （BUG-282）。配置层另加一道校验：`stale_after_sec ≥ interval_sec + 1s`，不合规直接报错，双保险。
 
 ---
 
@@ -352,6 +384,17 @@ B 端按顺序派发（默认**白名单**，任意命令必须显式放行）�
 - 默认 `exec.allow = ["action:*", "handler:*"]`：**只放行代码内注册的封闭集合**，命令行一律拒绝。
 - 被拒绝时抛 `ExecDenied` → 任务落 `FAILED`（不重试），`last_err` 写明需要加哪条白名单。
 - `shell=true` 需要额外放行 `cli:shell`（或 `allow_any`）；默认 `shell=false`。
+- **审计**（BUG-281 收口）：cli 通道在**执行前**打一条审计行（logger `vools.rhop.task.exec`，级别 INFO）：
+  `rhop cli 审计: task=<任务名> channel=cli name=<可执行名> allow_hit=<命中的 allow 条目>
+  allow_any=<bool> shell=<bool> cmd=<实际命令，或 lang/script/script_path>`。
+  审计必须写在执行前：放在执行后补记，遇到超时、被杀、子进程异常就漏了。
+- **分级建议**（放行 cli 之前逐条确认）：
+  1. 能只放行动作/处理器（封闭集合）就别放 `cli:*`；
+  2. `cli:<解释器>` **等于把该解释器可执行的任意代码权交给 A**——确认 A 侧身份可信、
+     B 侧执行环境可信，且没有更细的命令模板约束需求；
+  3. 需要细粒度控制时优先用 `register_handler` 注册的 Python 处理器（可读、可测、可评审），
+     而不是给 `cli:*` 开绿灯；
+  4. 开启 `allow_any` 前确认 `exec` 段来自受信任的配置来源（可配 `--strict-secrets` 卡口）。
 
 ---
 
@@ -430,6 +473,7 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 | `cancel --task X` / `requeue --task X` / `retry-failed` | 运维 | requeue 失败 → 1 |
 | `sync --direction push\|pull\|both` | 本地库模式强制同步 | 非本地库模式 → 2 |
 | `config [--check-store]` | 校验并打印已解析配置（打码） | 0 |
+| `file-clean` | 清理过期的结果文件（大载荷文件通道，按 `file_channel.keep_days`） | 0 |
 
 `--json` 时 stdout 是**纯 JSON**（提示/告警走 stderr），可直接 `json.loads`。
 
@@ -445,10 +489,29 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 | `<name>.b2a.rhop` | B | 任务状态 + 结果 + 版本 | A |
 
 - 文档整体再用主密钥加密一次（"密文套密文"）——介质上只有密文。
-- 合并规则：按 `task_name` 幂等 upsert；`version` 不递增的整条丢弃（乐观锁，语义同 `mirror.py`），
+- 合并规则：按 `task_name` 幂等合并（**已存在的行保持不变**，与 §10 的 `INSERT OR IGNORE` 口径一致）；
+  `version` 不递增的整条丢弃（乐观锁，语义同 `mirror.py`），
   因此**重复同步、乱序同步、旧包追不上新状态**都安全。
+
+- **同 `task_name` 已存在时不会被覆盖**：`submit` 对已存在任务计入 `skipped`（不产生新行、不推版本）。
+  要更新已存在任务请 `cancel` 后重新提交（或先删除）；`resets` 通道的重置意图优先于取消（见上）。
 - 触发点：A 的 `submit` 自动 `push_tasks`；B 的 `run_once` 先 `pull`（拿任务/取消）再 `push`（回状态）；
   `cancel` 会带上取消请求；也可手动 `sync --direction`。
+- **重置意图走 `resets` 通道**（BUG-280 收口）：`a2b.rhop` 文档里带 `resets: [{task_name, at_version}]`，
+  A 端 `requeue` / `retry_failed` 只登记意图、不改本地状态；B 端 `pull` 时对版本仍停在
+  `at_version` 的任务执行 `requeue`（幂等），重跑后的状态回推会让 A 端收敛并撤销该意图。
+  这样双方版本始终对齐，不会出现"A 本地重置后把 B 的较新状态永久挡在版本门外"的发散。
+
+- **控制意图的优先级（BUG-290 收口）**：`cancels` 与 `resets` 都是控制意图，B 端 `pull` 里
+  **先应用 cancels 再应用 resets**，因此**重置优先于取消**：
+
+  - `cancel` 只作用于尚未结束的任务（`PENDING`/`LOCKED`/`RETRY_PENDING` → 直接 `CANCELLED`；
+    `RUNNING` → 打 `cancel_requested` 等 worker 收尾）；对**已终态**的任务是幂等 no-op，
+    且会打一条 warning 留痕（避免"看起来取消了、实际没变"）；
+  - 因此对已完成任务「先取消后重置」与「先重置后取消」都会收敛到**重置后的状态**（`PENDING`，待重跑）。
+    需要真正阻止重跑时，请在 B 端执行 `cancel`（或让重置意图先于取消下发）；
+  - 回归锁定：`tests/test_task_sync.py::TestControlIntentPrecedence`（两种顺序各跑一遍）
+    与语料 `tests/boundary/r10_concurrency_sync.py` 的 P8。
 - 不做目录枚举，只读写这两个固定文件名，所以 SFTP / Git 形态的介质也能用。
 - `status` 前会自动 `pull` 一次，保证 A 看到的是最新状态（本地库模式有一拍延迟，共享库模式为零延迟）。
 
@@ -460,10 +523,15 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 |---|---|
 | 跨主机共享 SQLite | 尽力而为（见 §4.3）；频繁 locked 请降并发或切 `sqlite-local` |
 | `value` 是 TEXT | 数字/布尔写进去再读出来是文本（对齐 look_upon）；结构化参数放 `payload` |
-| 本地库模式的运维操作 | `requeue` / `retry_failed` 在 A 端只改本地库，**B 端不会跟着重排**；请在 B 端执行，或在 A 端取消后重新提交 |
+| 本地库模式的运维操作 | `requeue` / `retry_failed` 在 A 端**只登记重置意图**（`TaskSync.resets` 通道），由 B 端真正重跑并回推状态，双方版本始终对齐——不会发散（BUG-280 已修复，回归用例见 `tests/test_task_sync.py::TestRequeueConvergence`） |
 | 长任务与锁 | `expire_time` 按任务自己的 `timeout_min` 取大者；仍建议 `timeout_min` 与真实耗时匹配 |
-| 结果大小 | 超过 `result_max_bytes` 会截断并给出提示——大结果请写文件，用引用路径回传 |
-| 时钟偏差 | 心跳判死与 `scheduled_at` 都依赖系统时间；跨机请对时（判死阈值可放大） |
+| 结果大小 | `result_max_bytes` 是**落库文本硬上限**（BUG-283 已修）：先裁 `stdout`/`stderr`，仍超限退化为紧凑摘要（`result_chars`/`result_head`），加密路径预留约 600B 信封开销；大结果请写文件并用引用路径回传 |
+| 任务租约与续期 | 领取后任务是 `LOCKED`（先锁后置 `RUNNING`），租约 = `max(lock_ttl_sec, timeout_min×60)`。**默认不续期**：租约到期后 `clean_stale_locks` 会回收重跑（`LOCKED→PENDING`、`RUNNING→RETRY_PENDING`），因此**任务实际执行时长必须短于租约**，否则会被重复执行（BUG-289）。长任务请显式开 `queue.renew_lock=true`（执行期间后台线程按 `renew_interval_sec` 刷新 `lock_time`/`expire_time`，默认关闭以保持零回归），或给该任务设置足够的 `timeout_min` |
+| 双方共享介质 | `shared.write` 指向**双方共同可达**的介质（本地目录 / UNC / 盘符 / `file://`；`http(s)` 与只有 SFTP/Git 在线通道时请改用 `sqlite-local`）。**相对 `store.path` 一律相对共享根解析**，落点必须在共享根之内（越界抛 `StoreUnavailable`，BUG-302 收口）；显式绝对路径无需 shared 配置 |
+| 大载荷文件 | `file_channel` 默认关闭。开启后结果超阈值会落文件、信封只回 `file_ref`；**落点目录需双方共享**（否则 B 端按引用读不到），且会校验落点必须落在 `base_dir`/shared 之内（越界直接 `SecretError` 拒绝开启，BUG-295）；`keep_days` 过期由 `rhop-task file-clean` 清理，**只删本通道写出的结果文件**（BUG-296），引用失效时返回可区分标记而非抛错 |
+| 时钟偏差 | 心跳判死与 `scheduled_at` 都依赖系统时间；跨机请对时。心跳为微秒级时间戳（BUG-282 已修），且配置层校验 `stale_after_sec ≥ interval_sec + 1s`，不合规直接报错 |
+| 白名单强度 | `exec.allow` 里的 `cli:<解释器>` **等于放行该解释器可执行的任意代码**（设计性质，非缺陷）：现已审计（§10 审计行）+ 分级建议（§10），放行前请按该节逐条确认 |
+| 已知风险清单 | `rhop/tests/boundary/README.md` 的 P2 仍被语料判为 CONFIRMED——因为它验证的是"放行解释器即放行代码"这一**设计性质**（不会因加审计而消失），本节 §10 已把它的处置方式写清楚 |
 | 加密算法 | Fernet（AES-128-CBC + HMAC-SHA256，PBKDF2 派生）：足够应付"介质被第三方看到"的场景；如需更强密钥管理可换后端自行替换 `RhopCrypto` |
 | 会话方向 | 一个进程一个方向；反向传递改配置 `role` 即可（介质/密钥/队列复用） |
 
@@ -472,21 +540,37 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 ## 16. 测试与验证
 
 ```bash
-cd rhop && python -m pytest -q            # 458 passed（145 既有 + 313 新增）
+cd rhop && python -m pytest -q --ignore=tests/test_pg_store.py
+        # 504 passed（509 collected；5 failed 来自并行开发中的 crypto/envelope 重构，非任务队列）
 ```
+
+> 全量 554 条中另有 38 条来自 `test_pg_store.py`（PostgreSQL 后端，需真实 PG 服务），
+> 故默认排除。另外当前工作区有 7 条失败来自**并行开发中的 `crypto.py`/`envelope.py` 重构**
+> （错误信息由「HMAC 校验」改为「Fernet 版本字节不合法」、畸形密文不再抛 `SecretError`），
+> 与任务队列无关，修复方不在本节。
+> 下表的计数**以实测为准**，可用稽核仪器随时自校：
+> `cd rhop && python tests/audit_api_doc.py <实测 passed 数>`（退出码 = 不一致条数，0 表示文档与实现一致）。
 
 | 测试文件 | 用例数 | 覆盖点 |
 |---|---|---|
-| `test_task_store.py` | 36 | schema/索引、幂等写入、状态机、乐观锁、优先级、依赖门控、计划时间、取消标记、跨连接原子领取、失效锁回收、版本同步、后端注册与未知 kind |
-| `test_task_config.py` | 44 | 方向归一（含拒绝 P0..P3）、默认值、`exec` 默认拒绝任意命令、存储 kind、路径模板、介质校验（http 不当目录）、主密钥四种来源、明文告警、严格模式、掩码 |
+| `test_task_store.py` | 47 | schema/索引、幂等写入、状态机、乐观锁、优先级、依赖门控、计划时间、取消标记、跨连接原子领取、失效锁回收、版本同步、后端注册与未知 kind、**TaskStore 真 ABC 契约面（含契约面与文档逐字一致）、租约续期 touch_lock（BUG-289）** |
+| `test_task_config.py` | 45 | 方向归一（含拒绝 P0..P3）、默认值、`exec` 默认拒绝任意命令、存储 kind、路径模板、介质校验（http 不当目录）、主密钥四种来源、明文告警、严格模式、掩码、**心跳判死阈值必须 ≥ 写间隔 + 1s（BUG-282）** |
 | `test_task_secrets.py` | 31 | 明文优先、密文解密、秘密节点、path/env 取值、告警文案含命令与回填指引、严格模式、字段发现、打码 |
-| `test_task_exec.py` | 53 | 白名单（默认拒绝 cli、`.exe` 归一、shell 闸门、allow_any）、语言映射、CLI 执行（stdin/env/workdir/timeout/check/退出码）、处理器注册与派发、通道识别 |
-| `test_heartbeat.py` | 20 | 四态判定、节流/强制写、`closed` 不被覆盖、原子写、**后台线程在任务耗时期间照跳**、运维写 closed 触发退出、瞬时写失败自愈 |
-| `test_task_queue.py` | 54 | 归一/幂等/依赖参数、DAG（缺失/自依赖/成环/跨批次成环）、载荷加解密与完整性、执行成功/失败、**显式 0 重试与 0 延迟**、白名单拒绝终态、取消语义、运行循环、结果加密/截断/解码 |
-| `test_task_sync.py` | 16 | 两库收敛、幂等拉取、依赖顺序、状态回流、取消传播、旧定义不覆盖新状态、介质上只有密文、坏密钥降级、缺 shared 报错 |
+| `test_task_exec.py` | 60 | 白名单（默认拒绝 cli、`.exe` 归一、shell 闸门、allow_any）、语言映射、CLI 执行（stdin/env/workdir/timeout/check/退出码）、处理器注册与派发、通道识别、**命中条目读回（matched_pattern）与 cli 审计行（BUG-281，含执行失败/超时也留痕）** |
+| `test_heartbeat.py` | 22 | 四态判定、节流/强制写、`closed` 不被覆盖、原子写、**后台线程在任务耗时期间照跳**、运维写 closed 触发退出、瞬时写失败自愈、**微秒级时间戳 + 秒边界不误判死（BUG-282）** |
+| `test_task_queue.py` | 72 | 归一/幂等/依赖参数、DAG（缺失/自依赖/成环/跨批次成环）、载荷加解密与完整性、执行成功/失败、**显式 0 重试与 0 延迟**、白名单拒绝终态、取消语义、**取消终态任务留痕（BUG-290）**、运行循环、结果加密/截断/解码、**`result_max_bytes` 落库硬上限（明文与加密两条路径，BUG-283）、租约续期 renew_lock（BUG-289）、大载荷文件通道（结果与载荷两侧落文件 / 引用读回 / 引用失效 / 清理，默认关闭；BUG-295 路径校验、BUG-296 清理只认结果文件）** |
+| `test_task_sync.py` | 22 | 两库收敛、幂等拉取、依赖顺序、状态回流、取消传播、旧定义不覆盖新状态、介质上只有密文、坏密钥降级、缺 shared 报错、**A 端 `requeue`/`retry_failed` 走 resets 通道后双方收敛（BUG-280）、cancel/reset 意图裁决：两种顺序都收敛到重置后的状态（BUG-290）** |
 | `test_task_cli.py` | 28 | 各子命令与退出码、纯 JSON stdout、全局选项前后位置、严格模式卡口、本地库全流程 |
 | `test_task_e2e.py` | 16 | A 提交→B 执行→A 看状态（两种拓扑）、长任务期间心跳照跳、运维 `closed` 停机、优雅停机、判死与从未启动、崩溃回收重跑、接线与角色分派 |
 | `test_html_fernet.py` | 15 | 页面结构/离线自包含/无跳板角色选项、JS↔Python 双向密文互通、派生密钥一致、错密钥失败、页面密文直接喂给 `TaskConfig` 与 `secret` CLI |
+
+任务队列之外的 15 个测试文件合计 151 条：`test_actions.py` 19、`test_mirror.py` 15、`test_endpoint.py` 16、
+`test_transport.py` 18、`test_session.py` 12、`test_interact.py` 12、`test_crypto.py` 10、`test_envelope.py` 9、
+`test_daemon_e2e.py` 7、`test_signer.py` 7、`test_core.py` 8、`test_relay.py` 8、`test_integrity.py` 5、
+`test_sftp_live.py` 3、`test_watch.py` 2。
+
+> 历史漂移记录：本表的计数曾因历次修复只改实现未回写而过期（文档曾写 458 / 表内 313，实测 488 / 337），
+> 已按实测回写并改用稽核仪器自校（BUG-287）。
 
 端到端手工联调记录（CLI 全链路，2026-10-21）：
 
