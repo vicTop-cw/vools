@@ -311,24 +311,6 @@ def _is_allowed_module(module_path: str) -> bool:
     """判断模块路径是否在允许导入的白名单内（BUG-98）。"""
     if module_path in _ALLOWED_IMPORT_MODULES:
         return True
-# BUG-98: 反序列化可导入任意模块并 getattr。即使当前不直接呼叫，
-# 仍应限制允许导入的模块，防止信息泄露/导入副作用/未来 gadget 链。
-# 白名单：vools 前缀 + 常用 stdlib 模块；前缀匹配避免逐条维护。
-_ALLOWED_IMPORT_PREFIXES = (
-    'vools.',
-    'vools',
-)
-_ALLOWED_IMPORT_MODULES = frozenset({
-    'datetime', 'decimal', 'fractions', 'pathlib', 'enum',
-    'collections', 'collections.abc', 'typing',
-    'vools',
-})
-
-
-def _is_allowed_module(module_path: str) -> bool:
-    """判断模块路径是否在允许导入的白名单内（BUG-98）。"""
-    if module_path in _ALLOWED_IMPORT_MODULES:
-        return True
     for prefix in _ALLOWED_IMPORT_PREFIXES:
         if module_path.startswith(prefix):
             return True
