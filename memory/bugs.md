@@ -5042,3 +5042,23 @@ L266-267：`else: params = remaining_args` —— `remaining_kwargs`（除 conne
 
 新增回归 tests/test_sql_function_kwargs_regression.py 10 项 GREEN（7 静态模板形态 + 3 动态模式守护）；tests/sql/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
 
+
+## BUG-298 [2026-10-22T05:35:00Z] [medium] FIXED
+- summary: sql builder HAVING 占位符编号从 0 重新开始，与 self._params 不连续（numeric/named 风格）
+- detail: vools/sql/core/builder.py `_collect_condition_params()` 中 `param_offset` 是局部变量，每次调用从 0 开始。WHERE 和 HAVING 同时存在时，HAVING 的占位符编号从 :1 重新开始，但 `self._params` 是连续的（WHERE 参数在前）。导致 numeric/named 风格的 HAVING 占位符指向错误参数，DB 报 Incorrect number of bindings。
+
+实测（BaseSqlBuilder，paramstyle=numeric）：
+- builder.select('COUNT(*)').from_('orders').where('amount > ?', 100).group_by('customer_id').having('COUNT(*) > ?', 5)
+- 修复前 SQL: `... WHERE amount > :1 GROUP BY ... HAVING COUNT(*) > :1`，params: (100, 5)
+  - HAVING 的 :1 指向 params[0]=100（错误！应该是 params[1]=5）
+  - DB 报 Incorrect number of bindings supplied
+- 修复后 SQL: `... WHERE amount > :1 GROUP BY ... HAVING COUNT(*) > :2`，params: (100, 5)
+  - HAVING 的 :2 指向 params[1]=5（正确）
+
+根因：`_collect_condition_params` 的 `param_offset = 0` 是局部变量，WHERE 和 HAVING 独立编号。
+修复：`param_offset = len(self._params)`，从当前 params 长度开始编号，保证连续。
+- reported_by: vools-bughunt-lead
+
+### FIXED(2026-10-22T05:35:00Z / BUG-298)
+- evidence: vools/sql/core/builder.py `_collect_condition_params()` L743 改为 `param_offset = len(self._params)`。复现脚本验证：numeric 风格 WHERE+HAVING 的 SQL 正确生成 `HAVING COUNT(*) > :2`（params[1]=5），qmark 风格执行不报错。测试：`pytest tests/ -k "sql or builder"` exit 0（全绿）。
+- reported_by: vools-bughunt-lead
