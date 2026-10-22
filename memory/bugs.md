@@ -5367,3 +5367,51 @@ security/safe_eval/expression 全套 134 测试 exit 0。commit 750723a。
 - evidence: vb_json 后端 `loads` 调用 `_apply_object_hook(self.parse(...))`（L67），`_stringify` 未知类型分支先尝试 `vools_preprocess(obj)`（L546-547），未注册类型仍抛 TypeError。复现脚本验证：register_type(Point) 后 vb_json 往返 Point(1,2) ✓；datetime.date 往返 ✓；NONE 哨兵往返 ✓。
 - reported_by: vools-bughunt-lead
 
+
+
+### FIXED(2026-10-22T09:17:13Z / BUG-309)
+- evidence: vools/serialize/backends/vb_json_backend.py 修复（commit 998331a）：
+① 新增模块级 `_apply_object_hook(obj)`——递归（bottom-up，与 json 后端 object_hook 同序）对 dict/list 应用 `codec.vools_object_hook`；
+② `loads` 改为 `_apply_object_hook(self.parse(...))`；
+③ `_stringify` 未知类型分支先 `vools_preprocess(obj)`（内置/注册类型标记 `__vools_type__`），再接受 `vools_default(obj)` 产出的**可还原**标记（`__vools_singleton__`/`__vools_type__`）；通用 `__vools_obj__` 不接受（依赖白名单可能还原不回来），保持 BUG-303 的显式 TypeError。
+
+修复前实测：register_type(Point) 后 dumps(Point(1,2),'vb_json') -> TypeError（json/pickle 均 Point 往返 ✓）；dumps(NONE,'vb_json') -> TypeError；dumps(datetime.date,'vb_json') -> TypeError。
+
+修复后 probe 跨三后端 × 6 类型全对：Point/date/datetime/set/Decimal/complex 在 json、vb_json、pickle 三后端均正确往返；NONE 哨兵三后端 `is NONE`；None 与 NONE 区分保持；未注册 uuid/普通对象 vb_json 仍抛 TypeError（BUG-303 不回归）；基础类型（42/'x'/True/None/[1,2]/嵌套 dict）往返不变。
+
+新增回归 tests/test_serialize_vb_json_type_registry_regression.py 17 项 GREEN（自定义类型×3 后端、内置类型×3 后端×5 类型、NONE 哨兵、未注册仍拒、嵌套注册类型）；同步更新 BUG-303 回归（datetime 现属"支持"而非"应报错"）；tests/serialize/ + 全部 vb_json 相关测试共 273 项 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-310 [2026-10-22T09:23:48Z] [medium] FIXED
+- summary: serialize 类型注册表 enum 往返两处缺陷：①元组值 Enum 经 json/vb_json 反序列化报 ValueError「[1,2] is not a valid X」（_deserialize_enum 用 value 还原，已存 name 却未使用）；②vb_json 把 IntEnum/IntFlag 静默降级为普通 int（_stringify 的 int 分支先于注册表查询）
+- detail: serialize 的类型注册表在两处对 enum 处理不当，导致真实往返缺陷：
+
+【缺陷 A】tuple/其它非原始类型作为 value 的 Enum 无法经 json / vb_json 往返
+- `type_registry._deserialize_enum`（L216-243）最后一步用 **value** 还原：`return cls(state['value'])`。
+- JSON 无 tuple 概念，序列化时 `obj.value` 的 tuple 变成 list；反序列化 `cls([1, 2])` 找不到成员。
+- 实测：
+  class TupleE(enum.Enum): PAIR = (1, 2)
+  - dumps(TupleE.PAIR, 'json') -> loads -> **ValueError: [1, 2] is not a valid TupleE**
+  - vb_json 同样 ValueError；pickle 正常（不经 registry）。
+- 同时对比：`_serialize_enum` 已保存 `name`，但反序列化端没有优先用 name——用 name 还原（`cls[name]`）对任何 value 类型都稳健。
+
+【缺陷 B】vb_json 把 IntEnum/IntFlag 降级成普通 int（类型静默丢失）
+- `VBJsonBackend._stringify` 的分支顺序是 None → bool → **isinstance(obj,(int,float))** → str → dict → list，未先查类型注册表（BUG-309 只在"未知类型"分支加了 registry 查询，而 IntEnum 是 int 子类，永远走不到那里）。
+- 实测：
+  class IntFlagE(enum.IntEnum): A = 1
+  - json 后端：dumps/loads -> IntFlagE.A（正确）
+  - **vb_json：loads 得到 int 1**（类型丢失，值相同但 `type(back) is not IntFlagE`）
+  - pickle：IntFlagE.A ✓
+
+影响：A 属「合法枚举无法往返（报错）」，B 属「静默类型降级」（值对、类型丢，后续 `is`/成员方法/`isinstance` 判断全部失效），均为用户可观察的往返缺陷；两处都在文档化的类型注册表机制内。severity medium。
+
+修复方向：
+A. `_deserialize_enum` 优先按 name 还原（`cls[state['name']]`，缺失 name 时回退 value），对 tuple/complex 等值类型均稳健，且不破坏既有 payload。
+B. `VBJsonBackend._stringify` 在数字/字符串分支之前先判断 `isinstance(obj, enum.Enum)`（或统一查 registry），走 `vools_preprocess` 标记，使 IntEnum/IntFlag/str 子类枚举不降级。
+
+附（窄面，未纳入本条）：`register_type` 允许不同类型注册**同名**，`get_type_deserializer(name)` 线性取首个 → 后者往返会被还原成前者的类型（实测 B(9) -> A(9)），无冲突检测。
+- reported_by: agent-vools-hardening
+- task_id: T0r725
+
+
+### FIXED(2026-10-22T09:30:00Z / BUG-310)
+- evidence: vools/serialize/type_registry.py `_deserialize_enum` 优先按 name 还原（cls[state['name']]），缺失 name 时回退 value；vools/serialize/backends/vb_json_backend.py `_stringify` 在 bool 检查后、int/float 前加 enum.Enum 检查，先走 vools_preprocess 标记化。复现脚本验证：TupleE.PAIR=(1,2) 三后端往返 ✓；IntFlagE.A=1 三后端往返 type 不降级 ✓。serialize/type_registry/vb_json/enum 全套 352 测试 exit 0。commit 0ed5acb。
+- reported_by: vools-bughunt-lead
