@@ -496,7 +496,13 @@ class _IndexHolder:
             # math.__loader__.load_module('sys') / ().__class__.__bases__ /
             # operator.attrgetter('__class__') 等对象图逃逸的主防线。
             _check_expr_dangerous(self.expr)
-            cache_key = (self.expr, tuple(sorted(self.env.keys())))
+            # BUG-311: 原缓存键只含 env 键名 (tuple(sorted(self.env.keys())))，
+            # 不含值——两个 expr 相同、env 键名相同但值不同的 placeholder
+            # 共享同一缓存条目，第二个拿到第一个的 eval 结果（实测
+            # _IndexHolder("x+1",{"x":5}).call=6, _IndexHolder("x+1",{"x":10}).call=6）。
+            # 修复：用 repr(v) 纳入值（值可能是模块/函数等可哈希对象，
+            # 但 repr 能区分不同实例），键名+值一起构成缓存键。
+            cache_key = (self.expr, tuple(sorted((k, repr(v)) for k, v in self.env.items())))
             if cache_key not in _eval_cache:
                 _eval_cache[cache_key] = eval(self.expr, self.env)
             object.__setattr__(self, '_cached_call', _eval_cache[cache_key])
