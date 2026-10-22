@@ -100,6 +100,16 @@ class ConfigManager:
         with open(filepath, 'r', encoding='utf-8') as f:
             config_data = yaml.safe_load(f)
 
+        # BUG-316: 空文件 / 仅注释 / "null" 的 YAML 解析结果是 None，原实现直接
+        # `'database' in None` 抛 TypeError: argument of type 'NoneType' is not
+        # iterable（内部错误掩盖真因）。空配置视为无操作；非映射顶层给出清晰错误。
+        if config_data is None:
+            config_data = {}
+        if not isinstance(config_data, dict):
+            raise ValueError(
+                f"配置文件顶层必须是映射(dict)，实际得到 "
+                f"{type(config_data).__name__}: {filepath}")
+
         if 'database' in config_data:
             for key, value in config_data['database'].items():
                 setattr(self.database, key, value)
