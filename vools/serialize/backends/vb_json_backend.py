@@ -5,6 +5,7 @@ VB JSON 序列化后端
 """
 
 from typing import Any, Dict, List, Optional, Union
+import enum
 import re
 
 from .base import BaseBackend
@@ -511,6 +512,27 @@ class VBJsonBackend(BaseBackend):
         
         if isinstance(obj, bool):
             return 'true' if obj else 'false'
+        
+        # BUG-310B: enum.Enum 检查必须在 int/float 分支之前——
+        # IntEnum/IntFlag 是 int 子类，若走 int 分支会被静默降级为普通 int
+        # （值对、类型丢，后续 is/成员方法/isinstance 判断全部失效）。
+        # 先走 vools_preprocess 标记化，确保枚举类型不丢失。
+        if isinstance(obj, enum.Enum):
+            try:
+                from ..codec import vools_preprocess
+                _pre = vools_preprocess(obj)
+                if _pre is not obj:
+                    return self._stringify(_pre)
+            except Exception:
+                pass
+            # vools_preprocess 未处理（未注册），走 __vools_obj__ 标记
+            try:
+                from ..codec import vools_default
+                _dflt = vools_default(obj)
+                if isinstance(_dflt, dict) and '__vools_obj__' in _dflt:
+                    return self._stringify(_dflt)
+            except Exception:
+                pass
         
         if isinstance(obj, (int, float)):
             # BUG-203：非有限浮点必须输出标准 JSON 字面量（与 json.dumps 的

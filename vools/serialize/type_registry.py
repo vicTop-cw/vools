@@ -240,6 +240,15 @@ def _deserialize_enum(state: Dict[str, Any]) -> Any:
     # BUG-96: 仅允许 enum.Enum 子类，禁止任意类或函数被呼叫
     if not isinstance(cls, type) or not issubclass(cls, enum.Enum):
         raise ValueError(f'Invalid enum type: {type_name}')
+    # BUG-310A: 优先按 name 还原——_serialize_enum 已保存 name，
+    # 反序列化端用 cls[name] 对任何 value 类型（tuple/complex/自定义对象）
+    # 都稳健；仅当 name 缺失时回退 value（兼容旧 payload）。
+    name = state.get('name')
+    if name:
+        try:
+            return cls[name]
+        except KeyError:
+            pass
     return cls(state['value'])
 
 
