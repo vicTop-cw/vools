@@ -185,11 +185,16 @@ class SafeExpressionEvaluator:
         elif isinstance(node, ast.Call):
             func = self._eval_node(node.func)
             args = [self._eval_node(arg) for arg in node.args]
+            # BUG-308: 原实现只处理 node.args，node.keywords 被静默丢弃——
+            # round(3.14, ndigits=2) 变成 round(3.14) 返回 3（整数），
+            # 与位置参数 round(3.14, 2) 返回 3.14 不一致。关键字参数
+            # 同样是用户输入的一部分，必须求值并传递。
+            kwargs = {kw.arg: self._eval_node(kw.value) for kw in node.keywords}
 
             if func not in ALLOWED_BUILTINS.values():
                 raise SafeEvalError(f"不允许的函数调用: {func}")
 
-            return func(*args)
+            return func(*args, **kwargs)
 
         else:
             raise SafeEvalError(f"不支持的表达式类型: {type(node).__name__}")
