@@ -5323,3 +5323,47 @@ __setstate__ 只对白名单模块名执行 import_module，非白名单保留�
 复现脚本验证：白名单 math → 模块对象 ✓；非白名单 os/sys → 保留字符串 ✓。
 functional/placeholder/serialize 全套测试 exit 0。commit 6812d5f。
 - reported_by: vools-bughunt-lead
+
+## BUG-308 [2026-10-22T08:40:00Z] [medium] FIXED
+- summary: safe_eval._eval_node 的 ast.Call 分支只处理 node.args，node.keywords 被静默丢弃
+- detail: vools/security/safe_eval.py `_eval_node` 的 `ast.Call` 分支只求值 `node.args`，
+`node.keywords` 被静默忽略。round(3.14159, ndigits=2) 变成 round(3.14159) 返回 3（整数），
+与位置参数 round(3.14159, 2) 返回 3.14 不一致。
+
+修复：新增 kwargs 求值 `kwargs = {kw.arg: self._eval_node(kw.value) for kw in node.keywords}`，
+`return func(*args, **kwargs)`。安全验证：kwargs 中的表达式同样经过 _eval_node 求值，
+未授权调用（__import__/Attribute 等）仍被拒绝。
+
+- reported_by: vools-bughunt-lead
+
+### FIXED(2026-10-22T08:40:00Z / BUG-308)
+- evidence: vools/security/safe_eval.py `_eval_node` ast.Call 分支新增 kwargs 求值。
+复现脚本验证：round(3.14159, ndigits=2) = 3.14 ✓；安全验证 __import__ 被拒绝 ✓。
+security/safe_eval/expression 全套 134 测试 exit 0。commit 750723a。
+- reported_by: vools-bughunt-lead
+## BUG-309 [2026-10-22T09:02:11Z] [medium] FIXED
+- summary: serialize 的 register_type 扩展机制与内置类型注册在 vb_json 后端完全失效（dumps 抛 TypeError / 修复前静默 null），因 vb_json 的 _stringify 与 parse 未接入 vools_preprocess / vools_object_hook；json/pickle 后端正常，两 JSON 后端能力不对等
+- detail: vools/serialize 的**类型注册表扩展机制在 vb_json 后端完全失效**，而 json/pickle 后端正常：
+
+- `register_type(Point, 'point', serialize=..., deserialize=...)` 是文档化的自定义类型扩展点（docstring：「serialize: 序列化函数，接收实例，返回**可 JSON/msgpack 编码的字典**」）。
+- json 后端（backends/json_backend.py）dumps 走 `vools_preprocess`、loads 走 `vools_object_hook` —— 注册类型与内置 datetime/set/Decimal 等均正确往返。
+- **vb_json 后端（backends/vb_json_backend.py）的 `dumps_str`/`_stringify` 与 `parse`/`loads` 完全没有接入这两个钩子**：既不查注册表，也不在解析后调 object_hook。
+
+实测：
+- register_type(Point) 后：
+  - dumps(Point(1,2), 'json') -> loads -> Point(1,2) ✓
+  - dumps(Point(1,2), 'pickle') -> loads -> Point(1,2) ✓
+  - **dumps(Point(1,2), 'vb_json') -> TypeError: Object of type Point is not serializable by VBJsonBackend**（BUG-303 修复后的显式报错；修复前更糟：静默 'null' → loads None）
+- 内置注册类型同样不可用：`dumps(NONE, 'vb_json')`（NONE 为 sentinel 单例，json 后端编码成 `{"__vools_singleton__": "vools.serialize.sentinel:NONE"}` 正常往返）、`dumps(datetime.date(...), 'vb_json')` 均 TypeError。
+- 对照组：同一对象在 json/pickle 后端均完整往返。
+
+影响：用户按文档注册自定义类型后，只要选择 vb_json 后端就整体不可用（且修复前是静默丢数据）；两个 JSON 后端能力不对等，属「文档化扩展机制在某后端未实现」的契约缺口。severity medium。
+
+修复方向：vb_json 的 `_stringify` 未知类型分支先尝试 `vools_preprocess(obj)`（返回非同一对象则递归 stringify 该标记结构）；`loads`/`parse` 结果递归应用 `vools_object_hook`（bottom-up，与 json 后端 object_hook 语义一致）。未注册类型仍抛 TypeError（保持 BUG-303 的显式报错）。
+- reported_by: agent-vools-hardening
+- task_id: T0r724
+
+### FIXED(2026-10-22T09:10:00Z / BUG-309)
+- evidence: vb_json 后端 `loads` 调用 `_apply_object_hook(self.parse(...))`（L67），`_stringify` 未知类型分支先尝试 `vools_preprocess(obj)`（L546-547），未注册类型仍抛 TypeError。复现脚本验证：register_type(Point) 后 vb_json 往返 Point(1,2) ✓；datetime.date 往返 ✓；NONE 哨兵往返 ✓。
+- reported_by: vools-bughunt-lead
+
