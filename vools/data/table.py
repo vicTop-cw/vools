@@ -385,7 +385,10 @@ class Table(Seq):
     # BUG-252: max/min 在无匹配数据时返回 None，@rself 的 None→self 兜底会把
     # None 转成 Table(empty)，使「空表 max/min 语义」与 sum/avg（返回 0）一致
     # 却丧失了 None 可判性；把 max/min 加入 _rself_exclude，让它走原生 None 路径。
-    _rself_exclude = ('max', 'min')
+    # BUG-313: get_cell/get_cell2 的默认 default_value=None 是**有意义的返回值**
+    # （文档：越界/空值返回 default_value），@rself 的 None→self 兜底会把它们
+    # 变成整个 Table 对象，破坏 `v is None` 判断。与 BUG-252 的 max/min 同理。
+    _rself_exclude = ('max', 'min', 'get_cell', 'get_cell2')
 
     """二维表格数据结构
 
