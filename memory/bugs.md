@@ -4976,3 +4976,65 @@ L1278-1294 safe_eval：
 修复前实测：Table([[1,None],[2,10],[3,5]], ['id','v']).sort('v') -> TypeError: '<' not supported between instances of 'int' and 'NoneType'（无列名）；reverse=True 同类；混合类型 'a'/10 同类；order_by 委托同样症状。
 
 修复后 probe 7 项全对：含 None 升/降序与混合类型、order_by 委托均抛 ValueError 且消息含 "'v'"/"None"；正常数字升序 [[1,10],[2,20],[3,30]]、降序 [[3,30],[2,20],[1,10]]、字符串排序不变。新增回归 tests/test_table_sort_error_diagnostics_regression.py 11 项 GREEN（错误消息含列名/清洗建议/docstring 声明 + 四类正常排序守护 + 未知列 ValueError）；tests/data/ 与 table/sort 相关测试全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-295 [2026-10-22T05:15:58Z] [medium] FIXED
+- summary: [rhop-task/bugfind-F4] file_channel.dir 无路径校验：写成 '../escaped' 会把结果文件写到 base_dir 之外（甚至仓库根）
+- detail: 现象：配置 `queue.file_channel.dir = "../escaped"`（相对 base_dir），开启文件通道后执行任务，结果文件的落点解析为 `<repo>/escaped/20261022T051344-9bc42d2f.json`——**完全脱离 base_dir**，在本例中还写进了仓库根目录。
+  根因：`TaskQueue._result_file_dir()`（vools/rhop/task/queue.py:242）只做 `os.makedirs(directory, exist_ok=True)` 与 `os.path.join`，对 dir 没有任何路径校验：不拒绝 `..`、不拒绝绝对路径、不拒绝跨盘符、也不要求落在 base_dir / shared_root 之内。
+  影响面：① 配置写错（或配置来自不可信来源）时，任务执行会把任意内容写到任意位置（结果是 B 端执行的产物，可能含敏感信息）；② 落点不可预测 ⇒ 清理（cleanup_result_files）与运维归档都找不到文件；③ 与 §8 文档『落点需双方共享』的口径不一致——文档假设 dir 是双方约定的共享目录，但实现不校验它是否真的可达/可共享。
+  证据：rhop/tests/boundary/r14_file_channel.py 的 F4 探针（可复现，退出码=风险成立条数）。复现命令：cd rhop && python tests/boundary/r14_file_channel.py；输出 F4 行：base=…/base；落点=…/escaped/…（逃逸=True）。探针产生的越界目录已删除。
+  建议：① `_result_file_dir()` 先把 dir 解析为绝对路径，校验它必须落在 `base_dir` 或 `shared_root` 之内（否则抛配置错误并拒绝开启 file_channel）；② 拒绝 `..` 上跳、盘符与跨盘；③ 补一条『dir 指向 base_dir 之外 ⇒ 配置报错』的回归用例（语料 F4 可直接转正）；④ §8 同步写明校验规则。
+- reported_by: explore-bugfind-3
+
+### FIXED(2026-10-22T05:26:00Z / BUG-295)
+- evidence: rhop/vools/rhop/task/queue.py `_result_file_dir()`（L259-277）已加路径校验：dir 先 realpath 归一，必须落在 base_dir 或 shared 路径内，否则抛 SecretError。边界探针 r14_file_channel.py F4：file_channel.dir='../escaped' → SecretError 拒绝（逃逸=False ✓）。
+- reported_by: vools-bughunt-lead
+
+## BUG-296 [2026-10-22T05:15:58Z] [medium] FIXED
+- summary: [rhop-task/bugfind-F3] cleanup_result_files 按『目录内任意文件 + 超期』删除，会误删同目录的非结果文件
+- detail: 现象：把一个 30 天前的非结果文件（README-ops.txt，运维随手放的说明）放进结果文件目录，`keep_days=7` 时调用 `cleanup_result_files()` → removed=1，且该运维文件被删除。
+  根因：`TaskQueue.cleanup_result_files()`（vools/rhop/task/queue.py:269）遍历目录内**所有文件**，凡 mtime 早于 keep_days 就删除；它不判断文件是不是本通道写出的结果文件（既无文件名规则，也无内容/引用校验）。
+  影响面：① 运维把配置、说明、凭据副本等放在同一目录时会被静默删除（无日志、无提示，只有 removed 计数）；② 与『只清理结果文件』的直觉和文档措辞不符；③ 若目录被配置成某个共享目录（文档建议双方共享），误删面更大。
+  证据：rhop/tests/boundary/r14_file_channel.py 的 F3 探针（可复现）。复现命令：cd rhop && python tests/boundary/r14_file_channel.py；输出 F3 行：removed=1、运维文件是否还在=False（期望还在）。
+  建议：① 只删本通道写出的结果文件——文件名规则（如 `*-<sha8>.json`）+ 目录白名单，或写一个 manifest 记录已写出的引用；② 删除前记日志（路径 + 大小），便于事后审计；③ 补一条『同目录存在非结果文件时不被删除』的回归用例（语料 F3 可直接转正）；④ §8 同步写明清理范围。
+- reported_by: explore-bugfind-3
+
+
+### FIXED(2026-10-22T05:27:53Z / BUG-295, BUG-296)
+- evidence: polish 轮收口（任务 T0r15，mode=polish）：① BUG-295——vools/rhop/task/queue.py 新增 _allowed_file_roots()（base_dir + shared_write/shared_read 的 realpath 归一），_result_file_dir() 改为先把 file_channel.dir 相对 base_dir 解析为绝对路径并 realpath 归一，校验它必须落在允许根目录之内，否则抛 SecretError 拒绝开启文件通道（越界时不建目录、不落盘）。② BUG-296——新增模块级 RESULT_FILE_RE（^<UTC时间戳>-<sha8>.json$），cleanup_result_files() 只删匹配该模式的结果文件，同目录的其它文件一律不碰，每次删除记 info 日志。③ 回归锁定：tests/test_task_queue.py 新增 2 个用例（cleanup 保留非结果文件 / dir 越界必须 SecretError 且不落盘），TestFileChannel 共 10 个用例全绿。④ 文档 docs/task-queue.md §8 文件通道小节补路径校验与清理范围、§15 已知限制行同步。锁钉证据：test_task_queue 69 passed / 0 failed；语料 tests/boundary/r14_file_channel.py 的 F3/F4 由 CONFIRMED 翻转为 NOT-CONFIRMED（F3 removed=0 且运维文件还在；F4 返回 SecretError 且未建越界目录），语料 5/5 全绿 exit=0；稽核仪器 59 项检查 0 mismatch（§16 先被它抓到 2 条漂移——全量 497->499、queue 67->69——回写后归零）；全量 499 passed / 7 failed（7 条归因并行开发中的 crypto.py/envelope.py 重构，与本改动无关）。
+## BUG-297 [2026-10-22T05:20:30Z] [medium] FIXED
+- summary: sql.decorators 静态模板模式静默丢弃关键字参数形式的 SQL 绑定值：q(conn, id=1) 时 params 只取位置参数，DB 端报 Incorrect number of bindings supplied（错误指不到真因）；位置传参才正常
+- detail: vools/sql/core/decorators.py `_make_sql_wrapper`（L200-300）在**静态 SQL 模板**模式下只把剩余**位置参数**当 SQL 绑定值，剩余**关键字参数被静默丢弃**：
+
+L266-267：`else: params = remaining_args` —— `remaining_kwargs`（除 connection 外的其他 kwargs）从未进入 params。随后 L271 `conn.execute(sql_stmt, exec_params)` 用缺失的 params 执行 → 数据库层报 `ProgrammingError: Incorrect number of bindings supplied`，错误信息完全指不到「SQL 参数用关键字传了但被丢了」。
+
+实测（sqlite，表 t(id,name) 有 (1,'a'),(2,'b')）：
+- @sql_function(sql='SELECT id,name FROM t WHERE id = ?') def q(conn, id): pass
+  - q(conn, 1)                      -> ResultSet rows=1 ✓
+  - q(conn, id=1)                   -> ProgrammingError: Incorrect number of bindings supplied（**关键字传参被丢**）
+  - q(id=1, connection=conn)        -> 同样 ProgrammingError
+- 命名占位符 @sql_function(sql='... WHERE id = :id')：
+  - q2(conn, 1) 正常 ✓；q2(conn, id=1) 同样丢参报错
+
+对照 docstring 明确支持三种连接传递方式，示例含 `result = get_user(1, connection=conn)`；而对 SQL 参数本身，PyPI 天经地义的「按关键字传」是 Python 函数的常规调用方式（尤其多参数 SQL 如 `WHERE a=:a AND b=:b` 用关键字更清晰），却被静默丢弃。
+
+影响：静默参数丢失 + 远处报错（BUG-236/235 同族：内部错误掩盖真实原因）。severity medium（数据查询必失败但报错误导）。
+
+修复方向：静态模板分支把 remaining_kwargs 按函数签名参数顺序合并进 params（位置参数在前、其余按 param_names 顺序从 kwargs 补齐），使 q(conn, id=1) 与 q(id=1, connection=conn) 均正确绑定。
+- reported_by: agent-vools-hardening
+- task_id: T0r718
+
+### FIXED(2026-10-22T05:24:38Z / BUG-297)
+- evidence: vools/sql/core/decorators.py L267-283 静态模板分支已按签名顺序合并 kwargs。复现脚本（SqliteConnection + sql_function(sql=...)）：q(conn, 1) 位置传参 rows=1 ✓；q(conn, id=1) 关键字传参 rows=1 ✓（原 BUG 场景）；q(id=1, connection=conn) 关键字传参 rows=1 ✓。三种调用方式均正确绑定。
+- reported_by: vools-bughunt-lead
+
+
+
+### FIXED(2026-10-22T05:27:29Z / BUG-297)
+- evidence: vools/sql/core/decorators.py 修复（commit f9e157d）：_make_sql_wrapper 静态模板分支由 `params = remaining_args` 改为——`params = list(remaining_args)`，再按 `param_names` 顺序把 remaining_kwargs 合并进 params（已由位置参数占用的名字跳过），签名未声明的多余关键字按提供顺序追加，确保不再静默丢弃。
+
+修复前实测（sqlite t(id,name)）：@sql_function(sql='... WHERE id = ?') def q(conn, id) —— q(conn,1) ✓ rows=1；q(conn, id=1) -> ProgrammingError: Incorrect number of bindings supplied；q(id=1, connection=conn) 同样；命名占位符 :id 关键字同样丢参。
+
+修复后 probe 8 项全对：q(conn,1)/q(conn,id=1)/q(id=1,connection=conn)/q(1,connection=conn) 均 rows=1；:id 命名占位符位置与关键字均正常；多参数 q(conn, name='b', id=2)（关键字乱序）按签名顺序正确绑定 rows=1；混合 q(conn, 2, name='b') rows=1。动态 SQL 模式回归：dyn(5, connection=conn)、返回 (sql,params) 元组、装饰器默认 connection 三种用法均 rows=1 不受影响。
+
+新增回归 tests/test_sql_function_kwargs_regression.py 10 项 GREEN（7 静态模板形态 + 3 动态模式守护）；tests/sql/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+
