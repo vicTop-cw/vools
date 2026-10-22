@@ -158,8 +158,14 @@ def memoize(func: Callable) -> Callable:
 
     @curry
     def memoized(*args, **kwargs):
-        # 创建可哈希的键
-        key = (args, tuple(sorted(kwargs.items())))
+        # 创建可哈希的键（BUG-304：原实现直接 (args, sorted(kwargs)) 对
+        # list/dict 等不可哈希参数抛 TypeError，memoize 无法用于常见场景。
+        # 改为 try/except 降级：可哈希时用原键，不可哈希时用 repr 做键）
+        try:
+            key = (args, tuple(sorted(kwargs.items())))
+            hash(key)
+        except TypeError:
+            key = (repr(args), repr(sorted(kwargs.items())))
         if key not in cache:
             cache[key] = func(*args, **kwargs)
         return cache[key]
