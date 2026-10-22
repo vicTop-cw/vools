@@ -12,7 +12,7 @@ vools.md.rich — 富内容扫描与数据结构（BRIDGES_MD_RICH_CONTENT_PLAN 
 P0 范围：基础解析（不涉及渲染、安全净化、热更新）
 """
 
-from ..core.dataclass_compat import dataclass, field
+from ...core.dataclass_compat import dataclass, field
 from typing import List, Optional, Dict, Any
 import re
 
