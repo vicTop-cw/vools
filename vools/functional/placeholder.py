@@ -351,6 +351,18 @@ magic = Magic()
 _eval_cache = {}
 
 
+# BUG-307: __setstate__ 恢复 env 模块时的安全白名单。
+# 原实现对所有 '__module__:<name>' 无条件 importlib.import_module，
+# 而 __setstate__ 可达自 codec.vools_object_hook/_reconstruct_object
+# （`vools.` 前缀放行），攻击者构造 JSON 即可导入任意模块
+# （实测 env 装入 os/sys），绕过 BUG-98/99 的模块白名单，配合可控
+# expr 构成 RCE 链。非白名单模块名保留原字符串、不产生 import 副作用。
+_SAFE_ENV_MODULES = frozenset({
+    'math', 're', 'json', 'datetime', 'collections',
+    'vools.functional.placeholder',
+})
+
+
 class _IndexHolder:
     """占位符类 - 优化版本"""
     __slots__ = ('expr', 'env', 'arity', 'ix', 'is_use_getitem', 'X', '_cached_call', '_singleton_name')
@@ -425,7 +437,15 @@ class _IndexHolder:
         return state
 
     def __setstate__(self, state):
-        """Restore from serialization state"""
+        """Restore from serialization state.
+
+        BUG-307: env 中的模块恢复改为**固定白名单**——原实现对所有
+        ``'__module__:<name>'`` 无条件 importlib.import_module，而 __setstate__
+        可达自 codec.vools_object_hook/_reconstruct_object（`vools.` 前缀放行），
+        攻击者构造 JSON 即可导入任意模块（实测 env 装入 os/sys），绕过
+        BUG-98/99 的模块白名单，配合可控 expr 构成 RCE 链。非白名单模块名
+        保留原字符串、不产生 import 副作用。
+        """
         import importlib as _il
         for k, v in state.items():
             if k == '__singleton__':
@@ -436,7 +456,11 @@ class _IndexHolder:
                 for ek, ev in v.items():
                     if isinstance(ev, str) and ev.startswith('__module__:'):
                         mod_name = ev[len('__module__:'):]
-                        env_restored[ek] = _il.import_module(mod_name)
+                        if mod_name in _SAFE_ENV_MODULES:
+                            env_restored[ek] = _il.import_module(mod_name)
+                        else:
+                            # 非白名单：保留原字符串，不导入（防任意模块导入）
+                            env_restored[ek] = mod_name
                     else:
                         env_restored[ek] = ev
                 object.__setattr__(self, 'env', env_restored)
