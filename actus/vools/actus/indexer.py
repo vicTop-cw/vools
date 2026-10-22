@@ -7,6 +7,7 @@ filter_by_dimension 按维度过滤。
 __all__ = ['scan_actions', 'build_index', 'load_index', 'get_action',
            'filter_by_dimension', 'action_roots']
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone, timedelta
@@ -123,6 +124,15 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
     cached_actions: Dict[str, Action] = {}
     changed_files = []
 
+    # V-18（寻虫 2026-10-22）：缓存键 r{root_idx} 用枚举序号，
+    # 不同 actions_dir 的相同序号根会共享同一缓存键——A/B 两仓同相对
+    # 路径文件 mtime 相等时互相覆盖（当前被"命中仍重解析"掩盖，一旦
+    # 兑现免解析即踩）。改为 root 路径 hash，不同目录身份必不同。
+    root_ids: Dict[int, str] = {}
+    for root_idx, root in enumerate(roots):
+        root_ids[root_idx] = hashlib.md5(
+            os.path.normpath(root).encode('utf-8')).hexdigest()[:8]
+
     for root_idx, root in enumerate(roots):
         if not os.path.isdir(root):
             continue
@@ -131,10 +141,10 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
                 if not _is_action_file(fn):
                     continue
                 full = os.path.join(dirpath, fn)
-                # rel 带 root 序号前缀，保证多扫描根下不碰撞
-                # （旧实现用 dirname(root) 相对化，两个 actions/ 根会产生
-                #  同名 'actions/...' 前缀，缓存与 conflict 判定互相污染）
-                rel = f'r{root_idx}/' + os.path.relpath(full, root).replace(os.sep, '/')
+                # rel 带 root 路径 hash 前缀（V-18）：保证多扫描根下
+                # 不碰撞且不同目录身份必不同——旧实现用枚举序号 r{root_idx}，
+                # 两个 actions_dir 的相同序号根会共享同一缓存键互相覆盖
+                rel = f'r{root_ids[root_idx]}/' + os.path.relpath(full, root).replace(os.sep, '/')
                 try:
                     mtime = os.path.getmtime(full)
                 except OSError:
