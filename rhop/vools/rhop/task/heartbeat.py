@@ -15,6 +15,10 @@
 
 设计取舍：心跳文件内容就是"一行时间戳或 closed"，不塞 JSON —— 用户口径是
 "写时间戳 / 填 closed"，保持人可读、可手工编辑（运维直接写 closed 就能停服务）。
+
+时间戳精度：用微秒级 ISO（``TIMESTAMP_FORMAT``）。用秒精度会让 A 读到的 age 多出最多约 1s 的
+截断误差——写入发生在 .900、读取紧随其后时读到 age≈0.9s 而真实只有 5ms，小阈值配置下会把活着的
+B 判成"挂了"（BUG-282）。除本文档所述的判死阈值下限校验外，精度本身必须精确。
 """
 
 from __future__ import absolute_import
@@ -35,6 +39,11 @@ STATE_STALE = "stale"
 STATE_CLOSED = "closed"
 STATE_MISSING = "missing"
 STATE_UNKNOWN = "unknown"
+
+#: 心跳时间戳格式。**必须带小数秒**：秒精度会让 A 读到的 age 多出最多约 1s 的截断误差
+#: （写入发生在 .900、读取紧随其后时读到 age≈0.9s，真实只有 5ms），小阈值配置下会把活着的 B
+#: 判成死了（BUG-282）。微秒级精度下该误差为 0，config 层再配一道校验兜底。
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 
 class Heartbeat(object):
@@ -146,7 +155,7 @@ class Heartbeat(object):
         if not force and (now_mono - self._last_write_monotonic) < self.interval_sec:
             return {"action": "skipped", "ts": None, "content": content,
                     "path": self.filename}
-        ts = self._now_fn().strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts = self._now_fn().strftime(TIMESTAMP_FORMAT)
         text = "%s %s" % (ts, self.worker_id) if (self.include_worker and self.worker_id) else ts
         path = self._write_raw(text)
         self._last_write_monotonic = time.monotonic()

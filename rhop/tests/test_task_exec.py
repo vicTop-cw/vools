@@ -219,6 +219,48 @@ class TestHandlers:
             register_handler("", lambda p: None)
 
 
+class TestCliAudit:
+    """BUG-281 收口：cli 通道的白名单命中可读回 + 执行前必须留审计行。"""
+
+    def test_matched_pattern_reads_back(self):
+        p = ExecPolicy(allow=["action:*", "cli:python"])
+        assert p.matched_pattern("cli", "python") == "cli:python"
+        assert p.matched_pattern("cli", "python.exe") == "cli:python"     # 后缀归一
+        assert p.matched_pattern("cli", "bash") is None
+        assert p.matched_pattern("action", "jump.push") == "action:*"
+        assert ExecPolicy(allow=[]).matched_pattern("cli", "x") is None
+        assert ExecPolicy(allow_any=True).matched_pattern("cli", "rm") == "allow_any"
+        assert ExecPolicy().matched_pattern("cli", "python") is None       # 默认白名单不放行 cli
+
+    def test_cli_execution_writes_audit_line_before_running(self, caplog):
+        import logging
+        with caplog.at_level(logging.INFO, logger="vools.rhop.task.exec"):
+            out = run_payload(
+                {"task_name": "job-42",
+                 "cli": {"cmd": '"%s" -c "print(1)"' % PY.replace("\\", "/")}},
+                ExecPolicy(allow=["cli:python"]))
+        assert out["ok"] is True
+        hits = [r.getMessage() for r in caplog.records if "cli 审计" in r.getMessage()]
+        assert hits, "cli 执行必须留审计行（BUG-281）"
+        msg = hits[-1]
+        assert "task=job-42" in msg
+        assert "allow_hit=cli:python" in msg
+        assert "allow_any=False" in msg
+        assert "cmd=" in msg
+
+    def test_audit_line_present_even_when_execution_fails(self, caplog):
+        """超时/非零退出也必须有审计行 —— 所以审计必须写在执行之前。"""
+        import logging
+        with caplog.at_level(logging.INFO, logger="vools.rhop.task.exec"):
+            out = run_payload(
+                {"task_name": "job-timeout",
+                 "cli": {"cmd": '"%s" -c "import time; time.sleep(5)"' % PY.replace("\\", "/"),
+                         "timeout_sec": 0.3}},
+                ExecPolicy(allow=["cli:python"]))
+        assert out["ok"] is False
+        assert any("job-timeout" in r.getMessage() for r in caplog.records)
+
+
 class TestChannels:
     def test_resolve_channel_action(self):
         assert resolve_channel({"action": "jump.push"})["channel"] == "action"
@@ -261,3 +303,35 @@ class TestChannels:
         out = run_payload({"nope": 1}, ExecPolicy())
         assert out["ok"] is False
         assert "无法识别指令" in out["error"]
+
+
+class TestBugRegressions:
+    """BUG-303 回归：_sftp_cfg_of 不能在 media 非 dict 时抛 AttributeError。"""
+
+    def test_sftp_cfg_of_media_is_string(self):
+        """cfg['media'] 是字符串时不应抛 AttributeError。"""
+        from vools.rhop.actions.jump import _sftp_cfg_of
+        cfg = {"sftp": {"host": "h1"}, "media": "not-a-dict"}
+        result = _sftp_cfg_of(cfg)
+        assert result["host"] == "h1"
+
+    def test_sftp_cfg_of_media_is_none(self):
+        """cfg['media'] 是 None 时不应抛 AttributeError。"""
+        from vools.rhop.actions.jump import _sftp_cfg_of
+        cfg = {"sftp": {"host": "h2"}, "media": None}
+        result = _sftp_cfg_of(cfg)
+        assert result["host"] == "h2"
+
+    def test_sftp_cfg_of_no_sftp_key(self):
+        """cfg 没有 sftp 键且 media 是 dict 时走 media.sftp。"""
+        from vools.rhop.actions.jump import _sftp_cfg_of
+        cfg = {"media": {"sftp": {"host": "h3"}}}
+        result = _sftp_cfg_of(cfg)
+        assert result["host"] == "h3"
+
+    def test_sftp_cfg_of_fallback_to_cfg(self):
+        """cfg 没有 sftp/media 键时回退到整个 cfg。"""
+        from vools.rhop.actions.jump import _sftp_cfg_of
+        cfg = {"host": "h4", "port": 2222}
+        result = _sftp_cfg_of(cfg)
+        assert result["host"] == "h4"

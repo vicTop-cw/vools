@@ -107,6 +107,26 @@ class TestDefaults:
         with pytest.raises(SecretError):
             _cfg(base_dir=tmp_path, queue={"heartbeat": 5})
 
+    def test_heartbeat_threshold_must_cover_write_interval(self, tmp_path):
+        """BUG-282 收口：判死阈值必须 ≥ 写间隔 + 1s（否则刚写完心跳就会被 A 判死）。"""
+        base = {"name": "n", "role": "B", "key": "k",
+                "queue": {"store": {"kind": "sqlite-local"}}}
+
+        def build(hb):
+            return TaskConfig.from_dict(dict(base, queue={"store": {"kind": "sqlite-local"},
+                                                          "heartbeat": hb}),
+                                        base_dir=str(tmp_path), warn_plaintext=False)
+
+        with pytest.raises(SecretError):
+            build({"interval_sec": 5, "stale_after_sec": 5})       # 阈值 == 写间隔：拒绝
+        cfg = build({"interval_sec": 5, "stale_after_sec": 6})     # 边界：写间隔+1s 放行
+        assert cfg.queue["heartbeat"]["stale_after_sec"] == 6
+        with pytest.raises(SecretError):
+            build({"interval_sec": 0.1, "stale_after_sec": 0.5})   # 0.5 < 0.1 + 1：拒绝
+        default_cfg = build({})                                     # 默认值必须自洽
+        assert default_cfg.queue["heartbeat"]["stale_after_sec"] >= \
+            default_cfg.queue["heartbeat"]["interval_sec"] + 1
+
 
 class TestStoreSelection:
     def test_local_kind_needs_no_shared(self, tmp_path):

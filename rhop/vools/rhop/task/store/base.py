@@ -23,7 +23,7 @@ import abc
 from typing import Any, Dict, List, Optional
 
 from ..errors import TaskNotFound, StoreUnavailable
-from ..models import TaskRecord, TaskState, utcnow_iso
+from ..models import TaskRecord, TaskState, iso_add_seconds, utcnow_iso
 
 
 class TaskStore(abc.ABC):
@@ -49,6 +49,39 @@ class TaskStore(abc.ABC):
     def __init__(self, spec: Optional[dict] = None, ctx: Optional[dict] = None):
         self.spec = dict(spec or {})
         self.ctx = dict(ctx or {})
+
+    def touch_lock(self, task_name: str, worker_id: Optional[str] = None,
+                   now: Optional[str] = None) -> bool:
+        """刷新任务租约（BUG-289 收口）。
+
+        租约 = ``lock_time`` + ``expire_time``：只要任务已被领取（LOCKED）或正在执行（RUNNING）
+        且持有者匹配，就把两者推到现在，这样 ``clean_stale_locks`` 就不会把**还在跑**的任务
+        判死回收（判死回收会让另一个 worker 重新领取并重复执行 ⇒ 重复副作用）。
+
+        默认实现走契约内的 ``update_fields``，因此**所有后端自动获得续期能力**，
+        不需要在每个后端里重复写 SQL。SqliteTaskStore 覆盖了本方法（版本无关的 UPDATE，
+        因为续期不该改变任务定义、不该推 version）。
+
+        Args:
+            task_name: 任务名
+            worker_id: 持有者；非空时只有持有者本人能续（防止已被回收的任务被旧 worker 续活）
+            now: 刷新时间（缺省当前时间）
+
+        Returns:
+            bool: 是否真的刷新了租约
+        """
+        record = self.get_task(task_name)
+        if record is None or record.state not in (TaskState.LOCKED, TaskState.RUNNING):
+            return False
+        if worker_id and record.worker_id and record.worker_id != worker_id:
+            return False
+        now_iso = now or utcnow_iso()
+        # 与 claim_next 同口径：租约取「全局 lock_ttl」与「该任务自己的 timeout_min」的较大者
+        lease = max(float(self.spec.get("lock_ttl_sec") or 900),
+                    float(record.timeout_min or 60) * 60.0)
+        expire_iso = iso_add_seconds(now_iso, lease)
+        return bool(self.update_fields(task_name, now=now_iso, lock_time=now_iso,
+                                      expire_time=expire_iso))
 
     # ------------------------------------------------------------------
     # 生命周期

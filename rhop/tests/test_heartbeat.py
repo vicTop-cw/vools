@@ -49,6 +49,27 @@ class TestReadStates:
         assert stale.read()["age_sec"] > 5
         assert stale.is_alive() is False
 
+    def test_timestamp_has_sub_second_precision(self, tmp_path):
+        """BUG-282 收口：心跳时间戳必须带小数秒，否则存在最多约 1s 的判死误判窗口。"""
+        hb = _hb(tmp_path, interval_sec=0.05, stale_after_sec=0.5)
+        hb.tick(force=True)
+        ts = hb.current_content()
+        assert "." in ts, "时间戳必须是微秒级（带小数秒）；秒精度会让 A 读到的 age 多出最多 1s 的截断误差"
+
+    def test_no_false_stale_at_second_boundary(self, tmp_path):
+        """写入落在 .900、读取紧随 +5ms（仍在同一秒内）→ 真实间隔 5ms 必须判 alive。"""
+        shared = _hb(tmp_path).shared
+        tz = datetime.timezone.utc
+        write_at = datetime.datetime(2026, 10, 22, 0, 0, 0, 900000, tzinfo=tz)
+        Heartbeat(shared, "x.heartbeat", interval_sec=0.05, stale_after_sec=0.5,
+                  now_fn=lambda: write_at).tick(force=True)
+        read_at = write_at + datetime.timedelta(milliseconds=5)
+        info = Heartbeat(shared, "x.heartbeat", stale_after_sec=0.5,
+                         now_fn=lambda: read_at).read()
+        assert info["state"] == STATE_ALIVE, info
+        assert info["age_sec"] < 0.5
+        assert info["age_sec"] < 0.1, "读数必须接近真实间隔（秒精度时会读到 0.905s）"
+
     def test_max_age_override(self, tmp_path):
         hb = _hb(tmp_path, stale_after_sec=3600)
         hb.tick()

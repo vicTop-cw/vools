@@ -127,6 +127,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     _sub("retry-failed", "把所有 FAILED 重置回 PENDING")
 
+    _sub("file-clean", "清理过期的结果文件（大载荷文件通道）")
+
     p_sync = _sub("sync", "本地库模式：强制推/拉同步包")
     p_sync.add_argument("--direction", choices=["push", "pull", "both"], default="both")
 
@@ -364,6 +366,20 @@ def _cmd_retry_failed(args, config: TaskConfig) -> int:
     return 0
 
 
+def _cmd_file_clean(args, config: TaskConfig) -> int:
+    """清理过期的结果文件（大载荷文件通道，按 file_channel.keep_days）。"""
+    queue = build_queue(config)
+    try:
+        directory = queue._result_file_dir()
+        removed = queue.cleanup_result_files()
+    finally:
+        queue.close()
+    _emit(args, {"removed": removed, "dir": directory},
+          "已清理 %s 个过期结果文件（保留 %s 天）" % (
+              removed, (config.queue.get("file_channel") or {}).get("keep_days", 7)))
+    return 0
+
+
 def _cmd_sync(args, config: TaskConfig) -> int:
     queue = build_queue(config)
     try:
@@ -420,6 +436,7 @@ _COMMANDS = {
     "cancel": _cmd_cancel,
     "requeue": _cmd_requeue,
     "retry-failed": _cmd_retry_failed,
+    "file-clean": _cmd_file_clean,
     "sync": _cmd_sync,
     "config": _cmd_config,
 }

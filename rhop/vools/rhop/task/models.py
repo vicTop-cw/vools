@@ -233,7 +233,10 @@ DEFINITION_FIELDS = (
 
 
 def _as_json_list(value: Any) -> List[Any]:
-    """把 deps/tags 统一成 list（兼容 None / JSON 文本 / 已解析 list）。"""
+    """把 deps/tags 统一成 list（兼容 None / JSON 文本 / list / VList/Seq 等可迭代）。
+
+    VList 不是 list 子类：必须在 any-iterable 分支捕获，否则被当成单值包进 [value]。
+    """
     if value is None or value == "":
         return []
     if isinstance(value, (list, tuple)):
@@ -246,10 +249,20 @@ def _as_json_list(value: Any) -> List[Any]:
         if isinstance(parsed, (list, tuple)):
             return list(parsed)
         return [parsed]
-    return [value]
+    if isinstance(value, dict):
+        return [value]
+    # VList / Seq / 其它可迭代（非 str/dict）→ 转 list
+    try:
+        return list(value)
+    except TypeError:
+        return [value]
 
 
-class TaskRecord(object):
+from vools.core.dataclass_compat import dataclass, field
+
+
+@dataclass
+class TaskRecord:
     """一条任务记录（与任务表列一一对应）。
 
     Attributes:
@@ -264,38 +277,59 @@ class TaskRecord(object):
         version:       乐观锁版本（同步收敛时判新旧）
     """
 
-    def __init__(self, **kwargs):
-        self.task_id = kwargs.get("task_id")
-        self.task_name = str(kwargs.get("task_name") or "").strip()
-        self.task_type = str(kwargs.get("task_type") or "CLI")
-        self.value = kwargs.get("value")
-        self.deps = [str(x) for x in _as_json_list(kwargs.get("deps"))]
-        self.state = kwargs.get("state") or TaskState.PENDING
-        self.priority = int(kwargs.get("priority") or 0)
-        self.timeout_min = float(kwargs.get("timeout_min") if kwargs.get("timeout_min") is not None else 60)
-        self.retry_delay_min = float(kwargs.get("retry_delay_min") if kwargs.get("retry_delay_min") is not None else 5)
-        self.retry_count = int(kwargs.get("retry_count") or 0)
-        self.max_retries = int(kwargs.get("max_retries") if kwargs.get("max_retries") is not None else 3)
-        self.scheduled_at = kwargs.get("scheduled_at")
-        self.worker_id = kwargs.get("worker_id")
-        self.lock_time = kwargs.get("lock_time")
-        self.expire_time = kwargs.get("expire_time")
-        self.start_time = kwargs.get("start_time")
-        self.end_time = kwargs.get("end_time")
-        self.cancel_requested = bool(kwargs.get("cancel_requested"))
-        self.version = int(kwargs.get("version") or 1)
-        self.payload_enc = kwargs.get("payload_enc")
-        self.payload_sha = kwargs.get("payload_sha")
-        self.back_info = kwargs.get("back_info")
-        self.last_err = kwargs.get("last_err")
-        self.tags = _as_json_list(kwargs.get("tags"))
-        self.queue = str(kwargs.get("queue") or "")
-        self.owner = str(kwargs.get("owner") or "")
-        self.team = str(kwargs.get("team") or "")
-        self.group_name = str(kwargs.get("group_name") or "")
-        self.extra_desc = kwargs.get("extra_desc")
-        self.created_at = kwargs.get("created_at")
-        self.updated_at = kwargs.get("updated_at")
+    task_id: Optional[Any] = None
+    task_name: str = ""
+    task_type: str = "CLI"
+    value: Optional[Any] = None
+    deps: List[str] = field(default_factory=list)
+    state: Any = TaskState.PENDING
+    priority: int = 0
+    timeout_min: Optional[float] = None
+    retry_delay_min: Optional[float] = None
+    retry_count: int = 0
+    max_retries: Optional[int] = None
+    scheduled_at: Optional[str] = None
+    worker_id: Optional[str] = None
+    lock_time: Optional[str] = None
+    expire_time: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    cancel_requested: bool = False
+    version: int = 1
+    payload_enc: Optional[str] = None
+    payload_sha: Optional[str] = None
+    back_info: Optional[str] = None
+    last_err: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
+    queue: str = ""
+    owner: str = ""
+    team: str = ""
+    group_name: str = ""
+    extra_desc: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    def __post_init__(self):
+        """字段后处理：strip/类型转换/默认值（与旧 __init__ 逻辑等价）。"""
+        from vools.data.vlist import VList  # 惰性导入，避免模块加载顺序问题
+        self.task_name = str(self.task_name or "").strip()
+        self.task_type = str(self.task_type or "CLI")
+        # deps/tags 用 vools VList 承载（可迭代/切片/链式），DB 序列化在 to_row 收敛为 list
+        self.deps = VList([str(x) for x in _as_json_list(self.deps)])
+        if not self.state:
+            self.state = TaskState.PENDING
+        self.priority = int(self.priority or 0)
+        self.timeout_min = float(self.timeout_min if self.timeout_min is not None else 60)
+        self.retry_delay_min = float(self.retry_delay_min if self.retry_delay_min is not None else 5)
+        self.retry_count = int(self.retry_count or 0)
+        self.max_retries = int(self.max_retries if self.max_retries is not None else 3)
+        self.cancel_requested = bool(self.cancel_requested)
+        self.version = int(self.version or 1)
+        self.tags = VList(_as_json_list(self.tags))
+        self.queue = str(self.queue or "")
+        self.owner = str(self.owner or "")
+        self.team = str(self.team or "")
+        self.group_name = str(self.group_name or "")
 
     # ---- 协议 ----
 
@@ -305,14 +339,24 @@ class TaskRecord(object):
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """导出为 dict（deps/tags 为 list，cancel_requested 为 bool）。"""
-        return {name: getattr(self, name) for name in TASK_COLUMNS}
+        """导出为 dict（deps/tags 转 plain list，保证 JSON 可序列化）。
+
+        record 属性上的 deps/tags 是 VList（非 list 子类），直接 json.dumps 会炸；
+        所有序列化边界（sync 包 / 回写 / DAG 快照）统一从 to_dict 取纯 list。
+        """
+        data = {name: getattr(self, name) for name in TASK_COLUMNS}
+        data["deps"] = list(self.deps)
+        data["tags"] = list(self.tags)
+        return data
 
     def to_row(self) -> Dict[str, Any]:
-        """导出为「可直接写库」的 dict（deps/tags 转 JSON 文本，bool 转 int）。"""
+        """导出为「可直接写库」的 dict（deps/tags 转 JSON 文本，bool 转 int）。
+
+        deps/tags 是 VList（非 list 子类），序列化前显式转 list。
+        """
         row = self.to_dict()
-        row["deps"] = json.dumps(self.deps, ensure_ascii=False)
-        row["tags"] = json.dumps(self.tags, ensure_ascii=False)
+        row["deps"] = json.dumps(list(self.deps), ensure_ascii=False)
+        row["tags"] = json.dumps(list(self.tags), ensure_ascii=False)
         row["cancel_requested"] = 1 if self.cancel_requested else 0
         return row
 

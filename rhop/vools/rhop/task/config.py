@@ -67,6 +67,12 @@ DEFAULT_QUEUE = {
     "encrypt_result": True,
     "result_max_bytes": 65536,
     "lock_ttl_sec": 900,
+    # 大载荷文件通道（默认关闭 ⇒ 零回归）：开启后，结果超过 max_bytes 时把完整结果落文件，
+    # 信封里只回 file_ref（路径 + sha256 + 字节数），B 端按引用读回。
+    # dir 需双方共享（缺省 <base_dir>/rhop-files，且会校验落点必须落在 base_dir/shared 之内）；
+    # keep_days 是 cleanup 的保留期；payload_max_bytes 是**载荷侧**落文件阈值（0=关闭）。
+    "file_channel": {"enabled": False, "dir": "", "max_bytes": 1048576,
+                     "keep_days": 7, "payload_max_bytes": 0},
 }
 
 #: exec 段默认值（默认白名单：只放行代码内注册的 rhop 动作与处理器，
@@ -132,6 +138,41 @@ def _filesystem_root(view: Any) -> Optional[str]:
     return str(path)
 
 
+def _validate_shared_root(root: str, base_dir: str, label: str) -> str:
+    """校验共享介质落点在 base_dir 的父目录之内（BUG-302 收口）。
+
+    shared.write/shared.read 的路径只经过 _filesystem_root 的「视图解析」，
+    没有像 file_channel.dir 那样的落点校验——写成 ``..`` 上跳会让共享库
+    真实写到 base_dir 之外（BUG-295 只覆盖了文件通道，没覆盖共享介质）。
+
+    校验规则：解析后的绝对路径必须在 base_dir 的父目录（或其更深层）之内。
+    这允许 shared 指向 base_dir 的同级目录（如 ``<parent>/share`` 与
+    ``<parent>/a`` 并存），同时拒绝逃逸到父目录之上的 ``../..`` 路径。
+
+    Args:
+        root: 共享介质路径（相对或绝对）
+        base_dir: 基准目录
+        label: 配置键名（用于错误提示）
+
+    Returns:
+        校验通过的绝对路径
+
+    Raises:
+        SecretError: 路径逃逸时
+    """
+    from .errors import SecretError
+    abs_root = os.path.realpath(os.path.abspath(os.path.join(base_dir, root)))
+    real_base = os.path.realpath(os.path.abspath(base_dir))
+    # 允许的边界：base_dir 的父目录（含自身）
+    allowed_root = os.path.dirname(real_base)
+    if not (abs_root == allowed_root or abs_root.startswith(allowed_root + os.sep)):
+        raise SecretError(
+            "shared.%s=%r 解析为 %s，不在允许的共享根（%s）之内。"
+            "为防止共享库写到约定范围之外，请把 shared.%s 设成 base_dir "
+            "的父目录或其子目录下的路径。" % (label, root, abs_root, allowed_root, label))
+    return abs_root
+
+
 class TaskConfig(object):
     """任务队列配置对象（读配置 + 构件工厂）。"""
 
@@ -161,6 +202,18 @@ class TaskConfig(object):
         self.queue["heartbeat"] = _deep_merge(DEFAULT_QUEUE["heartbeat"], heartbeat_raw)
         if not self.queue["heartbeat"].get("file"):
             self.queue["heartbeat"]["file"] = "%s.heartbeat" % self.name
+        # 判死阈值校验（BUG-282 收口）：心跳时间戳是微秒级，但读数的 age 仍依赖阈值合理性。
+        # 阈值必须 ≥ 写间隔 + 1s，否则「刚写完就被判死」的窗口成立；同时阈值过小还会把 B 的
+        # 一次写间隔抖动误判成挂了。
+        heartbeat = self.queue["heartbeat"]
+        interval = float(heartbeat.get("interval_sec") or 5.0)
+        stale = float(heartbeat.get("stale_after_sec") or 15.0)
+        if stale < interval + 1.0:
+            raise SecretError(
+                "心跳判死阈值过小：stale_after_sec=%s 必须 ≥ interval_sec=%s + 1s。"
+                "心跳读数的 age 含最多约 1s 的截断误差（历史缺陷 BUG-282：秒精度时该误差会顶到 0.999s，"
+                "阈值小于 1s 会把刚写完心跳的 B 判成 stale）。请把阈值调到 interval_sec + 1s 以上。"
+                % (stale, interval))
 
         exec_raw = resolved.get("exec") or {}
         if not isinstance(exec_raw, dict):
@@ -273,14 +326,22 @@ class TaskConfig(object):
         shared = self.build_shared()
         if shared is None:
             return None
-        return _filesystem_root(getattr(shared, "read_view", None))
+        root = _filesystem_root(getattr(shared, "read_view", None))
+        if root is None:
+            return None
+        # BUG-302: 落点校验——必须落在 base_dir 内
+        return _validate_shared_root(root, self.base_dir, 'read')
 
     def shared_write_root(self) -> Optional[str]:
         """共享介质写端视图的文件系统路径。"""
         shared = self.build_shared()
         if shared is None:
             return None
-        return _filesystem_root(getattr(shared, "write_view", None))
+        root = _filesystem_root(getattr(shared, "write_view", None))
+        if root is None:
+            return None
+        # BUG-302: 落点校验——必须落在 base_dir 内
+        return _validate_shared_root(root, self.base_dir, 'write')
 
     def store_ctx(self) -> dict:
         """存储后端的解析上下文。"""

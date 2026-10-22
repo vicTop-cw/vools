@@ -5,6 +5,7 @@ import sqlite3
 
 import pytest
 
+from vools.rhop.task.config import TaskConfig            # noqa: E402
 from vools.rhop.task.errors import StoreError, StoreUnavailable, TaskNotFound
 from vools.rhop.task.models import TaskRecord, TaskState, utcnow_iso
 from vools.rhop.task.store import (
@@ -36,9 +37,9 @@ class TestRegistry:
 
     def test_unknown_kind_lists_available(self, tmp_path):
         with pytest.raises(StoreUnavailable) as exc:
-            create_store({"kind": "postgres"}, _ctx(tmp_path))
+            create_store({"kind": "mysql"}, _ctx(tmp_path))
         message = str(exc.value)
-        assert "postgres" in message
+        assert "mysql" in message
         assert "sqlite-shared" in message
         assert "register_store" in message
 
@@ -413,6 +414,73 @@ class TestAbstractContract:
         finally:
             store.close()
 
+
+class TestTouchLock:
+    """BUG-289 收口：租约续期受「仍在 RUNNING + 持有者匹配」两道闸门保护，且不改版本。"""
+
+    def _claimed(self, tmp_path, **spec):
+        store = _store(tmp_path, **spec)
+        store.insert_tasks([TaskRecord(task_name="j", timeout_min=60)])
+        assert store.claim_next("w1") is not None
+        return store
+
+    def test_touch_lock_refreshes_lease_without_version_bump(self, tmp_path):
+        store = self._claimed(tmp_path, lock_ttl_sec=10)
+        before = store.get_task("j")
+        assert store.touch_lock("j", worker_id="w1", now="2030-01-01T00:00:00Z") is True
+        after = store.get_task("j")
+        assert after.lock_time == "2030-01-01T00:00:00Z"
+        assert after.expire_time > before.expire_time
+        assert after.version == before.version, "续期不该推版本（否则同步通道会把它当成『定义变了』）"
+        store.close()
+
+    def test_touch_lock_refuses_other_worker(self, tmp_path):
+        store = self._claimed(tmp_path, lock_ttl_sec=10)
+        before = store.get_task("j")
+        assert store.touch_lock("j", worker_id="w2", now="2030-01-01T00:00:00Z") is False
+        assert store.get_task("j").lock_time == before.lock_time
+        store.close()
+
+    def test_touch_lock_refuses_non_running(self, tmp_path):
+        store = _store(tmp_path)
+        store.insert_tasks([TaskRecord(task_name="j")])
+        assert store.touch_lock("j") is False        # 未领取（PENDING）
+        assert store.touch_lock("ghost") is False    # 不存在
+        store.close()
+
+
+class TestSharedPathResolution:
+    """BUG-302 收口：相对 store.path 必须落在共享介质内（不得按进程 cwd 解析）。"""
+
+    def test_relative_path_resolves_inside_shared_root(self, tmp_path):
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        cfg = TaskConfig.from_dict(
+            {"name": "n", "role": "B", "key": "k", "shared": {"write": str(shared)},
+             "queue": {"store": {"kind": "sqlite-shared", "path": "tasks.db"}}},
+            base_dir=str(tmp_path), warn_plaintext=False)
+        store = cfg.build_store()
+        try:
+            medium = os.path.realpath(str(shared))
+            assert os.path.realpath(store.path).startswith(medium + os.sep), \
+                "相对 store.path 必须落在共享介质内（BUG-302）"
+            assert store.path != os.path.abspath("tasks.db"), "不得按进程 cwd 解析"
+        finally:
+            store.close()
+
+    def test_path_escaping_shared_root_is_rejected(self, tmp_path):
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        cfg = TaskConfig.from_dict(
+            {"name": "n", "role": "B", "key": "k", "shared": {"write": str(shared)},
+             "queue": {"store": {"kind": "sqlite-shared",
+                                 "path": str(outside / "x.db")}}},
+            base_dir=str(tmp_path), warn_plaintext=False)
+        with pytest.raises(StoreUnavailable):
+            cfg.build_store()
+
     def test_create_store_reports_broken_backend_readably(self, tmp_path):
         """工厂造不出完整实现时，create_store 必须给可读的 StoreUnavailable（而非裸 TypeError）。"""
 
@@ -427,3 +495,33 @@ class TestAbstractContract:
         assert "unit-broken-abc" in message
         assert "完整实现" in message
         assert "claim_next" in message       # 缺失方法名要透出来
+
+
+class TestTaskRecordVListCases:
+    """BUG-304 复核：VList 输入不得被 _as_json_list 嵌套；序列化边界 JSON 安全。"""
+
+    def test_vlist_input_not_nested(self):
+        from vools.data.vlist import VList
+        rec = TaskRecord(task_name="t", deps=VList(["a", "b"]),
+                         tags=VList(["x"]))
+        assert list(rec.deps) == ["a", "b"]  # 不是 ["VList(...)"]
+        assert list(rec.tags) == ["x"]
+
+    def test_to_dict_is_json_safe(self):
+        import json as _json
+        from vools.data.vlist import VList
+        rec = TaskRecord(task_name="t", deps=["a"], tags=VList(["x"]))
+        data = rec.to_dict()
+        # VList 非 list 子类，直接 json.dumps 会炸 —— to_dict 必须给出 plain list
+        s = _json.dumps(data, ensure_ascii=False)
+        assert _json.loads(s)["deps"] == ["a"]
+        assert _json.loads(s)["tags"] == ["x"]
+
+    def test_vlist_identity_preserved_on_attribute(self):
+        from vools.data.vlist import VList
+        rec = TaskRecord(task_name="t", deps=["a"])
+        assert type(rec.deps).__name__ == "VList"  # 属性层是 VList（链式能力）
+
+    def test_empty_vlist_falsy(self):
+        rec = TaskRecord(task_name="t")
+        assert not rec.deps  # 空 VList 必须是假（claim_next 的 rec.deps and 分支依赖）
