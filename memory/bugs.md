@@ -2381,7 +2381,7 @@ docstring L303 明确承诺"发送成功返回 True，超时或关闭返回 Fals
 
 ### FIXED(2026-10-19T04:13:45Z / BUG-191)
 - evidence: vools/vconcurrent/bridges.py 桥接 send/recv 异常捕获集合补 `TypeError`/`AttributeError`：(1) `ChannelBridge.send`/`ThreadProcessBridge.send_thread_side`/`send_process_side` 原 `except (EOFError, OSError, ValueError)` 漏 pickle 会抛的 AttributeError/TypeError → 现加两类；(2) `recv` 三处（ChannelBridge.recv、ThreadProcessBridge.recv_thread_side/recv_process_side）与 `poll` 同步扩展；(3) `send_pickle` L387 原 `(pickle.PickleError, TypeError)` 漏 AttributeError（pickle.dumps 对 lambda 等局部对象抛 AttributeError）→ 补；`recv_pickle` 补 AttributeError。实测：修复前 `send(lambda:1)`→AttributeError 崩溃、`send(open(...))`→TypeError 崩溃、`send_pickle(lambda:1)`→AttributeError 崩溃；修复后三例均返回 False 符合 docstring"发送成功返回 True，超时或失败返回 False"契约，正常 `send({'k':1})`→True、`recv`→None 不受影响。新增 tests/vconcurrent/test_bridges.py 4 项回归 GREEN（TestChannelBridge 3 + TestThreadProcessBridge 1），bridges 42 项 + vconcurrent 全 GREEN。commit cbae2b7 已推送 gitcode。
-## BUG-192 [2026-10-19T04:32:41Z] [critical] OPEN
+## BUG-192 [2026-10-19T04:32:41Z] [critical] FIXED
 - summary: [rule:syntax] bridges/vools/bridge/md/rich/renderer.py L193 f-string 表达式含反斜杠，Python 3.11 编译失败致模块 import 崩溃 + test_py36_syntax_guard 失败
 - detail: bridges/vools/bridge/md/rich/renderer.py L193:
     f'{" data-rich-collapsed=\\"true\\"" if (foldable and collapsed) else ""}>\''
@@ -2400,6 +2400,10 @@ f-string 的 {表达式} 内含 `\\"` 反斜杠字面量。Python 3.11 规定 f-
 注：该文件属 bridges/ 工作区（其他 agent 同步开发范围），本上报仅归档证据，修复由 bridges 责任方执行。
 - reported_by: agent-vools-hardening
 - task_id: T0r606
+
+### FIXED(2026-10-22T05:30:00Z / BUG-192)
+- evidence: renderer.py L204-206 已用变量提取法修复——`source_attr = ' data-rich-collapsed="true"'`、`collapse_attr = ' data-rich-collapsed="true"' if (foldable and collapsed) else ""`，f-string 表达式内无反斜杠。验证：① `python -c "import ast; ast.parse(...)"` 编译通过；② `pytest tests/core/test_py36_syntax_guard.py::test_py36_syntax_guard` exit 0（1 passed）。
+- reported_by: vools-bughunt-lead
 
 ## BUG-193 [2026-10-19T04:42:07Z] [medium] FIXED
 - summary: tests/test_utils_tools.py test_shift L90-91 cycle=True 断言方向与 docstring「正数右移」+ deque.rotate 语义相反，实现正确而断言写反致测试恒失败
