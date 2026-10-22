@@ -5062,3 +5062,155 @@ L266-267：`else: params = remaining_args` —— `remaining_kwargs`（除 conne
 ### FIXED(2026-10-22T05:35:00Z / BUG-298)
 - evidence: vools/sql/core/builder.py `_collect_condition_params()` L743 改为 `param_offset = len(self._params)`。复现脚本验证：numeric 风格 WHERE+HAVING 的 SQL 正确生成 `HAVING COUNT(*) > :2`（params[1]=5），qmark 风格执行不报错。测试：`pytest tests/ -k "sql or builder"` exit 0（全绿）。
 - reported_by: vools-bughunt-lead
+## BUG-299 [2026-10-22T05:42:50Z] [medium] FIXED
+- summary: datetime.dates_format 上下文更新串的赋值 RHS 不求值表达式：{x<-1;y<-x+1;y} 得 'x+1'（应 2），后续算术退化为字符串运算（y*2 -> 'x+1x+1'）或整串回退原文，无错误提示；BUG-239 注释声称的「同串内先赋值后引用」对赋值链不成立
+- detail: vools/datetime/dates_format.py `EnhancedDateFormatter._evaluate_context_update`（L714-774）的赋值分支不求值 RHS 表达式，导致「同串内先赋值后引用」对**赋值链**失效（BUG-239 注释声称保留该语义，实际只有最后表达式支持引用）：
+
+L747-757：
+    var_value = part.split('<-', 1)[1].strip()
+    parsed_value = self._parse_value(var_value)   # 仅字面量解析（数字/字符串/list/dict）
+    staged[var_name] = parsed_value               # 表达式文本被原样存成字符串
+对比 L758-766（纯表达式分支）走 `safe_eval_expression(part, vars=staged)` 才支持变量引用。
+
+实测：
+- {x<-1;y<-x+1;y}     -> 'x+1'（应 2：y 存成了字符串）
+- {x<-1;y<-x*2;y}     -> 'x*2'（应 2）
+- {x<-5;y<-x-1;y}     -> 'x-1'（应 4）
+- {x<-5;y<-x;y}       -> 'x'（应 5）
+- {a<-2;b<-a*a;b}     -> 'a*a'（应 4）
+- {x<-1;y<-2;y*2}     -> '4' ✓（纯数字 RHS 正常，掩盖问题）
+- {x<-1;y<-x+1;y*2}   -> 'x+1x+1'（字符串重复！静默错值）
+- {x<-1;y<-x+1;x+y}   -> 整个模板原样返回 '{x<-1;y<-x+1;x+y}'（1 + 'x+1' TypeError 被 catch 后保留原文）
+- {x<-1;y<-x + 1;y}   -> 'x + 1'（带空格同样）
+
+影响：文档声明「支持表达式计算」与「渐进式替换：可逐步设置变量」，BUG-239 修复处注释明写「用 staged 副本保持『同串内先赋值后引用可见』的既有语义」——但该语义在赋值 RHS 上不成立：值被静默存成未求值文本，后续算术**退化为字符串运算**（`y*2` -> 'x+1x+1'）或整串回退原文，且无任何错误提示。severity medium（静默错值）。
+
+修复方向：赋值分支在 _parse_value 返回字符串时，尝试 safe_eval_expression(var_value, vars=staged) 求值（失败保留原解析结果），使 `y <- x+1` 得到 2；带引号的字符串字面量行为不变。
+
+附（弱信号，未纳入本条）：`{x:2f}` 被静默忽略（返回默认 6 位小数）而 `{x:.2f}` 正常——非法 Python format spec 未报错。
+- reported_by: agent-vools-hardening
+- task_id: T0r719
+
+
+
+### FIXED(2026-10-22T05:50:45Z / BUG-299)
+- evidence: vools/datetime/dates_format.py 修复（commit fe05a7a）：_evaluate_context_update 赋值分支在 `_parse_value(var_value)` 返回字符串时，追加一次 `safe_eval_expression(var_value, vars=dict(staged))` 尝试按当前 staged 上下文求值；失败保留原解析值；求值结果若是原样文本（字符串字面量）则保持原值——带引号字符串不受影响。
+
+修复前实测：{x<-1;y<-x+1;y} -> 'x+1'（应 2）；{x<-1;y<-x*2;y} -> 'x*2'；{x<-5;y<-x-1;y} -> 'x-1'；{x<-5;y<-x;y} -> 'x'；{a<-2;b<-a*a;b} -> 'a*a'；{x<-1;y<-x+1;y*2} -> 'x+1x+1'（字符串重复，静默错值）；{x<-1;y<-x+1;x+y} -> 整串回退原文；{x<-1;y<-x + 1;y} -> 'x + 1'。
+
+修复后 probe 14 项全对：RHS 引用变量全部正确求值（2/2/4/5/4/2）、y*2 -> '4'、x+y -> '3'；回归守护：纯数字 {x<-10;y<-20;x+y} -> '30'、docstring 示例 {name<-"张三";age<-30;age+10} -> '40'、引号字符串 {s<-"1+1";s} -> '1+1'（不被求值）、未定义名 {s<-abc;s} -> 'abc'、list {items<-[1,2,3];len(items)} -> '3'、日期占位符 {run_date-1} -> '20260225'。
+
+新增回归 tests/test_dates_format_context_rhs_regression.py 13 项 GREEN；tests/datetime/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。附记（未纳入本条）：{x:2f} 非法 format spec 被静默忽略（{x:.2f} 正常），属弱信号。
+## BUG-300 [2026-10-22T05:59:04Z] [low] FIXED
+- summary: datetime._parse_value 有符号整数被解析成 float：'-1' -> -1.0、'+7' -> 7.0、'1_000' -> 1000.0（isdigit 不认符号/下划线），端到端 {x<- -1;x} 渲染为 '-1.0' 而非 '-1'，与正数 '1' 的类型/文本不一致
+- detail: vools/datetime/dates_format.py `EnhancedDateFormatter._parse_value` 的数字解析对**有符号整数**类型不一致：
+
+实现：`if value_str.isdigit(): return int(value_str)` 之后 `try: return float(value_str)`。`str.isdigit()` 不识别正负号与下划线分隔，因此：
+- '1'   -> int 1
+- '0'   -> int 0
+- '-1'  -> **float -1.0**
+- '+7'  -> **float 7.0**
+- '1_000' -> **float 1000.0**（float() 接受下划线）
+- '1.5' / '-1.5' / '1e3' -> float（合理）
+
+端到端实测（模板格式化）：
+- {x<-1;x}    -> '1'      （int 分支）
+- {x<- -1;x}  -> **'-1.0'**（浮点渲染，应 '-1'）
+- {x<--1;x}   -> **'-1.0'**
+- {x<- -1;x*2} -> **'-2.0'**（应 '-2'）
+- {x<- -1;x+1} -> **'0.0'**（应 '0'）
+- {x<-1.0;x}  -> '1.0'（显式浮点，合理）
+
+影响：同一「数字字面量」在不同符号下产生不同 Python 类型与渲染文本——负整数被当成浮点，输出的文本多出 '.0'（如拼 SQL 的数字条件、日期偏移量、报表数字字段会变成 -1.0）。用户无法预期，且属静默类型漂移（不是报错）。severity low-medium。
+
+修复方向：数字解析改为先 `int(value_str)`（可正确接受 '+7'/' -1'/'1_000'），失败再 `float(value_str)`，最后再走 safe_eval（0x10 等进制字面量仍经安全求值得到 int）。
+- reported_by: agent-vools-hardening
+- task_id: T0r720
+
+
+
+### FIXED(2026-10-22T06:17:03Z / BUG-300)
+- evidence: vools/datetime/dates_format.py 修复（commit dad845d）：_parse_value 数字分支由 `if value_str.isdigit(): return int(...)` + `float(...)` 改为——先 `try: return int(value_str)`（可正确接受 '+7'/'-1'/'1_000'），`ValueError` 后再 `try: return float(value_str)`，仍失败则继续原有流程（引号字符串 / safe_eval 处理 0x10 等进制字面量 / 默认字符串）。
+
+修复前实测：_parse_value('-1') -> float -1.0、('+7') -> 7.0、('1_000') -> 1000.0、('1') -> int 1；模板 {x<- -1;x} -> '-1.0'、{x<--1;x} -> '-1.0'、{x<- -1;x*2} -> '-2.0'、{x<- -1;x+1} -> '0.0'。
+
+修复后 probe 22 项全对：_parse_value('1'/'0'/'42'/'-1'/'+7'/'1_000'/'0x10') 均为 int（-1/7/1000/16），('1.5'/'-1.5'/'1e3') 仍 float；模板 {x<-1;x}->'1'、{x<- -1;x}->'-1'、{x<--1;x}->'-1'、{x<- -1;x*2}->'-2'、{x<- -1;x+1}->'0'、{x<-+7;x}->'7'、{x<-1.0;x}->'1.0'（显式浮点保留）；回归守护：引号字符串 'abc'、None/true/FALSE、list/dict、纯文本回落全部不变。
+
+新增回归 tests/test_dates_format_signed_int_regression.py 20 项 GREEN；tests/datetime/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-301 [2026-10-22T06:39:52Z] [medium] FIXED
+- summary: data.vtext VText.strip_margin 的 $|/$\d+| 规则用 while True 反复 formatEx 无迭代上限：变量互相引用（a="{b}", b="{a}"）时 VText("$|{a}").strip_margin(a=..., b=...) 进程永久挂死（实测 5s 子进程超时无返回），无任何错误提示
+- detail: vools/data/vtext.py `VText.strip_margin` 的 `_format_until_stable`（L538-545）在 `$|` / `$\d+|` 规则下对文本反复 formatEx 直到稳定，但**无迭代上限**——振荡上下文导致**进程永久挂死**（不是报错、不是慢，是死循环）：
+
+    def _format_until_stable(text: str) -> str:
+        prev = self.__class__(text)
+        while True:
+            current = prev.formatEx(**kwargs)
+            if current == prev:
+                break
+            prev = current
+        return prev
+
+复现（5 秒子进程超时，实测 TIMEOUT 未返回）：
+    VText("$|{a}").strip_margin(a="{b}", b="{a}")
+→ formatEx 每轮 {a}->{b}->{a}->... 永不相等，while True 死循环。
+
+现实触发：两个变量互相引用（配置/模板数据错误）、或变量值展开后重新生成同名占位符（如 a="{a}" 虽稳定，但 a="{b}", b="{a}" 即振荡）。调用方侧表现是「进程卡死、CPU 100%、无法中断（纯 Python 循环仍可 Ctrl+C，但在服务/流水线里即死锁）」，且没有任何错误信息可排查。
+
+同类防护缺失对照：同库 `build_text` 有 `max_iter_num=999` 迭代上限并静默截断；本处连上限都没有。severity medium（挂死 > 异常，属可用性/健壮性缺陷）。
+
+修复方向：给 _format_until_stable 加迭代上限（如 100 轮），超限抛 ValueError（明确提示「格式化未在 N 轮内收敛，可能存在变量循环引用」）或返回最后结果并记录；优先显式报错，避免静默错文本。
+- reported_by: agent-vools-hardening
+- task_id: T0r721
+
+
+### FIXED(2026-10-22T06:53:53Z / BUG-301)
+- evidence: vools/data/vtext.py 修复（commit b9212c6）：strip_margin 内 `_format_until_stable` 由 `while True` 改为 `for _ in range(100)` 上限循环——收敛即 `return prev`；100 轮未收敛抛 `ValueError("strip_margin: 格式化在 100 轮内未收敛，可能存在变量循环引用（检查传入的 kwargs 是否互相引用）。起始文本: ...")`。
+
+修复前实测：`VText("$|{a}").strip_margin(a="{b}", b="{a}")` 在 5 秒子进程超时下**无返回**（死循环，CPU 空转，无错误提示）。
+
+修复后实测（子进程）：同一输入 **0.01 秒**即抛 ValueError；正常路径全部不变——`$|v={x}` x=42 -> 'v=42'；多轮收敛 `$|{a}`（a='{b}', b='done'）-> 'done'；缩进 `$2|v={x}` -> '  v=7'；自引用 a='{a}' 首轮不变化即稳定 -> '{a}'（不误报循环）；`#|` 丢弃、`|` 掐头、普通行原样保持。
+
+新增回归 tests/test_vtext_strip_margin_convergence_regression.py 10 项 GREEN（3 振荡报错 + 7 正常路径守护）；tests/data/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-302 [2026-10-22T06:44:39Z] [medium] FIXED
+- summary: [rhop-task/bugfind-T2] shared.write 没有落点校验：写成 .. 上跳会让共享库真实写到 base_dir 之外（BUG-295 只覆盖了文件通道）
+- detail: 现象：配置 shared.write = <base_dir>/../escaped-dir、store.kind=sqlite-shared 时，build_store() 产出的共享库路径是 <cwd>/tasks.db——**完全不在 base_dir 内**（本例直接写进了仓库根 rhop/）。
+  根因：共享介质路径只经过 make_shared_path 的『视图解析』（把 .. 归一成绝对路径），没有像 file_channel.dir 那样的落点校验（BUG-295 只修了文件通道，没覆盖共享介质这一侧）。因此 shared.write 里的 .. 上跳、绝对路径、跨盘符都不会被拒绝。
+  影响面：① 共享库是双方读写任务状态的唯一载体（用户要求『数据库需要双方都能读写』），落点跑偏会导致 A/B 实际读写的不是同一个库——任务状态互相看不见，静默发散；② 配置来自不可信来源时，可以把库写到任意位置（库内含任务定义与密文载荷）；③ 与 §4/§15 文档里『shared.write 指向双方共同可达的介质』的口径不一致——文档假设它是双方约定的目录，但实现不校验它是否真的在约定范围内。
+  证据：rhop/tests/boundary/r17_shared_medium.py 的 T2 探针（真实建库验证，不是只看视图）。复现命令：cd rhop && python tests/boundary/r17_shared_medium.py；输出 T2 行：store.path=…；base=…；逃逸=True。探针与调试产生的越界文件已删除（git status 干净）。
+  建议：① 在 build_store/create_store 里对 shared.write 做与 file_channel.dir 相同的落点校验（解析为绝对路径 + realpath，必须落在 base_dir 或配置显式声明的共享根之内，否则抛配置错误）；② 至少拒绝 .. 上跳与跨盘符；③ 补一条『shared.write 逃逸 ⇒ 配置报错』的回归用例（语料 T2 可直接转正）；④ §4/§15 同步写明校验规则。
+- reported_by: explore-bugfind-6
+
+
+
+
+### FIXED(2026-10-22T07:06:44Z / BUG-302)
+- evidence: polish 轮收口（任务 T0r20，mode=polish）：① vools/rhop/task/store/sqlite_store.py 的 resolve_shared_db_path 增加落点校验——相对 store.path 一律相对共享根（require_shared_root）解析，落点 realpath 后必须在共享根之内，越界抛可读的 StoreUnavailable（不静默回退到 cwd）；显式绝对路径按文档语义无需 shared 配置（保持 test_task_config.py::test_explicit_path_needs_no_shared 的行为）。② 回归锁定：tests/test_task_store.py 新增 TestSharedPathResolution 2 个用例（相对路径落在共享介质内且不等于 cwd 解析 / 逃逸出共享根必须抛 StoreUnavailable）。③ 文档 docs/task-queue.md §15 新增『双方共享介质』行。④ **根因更正**：本条初报把成因写成『shared.write 没有落点校验』，实测后修正为『相对 store.path 被按进程 cwd 解析』——shared.write 指向 base_dir 之外本身不是缺陷（共享介质本就该在双方约定的位置，如 /mnt/shared 或 D:/shared），真正的缺陷是库没有落在介质里（A/B 会读写不同的库）。该更正写入本条证据，账本叙述只追加不销毁。锁钉证据：目标回归 143 passed / 0 failed（含既有 test_explicit_path_needs_no_shared）；第七轮语料 tests/boundary/r17_shared_medium.py 的 T2 由 CONFIRMED 翻转为 NOT-CONFIRMED（store.path=<...>/shared/tasks.db、在介质内=True），语料 5/5 全绿 exit=0；全量 554 passed / 6 failed（6 条归因并行开发：html_fernet 5 条 crypto 重构 + clipboard 1 条，与本改动无关）。
+## BUG-303 [2026-10-22T07:37:05Z] [high] FIXED
+- summary: serialize.vb_json_backend._stringify 对未知类型静默输出 'null'：dumps(uuid/自定义对象) 成功但 loads 得 None（数据无声丢失，嵌套字段变 null），与同库 json 后端显式 TypeError 及 BUG-203「不得退化为 None」修复意图相悖
+- detail: vools/serialize/backends/vb_json_backend.py `_stringify`（L482-525）对**任何不支持的对象类型静默返回 'null'**，序列化"成功"但反序列化得到 None——**数据无声丢失**：
+
+    def _stringify(self, obj):
+        if obj is None: return 'null'
+        if isinstance(obj, bool): ...
+        if isinstance(obj, (int, float)): ...   # BUG-203 已修非有限浮点
+        if isinstance(obj, str): ...
+        if isinstance(obj, dict): ...
+        if isinstance(obj, (list, tuple)): ...
+        return 'null'          # ← 未知类型（uuid/自定义对象/datetime 等）静默丢失
+
+实测（vools.serialize.dumps/loads）：
+- dumps(uuid.UUID('1234...'), backend='vb_json') -> b'null'；loads -> **None**（原值彻底消失，无异常）
+- dumps(Custom(), backend='vb_json') -> b'null'；loads -> **None**
+- 对照：同库 json 后端 dumps(Custom()) -> TypeError: Object of type Custom is not serializable（显式报错 ✓）；pickle 后端 uuid/Custom 均完整往返 ✓
+- 嵌套场景同样：{'id': uuid_obj} -> {'id': null}（单个字段静默变空）
+
+影响：vb_json 被用作 backend 时，任何未显式支持的类型（uuid、自定义对象、以及 datetime/date/decimal 等——_stringify 未覆盖它们）都会变成 null；调用方拿到 None 无从判断是"本来就是空"还是"被吞了"。属静默数据丢失（比报错严重）；与本文件 BUG-203「非有限浮点必须输出标准字面量，否则 loads 端会得到 0/None，数据失真」的修复意图同族，但未知对象分支被漏掉。severity medium-high。
+
+修复方向：`_stringify` 末尾对未知类型 raise TypeError（消息给出类型名，与 json 后端口径一致），不再静默 'null'；None 已由开头显式分支处理，不影响合法空值。
+- reported_by: agent-vools-hardening
+- task_id: T0r722
+
+### FIXED(2026-10-22T07:50:00Z / BUG-303)
+- evidence: vools/serialize/backends/vb_json_backend.py `_stringify` L525-533 改为 raise TypeError（消息含类型名+后端建议），不再静默 'null'。复现脚本验证：dumps(uuid) → TypeError ✓；dumps(Custom()) → TypeError ✓；dumps({"id": uuid}) → TypeError ✓；合法类型 {"name":"test","count":42,"active":True} 往返正常 ✓。commit 11182ef。
+- reported_by: vools-bughunt-lead
+
