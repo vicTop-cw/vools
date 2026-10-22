@@ -28,6 +28,9 @@ from .config_parser import (
     parse_config_block, parse_json, parse_toml, parse_yaml,
     execute_lua, validate_config, ConfigParseError,
 )
+from .rich import (
+    RichDoc, RichContent, scan_rich, parse_rich_directive,
+)
 from .advanced import (
     get_theme, list_themes, render_html_with_theme, export_html_theme,
     ast_to_tree, ast_to_mermaid,
@@ -66,6 +69,8 @@ __all__ = [
     # 配置解析器
     'parse_config_block', 'parse_json', 'parse_toml', 'parse_yaml',
     'execute_lua', 'validate_config', 'ConfigParseError',
+    # 富内容（BRIDGES_MD_RICH_CONTENT_PLAN P0）
+    'RichDoc', 'RichContent', 'scan_rich', 'parse_rich_directive',
     # 高级功能
     'get_theme', 'list_themes', 'render_html_with_theme', 'export_html_theme',
     'ast_to_tree', 'ast_to_mermaid',
