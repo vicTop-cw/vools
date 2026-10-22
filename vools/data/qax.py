@@ -537,6 +537,10 @@ class Qax(Table):
 
         Returns:
             求和结果
+
+        Note:
+            BUG-285: 仅统计 int/float——数字字符串（CSV 读入的常态）与 None
+            被静默忽略，整列字符串时返回 0；数字字符串列请先 QAXColToNum。
         """
         return self.sum(col)
 
@@ -548,6 +552,10 @@ class Qax(Table):
 
         Returns:
             平均值
+
+        Note:
+            BUG-285: 同 QAXSum——仅统计 int/float，数字字符串与 None 被静默
+            忽略，整列字符串时返回 0；数字字符串列请先 QAXColToNum。
         """
         return self.avg(col)
 
