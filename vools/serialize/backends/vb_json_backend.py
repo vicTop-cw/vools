@@ -12,6 +12,21 @@ from .base import BaseBackend
 __all__ = ['VBJsonBackend']
 
 
+def _apply_object_hook(obj: Any) -> Any:
+    """BUG-309: 递归应用 codec.vools_object_hook（bottom-up）。
+
+    与 json 后端 object_hook 的调用顺序一致：先处理内层 dict，再处理外层，
+    使 {"__vools_type__": ...} / {"__vools_singleton__": ...} 等标记可还原。
+    非 dict/list 原样返回，解析失败时保持原始结构（不新增崩溃面）。
+    """
+    from ..codec import vools_object_hook
+    if isinstance(obj, dict):
+        return vools_object_hook({k: _apply_object_hook(v) for k, v in obj.items()})
+    if isinstance(obj, list):
+        return [_apply_object_hook(v) for v in obj]
+    return obj
+
+
 class VBJsonBackend(BaseBackend):
     """
     基于 VB6 JSON.cls 的 JSON 序列化后端
@@ -47,7 +62,9 @@ class VBJsonBackend(BaseBackend):
         Returns:
             反序列化后的对象
         """
-        return self.parse(data.decode('utf-8'))
+        # BUG-309: 与 json 后端对齐——解析结果递归应用 vools_object_hook，
+        # 使 register_type 注册类型与内置类型（datetime/set/NONE 哨兵等）可还原。
+        return _apply_object_hook(self.parse(data.decode('utf-8')))
 
     def dumps_str(self, obj: Any) -> str:
         """
@@ -522,6 +539,29 @@ class VBJsonBackend(BaseBackend):
             items = [self._stringify(item) for item in obj]
             return '[' + ','.join(items) + ']'
         
+        # BUG-309: 未知类型先尝试类型注册表（register_type 自定义类型、
+        # 内置 datetime/set/Decimal 等）——与 json 后端 _json_default 同源。
+        # vools_preprocess 对未注册对象原样返回（is 判断），此时才报错。
+        try:
+            from ..codec import vools_preprocess
+            _pre = vools_preprocess(obj)
+        except Exception:
+            _pre = obj
+        if _pre is not obj:
+            return self._stringify(_pre)
+        # 单例哨兵（NONE 等）由 vools_default 产出 __vools_singleton__ 标记。
+        # 只接受**可还原**的标记（__vools_singleton__ / __vools_type__）；
+        # 通用 __vools_obj__ 依赖 _import_class 白名单，可能还原不回来，
+        # 宁可抛 TypeError（保持 BUG-303 的显式报错，不静默丢数据）。
+        try:
+            from ..codec import vools_default
+            _dflt = vools_default(obj)
+        except Exception:
+            _dflt = obj
+        if isinstance(_dflt, dict) and (
+                _dflt.get('__vools_singleton__') or _dflt.get('__vools_type__')):
+            return self._stringify(_dflt)
+
         # BUG-303: 未知类型原实现静默 `return 'null'` —— dumps 成功但 loads
         # 得到 None（数据无声丢失，嵌套字段变 null）。改为显式 TypeError，
         # 与同库 json 后端口径一致（不吞数据）。
