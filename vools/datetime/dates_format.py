@@ -808,8 +808,14 @@ class EnhancedDateFormatter:
             return False
         
         # 数字
-        if value_str.isdigit():
+        # BUG-300: 原 `isdigit()` 不识别正负号与下划线分隔——'-1'/'+7'/'1_000'
+        # 落到 float() 变成 -1.0/7.0/1000.0，而正数 '1' 是 int，导致同一
+        # 「数字字面量」类型/渲染不一致（{x<- -1;x} -> '-1.0'）。先试 int，
+        # 再 float，最后交给 safe_eval 处理 0x10 等进制字面量。
+        try:
             return int(value_str)
+        except ValueError:
+            pass
         try:
             return float(value_str)
         except ValueError:
