@@ -194,7 +194,7 @@ def keep(iterable: Iterable[A]) -> List[A]:
         >>> keep([None, None, None])
         []
     """
-    return filter(identity, iterable)
+    return filter(lambda x: x is not None, iterable)
 
 
 @curry
