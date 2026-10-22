@@ -536,13 +536,19 @@ class VText(str):
 
         # 对 $| 或 $\d+| 后的内容执行多次 formatEx 直到收敛
         def _format_until_stable(text: str) -> str:
+            # BUG-301: 原 `while True` 无迭代上限——变量互相引用时
+            # （a="{b}"、b="{a}"）formatEx 每轮在两种文本间振荡、永不相等，
+            # 进程永久挂死且无任何错误提示。加迭代上限并显式报错。
             prev = self.__class__(text)
-            while True:
+            for _ in range(100):
                 current = prev.formatEx(**kwargs)
                 if current == prev:
-                    break
+                    return prev
                 prev = current
-            return prev
+            raise ValueError(
+                f"strip_margin: 格式化在 100 轮内未收敛，可能存在变量循环引用"
+                f"（检查传入的 kwargs 是否互相引用）。起始文本: {text[:80]!r}"
+            )
 
         for line in lines:
             m = pattern_dollar_indent.match(line)
