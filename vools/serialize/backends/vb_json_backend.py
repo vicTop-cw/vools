@@ -522,6 +522,14 @@ class VBJsonBackend(BaseBackend):
             items = [self._stringify(item) for item in obj]
             return '[' + ','.join(items) + ']'
         
+        # BUG-303: 未知类型原实现静默 `return 'null'` —— dumps 成功但 loads
+        # 得到 None（数据无声丢失，嵌套字段变 null）。改为显式 TypeError，
+        # 与同库 json 后端口径一致（不吞数据）。
+        raise TypeError(
+            f"Object of type {type(obj).__name__} is not serializable by "
+            f"VBJsonBackend（vb_json 支持 str/int/float/bool/None/dict/list/tuple；"
+            f"请改用 pickle 后端或先转换为受支持类型）"
+        )
         return 'null'
 
     def _encode_string(self, s: str) -> str:
