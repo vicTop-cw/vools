@@ -134,10 +134,11 @@ class TestGetMonth:
         assert get_month("2024-01-15", is_lastday=True) == "2024-01-31"
 
     def test_negative_num(self):
-        assert get_month("2024-01-15", num=-1) == "2024-02-01"
+        # BUG-323: 正数=未来，负数=过去（与 get_week 一致）
+        assert get_month("2024-01-15", num=-1) == "2023-12-01"
 
     def test_positive_num(self):
-        assert get_month("2024-01-15", num=1) == "2023-12-01"
+        assert get_month("2024-01-15", num=1) == "2024-02-01"
 
     def test_num_none(self):
         assert get_month("2024-01-15", None) is None

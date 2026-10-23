@@ -162,7 +162,7 @@ def get_month(dt: str, num: int = 0, is_lastday: bool = False) -> str:
 
     参数:
         dt: 日期字符串，格式为yyyyMMdd或yyyy-MM-dd
-        num: 月份差，正数表示过去，负数表示未来，0表示当月
+        num: 月份差，正数表示未来，负数表示过去，0表示当月
         is_lastday: 是否返回月末日期，False返回月初，True返回月末
 
     返回:
@@ -185,7 +185,9 @@ def get_month(dt: str, num: int = 0, is_lastday: bool = False) -> str:
         year = date_obj.year
         month = date_obj.month
 
-        total_months = year * 12 + month - 1 - num
+        # BUG-323: 原 `- num` 使正数指向过去，与 get_week 的正数=未来
+        # 不一致（BUG-242 只修了 get_week）。改为 `+ num` 匹配。
+        total_months = year * 12 + month - 1 + num
         target_year = total_months // 12
         target_month = total_months % 12 + 1
 
