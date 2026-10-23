@@ -243,85 +243,95 @@ class VDate(datetime):
         return simplified
 
     @staticmethod
+    @staticmethod
     def _generate_date_range(start_date=None, end_date=None, periods=None, freq='D'):
         """生成日期范围列表（内部方法）。
-        
+
         Args:
             start_date: 起始日期（datetime 对象）
             end_date: 结束日期（datetime 对象）
-            periods: 生成数量，与 end_date 配合使用表示向后推算
+            periods: 生成数量
             freq: 频率，'D'=天，'W'=周，'M'=月
-            
+
         Returns:
             datetime 对象列表
+
+        Raises:
+            ValueError: freq 非法；或 start/end/periods 三者同时给出（原先静默
+                忽略 periods —— BUG-389）。
+
+        Note:
+            BUG-368: freq 非法时原实现 if/elif 全不命中 → 静默重复日期 / 死循环。
+            BUG-388: 'M' 分支原用**本次已夹取的日期**再推进一个月，1-31 → 2-28 →
+                3-28（漂移）。现按「起始日锚定 + 每月末夹取」生成：1-31 → 2-28 →
+                3-31 → 4-30。
         """
-        # BUG-368: freq 非法（如 'X'，甚至小写 'd'）时下面三个分支的
-        # if/elif 全不命中 -> current 从不推进：
-        #   * periods 分支 -> 静默返回 periods 个**重复日期**；
-        #   * start+end 分支 -> `while current <= end_date` **死循环挂死**。
-        # 这里先规范化并校验 freq（大小写不敏感，仅 D/W/M）。
         if not isinstance(freq, str) or freq.strip().upper() not in ('D', 'W', 'M'):
             raise ValueError(
                 f"freq 只支持 'D'（天）/ 'W'（周）/ 'M'（月），收到 {freq!r}")
         freq = freq.strip().upper()
 
+        _given = [x is not None for x in (start_date, end_date, periods)]
+        if all(_given):
+            raise ValueError(
+                "start / end / periods 最多给其中两个：三者同时给出时原实现会"
+                "静默忽略 periods（BUG-389），请去掉其中一个")
+
+        def _plus_months(anchor_day, base, delta):
+            """base 的年月平移 delta 个月，日取 min(anchor_day, 该月最后一天)。"""
+            _total = base.year * 12 + (base.month - 1) + delta
+            _year, _month0 = divmod(_total, 12)
+            _month = _month0 + 1
+            _last_day = calendar.monthrange(_year, _month)[1]
+            return datetime(_year, _month, min(anchor_day, _last_day))
+
         dates = []
 
         if end_date is not None and periods is not None:
+            if freq == 'M':
+                _anchor_day = end_date.day
+                return [_plus_months(_anchor_day, end_date, -_i)
+                        for _i in range(periods - 1, -1, -1)]
             current = end_date
             for _ in range(periods):
                 dates.append(current)
                 if freq == 'D':
                     current -= timedelta(days=1)
-                elif freq == 'W':
+                else:  # W
                     current -= timedelta(weeks=1)
-                elif freq == 'M':
-                    year = current.year
-                    month = current.month - 1
-                    if month == 0:
-                        month = 12
-                        year -= 1
-                    last_day = (datetime(year, month % 12 + 1, 1) - timedelta(days=1)).day
-                    day = min(current.day, last_day)
-                    current = datetime(year, month, day)
             return dates[::-1]
 
         elif start_date is not None and end_date is not None:
+            if freq == 'M':
+                _anchor_day = start_date.day
+                _i = 0
+                current = start_date
+                while current <= end_date:
+                    dates.append(current)
+                    _i += 1
+                    current = _plus_months(_anchor_day, start_date, _i)
+                return dates
             current = start_date
             while current <= end_date:
                 dates.append(current)
                 if freq == 'D':
                     current += timedelta(days=1)
-                elif freq == 'W':
+                else:  # W
                     current += timedelta(weeks=1)
-                elif freq == 'M':
-                    year = current.year
-                    month = current.month + 1
-                    if month > 12:
-                        month = 1
-                        year += 1
-                    last_day = (datetime(year, month % 12 + 1, 1) - timedelta(days=1)).day
-                    day = min(current.day, last_day)
-                    current = datetime(year, month, day)
             return dates
 
         elif start_date is not None and periods is not None:
+            if freq == 'M':
+                _anchor_day = start_date.day
+                return [_plus_months(_anchor_day, start_date, _i)
+                        for _i in range(periods)]
             current = start_date
             for _ in range(periods):
                 dates.append(current)
                 if freq == 'D':
                     current += timedelta(days=1)
-                elif freq == 'W':
+                else:  # W
                     current += timedelta(weeks=1)
-                elif freq == 'M':
-                    year = current.year
-                    month = current.month + 1
-                    if month > 12:
-                        month = 1
-                        year += 1
-                    last_day = (datetime(year, month % 12 + 1, 1) - timedelta(days=1)).day
-                    day = min(current.day, last_day)
-                    current = datetime(year, month, day)
             return dates
 
         return dates
@@ -343,6 +353,13 @@ class VDate(datetime):
         """
         if end is None and periods is None:
             raise ValueError("params  'end' or 'periods' must give One ")
+
+        # BUG-389: start/end/periods 三者同给时，最终 else 分支只按 start+end
+        # 生成、**静默忽略 periods**。显式报错，避免调用方以为 periods 生效。
+        if start is not None and end is not None and periods is not None:
+            raise ValueError(
+                "start / end / periods 最多给其中两个：三者同时给出时原实现会静默"
+                "忽略 periods（BUG-389），请去掉其中一个")
 
         if start is not None:
             start_dt = datetime.strptime(start, '%Y-%m-%d') if isinstance(start, str) else start
