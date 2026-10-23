@@ -955,6 +955,36 @@ class EnhancedDateFormatter:
         
         # 应用格式说明符
         if format_spec:
+            _spec = format_spec[1:] if format_spec.startswith(':') else format_spec
+            # BUG-369: 原实现只对 (int, float) 应用格式说明符 —— 日期变量是
+            # **字符串**，`{run_date:%Y/%m/%d}` 的显式格式被静默丢弃
+            # （返回默认紧凑格式 20260226）。这里补字符串/日期对象分支。
+            if isinstance(value, (datetime.datetime, datetime.date)):
+                if '%' in _spec:
+                    try:
+                        _out = value.strftime(_spec)
+                        if '%' in _out:      # 非法指令（Windows 会原样保留 '%Q'）
+                            raise ValueError(f'unsupported strftime directive: {_spec!r}')
+                        return _out
+                    except (ValueError, TypeError):
+                        pass
+            elif isinstance(value, str):
+                if '%' in _spec:
+                    for _in_fmt in ('%Y%m%d', '%Y-%m-%d', '%Y/%m/%d'):
+                        try:
+                            _dt = datetime.datetime.strptime(value, _in_fmt)
+                        except ValueError:
+                            continue
+                        _out = _dt.strftime(_spec)
+                        if '%' in _out:
+                            raise ValueError(
+                                f'unsupported strftime directive: {_spec!r}')
+                        return _out
+                else:
+                    try:
+                        return format(value, _spec)
+                    except (ValueError, TypeError):
+                        pass
             # 处理浮点数格式化
             if isinstance(value, (int, float)) and format_spec.startswith(':'):
                 try:
