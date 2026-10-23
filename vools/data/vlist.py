@@ -1069,13 +1069,21 @@ class VList(Seq, metaclass=ListLikeMeta):
         args = [iter(self.collect())] * n
         return VList(itertools.zip_longest(*args, fillvalue=fillvalue))
 
-    @staticmethod
-    def roundrobin(*iterables) -> 'VList':
+    def roundrobin(self, *iterables) -> 'VList':
         """轮流取各可迭代对象的元素（legacy ``vicList.roundrobin``）。
+
+        实例调用时**接收者本身**是第一个可迭代对象；类调用
+        ``VList.roundrobin(a, b)`` 时第一个参数即充当"接收者"，因此两种写法
+        结果一致。
+
+        BUG-367: 原实现是 ``@staticmethod`` —— `vl.roundrobin(a, b)` 会把 `vl`
+        整个丢掉且不报错（`VList([1,2]).roundrobin([3,4])` 返回 `[3,4]`），
+        属静默丢数据。
 
         Returns:
             VList 结果
         """
+        iterables = (self, *iterables)
         num_active = len(iterables)
         nexts = itertools.cycle(iter(it).__next__ for it in iterables)
         out = []
