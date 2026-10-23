@@ -43,11 +43,13 @@ class TestQaxOnlyDeclaresOwnEntries:
         assert q.get_cell(99, 0) is None
         assert q.get_cell(0, 99) is None
         assert q.get_cell2(0, 'nope') is None
-        assert q.compute('BOGUS(x)') is None
+        # 用「合法但无数值」的聚合做 rself 探针（BUG-378 起未识别形式会 ValueError）
+        assert q.compute('SUM(name)') is None
 
     def test_qax_own_exclusions_work(self, q):
-        assert q.QAXCompute('BOGUS(x)') is None
-        assert q.QAXCompute('id') is None
+        # 合法但无数值 / 显式 default 仍是 None（不被 rself 转成 self）
+        assert q.QAXCompute('name', 'sum') is None
+        assert q.QAXCompute('name', 'sum', ) is None
 
     def test_qax_normal_paths_unchanged(self, q):
         assert q.get_cell(0, 0) == 1
@@ -71,7 +73,7 @@ class TestSubclassInheritsExclusions:
         # 基类豁免经 MRO 合并继承
         assert s.get_cell(99, 0) is None
         assert s.get_cell2(9, 0) is None
-        assert s.compute('BOGUS(x)') is None
+        assert s.compute('SUM(name)') is None
         # 自身声明项生效
         assert s.my_custom() is None
 
@@ -94,7 +96,7 @@ class TestMergeDedup:
 
         d = DupTable([[1, 'a']], columns=['id', 'name'])
         assert d.get_cell(99, 0) is None
-        assert d.compute('BOGUS(x)') is None
+        assert d.compute('SUM(name)') is None
 
     def test_class_without_exclude_unchanged(self):
         @rself
