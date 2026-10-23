@@ -291,6 +291,11 @@ class SqlBuilder(abc.ABC):
 
 
 class BaseSqlBuilder(SqlBuilder):
+    """基础 SQL 构建器实现（占位符按 `_paramstyle` 生成）。"""
+
+    #: `join()` 允许的连接类型（BUG-395）
+    _VALID_JOIN_TYPES = ('INNER', 'LEFT', 'RIGHT', 'OUTER', 'FULL', 'CROSS')
+
     """
     SQL 构建器基础实现类
 
@@ -421,7 +426,20 @@ class BaseSqlBuilder(SqlBuilder):
 
         返回：
             (normalized_condition, params) 元组
+
+        异常：
+            TypeError: condition 不是字符串
+            ValueError: condition 为空/仅空白（原实现会生成 `... WHERE ` 这种
+                语法非法的 SQL —— BUG-395）
         """
+        # BUG-395: 原实现不校验空条件，build() 输出 `SELECT * FROM t WHERE `
+        # 这种非法 SQL，到执行阶段才报错且信息晦涩。入口直接拒绝。
+        if not isinstance(condition, str):
+            raise TypeError(
+                f"条件表达式必须是 str，收到 {type(condition).__name__}: {condition!r}")
+        if not condition.strip():
+            raise ValueError("条件表达式不能为空（会生成非法的 WHERE/HAVING 子句）")
+
         param_idx = 0
 
         def replace_placeholder(match):
@@ -564,6 +582,12 @@ class BaseSqlBuilder(SqlBuilder):
         返回：
             self，支持链式调用
         """
+        # BUG-395: 原实现直接存值——limit(-1) 在多数数据库语义异常、limit('10')
+        # 静默把字符串当参数透传。这里要求非负整数（0 合法：返回空集）。
+        if not isinstance(count, int) or isinstance(count, bool):
+            raise TypeError(f"limit 需要 int，收到 {type(count).__name__}: {count!r}")
+        if count < 0:
+            raise ValueError(f"limit 不能为负，收到 {count}")
         self._limit = count
         return self
 
@@ -577,6 +601,11 @@ class BaseSqlBuilder(SqlBuilder):
         返回：
             self，支持链式调用
         """
+        # BUG-395: 同 limit —— 要求非负整数
+        if not isinstance(count, int) or isinstance(count, bool):
+            raise TypeError(f"offset 需要 int，收到 {type(count).__name__}: {count!r}")
+        if count < 0:
+            raise ValueError(f"offset 不能为负，收到 {count}")
         self._offset = count
         return self
 
@@ -657,7 +686,14 @@ class BaseSqlBuilder(SqlBuilder):
         返回：
             self，支持链式调用
         """
-        self._joins.append((join_type.upper(), table, on_condition))
+        # BUG-395: 原实现只做 .upper()，非法 join_type 会生成
+        # `SELECT * FROM a BOGUS JOIN b ...` —— 语法非法却毫无提示。
+        _jt = join_type.strip().upper() if isinstance(join_type, str) else None
+        if _jt not in self._VALID_JOIN_TYPES:
+            raise ValueError(
+                f"join_type 只支持 {'/'.join(self._VALID_JOIN_TYPES)}，"
+                f"收到 {join_type!r}")
+        self._joins.append((_jt, table, on_condition))
         return self
 
     def left_join(self, table: str, on_condition: str) -> 'BaseSqlBuilder':
