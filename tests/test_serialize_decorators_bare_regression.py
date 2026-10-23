@@ -29,14 +29,23 @@ from vools.serialize import (
 )
 
 
+@serializable
+class Bare:
+    """模块级：pickle 无法序列化局部类，故定义在模块作用域。"""
+
+    def __init__(self, name):
+        self.name = name
+
+
+@serializable(backend='pickle')
+class Paren:
+    def __init__(self, v):
+        self.v = v
+
+
 class TestBareDecoratorForms:
     def test_bare_serializable_keeps_class(self):
-        @serializable
-        class Bare:
-            def __init__(self, name):
-                self.name = name
-
-        # 修复前：Bare 已变成装饰器函数
+        # 修复前：Bare 已变成装饰器函数（类丢失）
         assert isinstance(Bare, type)
         back = Bare.deserialize(Bare.serialize(Bare('abc')))
         assert back.name == 'abc'
@@ -64,12 +73,7 @@ class TestBareDecoratorForms:
 
 class TestParenthesizedFormsUnchanged:
     def test_serializable_with_backend(self):
-        @serializable(backend='pickle')
-        class P:
-            def __init__(self, v):
-                self.v = v
-
-        assert P.deserialize(P.serialize(P(1))).v == 1
+        assert Paren.deserialize(Paren.serialize(Paren(1))).v == 1
 
     def test_serialize_method_with_backend(self):
         class S:
