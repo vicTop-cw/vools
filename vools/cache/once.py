@@ -15,6 +15,7 @@
 
 import time
 import threading
+import weakref
 from functools import wraps
 from inspect import signature, isclass
 from typing import Any, Callable, Optional
@@ -27,7 +28,7 @@ class _OnceWrapper:
     
     __slots__ = ("func", "called", "result", "force", "called_args", 
                  "called_kwargs", "last_called_time", "__signature__", "force_default",
-                 "_lock")
+                 "_lock", "_instance_cache")
     
     def __init__(self, func: Callable):
         self.func = func
@@ -41,6 +42,8 @@ class _OnceWrapper:
         self.force_default = False  # 默认值
         # BUG-104: 并发安全锁（RLock 允许 func 内部递归调用自身装饰的函数）
         self._lock = threading.RLock()
+        # BUG-382: 方法装饰时按**实例**缓存（WeakKeyDictionary，避免强引用泄漏）
+        self._instance_cache = weakref.WeakKeyDictionary()
     
     def __getstate__(self):
         """Return serialization state"""
@@ -54,6 +57,35 @@ class _OnceWrapper:
         self.force_default = getattr(self.func, '_force_default', False)
         # BUG-104: 反序列化后重建锁（Lock 不可 pickle）
         self._lock = threading.RLock()
+        self._instance_cache = weakref.WeakKeyDictionary()
+
+    def __get__(self, instance, owner=None):
+        """BUG-382: 支持 `@once` 装饰**实例方法**。
+
+        原实现包装成普通可调用对象（无 `__get__`），实例访问不会绑定 self，
+        一调用就抛 `TypeError: ... missing 1 required positional argument: 'self'`。
+        语义按"每个实例各自只执行一次"实现（缓存用弱引用表，实例回收后自动释放）；
+        类访问（``Cls.method``）仍返回包装器本身。
+        """
+        if instance is None:
+            return self
+
+        def bound(*args, **kwargs):
+            _force = kwargs.pop("force", self.force_default)
+            with self._lock:
+                try:
+                    if not _force and instance in self._instance_cache:
+                        return self._instance_cache[instance]
+                except TypeError:
+                    # 实例不可弱引用/不可哈希（如某些 __slots__ 对象）→ 不缓存
+                    return self.func(instance, *args, **kwargs)
+                _result = self.func(instance, *args, **kwargs)
+                self._instance_cache[instance] = _result
+                return _result
+
+        bound.__name__ = getattr(self.func, "__name__", "bound")
+        bound.__doc__ = getattr(self.func, "__doc__", None)
+        return bound
 
     def __call__(self, *args, **kwargs) -> Any:
         # 使用 force_default 作为默认值，如果调用时提供了 force 参数则覆盖
