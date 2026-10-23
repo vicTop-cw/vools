@@ -110,6 +110,11 @@ class Action:
         return self.meta.get('kind') or 'exec'
 
     @property
+    def target(self) -> str:
+        """转发目标（kind=link/alias 时指向另一个动作 id）。"""
+        return str(self.meta.get('target') or '').strip()
+
+    @property
     def purpose(self) -> list:
         """用途分类（多值 1..5），默认 [utility]。"""
         v = self.meta.get('purpose')
