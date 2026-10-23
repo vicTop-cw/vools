@@ -314,12 +314,28 @@ class Box(AOP):
 
     __call__ = CallableDescriptor()
 
+    @staticmethod
+    def _is_indexable(base):
+        """BUG-343: 是否为「可按下标访问」的序列。
+
+        原实现只认 `isinstance(base, (list, tuple))`，但 `_box` 会把函数返回值
+        包装成 vools 类型（list -> VList、str -> VText、datetime -> VDate），
+        这些类型**支持下标但都不是 list 子类**，导致 Box 自己的产物无法索引：
+        `b[0]` / `b._1` / `b[0:2]` 全部抛 "类型 'VList' 不支持数字索引"。
+        改为鸭子类型：有 __getitem__ 与 __len__ 且不是 dict 即视为序列。
+        """
+        return (
+            not isinstance(base, dict)
+            and hasattr(base, '__getitem__')
+            and hasattr(base, '__len__')
+        )
+
     def _get_keys(self):
-        """获取 __wrapped__ 的键列表（支持 dict 和 列表类型）"""
+        """获取 __wrapped__ 的键列表（支持 dict 和任意可索引序列）"""
         base = self.__wrapped__
         if isinstance(base, dict):
             return list(base.keys())
-        elif isinstance(base, (list, tuple)):
+        if self._is_indexable(base):
             return list(range(len(base)))
         return None
 
@@ -334,7 +350,7 @@ class Box(AOP):
             if index < 0 or index >= n:
                 raise IndexError(f"索引 {index} 超出范围 [0, {n-1}] 或 [-{n}, -1]")
             return base[keys[index]]
-        elif isinstance(base, (list, tuple)):
+        elif self._is_indexable(base):
             n = len(base)
             if index < 0:
                 index = n + index
@@ -353,7 +369,7 @@ class Box(AOP):
                 return Box({k: base[k] for k in sliced_keys})
             else:
                 return Box({sliced_keys: base[sliced_keys]})
-        elif isinstance(base, (list, tuple)):
+        elif self._is_indexable(base):
             return Box(base[key])
         raise TypeError(f"类型 '{type(base).__name__}' 不支持切片")
 
