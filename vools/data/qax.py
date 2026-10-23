@@ -954,6 +954,7 @@ class Qax(Table):
 
         Raises:
             IndexError: oldName 为整数且越界（BUG-251）
+            KeyError: oldName 为字符串且列名不存在（BUG-320）
         """
         if isinstance(oldName, int):
             # BUG-251: 原 `oldName - 1` 无校验，越界静默 no-op。
@@ -963,7 +964,10 @@ class Qax(Table):
             try:
                 col_num = self._columns.index(oldName)
             except ValueError:
-                return self
+                # BUG-320: 原 `return self` 静默 no-op——列改名拼写错误/上游改名后
+                # 残留调用时改名静默不生效。与同族 QAXColToNum/GetCol/DelCol/
+                # QAXSplit/QAXConcat/QAXReplace 的 KeyError 口径统一。
+                raise KeyError(f"列名不存在: {oldName!r}")
         return self.set_col_name(col_num, newName)
 
     def SetOrdinal(self, col, new_index):
