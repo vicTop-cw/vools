@@ -467,11 +467,20 @@ class Seq(SeqBase):
         """
         rs: List[T] = []
         s = set()
-        d = s.add
+        # BUG-356: 不可哈希元素（dict/list —— Table 的行正是 dict）会让
+        # `i not in s` 抛 TypeError，`Table().unique` 因此**必然崩溃**。
+        # 退化为顺序保持的线性去重。
+        unhashable: List[T] = []
         for i in self._evaluate():
-            if i not in s:
-                d(i)
-                rs.append(i)
+            try:
+                if i in s:
+                    continue
+                s.add(i)
+            except TypeError:
+                if i in unhashable:
+                    continue
+                unhashable.append(i)
+            rs.append(i)
         return rs
     
     def distinct(self, key: Optional[Callable[[T], K]] = None) -> 'Seq':
@@ -487,12 +496,19 @@ class Seq(SeqBase):
             key = _identify
         def gen():
             s = set()
-            d = s.add
+            unhashable: List[K] = []
             for i in self._evaluate():
                 k = key(i)
-                if k not in s:
-                    d(k)
-                    yield i
+                # BUG-356: 同 unique —— 不可哈希的 key（默认 key 恒等时 dict 行）
+                try:
+                    if k in s:
+                        continue
+                    s.add(k)
+                except TypeError:
+                    if k in unhashable:
+                        continue
+                    unhashable.append(k)
+                yield i
         return self.__class__(gen())
     
     def group_by(self, key: Optional[Callable[[T], K]] = None) -> 'Seq':
