@@ -695,9 +695,23 @@ class Stuff:
                     f"{_missing}（{getattr(self.main_func, '__name__', self.main_func)}）"
                 )
 
+        def _resolve(v):
+            """BUG-339: 解析绑定值。
+
+            provider 一般为无参可调用对象；但 `__call__` 传入的实参会被
+            `_trans` 包成 lambda，`*args` 因此绑定为「lambda 列表」、`**kwargs`
+            绑定为「lambda 字典」，原实现一律 `v()` -> 'list'/'dict' object is
+            not callable。这里对容器逐元素解析。
+            """
+            if isinstance(v, dict):
+                return {k: (x() if callable(x) else x) for k, x in v.items()}
+            if isinstance(v, (list, tuple)):
+                return [x() if callable(x) else x for x in v]
+            return v() if callable(v) else v
+
         @vic_execute(max_workers=self.config.max_workers, use_process=0)
         def compute(v):
-            return v()
+            return _resolve(v)
 
         actuals = compute(bounds.values())
 
@@ -736,11 +750,45 @@ class Stuff:
             if z and not p:
                 actual_kwargs[first_name] = 'NONE'
         else:
-            for i, name in enumerate(bounds.keys()):
-                if name in only_pos_args_name:
-                    actual_args.append(actuals[i])
+            # BUG-339: 按**签名顺序**装配，且 *args 展开为位置实参、**kwargs 合并
+            # 进关键字实参。原实现统一按名字塞进 kwargs——对 f(a, *rest) 会得到
+            # "got multiple values for argument 'a'"、对 **kw 会把形参名当真实键。
+            _params = self.sig.parameters
+            _values = dict(zip(bounds.keys(), actuals))
+            _pos_names = [
+                _n for _n, _p in _params.items()
+                if _p.kind in (Parameter.POSITIONAL_ONLY,
+                               Parameter.POSITIONAL_OR_KEYWORD)
+                and _n not in ('self', 'cls')
+            ]
+            _can_pos = True          # 前面的位置参数是否都已按位置填充
+            for _n, _p in _params.items():
+                if _n in ('self', 'cls'):
+                    continue
+                _has = _n in _values
+                if _p.kind == Parameter.VAR_POSITIONAL:
+                    if _has:
+                        _v = _values[_n]
+                        actual_args.extend(_v if isinstance(_v, (list, tuple)) else [_v])
+                    continue
+                if _p.kind == Parameter.VAR_KEYWORD:
+                    if _has:
+                        _v = _values[_n]
+                        if isinstance(_v, dict):
+                            actual_kwargs.update(_v)
+                        else:
+                            actual_kwargs[_n] = _v
+                    continue
+                if not _has:
+                    _can_pos = False
+                    continue
+                _v = _values[_n]
+                if _p.kind == Parameter.POSITIONAL_ONLY:
+                    actual_args.append(_v)
+                elif _can_pos:
+                    actual_args.append(_v)
                 else:
-                    actual_kwargs[name] = actuals[i]
+                    actual_kwargs[_n] = _v
             if (first_name in ('self', 'cls')
                     and first_name not in bounds.keys()
                     and not p):
