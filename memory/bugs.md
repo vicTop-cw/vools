@@ -6028,7 +6028,7 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
 修复后 probe 全对：三条路径 + set_col_name 改名到已存在名均抛 ValueError；合法路径不变（AddCol/InsertCol/add_col 新名、set_col_name 新名、改成自身原名幂等、InsertCol(1) 前插）；失败操作不改动列名；未发生重名时 GetCol('id') == [1]、QAXColIndex('id') == 1（唯一命中）。
 
 新增回归 tests/test_table_duplicate_column_name_regression.py 16 项 GREEN（5 类拒绝 + 6 类合法路径 + 3 类「失败后列名不变」+ 唯一命中）；tests/data/ 全 GREEN；**全量测试 EXIT=0**。commit 已推送 gitcode master。
-## BUG-327 [2026-10-23T04:51:28Z] [medium] OPEN
+## BUG-327 [2026-10-23T04:51:28Z] [medium] FIXED
 - summary: BUG-326 入口残留：Table/Qax 构造函数与 Table.from_file 仍接受重复列名（CSV 重复表头 'id,id,name' 直接读入成 ['id','id','name']），随后 column('id') 静默返回第二列、to_num('id') 只转第二列——按名 API 静默错列，且用户通常不知道源文件表头重复
 - detail: BUG-326 只堵了「新增/插入/改名」三条路径，**构造入口与文件读取入口仍可产生重复列名**，重名后按名 API 静默错列（与 BUG-326 同一危害，但入口更常见）：
 
@@ -6052,4 +6052,78 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
 - **显式操作**（add_col/InsertCol/set_col_name）保持 BUG-326 的 ValueError 拒绝（用户意图明确，静默改名更糟）。
 - reported_by: agent-vools-hardening
 - task_id: T0r740
+
+
+### FIXED(2026-10-23T13:00:00Z / BUG-327)
+- evidence: vools/data/table.py Table 构造函数/select/from_file 调用 _dedup_column_names 去重重复列名（id->id, id_2, id_3...），按名 API 不再静默错列。复现脚本验证：构造/select/from_file 三入口去重 ✓；column('id') 正确返回第一列 ✓。data/table/column 全套 512 测试 exit 0。
+- reported_by: vools-bughunt-lead
+
+
+### FIXED(2026-10-23T05:09:26Z / BUG-327)
+- evidence: 修复（实现已入 HEAD + 回归 commit 4b41bf9）：
+① vools/data/table.py 新增模块级 `_dedup_column_names(columns)`：重复列名按出现次序去重为 `id`、`id_2`、`id_3`…（后缀冲突时继续递增，保证唯一；与既有空表头 `col_j` 兜底同风格）；
+② `Table.__init__` 的 `self._columns = _dedup_column_names(columns or [...])` —— 构造入口统一去重，`from_file`（构造委托）随之生效。
+③ 显式操作保持 BUG-326 语义：add_col/InsertCol/set_col_name 仍 ValueError 拒绝。
+
+修复前实测：
+- Table([[1,2]], columns=['id','id']) 与 Qax(...) 均接受重名
+- CSV 'id,id,name\n1,2,a\n3,4,b' -> from_file 列 ['id','id','name']，随后 t.column('id') 返回 **['2','4']**（第二列）、t.to_num('id') 只转第二列（第一列仍字符串）
+
+修复后实测：
+- 构造去重 ['id','id_2']；三重名 ['a','a_2','a_3']；原生 'a_2' 冲突时列名仍唯一；Qax 构造同样去重；无重名不受影响；数据与列序不变
+- from_file 列 ['id','id_2','name']；column('id') == ['1','3']、column('id_2') == ['2','4']、to_list 数据完整、to_num('id') 只转第一列
+- 显式 add_col/InsertCol/set_col_name 仍 ValueError
+
+新增回归 tests/test_table_ingest_column_dedup_regression.py 14 项 GREEN（6 构造 + 4 from_file + 3 显式拒绝 + 数据保留）；tests/data/ 全 GREEN；**全量测试 EXIT=0**。
+
+过程记录（诚实）：本轮插入 helper 时锚点选在 `class Table` 前，把 `@rself` 装饰器与类定义拆开，导致 Table 一度失去 rself 包装（模块 import 阶段抛「@rself 仅允许应用于类」），已立即定位并补回 `@rself`（验证 `Table.__init__` 为 `_wrap_init`、__getattribute__ 覆盖、get_cell/compute 豁免均生效）。另：暂存的 table.py 被并发提交 9f6619d 一并收编（同 73a7737 模式），内容核对无误。
+## BUG-328 [2026-10-23T05:24:44Z] [medium] OPEN
+- summary: Table.join 的 on_str 解析缺陷导致静默笛卡尔积：①语法不合模板('id = id')时把整串当列名→两侧 key 全 None→返回 2×2 全组合；②解析成功但只用左侧列名当作两表共用键→键列异名(t1.id=t2.bid)时 other 侧全 None 同样退化为交叉连接；未知表别名也不校验
+- detail: `Table.join(other, on_str='...')` 对 on_str 的解析有两处缺陷，都会**静默退化为笛卡尔积/错误匹配**（无任何错误提示）：
+
+实现（table.py join）：
+    if on_str is None:
+        on_col = list(set(self._columns) & set(other._columns))[0]
+    else:
+        match = re.match(r'(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)', on_str)
+        if match:
+            on_col = match.group(2)      # ← 只取**左侧**列名，且两侧共用
+        else:
+            on_col = on_str              # ← 解析失败时把整串当列名
+    ...
+    key = row[other._columns.index(on_col)] if on_col in other._columns else None
+    key = s_row[self._columns.index(on_col)] if on_col in self._columns else None
+
+【缺陷 A】on_str 语法不合模板 -> 静默笛卡尔积
+- a=Table([[1,'x','A'],[2,'y','B']], ['id','name','aval'], name='t1')，b=Table([[1,'x','P'],[3,'z','Q']], ['id','name','bval'], name='t2')
+- a.join(b, on_str='id = id')  -> 返回 **4 行**（2×2 全组合）：cols ['t1_id','t1_name','t1_aval','t2_id','t2_name','t2_bval']，data 含 (1,x,A,1,x,P)/(1,x,A,3,z,Q)/(2,y,B,1,x,P)/(2,y,B,3,z,Q)
+- 即：条件写错（少写表别名）不会报错，用户拿到"看起来成功"的成倍放大结果。
+
+【缺陷 B】on_str 左右列名不同时被误当成同一列
+- 写 `on_str='t1.id = t2.bid'`（两表键列不同名，这本是显式写 on_str 的主要理由）时，代码取 `group(2)`='id' 作为**两侧共用**的键列：
+  - 若 other 表没有 'id' 列 -> other 侧 key 恒 None -> 与所有行匹配 -> **静默笛卡尔积**
+  - 若 other 表恰好也有 'id' 列（与 biz 键无关）-> 用错的列做连接 -> **静默错误匹配**
+- 实测：a.join(b_with_bid, on_str='t1.id = t2.bid') 走的是"other 无 id -> 全 None -> 交叉"路径（返回行数 = len(a)*len(b)）。
+- 另一侧现象：`on_str='nope.id = t2.id'`（未知别名）被正常解析为 on_col='id'，别名完全不校验——即别名写错也不会被发现。
+
+【附】inner join 输出会丢掉 other 的键列（cols 无 t2_id），而 left/outer 保留（有 t2_id）——同一 API 两种连接类型列形状不一致（次要，随本条一并修）。
+
+影响：join 是用得最多的分析操作；条件写错/键列异名时得到**成倍放大的或错配的数据集**且无报错，属最危险的静默错值。severity medium-high。
+
+修复方向：
+1. 严格解析 on_str（必须 `别名.列 = 别名.列`），解析失败 raise ValueError 并给出期望格式；
+2. 解析出 (left_alias,left_col,right_alias,right_col)，按表 name/别名（t1/self/table1 与 t2/other/table2）或列归属判定两侧列，**分别**用于 self 键与 other 键；
+3. 列不存在时 raise KeyError（不再静默 None 键）；
+4. 列形状统一（inner 是否丢 other 键列，两种类型保持一致）。
+- reported_by: agent-vools-hardening
+- task_id: T0r742
+
+## BUG-329 [2026-10-23T05:28:49Z] [medium] OPEN
+- summary: [rhop-task/bugfind-C1] cancel 一个 RUNNING 任务后，命令跑完被记为 COMPLETED —— 取消请求被静默忽略（_finish_success 从不检查 cancel_requested）
+- detail: 现象：任务 RUNNING 时调用 cancel（queue.py:637 打上 cancel_requested 标记），命令照常跑完（实测 run_once 耗时 10.34s，命令本身 10s），任务最终状态是 **COMPLETED** 而不是 CANCELLED。
+  根因：_finish_success（vools/rhop/task/queue.py:832）无条件 set_state(COMPLETED)，从不检查 record.cancel_requested；取消标记只在领取期被读一次（queue.py:750，`if record.cancel_requested: return cancelled`），执行期间与收尾时都不再看它。
+  影响面：① 用户 cancel 一个在跑的任务，期望它变成 CANCELLED，实际变成 COMPLETED —— 取消『看起来没生效』，且结果里还带着命令的完整输出（会被当成正常完成）；② 运维侧无法从终态判断该任务是否曾被取消（要回查 cancel 请求日志）；③ 与 §15『cancel 只作用于尚未结束的任务』和 queue.py:620『RUNNING 打取消标记等其收尾』的措辞不矛盾，但『收尾』之后应该落到 CANCELLED 而不是 COMPLETED，否则取消语义不完整；④ 与 BUG-290 的『cancel 对终态任务幂等 no-op』叠加后，会出现『先 cancel 再跑完 ⇒ COMPLETED』这种无法从状态分辨的终态。
+  证据：rhop/tests/boundary/r20_cancel_stop.py 的 C1 探针（可复现，worker 线程内创建 store 以避免 SQLite 跨线程）。复现命令：cd rhop && python tests/boundary/r20_cancel_stop.py；输出 C1 行：命令已启动=True；run_once 耗时=10.34s（命令本身 10s）；状态=COMPLETED；收敛=False。
+  建议：① _finish_success / _finish_failure 在写终态前检查 record.cancel_requested，命中则写 CANCELLED（并保留 back_info 以便审计）；② 或至少在 cancel 时同步把 RUNNING 的 cancel_requested 落库并让收尾路径优先 CANCELLED；③ 补回归用例：RUNNING 时 cancel、命令跑完 ⇒ 状态必须是 CANCELLED（语料 C1 可直接转正）；④ §6/§15 明确写清『cancel RUNNING 后收尾落 CANCELLED』。
+- reported_by: explore-bugfind-9
 

@@ -1604,7 +1604,8 @@ class Table(Seq):
                         f"join 的 on_str 无法判定两侧键列（别名可用 t1/t2 或表 name）: "
                         f"{on_str!r}（左表列={self._columns}，右表列={other._columns}）")
             else:
-                # 简化格式：单列名，两表都必须有该列
+                # 简化格式：裸列名，两表都必须有该列。
+                # BUG-328: 原实现把整串当列名、不校验存在性 → key 恒 None → 静默笛卡尔积。
                 col = on_str.strip()
                 if col not in self._columns:
                     raise KeyError(
