@@ -81,7 +81,15 @@ def deserialize(backend: Optional[str] = None):
                             ))
                         else:
                             new_args.append(data)
-                    except Exception:
+                    except Exception as _exc:
+                        # BUG-372: 原实现静默回退原始 bytes —— 后端不匹配时
+                        # 调用方毫无提示（如默认 json 后端收到 pickle 字节）。
+                        # 保持回退（参数本身可能只是任意二进制），但发出可见告警。
+                        import warnings as _w
+                        _w.warn(
+                            f"deserialize: 参数无法按 {be!r} 后端反序列化，"
+                            f"已按原始 bytes 传入（{type(_exc).__name__}: {_exc}）",
+                            RuntimeWarning, stacklevel=2)
                         new_args.append(arg)
                 else:
                     new_args.append(arg)
@@ -100,7 +108,12 @@ def deserialize(backend: Optional[str] = None):
                             )
                         else:
                             new_kwargs[k] = data
-                    except Exception:
+                    except Exception as _exc:
+                        import warnings as _w
+                        _w.warn(
+                            f"deserialize: 参数 {k!r} 无法按 {be!r} 后端反序列化，"
+                            f"已按原始 bytes 传入（{type(_exc).__name__}: {_exc}）",
+                            RuntimeWarning, stacklevel=2)
                         new_kwargs[k] = v
                 else:
                     new_kwargs[k] = v
@@ -128,6 +141,13 @@ def serializable(backend: Optional[str] = None):
         back = MyData.deserialize(data) # MyData 实例，back.name == 'abc'
 
     """
+    if isinstance(backend, type):
+        # BUG-371: 支持裸装饰 @serializable。原实现把被装饰的**类**当成
+        # backend 参数吞掉，返回的装饰器函数替换掉类名，直到实例化该类才抛
+        # AttributeError（'str' object has no attribute 'serialize'）。
+        _cls = backend
+        return serializable(None)(_cls)
+
     def decorator(cls: Type) -> Type:
         be = backend or get_default_backend() or 'pickle'
 
@@ -168,6 +188,11 @@ def serialize_method(backend: Optional[str] = None):
         # 读回：Serializer(backend='json').loads(raw) == {"status": "ok"}
 
     """
+    if callable(backend) and not isinstance(backend, str):
+        # BUG-371: 支持裸装饰 @serialize_method（原实现把方法当成 backend 吞掉）
+        _method = backend
+        return serialize_method(None)(_method)
+
     def decorator(method: Callable) -> Callable:
         @wraps(method)
         def wrapper(self, *args, **kwargs):
@@ -205,6 +230,11 @@ def deserialize_method(backend: Optional[str] = None):
         assert svc._state == {"status": "ok"}
 
     """
+    if callable(backend) and not isinstance(backend, str):
+        # BUG-371: 支持裸装饰 @deserialize_method（原实现把方法当成 backend 吞掉）
+        _method = backend
+        return deserialize_method(None)(_method)
+
     def decorator(method: Callable) -> Callable:
         @wraps(method)
         def wrapper(self, *args, **kwargs):
@@ -224,7 +254,15 @@ def deserialize_method(backend: Optional[str] = None):
                             ))
                         else:
                             new_args.append(data)
-                    except Exception:
+                    except Exception as _exc:
+                        # BUG-372: 原实现静默回退原始 bytes —— 后端不匹配时
+                        # 调用方毫无提示（如默认 json 后端收到 pickle 字节）。
+                        # 保持回退（参数本身可能只是任意二进制），但发出可见告警。
+                        import warnings as _w
+                        _w.warn(
+                            f"deserialize: 参数无法按 {be!r} 后端反序列化，"
+                            f"已按原始 bytes 传入（{type(_exc).__name__}: {_exc}）",
+                            RuntimeWarning, stacklevel=2)
                         new_args.append(arg)
                 else:
                     new_args.append(arg)
@@ -242,7 +280,12 @@ def deserialize_method(backend: Optional[str] = None):
                             )
                         else:
                             new_kwargs[k] = data
-                    except Exception:
+                    except Exception as _exc:
+                        import warnings as _w
+                        _w.warn(
+                            f"deserialize: 参数 {k!r} 无法按 {be!r} 后端反序列化，"
+                            f"已按原始 bytes 传入（{type(_exc).__name__}: {_exc}）",
+                            RuntimeWarning, stacklevel=2)
                         new_kwargs[k] = v
                 else:
                     new_kwargs[k] = v
