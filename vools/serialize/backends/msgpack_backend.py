@@ -87,12 +87,21 @@ class MsgpackBackend(BaseBackend):
             反序列化后的对象
         """
         from ...serialize.codec import vools_object_hook
+        # BUG-379: 写入端 packb 接受**非字符串键**（如 {1: 'a'}），而读取端
+        # msgpack>=1.0 默认 strict_map_key=True 会直接拒绝
+        # "int is not allowed for map key when strict_map_key=True"
+        # —— 写成功、读失败（不对称）。这里显式 strict_map_key=False，
+        # 让 msgpack 后端能往返 int/float/bool 等合法键。
         try:
-            return msgpack.unpackb(data, object_hook=vools_object_hook, raw=self.raw)
+            return msgpack.unpackb(data, object_hook=vools_object_hook,
+                                   raw=self.raw, strict_map_key=False)
         except TypeError:
-            # msgpack >= 1.0 移除了 raw 参数和不支持 object_hook
-            # 使用 post_process 模拟 object_hook
-            result = msgpack.unpackb(data)
+            # 旧版 msgpack 无 raw/object_hook/strict_map_key 参数：
+            # 先试 strict_map_key=False，再退化为无参调用。
+            try:
+                result = msgpack.unpackb(data, strict_map_key=False)
+            except TypeError:
+                result = msgpack.unpackb(data)
             from ...serialize.codec import post_process_msgpack
             return post_process_msgpack(result)
 
