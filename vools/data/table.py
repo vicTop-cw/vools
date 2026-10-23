@@ -889,31 +889,66 @@ class Table(Seq):
         """设置单元格值 (对应 SetCell)
         
         Args:
-            row_index: 行索引 (从0开始)
-            col_index: 列索引或列名
+            row_index: 行索引 (从0开始，**不支持负索引**)
+            col_index: 列索引或列名（均不支持负值）
             value: 要设置的值
-        
+
         Returns:
             self (支持链式)
+
+        Note:
+            越界写入会**自动扩容**（表格语义）：行越界补 `None` 行；int 列越界
+            整表加宽并补 `col_N` 列名（保证每行宽度 == 列数）；str 列名不存在时
+            自动追加该列（各行为此补 `None`）。负索引一律 IndexError（BUG-377）。
         """
+        # BUG-377: 自动扩容是既有设计（表格可越界写入并自动补齐），但原实现
+        # 有三个缺陷：
+        #   1) 负索引未校验：set_cell(-1, 0, v) 静默写入**最后一行**（与
+        #      del_col/_get_col_index 明确拒绝负索引的口径不一致）；
+        #   2) 按 int 列索引扩容时只把**当前行**补长，其它行与 `_columns` 不变，
+        #      产生锯齿行（行宽与列数不一致，后续 row()/to_file 全部错乱）；
+        #   3) 按列名写入未知列会静默建列（本次保留该行为，但补文档说明）。
+        # 这里：负索引直接 IndexError；列扩容按「整表加宽 + 补 col_N 列名」处理，
+        # 保持行宽 == 列数的内部不变量。
+        if not isinstance(row_index, int) or isinstance(row_index, bool):
+            raise TypeError(
+                f"set_cell 的行参数需要 int 行索引，收到 "
+                f"{type(row_index).__name__}: {row_index!r}")
+        if row_index < 0:
+            raise IndexError(
+                f"set_cell 的行索引必须 >= 0（不支持负索引），收到 {row_index}")
+        if isinstance(col_index, bool) or not isinstance(col_index, (int, str)):
+            raise TypeError(
+                f"set_cell 的列参数需要 int 列索引或 str 列名，收到 "
+                f"{type(col_index).__name__}: {col_index!r}")
+
         # 确保有足够的行
         while len(self._data) <= row_index:
             self._data.append([None] * len(self._columns))
-        
+
         # 确保有足够的列
         if isinstance(col_index, str):
             col_idx = self._columns.index(col_index) if col_index in self._columns else -1
             if col_idx < 0:
-                # 添加新列
+                # 添加新列（既有语义：按列名写入未知列会自动建列）
                 col_idx = len(self._columns)
                 self._columns.append(col_index)
                 for row in self._data:
                     row.append(None)
         else:
+            if col_index < 0:
+                raise IndexError(
+                    f"set_cell 的列索引必须 >= 0（不支持负索引），收到 {col_index}")
             col_idx = col_index
-            while len(self._data[row_index]) <= col_idx:
-                self._data[row_index].append(None)
-        
+            if col_idx >= len(self._columns):
+                # 整表加宽到 col_idx+1，并补齐列名，避免锯齿行
+                _target = col_idx + 1
+                while len(self._columns) < _target:
+                    self._columns.append(f'col_{len(self._columns)}')
+                for row in self._data:
+                    while len(row) < _target:
+                        row.append(None)
+
         self._data[row_index][col_idx] = value
         return self
     
@@ -957,8 +992,17 @@ class Table(Seq):
         Returns:
             self (支持链式)
         """
-        if 0 <= rownum < len(self._data):
-            self._data.pop(rownum)
+        # BUG-377: 原实现越界/负索引**静默无操作**（del_col 早已校验并抛错，
+        # 两者口径不一致）。现在显式 IndexError，便于发现调用方错误。
+        if not isinstance(rownum, int) or isinstance(rownum, bool):
+            raise TypeError(
+                f"del_row 的行参数需要 int 行索引，收到 "
+                f"{type(rownum).__name__}: {rownum!r}")
+        if rownum < 0 or rownum >= len(self._data):
+            raise IndexError(
+                f"行索引必须在 0..{len(self._data) - 1} 范围内（从0开始），"
+                f"收到 {rownum}")
+        self._data.pop(rownum)
         return self
     
     def new_row(self) -> Row:
