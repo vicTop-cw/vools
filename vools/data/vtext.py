@@ -856,6 +856,14 @@ class VText(str):
         if s == "" or s == "E:":
             return self.__class__("")
         way_in = (way or "").lower().strip()
+        # BUG-394: 原实现把 `way` 直接和前缀探测混用——密文带前缀（F:/A:/E:）时
+        # 前缀优先，**非法 way（如 'des'）被静默忽略**，解出来的结果看起来"成功"。
+        # 这里提前校验 way 的取值；解密失败仍按文档回退（但发出可见告警）。
+        if way_in and way_in not in ('xor', 'fernet', 'aes'):
+            raise ValueError(
+                f"未知解密方式: {way!r}；支持 None（自动探测前缀）/ 'xor' / "
+                f"'fernet' / 'aes'")
+        _had_prefix = True
         if s.startswith("F:"):
             s = s[2:]
             way_eff = "fernet"
@@ -866,6 +874,7 @@ class VText(str):
             s = s[2:]
             way_eff = "xor"
         else:
+            _had_prefix = False
             way_eff = way_in or "xor"
         k = self._resolve_key(key)
         try:
@@ -878,8 +887,19 @@ class VText(str):
             raw = self._b64dec(s, urlsafe=False)
             dec = self._xor_crypt(raw, k)
             return self.__class__(dec.decode("utf-8"))
-        except Exception:
-            return self.__class__("")
+        except Exception as _exc:
+            # BUG-394: 文档写"解密失败回退原文/空串"，但原实现**一律静默返回空串**
+            # ——错误密钥/损坏密文与"本来就不是密文"无法区分。现按前缀区分：
+            #   * 带前缀（确为密文）→ 回退空串 + RuntimeWarning（可见）；
+            #   * 无前缀（本来就不是密文）→ 回退**原文**（文档的另一种回退）。
+            if _had_prefix:
+                import warnings as _w
+                _w.warn(
+                    f"VText.decrypt 解密失败（way={way_eff!r}），已回退为空串："
+                    f"{type(_exc).__name__}: {_exc}",
+                    RuntimeWarning, stacklevel=2)
+                return self.__class__("")
+            return self.__class__(str(self))
 
     def _decrypt_with_crypto(self, b64s: str, way: str, key: bytes) -> 'VText':
         """cryptography 解密实现。"""
