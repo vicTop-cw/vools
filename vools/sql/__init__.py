@@ -20,17 +20,17 @@ from .core.builder import SqlBuilder, BaseSqlBuilder
 from .core.connection import Connection
 from .core.result import ResultSet, Row
 from .core.decorators import sql_function, sql_module, sql_func_name
-from .core.dialect import Dialect, register_dialect as _core_register_dialect, get_dialect as _core_get_dialect, list_dialects as _core_list_dialects, has_dialect
+from .core.dialect import Dialect, register_dialect as _core_register_dialect, get_dialect as _core_get_dialect, list_dialects as _core_list_dialects, has_dialect as _core_has_dialect
 from .core.config import DialectConfig
 
 from .manager import (
     manager,
     DialectManager,
     register_dialect,
-    get_dialect,
-    create_dialect,
+    get_dialect as _manager_get_dialect,
+    create_dialect as _manager_create_dialect,
     is_available,
-    list_dialects,
+    list_dialects as _manager_list_dialects,
     list_available,
     get_config,
     set_config,
@@ -126,6 +126,43 @@ _LOADING = set()
 _DIALECT_FAILED = set()
 
 
+def _auto_register_dialect(name, mod):
+    """BUG-347: 惰性加载方言子模块后，把其中的 Dialect 子类登记到 manager。
+
+    原实现只 `globals()[name] = mod`，**从不注册**——于是内置方言虽然可导入，
+    `vools.sql.get_dialect('sqlite')` / `create_dialect` / `has_dialect` 全部
+    KeyError/False，`list_dialects()` 恒为空（除非用户手动 register_dialect）。
+    """
+    try:
+        # 本模块 __init__ 已绑定 Dialect / manager（见文件上部 import）；
+        # 导入期再次 `from .manager import` 会撞上循环导入，因此优先用全局名。
+        _Dialect = globals().get('Dialect')
+        _manager = globals().get('manager')
+        if _Dialect is None or _manager is None:
+            from .core.dialect import Dialect as _Dialect
+            from .manager import manager as _manager
+
+        try:
+            _manager.get_dialect(name)       # 已注册则跳过
+            return
+        except KeyError:
+            pass
+
+        candidates = [
+            v for v in vars(mod).values()
+            if isinstance(v, type) and issubclass(v, _Dialect) and v is not _Dialect
+            and getattr(v, '__module__', '').startswith(mod.__name__)
+        ]
+        if not candidates:
+            return
+        _lowered = name.replace('_', '').lower()
+        _preferred = [c for c in candidates if _lowered in c.__name__.lower()]
+        _manager.register(name, (_preferred or candidates)[0])
+    except Exception:
+        # 注册失败不影响模块可用性（用户仍可手动 register_dialect）
+        return
+
+
 def _load_dialect(name):
     """按名字惰性加载 vools.sql.<name> 方言子模块（幂等、防重入）。
 
@@ -142,6 +179,7 @@ def _load_dialect(name):
         import importlib
         mod = importlib.import_module('.' + name, __name__)
         globals()[name] = mod
+        _auto_register_dialect(name, mod)
         return True
     except Exception:
         _DIALECT_FAILED.add(name)          # 记一次失败，不在每次 getattr 都撞一遍
@@ -221,6 +259,51 @@ def __getattr__(name):
         return getattr(globals()['manager'], name)
 
     raise AttributeError("module 'vools.sql' has no attribute '%s'" % name)
+
+
+# ============================================================================
+# BUG-347: 公开方言 API 需先触发**惰性加载**
+#
+# 内置方言（sqlite/spark/postgres…）通过模块级 __getattr__ 惰性导入，
+# 但 `get_dialect('sqlite')` / `create_dialect` / `has_dialect` / `list_dialects`
+# 直接查 manager 注册表 —— 在用户从未访问 `vools.sql.sqlite` 时注册表是空的，
+# 于是"方言实际可用却报未注册 / 列表恒空"。
+# 这里统一先按需加载（_load_dialect 内含防重入 + 失败缓存），再委派。
+# ============================================================================
+_LAZY_DIALECT_NAMES = ('sqlite', 'spark', 'postgres', 'mysql', 'oracle', 'mssql')
+
+
+def _ensure_dialect_loaded(name):
+    """按需加载单个方言子模块（幂等；失败静默，交由后续 KeyError 曝露）。"""
+    try:
+        _load_dialect(name)
+    except Exception:
+        pass
+
+
+def get_dialect(name):
+    """获取方言类（自动按需加载内置方言）。"""
+    _ensure_dialect_loaded(name)
+    return _manager_get_dialect(name)
+
+
+def create_dialect(name, **kwargs):
+    """创建方言实例（自动按需加载内置方言）。"""
+    _ensure_dialect_loaded(name)
+    return _manager_create_dialect(name, **kwargs)
+
+
+def has_dialect(name):
+    """检查方言是否已注册（自动按需加载内置方言）。"""
+    _ensure_dialect_loaded(name)
+    return _core_has_dialect(name)
+
+
+def list_dialects():
+    """列出已注册方言（先按需加载全部内置方言）。"""
+    for _n in _LAZY_DIALECT_NAMES:
+        _ensure_dialect_loaded(_n)
+    return _manager_list_dialects()
 
 
 def __dir__():
