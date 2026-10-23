@@ -205,18 +205,41 @@ def _attach_demo_expansion(result, action):
     return result
 
 
-def _merge_link_params(action, params):
-    """阶段3：link 的参数浅合并——args 作基底、调用方入参覆盖同名键。
+def _deep_merge_params(base: dict, override: dict) -> dict:
+    """递归合并：dict 逐层合并、其它类型（含 list）整体替换，override 叶子优先。
 
+    计划 §六.4 的深合并规则：
+      - 两侧都是 dict → 递归合并
+      - 任一侧不是 dict（含 list/标量）→ override 整体替换
+      - override 里没有的键保留 base 的值
+    """
+    out = dict(base or {})
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge_params(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _merge_link_params(action, params):
+    """阶段3/§六.4：link 的参数合并——args 作基底、调用方入参覆盖同名键。
+
+    合并模式由动作 `meta['merge']` 决定：
+      - `shallow`（默认）：顶层键覆盖，嵌套 dict 整体替换（零回归）
+      - `deep`：递归合并嵌套 dict；list/标量整体替换；调用方叶子优先
     抽成纯函数便于单测（不依赖 execute 递归，避免打桩模块全局的脆弱性）。
     """
     forwarded = dict(params or {})
     link_args = action.meta.get('args') or {}
-    if isinstance(link_args, dict):
-        merged = dict(link_args)
-        merged.update(forwarded)
-        forwarded = merged
-    return forwarded
+    if not isinstance(link_args, dict):
+        return forwarded
+    mode = str(action.meta.get('merge') or 'shallow').strip().lower()
+    if mode == 'deep':
+        return _deep_merge_params(link_args, forwarded)
+    merged = dict(link_args)
+    merged.update(forwarded)
+    return merged
 
 
 def _execute_forwarding_kind(action, action_id, params, kind, **kw):
