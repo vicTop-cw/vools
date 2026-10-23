@@ -384,6 +384,33 @@ class Column(Seq):
         return list(self._data)
 
 
+def _dedup_column_names(columns):
+    """BUG-327: 摄入入口的列名去重（保持数据不丢、列名唯一）。
+
+    重复列名会让所有按名 API 静默命中其中一列（column/GetCol/to_num/...），
+    而来源常是外部 CSV/Excel 的重复表头。与 `col_j` 空名兜底同风格：第二个
+    重名改成 `id_2`、第三个 `id_3`…（原列序与数据都不变）。
+    """
+    if not columns:
+        return columns
+    seen = {}
+    out = []
+    for name in columns:
+        if name not in seen:
+            seen[name] = 1
+            out.append(name)
+            continue
+        seen[name] += 1
+        candidate = f"{name}_{seen[name]}"
+        # 兜底：若 `id_2` 本身已被占用，继续递增后缀直到唯一
+        while candidate in seen:
+            seen[name] += 1
+            candidate = f"{name}_{seen[name]}"
+        seen[candidate] = 1
+        out.append(candidate)
+    return out
+
+
 @rself
 class Table(Seq):
     # BUG-252: max/min 在无匹配数据时返回 None，@rself 的 None→self 兜底会把
@@ -447,7 +474,8 @@ class Table(Seq):
         self._ops = []
         self._active_op = lambda x: x
         
-        self._columns = columns or [f'col_{i}' for i in range(len(self._collection[0]) if self._collection else 0)]
+        # BUG-327: 摄入入口（构造/文件读取）统一对列名去重，避免重名列让按名 API 静默错列。
+        self._columns = _dedup_column_names(columns or [f'col_{i}' for i in range(len(self._collection[0]) if self._collection else 0)])
         self._row_index = {}
         self._name = name or ''
         self._rself_kwargs = {'columns': list(self._columns), 'name': self._name}
