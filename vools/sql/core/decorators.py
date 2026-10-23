@@ -31,6 +31,21 @@ else:
         return getattr(tp, '__args__', None)
 
 
+def _unwrap_optional(tp):
+    """BUG-352: 把 `Optional[X]` / `Union[X, None]` 解包为 `X`。
+
+    `_convert_result` 只处理 list/dict/Row/标量等**具体类型**，而 `Optional[int]`
+    这类标注的 `__origin__` 是 `typing.Union` —— 结果会**原样返回 ResultSet**
+    而不是标量（`Optional` 正是可空列最常见的写法）。
+    """
+    origin = _get_origin(tp)
+    if origin is typing.Union:
+        inner = [a for a in (_get_args(tp) or ()) if a is not type(None)]
+        if len(inner) == 1:
+            return inner[0]
+    return tp
+
+
 def _get_signature_info(func):
     """
     从函数签名中提取参数类型和返回类型信息。
@@ -86,13 +101,19 @@ def _resolve_sql_types(param_types, return_type):
         if py_type is None:
             sql_param_types.append(None)
         else:
+            # BUG-352: Optional[X] 解包为 X；List[X]/Dict[..] 等泛型按 origin 映射
+            py_type = _unwrap_optional(py_type)
             sql_type = SqlTypeMapper.get_sql_type(py_type)
+            if sql_type is None:
+                _origin = _get_origin(py_type)
+                if _origin is not None:
+                    sql_type = SqlTypeMapper.get_sql_type(_origin)
             if sql_type is None:
                 sql_param_types.append('VARCHAR')
             else:
                 sql_param_types.append(sql_type)
 
-    sql_return_type = SqlTypeMapper.infer_ret_type(return_type)
+    sql_return_type = SqlTypeMapper.infer_ret_type(_unwrap_optional(return_type))
 
     return sql_param_types, sql_return_type
 
@@ -133,6 +154,9 @@ def _convert_result(result, return_type):
     返回：
         转换后的返回值
     """
+    # BUG-352: Optional[X] -> X，否则下面所有具体类型分支都匹配不上
+    return_type = _unwrap_optional(return_type)
+
     if return_type is None or return_type is type(None):
         return result
 

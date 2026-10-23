@@ -142,8 +142,22 @@ class SqlTypeMapper:
         """
         if ret_type is None or ret_type is type(None):
             return None
+        # BUG-352: Optional[X] 解包后再推断
+        _origin_o = getattr(ret_type, '__origin__', None)
+        if _origin_o is not None and getattr(_origin_o, '__name__', '') == 'Union':
+            _inner = [a for a in (getattr(ret_type, '__args__', ()) or ())
+                      if a is not type(None)]
+            if len(_inner) == 1:
+                ret_type = _inner[0]
         if isinstance(ret_type, type):
             sql_type = SqlTypeMapper._py_to_sql.get(ret_type)
+            if sql_type is not None:
+                return sql_type
+        # BUG-352: List[int]/Dict[str, int] 等泛型按 origin 映射（list/dict -> JSON），
+        # 原实现落到最后 fallback 'INTEGER'，与 PY_TO_SQL 的声明不一致。
+        _origin = getattr(ret_type, '__origin__', None)
+        if _origin is not None:
+            sql_type = SqlTypeMapper._py_to_sql.get(_origin)
             if sql_type is not None:
                 return sql_type
         return 'INTEGER'
