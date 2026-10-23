@@ -553,11 +553,18 @@ class Box(AOP):
         rerun = kwargs.pop('rerun', False)
         if unpack == "*":
             if not isinstance(arg0, Iterable):
-                raise TypeError(f"object of type '{type(arg0).__name__}' has no len()")
+                # BUG-344: 原报 "object of type 'int' has no len()"，但问题是
+                # unpack='*' 需要可迭代对象（与 len 无关），信息误导。
+                raise TypeError(
+                    f"unpack='*' 需要可迭代对象，但 __wrapped__ 是 "
+                    f"'{type(arg0).__name__}': {arg0!r}")
             result = [func(arg, *args, **kwargs) for arg in arg0] if rerun else func(*arg0, *args, **kwargs)
         elif unpack == "**":
             if not isinstance(arg0, dict):
-                raise TypeError(f"object of type '{type(arg0).__name__}' has no len()")
+                # BUG-344: 同上——unpack='**' 需要 dict，报 len() 同样误导。
+                raise TypeError(
+                    f"unpack='**' 需要字典，但 __wrapped__ 是 "
+                    f"'{type(arg0).__name__}': {arg0!r}")
             result = {k: func(v, *args, **kwargs) for k, v in arg0.items()} if rerun else func(*args, **arg0, **kwargs)
         else:
             result = func(arg0, *args, **kwargs)
