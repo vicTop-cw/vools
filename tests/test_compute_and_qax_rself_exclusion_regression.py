@@ -46,8 +46,10 @@ class TestTableComputeTypeCheck:
         assert t.compute('SUM(score)') == 30
         assert t.compute('COUNT(id)') == 2
 
-    def test_unmatched_returns_none(self, t):
-        assert t.compute('score') is None
+    def test_unmatched_raises(self, t):
+        # BUG-378: 裸列名不是聚合形式 -> 显式 ValueError（原静默 None）
+        with pytest.raises(ValueError):
+            t.compute('score')
 
 
 # --------------------------------------------------------------------------
@@ -55,8 +57,11 @@ class TestTableComputeTypeCheck:
 # --------------------------------------------------------------------------
 class TestQaxComputeIntColumn:
     def test_valid_int_resolves_to_column(self, q):
-        # 未匹配聚合表达式 -> None（而不是 AttributeError 或整表）
-        assert q.QAXCompute(2) is None
+        # BUG-321B 的核心是"int 列号能解析、不抛 AttributeError"；
+        # BUG-378 起未识别聚合形式改为显式 ValueError（原先静默 None）。
+        # 仍验证：不是 AttributeError、不是整表。
+        with pytest.raises(ValueError):
+            q.QAXCompute(2)
 
     @pytest.mark.parametrize('bad', [0, -1, 99])
     def test_out_of_range_raises_indexerror(self, q, bad):
@@ -80,12 +85,16 @@ class TestQaxInheritsTableExclusions:
     def test_get_cell2_unknown_column_none(self, q):
         assert q.get_cell2(0, 'nope') is None
 
-    def test_compute_unmatched_none(self, q):
-        assert q.compute('BOGUS(x)') is None
+    def test_compute_unmatched_raises(self, q):
+        # BUG-378: 未识别聚合形式显式报错（原静默返回 default_value/None）
+        with pytest.raises(ValueError):
+            q.compute('BOGUS(x)')
 
-    def test_qax_compute_unmatched_none(self, q):
-        assert q.QAXCompute('BOGUS(x)') is None
-        assert q.QAXCompute('score') is None
+    def test_qax_compute_unmatched_raises(self, q):
+        with pytest.raises(ValueError):
+            q.QAXCompute('BOGUS(x)')
+        with pytest.raises(ValueError):
+            q.QAXCompute('score')
 
     def test_normal_paths_unchanged(self, q):
         assert q.get_cell(0, 0) == 1
