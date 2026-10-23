@@ -6273,7 +6273,7 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
 ### FIXED(2026-10-23T15:30:00Z / BUG-331)
 - evidence: vools/task/core/models.py _SafeUnpickler._ALLOWED 白名单加入 vools 数据类型（Table/Row/Column/Qax/VList/VText/Seq/SeqBase/VDate），任务实参/返回值里的 vools 类型可正确往返。复现脚本验证：Table/Qax/VList 往返类型与状态正确 ✓。task/payload/pickle 全套 289 测试 exit 0。
 - reported_by: vools-bughunt-lead
-## BUG-332 [2026-10-23T08:02:35Z] [medium] OPEN
+## BUG-332 [2026-10-23T08:02:35Z] [medium] FIXED
 - summary: serialize json 后端对 uuid 写读不对称：dumps(uuid, 'json') 成功但 loads 静默返回内部 state dict（{'int': ...}）而非 UUID——vools_default 写出 __vools_obj__ 通用标记，_import_class 的模块白名单不含 uuid，_reconstruct_object 在 cls is None 时直接 return state（静默降级，无提示）
 - detail: `vools.serialize` 的 json 后端对 `uuid.UUID` **写读不对称**：写入成功、读回静默降级成内部 state dict：
 
@@ -6298,4 +6298,149 @@ A. **类型注册表补齐 uuid**：`type_registry` 增加 `uuid.UUID` 的专用
 B. **失败不再静默**：`codec._reconstruct_object` 在 `cls is None`（模块不在白名单/类无法导入）时抛 `ValueError`（说明类型名与白名单限制），而不是 `return state` —— 避免未来新增类型再静默降级。
 - reported_by: agent-vools-hardening
 - task_id: T0r748
+
+
+### FIXED(2026-10-23T16:10:00Z / BUG-332)
+- evidence: vools/serialize/codec.py _ALLOWED_IMPORT_MODULES 白名单加入 'uuid'，json 后端对 uuid.UUID 写读对称。复现脚本验证：json/vb_json/pickle 三后端 UUID 往返 ✓。serialize/json/uuid 全套 414 测试 exit 0。
+- reported_by: vools-bughunt-lead
+
+
+### FIXED(2026-10-23T08:41:18Z / BUG-332)
+- evidence: 修复（实现：并发提交 a70cd32 + 我的 type_registry 改动，已入 HEAD；回归：commit 8069c85）：
+① `vools/serialize/type_registry.py` 注册 `uuid.UUID`（`_serialize_uuid`/`_deserialize_uuid`，`__vools_type__` 通道 `{'hex': ...}`，与 Decimal/date 同路径）→ json / vb_json / pickle 三后端均可往返；
+② `vools/serialize/codec.py` 的 `_reconstruct_object` 在 `cls is None` 时由静默 `return state` 改为抛 ValueError（「无法还原对象：类型 ... 的模块不在反序列化白名单（或类不存在）。请用 register_type 注册该类型，或改用 pickle 后端」），并在 `_ALLOWED_IMPORT_MODULES` 注明 uuid 的处理（并发提交补充）；
+③ 我的测试锁定：tests/test_serialize_uuid_and_fail_loud_regression.py（uuid 三后端往返 + 嵌套/uuid4 + 4 类不可导入模块 ValueError + 注册表可用性 + 既有类型不受影响）；把 tests/serialize/test_codec_import_whitelist.py 两条「拒绝后返回 state」断言改为 `pytest.raises(ValueError)`；uuid 从 tests/test_serialize_vb_json_unknown_type_regression.py 的「必报错」清单移除并补 uuid 正案例。
+
+修复前实测：dumps(uuid, 'json') 成功，loads 得到 **dict** `{'int': ...}`（静默降级）；pickle 后端正常。
+修复后实测：json/vb_json/pickle 三后端 loads 均得 UUID 且相等；嵌套 dict/list 中 uuid 同样正确；`_reconstruct_object('uuidx.NotAllowed')`/('subprocess.Popen')/('_io.FileIO') -> ValueError；未注册类 dumps -> TypeError；date/Decimal/set/complex 等既有类型三后端不变。
+
+测试：tests/serialize 全套 + 新增回归 GREEN（EXIT=0）；此前全量套件 EXIT=0。已推送 gitcode master（HEAD 8069c85）。
+
+协作记录：本轮并发 agent 先以 a70cd32 提交了 codec fail-loud + 一处回归更新并更新账本；我方补齐类型注册（uuid）与配套回归，最终实现/测试在 HEAD 一致、行为复核通过。
+## BUG-333 [2026-10-23T09:06:41Z] [medium] FIXED
+- summary: serialize 的 pathlib 处理器丢失具体风格：PurePosixPath('/a/b') 经 json/vb_json/msgpack 往返后变成 PureWindowsPath（Windows 上 PurePath(...) 的默认），isinstance/parts/分隔符语义随之静默改变；根因 _serialize_path 只存 str(obj)、_deserialize_path 用平台默认 PurePath 重建
+- detail: `vools.serialize` 的 pathlib 类型处理器丢失**具体路径风格**：`PurePosixPath` 往返后变成 `PureWindowsPath`（json / vb_json / msgpack 三个后端；pickle 正常）。
+
+实测（Windows 平台）：
+    obj = pathlib.PurePosixPath('/a/b')
+    loads(dumps(obj, backend='json'), backend='json')
+    -> **PureWindowsPath('/a/b')**      # type(back) is not type(obj)
+    vb_json / msgpack 同样；pickle -> PurePosixPath ✓
+
+根因（type_registry.py）：
+    def _serialize_path(obj): return {'path': str(obj)}          # ← 只存字符串，风格丢失
+    def _deserialize_path(state): return pathlib.PurePath(state['path'])
+`pathlib.PurePath(...)` 会按**当前平台**返回具体子类（Windows 上 → PureWindowsPath），因此一旦源对象是 PurePosixPath（例如处理服务器/容器路径），往返后类型与语义都变了。
+
+影响：
+- `isinstance(x, PurePosixPath)` 变为 False；
+- `.parts` / 路径拼接 `'/'` 语义、与 PurePosixPath 的比较、`.as_posix()` 之外的属性都会按 **Windows 规则**解释（例如 `PurePosixPath('/a/b').parts == ('/', 'a', 'b')`，而 `PureWindowsPath('/a/b').parts == ('\\', 'a', 'b')`）；
+- 属静默类型漂移（不报错、值看起来"差不多"），跨平台数据交换（Windows 客户端读 Linux 服务端路径）时会悄悄改变路径语义。
+
+severity medium。
+
+修复方向：序列化时同时保存具体风格（`PurePosixPath` → `'posix'`、`PureWindowsPath` → `'windows'`），反序列化按风格重建对应子类；无风格信息（旧 payload / 抽象 PurePath）时回退 `pathlib.PurePath` 保持向后兼容。
+- reported_by: agent-vools-hardening
+- task_id: T0r749
+
+
+
+### FIXED(2026-10-23T09:32:58Z / BUG-333)
+- evidence: 修复（commit 2c478ab + 0e839b9）vools/serialize/type_registry.py：
+① `_serialize_path` 在 `{'path': str(obj)}` 基础上记录 `flavor`（'posix'/'windows'）与 `concrete`（是否具体 `pathlib.Path`）；
+② `_deserialize_path` 按风格重建：同平台 concrete -> `pathlib.Path`（保留 exists/read_text 等 IO 能力）；跨平台或抽象 -> `PurePosixPath`/`PureWindowsPath`；无 flavor 的旧 payload -> 平台默认 `PurePath`（向后兼容）。
+
+修复前实测（Windows）：PurePosixPath('/a/b') 经 json/vb_json/msgpack 往返 -> **PureWindowsPath**（parts 由 ('/','a','b') 变 ('\\','a','b')）；具体 Path('a/b') -> PureWindowsPath（丢失 exists）。
+修复后实测：PurePosixPath/PureWindowsPath/Path 在 json/vb_json/pickle/msgpack **四后端**均保持原类型与原值；具体 Path 保留 `exists()` 且可调用返回 bool；抽象 Pure* 无 read_text；旧 payload 兼容。
+
+新增 tests/test_serialize_backend_symmetry_invariant.py：把「注册表内置类型 × 全部可用后端 → 原类型往返」固化为不变量（13 个内置类型 × 4 后端 + pathlib 风格/具体性专项 + 样本覆盖断言），防止未来写入/读取白名单再漂移（BUG-303/309/325/331/332 同族）。
+（中途全量跑出 1 项失败：覆盖断言直接遍历 `_TYPE_HANDLERS` 会被其它测试的 `register_type` 污染 -> 改为固定内置类型清单，顺序无关，已修。）
+
+测试：新不变量测试 + tests/serialize 全套 GREEN；**全量套件 EXIT=0**。commit 已推送 gitcode master（HEAD 0e839b9）。
+## BUG-334 [2026-10-23T09:56:57Z] [medium] FIXED
+- summary: 任务载荷白名单仍缺 bytearray/pathlib/Enum 三类常见类型：经 _dump_json/_load_json 往返后退化为标记字符串（有告警但类型与语义丢失——字节变字符串、路径丢 parts/风格、枚举成员判断失效）；枚举类在用户模块故需按 type_registry 同口径的「枚举模块白名单 + 必须 issubclass(Enum)」规则单独放行
+- detail: BUG-331 修完 vools 数据类型后，任务载荷仍有 3 类常见类型**降级成标记字符串**（有告警但仍丢失类型/语义）：
+
+实测（`_load_json(_dump_json([obj]))[0]`）：
+| 类型 | 结果 | 判定 |
+|---|---|---|
+| `bytearray(b'xy')` | **str** + 1 条告警 | 缺口（白名单无 bytearray） |
+| `pathlib.PurePosixPath('/a/b')` | **str** + 1 条告警 | 缺口（白名单无 pathlib） |
+| `enum` 实例（用户模块里的 `class Color(Enum)`） | **str** + 1 条告警 | 缺口（枚举类在用户模块，白名单不含该模块） |
+| datetime/date/timedelta/Decimal/UUID/set/frozenset/complex/bytes | 原类型 ✓ | 正常 |
+| tuple | list | JSON 固有限制（值不丢） |
+| Table/VList | 原类型 ✓ | BUG-331 已修 |
+
+白名单现状（`vools/task/core/models.py::_SafeUnpickler._ALLOWED`）：builtins 子集 / datetime / decimal / uuid / collections / vools.data.* / vools.datetime.vdate_class。
+缺口原因：`_dump_json` 用 pickle 标记写出任何对象，但 `find_class` 对上述三类一律拒绝 → `_restore_pickle` 告警后回退字符串。
+
+影响：任务实参/返回值里的 `bytearray` 变字符串（写文件/二进制处理直接坏）、路径变字符串（丢 `.parts`/`parents`/路径风格语义）、枚举变字符串（`Enum` 成员判断/`.name` 全失效）。虽已可见（告警），但仍是静默语义损坏，且这些类型在数据处理里很常见。
+
+修复方向（保持 BUG-207 的防护面）：
+1. `_ALLOWED['builtins']` 增补 `bytearray`；
+2. 新增 `_ALLOWED['pathlib'] = {'PurePath','PurePosixPath','PureWindowsPath','PosixPath','WindowsPath','Path'}`；
+3. **枚举**单独放行规则（与 type_registry 的 `_is_allowed_enum_module` 同口径）：`find_class` 在模块不在白名单时，若模块属于 `enum` / `__main__` / `vools*` / `tests*` 前缀，导入后校验必须是 `enum.Enum` 子类才放行——既支持用户枚举，又不放大"任意模块导入"面。
+- reported_by: agent-vools-hardening
+- task_id: T0r750
+
+
+
+### FIXED(2026-10-23T10:16:45Z / BUG-334)
+- evidence: 修复（commit b5f98f5）vools/task/core/models.py：
+① `_SafeUnpickler._ALLOWED` 增补 `builtins.bytearray` 与 `pathlib.{PurePath,PurePosixPath,PureWindowsPath,PosixPath,WindowsPath,Path}`；
+② 新增枚举放行规则（与 type_registry._is_allowed_enum_module 同口径）：`_ENUM_MODULE_ALLOW={'enum','__main__'}` + 前缀 ('vools','tests')，`find_class` 兜底时导入模块并校验 `issubclass(cls, enum.Enum)` 才放行，非枚举类仍 `UnpicklingError`；
+③ `_dump_json` 增加 `_json_prepare` 预转换：Enum 实例与非原生 str 子类（IntEnum/StrEnum/VText 等）先打成 pickle 标记——它们在 json.dumps 中被原生按数字/字符串编码（不触发 default）导致类型丢失；普通 str/int/bool 不受影响（用户字面量不会被误转）。
+
+修复前实测（_load_json(_dump_json([obj]))）：bytearray -> str(+告警)、PurePosixPath -> str(+告警)、用户枚举 -> str(+告警)、IntEnum -> int、VText -> str。
+修复后实测：bytearray/pathlib(含具体 Path)/Color/IntEnum/StrEnum/VText 全部原类型往返；嵌套 dict/list 内同样保真；普通 str/int/bool 不变；安全不回退——恶意 `os.system` 载荷仍被拒并告警、**非枚举用户类**（模块级 _NotEnum）仍被拒并告警、tests 前缀模块里的枚举正常放行。
+
+新增 tests/test_task_payload_symmetry_invariant.py：把「18 类型 × args/kwargs/result 三位置 → 原类型往返」固化为不变量 + 原始类型不受影响 + 安全拒绝三例（恶意 reduce、非枚举类、允许模块枚举）。
+测试：新增不变量 + tests/task + tests/serialize 全 GREEN；**全量套件 EXIT=0**。commit 已推送 gitcode master（HEAD b5f98f5）。
+## BUG-335 [2026-10-23T14:00:13Z] [medium] OPEN
+- summary: get_date_seq 的 week/month 序列端日错配：_generate_date_range 返回最旧在前，而代码把 i==0（最旧周期）的结束日设为 run_date，产生跨多周期区间（周 '1229-0115' 跨 3 周、月 '1101-0115' 应为 11-30）及未来结束日（01-18 > run 01-15）
+- detail: `vools/utils/tools.py::get_date_seq` 的 **week / month** 序列把「最旧周期」的结束日错误地设成 `run_ds`（基准日），产出跨多周期的区间与非单调序列：
+
+实现：
+    # _generate_date_range 末尾 return dates[::-1]   → **最旧在前**
+    for i, d in enumerate(dss):          # 周: d 是该周周日; 月: d 是该月末
+        start_date = d - timedelta(days=6)   # 周
+        end_date = d if i > 0 else run_date  # ← i==0 是最旧那一项，端日被设为 run_date
+（month 分支同构：start_date = d.replace(day=1)，end_date = d if i > 0 else run_date）
+
+实测（run_ds='2026-01-15'，nums=3，duo=True）：
+- 周（reverse=True）：['0112-0118', '0105-0111', **'1229-0115'**]
+  → 最旧一项是「12/29 周」但结束日成了 01-15（跨 3 周）；且最新一项结束 01-18 是**未来日期**（01-15 之后），与"当前周期截到 run_date"的意图相悖
+- 月（reverse=True）：['0101-0131', '1201-1231', **'1101-0115'**]
+  → 最旧一项「11 月」结束日成了 01-15，应为 11-30
+- 月 duo=False：['0131', '1231', **'0115'**]（同上错端日）
+- 日（day）分支不受影响：'0115-0115' 等正确（日周期 start==end）
+
+预期（周从旧到新）：['1229-0104', '0105-0111', '0112-0115']（**当前周截到 run_date，历史周用自然周期末**）
+预期（月从旧到新）：['1101-1130', '1201-1231', '0101-0115']
+
+影响：按周/月生成的日期区间错位——最旧一行变成"跨季度/跨多年"的超长区间，口径与下游（按周/月统计、报表分组、区间过滤）不符，且不报错。severity medium。
+
+修复方向：把「截到 run_date」的逻辑绑定到**包含 run_date 的那个周期**，而不是 i==0：
+    for d in dss:
+        start = d - 6d (周) / d.replace(day=1) (月)
+        end = run_date if start <= run_date <= d else d
+（day 分支保持现状；reverse 仍由外层递归负责。）
+- reported_by: agent-vools-hardening
+- task_id: T0r751
+
+## BUG-336 [2026-10-23T14:27:49Z] [high] OPEN
+- summary: [actus/resolver] 远程下载白名单语义反转（未配置 allow_hosts 时放行任意 URL ⇒ SSRF）+ SSL 证书校验被禁用（CERT_NONE ⇒ MITM）
+- detail: 现象（实测）：
+  1. `resolve_params_extended('@https://example.invalid/a.json')`（未配置 --allow-host）**直接发起下载**，而不是拒绝——白名单形同虚设。
+  2. 两处下载函数的 SSL 上下文写成 `ctx.check_hostname = False` + `ctx.verify_mode = ssl.CERT_NONE`，注释写着『仅用于开发环境』但**没有任何环境判断**，生产路径同样跳过证书校验。
+  根因：
+  - `_download_url`（vools/actus/resolver.py:137）与 `_download_json_url`（:382）都写成 `if allow_hosts:` 才校验主机 —— 把「空列表 / None」当成「不校验」。而 resolver 自己的 docstring（:190）明确写「allow_hosts: URL 下载白名单（**空列表表示禁止所有远程**）」⇒ 文档与实现语义相反。
+  - SSL 上下文创建后立即关掉校验，属于调试代码被提交进生产路径。
+  影响面：
+  - **SSRF**：调用方只要传一个 `@https://…` 入参，引擎就会向任意主机发起请求（内网地址、云元数据端点均可探测），未配置白名单时毫无防护。
+  - **供应链 MITM**：远程动作源/入参 JSON 可被中间人替换后执行（ACTUS_REFACTOR_PLAN §六.3 明确要求远程动作默认 audit + 白名单 + 指纹校验）。
+  证据：actus/tests/test_params_forms.py（新增 9 用例，含源码级契约「两个下载函数不得再出现 CERT_NONE / check_hostname=False」）。复现命令：cd actus && python -m pytest -q tests/test_params_forms.py；或 `python -c "from vools.actus.resolver import resolve_params_extended; resolve_params_extended('@https://example.invalid/a.json')"`（修前会尝试下载，修后抛 remote_host_denied）。
+  修复：新增 `_assert_host_allowed()` —— **空白名单即拒**（remote_host_denied，文案给出 --allow-host 指引），主机名归一小写后比较；两处下载函数改用 `ssl.create_default_context()` 的默认校验。
+  建议：① 保持「默认拒绝远程」语义，任何放宽都必须显式 --allow-host；② 远程动作源仍应补指纹/签名校验（计划 §六.3 的未完成项）；③ 建议再补一条「白名单内 + 证书校验失败」的用例（需要可用的自签测试服务）。
+- reported_by: explore-bugfind-10
 
