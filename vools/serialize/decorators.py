@@ -122,25 +122,11 @@ def serializable(backend: Optional[str] = None):
         class MyData:
             def __init__(self, name: str):
                 self.name = name
-            
-            def do(self, f=print, pre_f=None, sub_f=None):
-                '''Apply a function for side effects, return self.
-                
-                Args:
-                    f: Function to apply (default print)
-                    pre_f: Pre-processing function
-                    sub_f: Post-processing function (no return value expected)
-                
-                Returns:
-                    self, for chaining
-                '''
-                rs = self
-                if pre_f:
-                    rs = pre_f(rs)
-                rs = f(rs)
-                if sub_f:
-                    sub_f(rs)
-                return self
+
+        d = MyData('abc')
+        data = MyData.serialize(d)      # bytes
+        back = MyData.deserialize(data) # MyData 实例，back.name == 'abc'
+
     """
     def decorator(cls: Type) -> Type:
         be = backend or get_default_backend() or 'pickle'
@@ -174,28 +160,13 @@ def serialize_method(backend: Optional[str] = None):
 
     Example:
         class MyService:
-            @serialize_method
-            
-            def do(self, f=print, pre_f=None, sub_f=None):
-                '''Apply a function for side effects, return self.
-                
-                Args:
-                    f: Function to apply (default print)
-                    pre_f: Pre-processing function
-                    sub_f: Post-processing function (no return value expected)
-                
-                Returns:
-                    self, for chaining
-                '''
-                rs = self
-                if pre_f:
-                    rs = pre_f(rs)
-                rs = f(rs)
-                if sub_f:
-                    sub_f(rs)
-                return self
+            @serialize_method(backend='json')
             def get_state(self):
                 return {"status": "ok"}
+
+        raw = MyService().get_state()   # bytes，可直接落库/传输
+        # 读回：Serializer(backend='json').loads(raw) == {"status": "ok"}
+
     """
     def decorator(method: Callable) -> Callable:
         @wraps(method)
@@ -225,28 +196,14 @@ def deserialize_method(backend: Optional[str] = None):
 
     Example:
         class MyService:
-            @deserialize_method
-            
-            def do(self, f=print, pre_f=None, sub_f=None):
-                '''Apply a function for side effects, return self.
-                
-                Args:
-                    f: Function to apply (default print)
-                    pre_f: Pre-processing function
-                    sub_f: Post-processing function (no return value expected)
-                
-                Returns:
-                    self, for chaining
-                '''
-                rs = self
-                if pre_f:
-                    rs = pre_f(rs)
-                rs = f(rs)
-                if sub_f:
-                    sub_f(rs)
-                return self
+            @deserialize_method(backend='json')
             def update_state(self, state):
                 self._state = state
+
+        svc = MyService()
+        svc.update_state(b'{"status": "ok"}')   # bytes 参数被自动还原为 dict
+        assert svc._state == {"status": "ok"}
+
     """
     def decorator(method: Callable) -> Callable:
         @wraps(method)
