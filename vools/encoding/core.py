@@ -140,7 +140,9 @@ class CodecRegistry:
         Returns:
             所有已注册格式的列表
         """
-        return list(set(cls._encoders.keys()) | set(cls._decoders.keys()))
+        # BUG-337: 用 set 合并后直接 list()，顺序随字符串哈希每进程变化——
+        # 「支持格式」出现在错误信息与 UI 列表中，应当稳定；统一按字母序返回。
+        return sorted(set(cls._encoders.keys()) | set(cls._decoders.keys()))
     
     @classmethod
     def is_format_supported(cls, format_name: str) -> bool:
