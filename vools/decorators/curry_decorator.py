@@ -171,8 +171,11 @@ def curry_class(cls: type):
             return total
     
     t = T()
-    t.add(1).add(2).add(3)        # 返回 6
-    t.sum_all(1).sum_all(2).sum_all(3, 4)  # 返回 10
+    t.add(1).add(2).add(3)        # 返回 6（定长参数逐个累积，第 3 个参数时求值）
+    t.sum_all(1, 2, 3, 4)         # 返回 10
+
+    注意（BUG-318）：带 *args/**kwargs 的可变参数方法无法"累积到齐"触发求值，
+    柯里化链会一直返回 CurriedMethod；此类方法请一次性传全部实参（如上）。
     """
     if not inspect.isclass(cls):
         raise TypeError(f"@curry_class 装饰器仅允许应用于类，当前类型为: {type(cls).__name__}")

@@ -24,6 +24,26 @@ from vools.serialize.decorators import (
     serialize_method,
 )
 
+
+@serializable(backend='pickle')
+class _MyData:
+    """模块级类：pickle 后端要求可导入的类（局部类会 AttributeError）。"""
+
+    def __init__(self, name):
+        self.name = name
+
+
+@curry_class
+class _CurriedT:
+    def add(self, a, b, c):
+        return a + b + c
+
+    def sum_all(self, a, b, *c, **k):
+        total = a + b + sum(c)
+        if k:
+            total += sum(k.values())
+        return total
+
 _POLLUTING_MARKERS = ('pre_f', 'sub_f', 'Apply a function for side effects')
 
 
@@ -38,14 +58,10 @@ def test_docstring_not_polluted(obj):
 
 class TestDocumentedBehaviour:
     def test_serializable_example(self):
-        @serializable(backend='pickle')
-        class MyData:
-            def __init__(self, name):
-                self.name = name
-
-        data = MyData.serialize(MyData('abc'))
+        # pickle 不能序列化函数内局部类 -> 使用模块级 _MyData
+        data = _MyData.serialize(_MyData('abc'))
         assert isinstance(data, (bytes, bytearray))
-        assert MyData.deserialize(data).name == 'abc'
+        assert _MyData.deserialize(data).name == 'abc'
 
     def test_serialize_method_example(self):
         class MyService:
@@ -68,16 +84,9 @@ class TestDocumentedBehaviour:
         assert svc._state == {'status': 'ok'}
 
     def test_curry_class_example(self):
-        @curry_class
-        class T:
-            def add(self, a, b, c):
-                return a + b + c
-
-            def sum_all(self, a, b, *c, **k):
-                total = a + b + sum(c)
-                if k:
-                    total += sum(k.values())
-                return total
-
-        assert T().add(1).add(2).add(3) == 6
-        assert T().sum_all(1).sum_all(2).sum_all(3, 4) == 10
+        # 定长参数：可逐个累积到齐触发求值
+        assert _CurriedT().add(1).add(2).add(3) == 6
+        assert _CurriedT().add(1, 2, 3) == 6
+        # 可变参数（*args/**kwargs）：柯里化链无法"累积到齐"（永远返回
+        # CurriedMethod），文档示例已注明须一次性传全部实参
+        assert _CurriedT().sum_all(1, 2, 3, 4) == 10
