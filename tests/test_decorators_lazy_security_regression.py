@@ -95,7 +95,8 @@ class TestEscapeVectorsBlocked:
     def test_syntax_error_reports_clearly(self):
         with pytest.raises(LazySecurityError) as ei:
             lazy('-> 2 **')
-        assert '无效的延迟表达式' in str(ei.value)
+        # 共享守卫（vools.security.expr_guard）的措辞
+        assert '无效的表达式' in str(ei.value)
 
 
 class TestDefPathIsExplicitCode:

@@ -5,7 +5,6 @@
 - lazy: 延迟求值装饰器，支持字符串表达式解析
 """
 
-import ast
 import re
 import inspect
 import builtins
@@ -24,38 +23,19 @@ SAFE_BUILTINS = [
 ]
 
 
-class LazySecurityError(ValueError):
-    """延迟表达式触发安全限制时抛出。"""
+from ..security.expr_guard import ExpressionGuardError, validate_expression
 
 
-# BUG-361: eval + 受限 builtins **不是沙箱**——`().__class__.__base__.__subclasses__()`
-# 可直接拿到 Popen/BuiltinImporter 等，白名单形同虚设（实测可达 375 个子类）。
-# 表达式路径统一做 AST 校验：禁止下划线开头的属性/名称（`__class__`、`__subclasses__`、
-# `__globals__`、`__builtins__` 等）以及 `format`/`format_map`（同 BUG-288 的
-# str.format 逃逸面）。正常表达式（算术、白名单 builtin、调用者变量/模块属性）不受影响。
-_FORBIDDEN_ATTRS = frozenset({'format', 'format_map'})
+class LazySecurityError(ExpressionGuardError):
+    """延迟表达式触发安全限制时抛出（继承共享守卫的错误类型）。"""
 
 
 def _validate_lazy_expr(expr: str) -> None:
-    """校验延迟表达式：拒绝一切下划线开头的名字/属性。"""
+    """校验延迟表达式（复用 :mod:`vools.security.expr_guard`，BUG-361）。"""
     try:
-        tree = ast.parse(expr, mode='eval')
-    except SyntaxError as exc:
-        raise LazySecurityError(f"无效的延迟表达式: {expr!r}（{exc}）") from exc
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute):
-            if node.attr.startswith('_'):
-                raise LazySecurityError(
-                    f"延迟表达式不允许访问下划线属性: .{node.attr}")
-            if node.attr in _FORBIDDEN_ATTRS:
-                raise LazySecurityError(
-                    f"延迟表达式不允许访问 .{node.attr}（format 逃逸风险，BUG-288）")
-        elif isinstance(node, ast.Name):
-            if node.id.startswith('_'):
-                raise LazySecurityError(
-                    f"延迟表达式不允许使用下划线名称: {node.id}")
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            raise LazySecurityError("延迟表达式不允许 import")
+        validate_expression(expr)
+    except ExpressionGuardError as exc:
+        raise LazySecurityError(str(exc)) from None
 
 
 def lazy(obj: Any, caller_locals: Optional[Dict] = None, 
