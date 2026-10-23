@@ -77,6 +77,36 @@ class CryptoRegistry:
     _decryptors: Dict[str, Callable] = {}
     
     @classmethod
+    def _validate_registration(cls, algorithm_name: Any, func: Any, kind: str) -> None:
+        """校验注册参数（BUG-398，与 CodecRegistry 同口径）。
+
+        原实现直接 `_encryptors[algorithm_name] = encryptor`：`encryptable(None)`
+        会写入 None 键，令 `supported_algorithms()` 的 `sorted(set(...) | ...)`
+        抛 `TypeError: '<' not supported between 'NoneType' and 'str'` ——
+        连 `Encryptor('x').encrypt('nope')` 的错误提示路径都被连带打崩。
+        """
+        if not isinstance(algorithm_name, str) or not algorithm_name.strip():
+            raise ValueError(
+                f"算法名必须是非空字符串，收到 "
+                f"{type(algorithm_name).__name__}: {algorithm_name!r}")
+        if not callable(func):
+            raise TypeError(
+                f"{kind}必须可调用，收到 {type(func).__name__}: {func!r}")
+
+    @classmethod
+    def _warn_duplicate(cls, algorithm_name: str, existing: Any, new: Any) -> None:
+        """同名覆盖告警（同一函数重复注册视为幂等）——BUG-398。"""
+        if existing is None or existing is new:
+            return
+        import warnings as _w
+        _w.warn(
+            f"加密算法 {algorithm_name!r} 的注册被覆盖："
+            f"{getattr(existing, '__qualname__', existing)!r} -> "
+            f"{getattr(new, '__qualname__', new)!r}（如需替换请显式 "
+            f"unregister_algorithm 后重新注册）",
+            RuntimeWarning, stacklevel=3)
+
+    @classmethod
     def register_encryptor(cls, algorithm_name: str, encryptor: Callable) -> None:
         """
         注册加密器
@@ -92,6 +122,9 @@ class CryptoRegistry:
             
             CryptoRegistry.register_encryptor('custom', custom_encrypt)
         """
+        cls._validate_registration(algorithm_name, encryptor, '加密器')
+        cls._warn_duplicate(algorithm_name,
+                            cls._encryptors.get(algorithm_name), encryptor)
         cls._encryptors[algorithm_name] = encryptor
     
     @classmethod
@@ -110,6 +143,9 @@ class CryptoRegistry:
             
             CryptoRegistry.register_decryptor('custom', custom_decrypt)
         """
+        cls._validate_registration(algorithm_name, decryptor, '解密器')
+        cls._warn_duplicate(algorithm_name,
+                            cls._decryptors.get(algorithm_name), decryptor)
         cls._decryptors[algorithm_name] = decryptor
     
     @classmethod

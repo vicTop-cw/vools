@@ -71,6 +71,40 @@ class CodecRegistry:
     _decoders: Dict[str, Callable] = {}
     
     @classmethod
+    def _validate_registration(cls, format_name: Any, func: Any, kind: str) -> None:
+        """校验注册参数（BUG-398）。
+
+        原实现直接 `_encoders[format_name] = encoder`，什么都不检查：
+
+        * `format_name=None` → 污染注册表，之后 `supported_formats()` 的
+          `sorted(set(...) | ...)` 会把 None 与 str 比较，**TypeError 崩掉**，
+          影响所有调用方；
+        * 空串格式名会让错误信息/列表出现空项；
+        * 非可调用对象能注册成功，直到真正 encode/decode 时才炸。
+        """
+        if not isinstance(format_name, str) or not format_name.strip():
+            raise ValueError(
+                f"格式名必须是非空字符串，收到 "
+                f"{type(format_name).__name__}: {format_name!r}")
+        if not callable(func):
+            raise TypeError(
+                f"{kind}必须可调用，收到 "
+                f"{type(func).__name__}: {func!r}")
+
+    @classmethod
+    def _warn_duplicate(cls, format_name: str, existing: Any, new: Any) -> None:
+        """同名覆盖时告警（同一函数重复注册视为幂等，不告警）——BUG-398。"""
+        if existing is None or existing is new:
+            return
+        import warnings as _w
+        _w.warn(
+            f"编解码格式 {format_name!r} 的注册被覆盖："
+            f"{getattr(existing, '__qualname__', existing)!r} -> "
+            f"{getattr(new, '__qualname__', new)!r}（如需替换请显式 "
+            f"unregister_format 后重新注册）",
+            RuntimeWarning, stacklevel=3)
+
+    @classmethod
     def register_encoder(cls, format_name: str, encoder: Callable) -> None:
         """
         注册编码器
@@ -86,6 +120,8 @@ class CodecRegistry:
             
             CodecRegistry.register_encoder('yaml', yaml_encode)
         """
+        cls._validate_registration(format_name, encoder, '编码器')
+        cls._warn_duplicate(format_name, cls._encoders.get(format_name), encoder)
         cls._encoders[format_name] = encoder
     
     @classmethod
@@ -104,6 +140,8 @@ class CodecRegistry:
             
             CodecRegistry.register_decoder('yaml', yaml_decode)
         """
+        cls._validate_registration(format_name, decoder, '解码器')
+        cls._warn_duplicate(format_name, cls._decoders.get(format_name), decoder)
         cls._decoders[format_name] = decoder
     
     @classmethod
