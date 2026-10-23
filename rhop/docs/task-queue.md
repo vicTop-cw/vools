@@ -526,7 +526,7 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 | 本地库模式的运维操作 | `requeue` / `retry_failed` 在 A 端**只登记重置意图**（`TaskSync.resets` 通道），由 B 端真正重跑并回推状态，双方版本始终对齐——不会发散（BUG-280 已修复，回归用例见 `tests/test_task_sync.py::TestRequeueConvergence`） |
 | 长任务与锁 | `expire_time` 按任务自己的 `timeout_min` 取大者；仍建议 `timeout_min` 与真实耗时匹配 |
 | 结果大小 | `result_max_bytes` 是**落库文本硬上限**（BUG-283 已修）：先裁 `stdout`/`stderr`，仍超限退化为紧凑摘要（`result_chars`/`result_head`），加密路径预留约 600B 信封开销；大结果请写文件并用引用路径回传 |
-| 任务租约与续期 | 领取后任务是 `LOCKED`（先锁后置 `RUNNING`），租约 = `max(lock_ttl_sec, timeout_min×60)`。**默认不续期**：租约到期后 `clean_stale_locks` 会回收重跑（`LOCKED→PENDING`、`RUNNING→RETRY_PENDING`），因此**任务实际执行时长必须短于租约**，否则会被重复执行（BUG-289）。长任务请显式开 `queue.renew_lock=true`（执行期间后台线程按 `renew_interval_sec` 刷新 `lock_time`/`expire_time`，默认关闭以保持零回归），或给该任务设置足够的 `timeout_min` |
+| 任务租约与续期 | 领取后任务是 `LOCKED`（先锁后置 `RUNNING`），租约 = `max(lock_ttl_sec, timeout_min×60)`。**默认不续期**：租约到期后 `clean_stale_locks` 会回收重跑（`LOCKED→PENDING`、`RUNNING→RETRY_PENDING`），因此**任务实际执行时长必须短于租约**，否则会被重复执行（BUG-289）。长任务请显式开 `queue.renew_lock=true`（执行期间后台线程按 `renew_interval_sec` 刷新 `lock_time`/`expire_time`，默认关闭以保持零回归），或给该任务设置足够的 `timeout_min`。**`timeout_min` 同时是命令执行的硬超时**（BUG-324 收口）：`run_once` 把它换算成 `timeout_sec` 传给执行器，超时命令被截断并归为 `RETRY_PENDING`（可重试）——否则会出现「租约按 `timeout_min` 算、命令却跑到 `exec.timeout_sec`（默认 1 小时）」的错配，导致租约先过期、命令还在跑、被重复领取执行 |
 | 双方共享介质 | `shared.write` 指向**双方共同可达**的介质（本地目录 / UNC / 盘符 / `file://`；`http(s)` 与只有 SFTP/Git 在线通道时请改用 `sqlite-local`）。**相对 `store.path` 一律相对共享根解析**，落点必须在共享根之内（越界抛 `StoreUnavailable`，BUG-302 收口）；显式绝对路径无需 shared 配置 |
 | 大载荷文件 | `file_channel` 默认关闭。开启后结果超阈值会落文件、信封只回 `file_ref`；**落点目录需双方共享**（否则 B 端按引用读不到），且会校验落点必须落在 `base_dir`/shared 之内（越界直接 `SecretError` 拒绝开启，BUG-295）；`keep_days` 过期由 `rhop-task file-clean` 清理，**只删本通道写出的结果文件**（BUG-296），引用失效时返回可区分标记而非抛错 |
 | 时钟偏差 | 心跳判死与 `scheduled_at` 都依赖系统时间；跨机请对时。心跳为微秒级时间戳（BUG-282 已修），且配置层校验 `stale_after_sec ≥ interval_sec + 1s`，不合规直接报错 |
@@ -541,7 +541,7 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 
 ```bash
 cd rhop && python -m pytest -q
-        # 598 passed（598 collected，0 failed）
+        # 599 passed（600 collected；1 failed 来自并行开发中的 clipboard 测试，需真实剪贴板后端）
 ```
 
 > 全量 598 条**包含** `test_pg_store.py` 的 38 条（PostgreSQL 后端）。
@@ -558,7 +558,7 @@ cd rhop && python -m pytest -q
 | `test_task_secrets.py` | 31 | 明文优先、密文解密、秘密节点、path/env 取值、告警文案含命令与回填指引、严格模式、字段发现、打码 |
 | `test_task_exec.py` | 60 | 白名单（默认拒绝 cli、`.exe` 归一、shell 闸门、allow_any）、语言映射、CLI 执行（stdin/env/workdir/timeout/check/退出码）、处理器注册与派发、通道识别、**命中条目读回（matched_pattern）与 cli 审计行（BUG-281，含执行失败/超时也留痕）** |
 | `test_heartbeat.py` | 22 | 四态判定、节流/强制写、`closed` 不被覆盖、原子写、**后台线程在任务耗时期间照跳**、运维写 closed 触发退出、瞬时写失败自愈、**微秒级时间戳 + 秒边界不误判死（BUG-282）** |
-| `test_task_queue.py` | 72 | 归一/幂等/依赖参数、DAG（缺失/自依赖/成环/跨批次成环）、载荷加解密与完整性、执行成功/失败、**显式 0 重试与 0 延迟**、白名单拒绝终态、取消语义、**取消终态任务留痕（BUG-290）**、运行循环、结果加密/截断/解码、**`result_max_bytes` 落库硬上限（明文与加密两条路径，BUG-283）、租约续期 renew_lock（BUG-289）、大载荷文件通道（结果与载荷两侧落文件 / 引用读回 / 引用失效 / 清理，默认关闭；BUG-295 路径校验、BUG-296 清理只认结果文件）** |
+| `test_task_queue.py` | 74 | 归一/幂等/依赖参数、DAG（缺失/自依赖/成环/跨批次成环）、载荷加解密与完整性、执行成功/失败、**显式 0 重试与 0 延迟**、白名单拒绝终态、取消语义、**取消终态任务留痕（BUG-290）**、运行循环、结果加密/截断/解码、**`result_max_bytes` 落库硬上限（明文与加密两条路径，BUG-283）、租约续期 renew_lock（BUG-289）、大载荷文件通道（结果与载荷两侧落文件 / 引用读回 / 引用失效 / 清理，默认关闭；BUG-295 路径校验、BUG-296 清理只认结果文件）、任务级超时约束命令执行时长 + 超时归为可重试（BUG-324）** |
 | `test_task_sync.py` | 22 | 两库收敛、幂等拉取、依赖顺序、状态回流、取消传播、旧定义不覆盖新状态、介质上只有密文、坏密钥降级、缺 shared 报错、**A 端 `requeue`/`retry_failed` 走 resets 通道后双方收敛（BUG-280）、cancel/reset 意图裁决：两种顺序都收敛到重置后的状态（BUG-290）** |
 | `test_task_cli.py` | 28 | 各子命令与退出码、纯 JSON stdout、全局选项前后位置、严格模式卡口、本地库全流程 |
 | `test_task_e2e.py` | 16 | A 提交→B 执行→A 看状态（两种拓扑）、长任务期间心跳照跳、运维 `closed` 停机、优雅停机、判死与从未启动、崩溃回收重跑、接线与角色分派 |
