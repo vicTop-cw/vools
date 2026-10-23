@@ -53,15 +53,30 @@ class DAGScheduler:
         self._build_graph()
 
     def _build_graph(self):
-        """构建邻接表和入度表。"""
+        """构建邻接表和入度表。
+
+        **依赖不存在的节点必须报错**：此前用 `if dep in self.nodes` 静默跳过，
+        于是 `b depends: [ghost]` 的边被丢掉、`b` 与 `a` 落在同一层并发执行——
+        本该串行的顺序被静默破坏。静默错误比硬报错危险得多，故改为 fail loud。
+        """
         self.adj: Dict[str, Set[str]] = {nid: set() for nid in self.nodes}
         self.in_degree: Dict[str, int] = {nid: 0 for nid in self.nodes}
 
+        unknown: Dict[str, List[str]] = {}
         for nid, node in self.nodes.items():
             for dep in (node.get('depends') or node.get('deps') or []):
                 if dep in self.nodes:
                     self.adj[dep].add(nid)
                     self.in_degree[nid] += 1
+                else:
+                    unknown.setdefault(nid, []).append(dep)
+
+        if unknown:
+            detail = '; '.join('%s -> %s' % (k, v) for k, v in sorted(unknown.items()))
+            raise ActionError(
+                'dag_missing_dep',
+                f'DAG 节点依赖了不存在的节点: {detail}',
+                {'unknown': unknown})
 
     def topological_sort(self) -> List[List[str]]:
         """Kahn 算法分层拓扑排序。
