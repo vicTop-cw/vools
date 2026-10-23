@@ -53,17 +53,29 @@ SAMPLES = {
 }
 
 
-def test_samples_cover_registry():
-    """注册表里的每个类型都应有样本，否则本不变量测试本身会漏测。"""
+# 内置类型清单：只对**本库内置**注册类型做覆盖断言。
+# 运行期其它测试会 register_type 自定义类型（全局注册表），若直接遍历
+# `_TYPE_HANDLERS` 会被它们污染，导致测试顺序相关（实测全量跑必失败）。
+BUILTIN_REGISTERED = {
+    'datetime', 'date', 'time', 'timedelta', 'complex', 'Decimal',
+    'Fraction', 'Enum', 'PurePath', 'bytearray', 'frozenset', 'set', 'UUID',
+}
+
+
+def test_samples_cover_builtin_registry():
+    """内置注册类型都应有样本，否则本不变量测试本身会漏测新类型。"""
     registered = {t.__name__ for t in _TYPE_HANDLERS}
+    missing_builtin = BUILTIN_REGISTERED - registered
+    assert not missing_builtin, f'内置注册类型丢失: {sorted(missing_builtin)}'
+
     covered = set()
     for name, obj in SAMPLES.items():
         for t in _TYPE_HANDLERS:
             if isinstance(obj, t):
                 covered.add(t.__name__)
     # PurePath 处理器覆盖三种路径样本；Enum 覆盖 _Color
-    missing = registered - covered
-    assert not missing, f'注册类型缺少样本: {sorted(missing)}'
+    missing = BUILTIN_REGISTERED - covered
+    assert not missing, f'内置注册类型缺少样本: {sorted(missing)}'
 
 
 @pytest.mark.parametrize('backend', BACKENDS)
