@@ -27,10 +27,14 @@ class _Custom:
     pass
 
 
+class _Another:
+    pass
+
+
 class TestUnknownTypeRaises:
     @pytest.mark.parametrize('obj', [
-        uuid.UUID('12345678-1234-5678-1234-567812345678'),
         _Custom(),
+        _Another(),
     ])
     def test_dumps_raises_type_error(self, obj):
         # 修复前：静默 'null'，loads 得 None
@@ -38,13 +42,14 @@ class TestUnknownTypeRaises:
             dumps(obj, backend='vb_json')
 
     def test_nested_unknown_raises(self):
+        # BUG-332 后 uuid 已注册（三后端可往返），改用未注册的模块级类
         with pytest.raises(TypeError):
-            dumps({'id': uuid.uuid4()}, backend='vb_json')
+            dumps({'c': _Another()}, backend='vb_json')
 
     def test_error_message_mentions_type(self):
         with pytest.raises(TypeError) as ei:
-            dumps(uuid.uuid4(), backend='vb_json')
-        assert 'UUID' in str(ei.value) or 'serializable' in str(ei.value)
+            dumps(_Another(), backend='vb_json')
+        assert '_Another' in str(ei.value) or 'serializable' in str(ei.value)
 
 
 class TestSupportedTypesRoundTrip:
@@ -55,6 +60,12 @@ class TestSupportedTypesRoundTrip:
     ])
     def test_roundtrip(self, obj):
         assert loads(dumps(obj, backend='vb_json'), backend='vb_json') == obj
+
+    def test_uuid_now_supported(self):
+        # BUG-332: uuid 已注册到类型注册表，vb_json 亦可往返
+        u = uuid.UUID('12345678-1234-5678-1234-567812345678')
+        back = loads(dumps(u, backend='vb_json'), backend='vb_json')
+        assert isinstance(back, uuid.UUID) and back == u
 
     def test_non_finite_float_still_supported(self):
         # BUG-203 修复面：非有限浮点仍输出标准字面量并正确往返
