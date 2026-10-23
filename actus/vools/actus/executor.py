@@ -156,10 +156,23 @@ def _attach_demo_expansion(result, action):
     return result
 
 
+def _merge_link_params(action, params):
+    """阶段3：link 的参数浅合并——args 作基底、调用方入参覆盖同名键。
+
+    抽成纯函数便于单测（不依赖 execute 递归，避免打桩模块全局的脆弱性）。
+    """
+    forwarded = dict(params or {})
+    link_args = action.meta.get('args') or {}
+    if isinstance(link_args, dict):
+        merged = dict(link_args)
+        merged.update(forwarded)
+        forwarded = merged
+    return forwarded
+
+
 def _execute_forwarding_kind(action, action_id, params, kind, **kw):
     """阶段3：alias 直接转发；link 做参数浅合并后转发（ACTUS_REFACTOR_PLAN §3.3）。
 
-    link 的 args 作为基底、调用方入参覆盖同名键（浅合并）。
     转发通过 execute 递归完成（走完整的门禁链），并用线程局部深度计数防环（上限 5）。
     """
     target = str(getattr(action, 'target', '') or '').strip()
@@ -169,14 +182,7 @@ def _execute_forwarding_kind(action, action_id, params, kind, **kw):
             'error': {'code': 'param_invalid',
                       'message': f"kind={kind} 的动作 {action_id} 缺少 target 字段"},
         }
-    forwarded = dict(params or {})
-    if kind == 'link':
-        # Action 没有 args 属性，入参契约在 meta['args']（docs/03 §3 元数据字段总表）
-        link_args = action.meta.get('args') or {}
-        if isinstance(link_args, dict):
-            merged = dict(link_args)
-            merged.update(forwarded)
-            forwarded = merged
+    forwarded = _merge_link_params(action, params) if kind == 'link' else dict(params or {})
     depth = getattr(_forward_ctx, 'depth', 0)
     if depth >= 5:
         return {
