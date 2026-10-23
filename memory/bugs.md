@@ -5435,3 +5435,507 @@ B. `VBJsonBackend._stringify` 在数字/字符串分支之前先判断 `isinstan
 复现脚本验证：p1(x=5)->6, p2(x=10)->11, p3(x=5)->6（缓存命中）, p4(expr=x*2)->10。
 functional/placeholder 全套 351 测试 exit 0。commit 5d362b1。
 - reported_by: vools-bughunt-lead
+## BUG-312 [2026-10-22T09:45:56Z] [low] FIXED
+- summary: encoding.core 的 Encoder/Decoder 类文档承诺 encode(encoding='utf-8', errors='strict')「字符串转字节」，实现却只认 CodecRegistry 注册格式名——Encoder('中文').encode('utf-8') 直接 ValueError: Unknown encoder format（Decoder.decode 同），文档承诺能力缺失
+- detail: vools/encoding/core.py 的 `Encoder` / `Decoder` 类级文档与实现矛盾，且承诺的能力直接不可用：
+
+类 docstring（用户第一眼看到的能力清单）写着：
+    - encode(encoding='utf-8', errors='strict'): 字符串转字节
+    - encode(format_name, **kwargs): 使用已注册的自定义编码器
+（Decoder 对应 `decode(encoding='utf-8', errors='strict')`）
+
+但实现只有一种签名 `encode(self, format_name: str, **kwargs)`——只查 CodecRegistry 的已注册编码器，**不认识 Python 编码名**：
+    实测 Encoder('中文').encode('utf-8')
+      -> ValueError: Unknown encoder format: utf-8. Supported formats: ['zlib', 'lzma', 'gzip', 'base64', 'url', 'json', 'pickle']
+    实测 Decoder(...).decode('utf-8') 同理（Unknown decoder format）。
+
+影响：
+- 按类文档写的代码必然抛异常（文档承诺的「字符串转字节」能力完全缺失）；
+- 用户只能自己发现要用 `.encode('utf-8')` 的原生 `str.encode`（即 `Encoder` 无此能力），属文档-实现契约违背；错误信息也把人引向「未注册格式」而非「该能力不存在」。
+severity low（报错响亮，但文档承诺落空、易误导）。
+
+修复方向（二选一，推荐 A 以同时满足文档）：
+A. `encode(format_name, **kwargs)`：先查 CodecRegistry；未命中且 format_name 是合法 Python 编码名（如 'utf-8'/'gbk'）时回退 `str(data).encode(format_name, errors)`（kwargs 支持 errors）；两者都不是才抛 ValueError（消息同时列出「已注册格式」与「可用编码名」）。Decoder.decode 对称处理（bytes→str）。
+B. 仅改类文档，删除 encode(encoding=...) 行，改为说明「自定义编码器用 encode(format_name)；文本↔字节请用标准库 str.encode/bytes.decode」。
+- reported_by: agent-vools-hardening
+- task_id: T0r726
+
+
+
+### FIXED(2026-10-22T10:00:04Z / BUG-312)
+- evidence: vools/encoding/core.py 修复（commit 2e7dad6）双管齐下：
+① 类文档更正：Encoder 类 doc 的「encode(encoding='utf-8', errors='strict'): 字符串转字节」改为「to_bytes(...)」，Decoder 对应改「to_str(...)」（真实方法名），并注明 encode/decode 也接受 Python 编码名；
+② `Encoder.encode` / `Decoder.decode`：`CodecRegistry.get_encoder/decoder` 未命中时，若 `codecs.lookup(format_name)` 成功则回退 `self.to_bytes(format_name, **kwargs)` / `self.to_str(...)`；非法名仍抛 ValueError（消息保留 Supported formats）。
+
+修复前实测：Encoder('中文').encode('utf-8') -> ValueError: Unknown encoder format: utf-8(Supported formats: gzip/url/json/lzma/zlib/pickle/base64)；Decoder 对称。真实能力在 to_bytes/to_str（实测 utf-8/gbk/errors='replace' 均正确）。
+
+修复后 probe：encode('utf-8').data == '中文'.encode('utf-8') ✓；encode('gbk') ✓；decode('utf-8').data == '中文' ✓；encode('gbk', errors='strict') ✓；已注册格式优先级不变（encode('json')/decode('json') 往返 {'a':1} ✓）；非法名仍 ValueError ✓；to_bytes/to_str 行为不变（链式 self，.data 持值）。
+
+新增回归 tests/test_encoding_encode_name_fallback_regression.py 13 项 GREEN（3 编码名 + errors kwarg + 注册表优先 + 两类非法名 + to_bytes/to_str 不变 + 类文档不再出现 encode(encoding=...) 错误写法）；tests/encoding/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-313 [2026-10-22T10:19:40Z] [medium] FIXED
+- summary: Table.get_cell/get_cell2 越界或未知列时应返回 default_value(None)，因 @rself 的 None→self 兜底实际返回整个 Table 对象（is t），与文档契约相悖、与 BUG-252 的 max/min _rself_exclude 先例同类；显式非 None 默认值与正常路径不受影响
+- detail: vools/data/table.py `Table.get_cell` / `get_cell2` 在越界或未知列时按设计返回 `default_value`（默认参数为 None），但 `Table` 被 `@rself` 装饰（rself.py `_wrap_return_value(..., wrap_none=True)` 把 None 返回值兜底成 self），于是**返回整个 Table 对象**而非 None：
+
+    def get_cell(self, row_index, col_index, default_value=None, null_value=None):
+        if row_index < 0 or row_index >= len(self._data):
+            return default_value          # None -> 被 rself 包成 self
+        ...
+        if value is None or value == null_value:
+            return default_value
+
+实测（当前 HEAD，稳定复现）：
+- t = Table([[1,'a'],[2,'b']], columns=['id','name'])
+- t.get_cell(99, 0)        -> **Table**（is t）而非 None
+- t.get_cell(0, 99)        -> **Table**
+- t.get_cell2('nope', 0)   -> **Table**
+- t.get_cell(0, 0)         -> 1 ✓（正常路径不受影响）
+- t.get_cell(99, 0, 'D')   -> 'D' ✓（显式非 None 默认值不受影响）
+- 文档：get_cell docstring「default_value: 默认值 (当值为空时返回)」「Returns: 单元格值」
+
+影响：所有依赖「越界/空值 → None」判断的调用方拿到的是整个 Table——`v is None` 恒 False、后续 `v + 1`/`len(v)` 等要么静默错值要么抛离奇 TypeError；属静默返回错类型（比报错更难查）。先例：同文件 BUG-252 已为 `max/min` 加了 `_rself_exclude = ('max', 'min')` 正是为同一类「None 语义被 rself 吞掉」问题；get_cell/get_cell2（以及同语义的按列名版本）被漏掉。
+
+修复方向：把 `'get_cell'`、`'get_cell2'` 加入 `Table._rself_exclude`（沿用 BUG-252 机制，零新增概念），使这两条路径保留原生 None 返回。
+- reported_by: agent-vools-hardening
+- task_id: T0r727
+
+
+
+### FIXED(2026-10-22T10:26:30Z / BUG-313)
+- evidence: vools/data/table.py 修复（commit cb09f1d）：`Table._rself_exclude` 由 `('max', 'min')` 扩为 `('max', 'min', 'get_cell', 'get_cell2')`（沿用 BUG-252 既有机制，无新增概念），使 get_cell/get_cell2 保留原生 None 返回。
+
+修复前实测（稳定复现）：t = Table([[1,'a'],[2,'b']], ['id','name']) —— t.get_cell(99,0) 返回 **Table（is t）**、t.get_cell(0,99) 返回 Table、t.get_cell2('nope',0) 返回 Table；而 t.get_cell(0,0)=1、t.get_cell(99,0,'D')='D' 正常。文档「default_value: 默认值 (当值为空时返回)」被 @rself 的 None→self 兜底破坏。
+
+修复后 probe 9 项全对：get_cell(99,0)/(−1,0)/(0,99)/get_cell2('nope',0) 均返回 None；空单元格 → None；显式 default_value 'D'/-1 正常返回；正常路径 1/'b'/'a' 正确；空表 max/min 仍 None（BUG-252 不回归）；链式 set_name/clear 仍返回 self。
+
+新增回归 tests/test_table_get_cell_none_regression.py 12 项 GREEN；tests/data/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+
+附记：探测期间 table.py/rself.py 正被并发重构，曾观察到 get_row(99)->Row.take() 签名错、大量 'function' object is not iterable 等瞬时错误；待文件稳定后复测均恢复正常，故未纳入本条（避免误报）。
+## BUG-314 [2026-10-22T10:40:17Z] [medium] FIXED
+- summary: @rself 的 None→self 兜底在四处未排除路径吞掉有意义的 None（5/5 稳定复现）：Table.compute 未匹配表达式/全非数值列返回整个 Table（应 default_value=None）、VList.map(func=None) 违反其文档明确承诺的「返回 None」、Row.map()/Column.map() 同样返回 self
+- detail: `@rself` 的「None 返回值兜底成 self」在四处**未排除**的路径上吞掉了有意义的 None，形成静默错误返回（BUG-252/313 同族的剩余面）：
+
+【A】`Table.compute(expression, filter_expr=None, default_value=None)`
+- 源码：SUM/AVG/COUNT/MAX/MIN 之外的分支末尾 `return default_value`（默认 None）；SUM/AVG/MAX/MIN 在「列内无 int/float」时也 `return default_value`。
+- 文档：「Returns: 计算结果」「default_value: 默认值」。
+- 实测（5/5 稳定）：t=Table([[1,'a'],[2,'b']],['id','name'])
+  - t.compute('BOGUS(x)')      -> **Table（is t）**，应 None
+  - t.compute('SUM(name)')     -> **Table**（name 全字符串，nums 空 → default_value None），应 None
+  - t.compute('SUM(id)')       -> 3 ✓（正常路径不受影响）
+
+【B】`VList.map(func=None)` —— 源码 `if func is None: self._run(print); return None`
+- 文档明写：「Returns: 映射后的 VList 或 **None（当 func 为 None 时）**」
+- 实测（5/5）：VList([1,2]).map() -> **VList（is self）**，应 None；`VList._rself_exclude=('pop','shift')` 未含 map。
+
+【C/D】`Row.map(func=None)` / `Column.map(func=None)` —— 源码同样 `if func is None: print...; return None`
+- 实测：t.get_row(0).map() -> **Row（is self）**；t.get_col('id').map() -> **Column（is self）**；Row/Column 均无 `_rself_exclude`。
+
+影响：这些方法的 None 是**文档化的语义**（"默认值/未匹配/func=None 打印模式"），被兜底成 self 后调用方 `if r is None` 永远失败，且 A 场景会把「算不出来」伪装成「返回了整个表」，B/C/D 会把「打印模式」伪装成「返回了原集合」。均属静默错值（A/B/C/D 全部 5/5 复现，非并发瞬时态）。
+
+修复方向（沿用 BUG-252/313 既有机制，零新增概念）：
+- `Table._rself_exclude` 增加 `'compute'`
+- `VList._rself_exclude` 增加 `'map'`
+- `Row` / `Column` 新增 `_rself_exclude = ('map',)`
+
+附记：探测期间还观察到 `Row.map()` 抛 `TypeError: Row.take() takes 2 positional arguments but 3 were given`，经 5 轮重复验证为 **0/5**（table.py 正在被并发重构的瞬时态），未纳入本条。
+- reported_by: agent-vools-hardening
+- task_id: T0r728
+
+
+
+### FIXED(2026-10-22T10:44:47Z / BUG-314)
+- evidence: 修复（commit 7e07aac）四处 _rself_exclude 补齐（沿用 BUG-252/313 既有机制）：
+- vools/data/table.py：`Table._rself_exclude = ('max', 'min', 'get_cell', 'get_cell2', 'compute')`；`Row`/`Column` 新增 `_rself_exclude = ('map',)`
+- vools/data/vlist.py：`VList._rself_exclude = ('pop', 'shift', 'map')`
+
+修复前实测（均 5/5 稳定复现，非并发瞬时态）：
+- t=Table([[1,'a'],[2,'b']],['id','name'])：t.compute('BOGUS(x)') -> Table(is t)；t.compute('SUM(name)')（全非数值列）-> Table
+- VList([1,2]).map() -> VList(is self)（文档明写「Returns: 映射后的 VList 或 None（当 func 为 None 时）」）
+- t.get_row(0).map() -> Row(is self)；t.get_col('id').map() -> Column(is self)
+
+修复后 probe 10 项全对：compute('BOGUS(x)')/('SUM(name)')/('AVG'|'MAX'|'MIN'(name)) 均 None；compute('BOGUS(x)', default_value=-1) -> -1、('SUM(name)', 'N/A') -> 'N/A'；compute('SUM(id)')=3、COUNT=2、MAX=2、MIN=1 正常；VList.map() -> None、VList.map(lambda x: x*2) -> [2,4] 不变；Row.map()/Column.map() -> None；回归守护：空表 max/min 仍 None（BUG-252）、get_cell/get_cell2 仍 None（BUG-313）、VList.pop/shift 行为不变。
+
+新增回归 tests/test_rself_none_returns_regression.py 11 项 GREEN；tests/data/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+
+附记：探测中曾观察到 Row.map() 抛 `Row.take() takes 2 positional arguments but 3 were given`，5 轮重复验证 0/5（并发重构瞬时态），未纳入本条。
+## BUG-315 [2026-10-22T11:00:28Z] [low] FIXED
+- summary: sql.spark._quote_sql_literal 未覆盖 decimal.Decimal，数值被加引号成字符串字面量（Decimal('1.25') -> '1.25'，含引号），而 int/float 正确不加引号——金额/金融场景类型语义被静默改变（比较依赖隐式 cast，算术/INSERT 会失败或写错类型）
+- detail: vools/sql/spark/connection.py `_quote_sql_literal`（L23-37）未把 `decimal.Decimal` 归入数值分支，导致数值被**加引号变成字符串字面量**：
+
+实现分支顺序：
+    None -> NULL
+    bool -> TRUE/FALSE
+    isinstance(value, (int, float)) -> repr(value)        # 数值不加引号
+    bytes/bytearray -> hex
+    datetime/date/time -> isoformat
+    str -> '...'
+    else -> "'" + str(value) + "'"                        # ← Decimal 落到这里
+
+实测：
+- _quote_sql_literal(1)                    -> '1'            ✓
+- _quote_sql_literal(1.5)                  -> '1.5'          ✓
+- **_quote_sql_literal(Decimal('1.25'))    -> "'1.25'"**      ✗（数值被当字符串）
+
+影响（Spark 无服务端参数绑定，值直接拼进 SQL）：
+- 比较/算术语境：`WHERE amount > '1.25'` 依赖隐式 cast 才碰巧成立，`amount * '1.25'` 之类表达式直接报错；
+- 写入语境：`INSERT ... VALUES ('1.25')` 把字符串写进数值列（cast 失败或截断）；
+- Decimal 是金融/金额场景的典型类型（用户显式构造或 DB 驱动返回），而 float/int 都正确、唯独 Decimal 被当字符串，属**类型语义静默改变**且难察觉。
+
+附（弱信号，未纳入本条）：同一函数对 `datetime.datetime` 走 `isoformat()` 得到 `'2026-01-02T03:04:05'`（带 T）。Spark 3.x 接受 ISO 'T' 形式的 timestamp 字面量，故不作为缺陷上报。
+
+修复方向：在 int/float 分支后补 `Decimal`（`str(value)` 输出 '1.25'，不要用 repr 以免 `Decimal('1.25')` 函数调用语法）；必要时同时纳入 `numbers.Real` 子类。
+- reported_by: agent-vools-hardening
+- task_id: T0r729
+
+
+
+### FIXED(2026-10-22T11:06:37Z / BUG-315)
+- evidence: vools/sql/spark/connection.py 修复（commit f0b5cec）：新增 `import decimal as _decimal`；`_quote_sql_literal` 在 `isinstance(value, (int, float))` 分支之后补 `if isinstance(value, _decimal.Decimal): return str(value)`（用 str 而非 repr，避免输出 `Decimal('1.25')` 函数调用语法）。
+
+修复前实测：_quote_sql_literal(Decimal('1.25')) -> "'1.25'"（加引号成字符串）；_format_sql_params('... amt > %s', [Decimal('9.99')]) -> "... amt > '9.99'"；int/float/str/None/bool/date 均正确。
+
+修复后 probe 12 项全对：Decimal('1.25')/'−10.50'/'42' -> 1.25/-10.50/42（不加引号）；_format_sql_params 拼接 -> "amt > 9.99"；int 1/float 1.5 不变；str 仍加引号并转义 it''s；None->NULL；bool->TRUE；date->'2026-01-02'；LIKE '%x%' 字面 % 保留（BUG-234 面不回归）；参数数量不匹配仍 ValueError。
+
+新增回归 tests/test_spark_sql_literal_decimal_regression.py 16 项 GREEN；tests/sql/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+
+附记（弱信号未纳入）：同一函数对 datetime.datetime 用 isoformat() 得 '2026-01-02T03:04:05'（带 T），Spark 3.x 接受 ISO T 形式 timestamp 字面量，故不作为缺陷。
+## BUG-316 [2026-10-22T11:23:37Z] [low] FIXED
+- summary: core.config ConfigManager.load_from_file 对解析结果为 None 的配置（空文件/仅注释/null 字面量）抛 TypeError: argument of type 'NoneType' is not iterable，属内部错误掩盖真因（应视为空配置 no-op 或给出清晰提示）
+- detail: vools/core/config.py `ConfigManager.load_from_file`（读取 YAML 配置）在文件解析结果为 **None** 时抛内部类型错误，错误信息完全指不到真因：
+
+实现：
+    with open(filepath, 'r', encoding='utf-8') as f:
+        config_data = yaml.safe_load(f)      # 空文件/仅注释/null -> None
+    if 'database' in config_data:            # None -> TypeError!
+        ...
+
+实测：
+- 空文件（0 字节）              -> **TypeError: argument of type 'NoneType' is not iterable**
+- 仅注释文件（"# comment only"） -> 同样 TypeError
+- 内容为 "null" 的 YAML          -> 同样 TypeError
+- 内容 "{}"                      -> 返回 None，无操作 ✓
+- 部分键 / 完整 / 未知键          -> 正确合并 ✓
+
+现实触发：配置文件被创建但尚未填写、写入中断留下空文件、或由脚本生成的「暂无配置」占位文件——都是常见状态；得到的是 Python 内部错误而非"配置为空/格式不对"的可操作提示（属 BUG-235/236/294 同族的「内部错误掩盖真实原因」）。
+
+另附两点观察（未纳入本条，弱信号）：
+- 配置值无类型校验：`{"app": {"debug": "yes"}}` 会写成字符串 'yes'（dataclass 无运行时校验，文档也未承诺校验）；
+- 含 Tab 的 YAML 空白文件抛 YAML 自身 ScannerError（YAML 规范所限，非本模块缺陷）。
+
+修复方向：`config_data = yaml.safe_load(f) or {}` 处理 None（空配置=无操作），并对非 dict 顶层给出清晰 ValueError（如「配置文件顶层必须是映射，实际得到 list」），避免内部 TypeError。
+- reported_by: agent-vools-hardening
+- task_id: T0r730
+
+
+
+### FIXED(2026-10-22T11:28:13Z / BUG-316)
+- evidence: vools/core/config.py 修复（commit a4fe810）：`load_from_file` 在 `yaml.safe_load(f)` 之后补两行——`if config_data is None: config_data = {}`（空文件/仅注释/null 视为空配置 no-op）；`if not isinstance(config_data, dict): raise ValueError("配置文件顶层必须是映射(dict)，实际得到 {类型}: {路径}")`。
+
+修复前实测：空文件 -> TypeError: argument of type 'NoneType' is not iterable；仅注释文件 -> 同；YAML "null" -> 同；"{}" -> no-op ✓；部分键/完整/未知键合并正确 ✓；不存在文件 FileNotFoundError ✓。
+
+修复后 probe 9 项全对：空文件/'   \n\n'/'# only comment'/'null'/'~'/'{}' 全部 no-op 且默认值不变；顶层 list/scalar -> 清晰 ValueError（消息含「映射」）；部分键仍正确合并（debug=True, host=h1, 未提供的 environment 保持 development）；不存在文件仍 FileNotFoundError。
+
+新增回归 tests/test_config_load_empty_regression.py 14 项 GREEN（7 类空配置 no-op + 3 类非映射报错 + 部分/完整/未知键/缺文件）；config/core 相关测试 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-317 [2026-10-22T11:51:17Z] [medium] FIXED
+- summary: Table.from_file 把 CSV 首行同时当列名与数据行：to_file 写出的表头在 from_file 读回时变成第一行数据，导出→读回多一行（3 行变 4 行，_data[0] 为列名列表），rows() 计数与文件真实数据行数不符
+- detail: vools/data/table.py `Table.from_file`（CSV 读取）把**第一行同时当作列名与数据行**：`to_file` 会写出表头，二者形成不闭合的读写对。
+
+实现（from_file）：
+    for i, row in enumerate(reader):
+        if rows is not None and i >= rows: break
+        if i == 0:
+            columns = [str(c) if c else f'col_{j}' for j, c in enumerate(row)]  # 当列名
+            ...
+        else:
+            ...
+        data.append(row)        # ← 第一行也被 append 进 data
+
+实测（to_file 写 3 行数据 + 表头，再 from_file 读回）：
+- 原始: Table([[1,'a,b','有"引号"'],[2,'line1\nline2','中文'],[3,'plain','']], ['id','txt','note']) -> rows=3
+- to_file 文件内容: 'id,txt,note\n1,"a,b","有""引号"""\n2,"line1\nline2",中文\n3,plain,\n'  （表头 + 3 数据行，CSV 引号/转义/换行/中文均正确）
+- from_file 读回: **rows=4**，`_data[0] == ['id','txt','note']`（表头行被当作数据）
+- 自定义分隔符 `|`、gbk 编码下同样多一行
+- 附：所有单元格被读成字符串（'1' 而非 1）——CSV 无类型信息，可接受；但表头重复属实现缺陷
+
+影响：任何「导出→读回」流程多出一行伪数据（且该行所有列名当值），`rows()` 计数与文件真实数据行数不符；BUG-252 既有回归测试注释已记录该语义（"header + 2 data rows = 3 rows in Table"），说明是历史遗留而非设计意图。
+
+修复方向：`i == 0` 作为列名后**不再 append 到 data**（数据只含 i>=1 的真实数据行）；`rows` 的计数语义保持（仍然从表头行开始计 i，故 `rows=N` 表示"文件前 N 行含表头"）。连带需要把 BUG-252 回归中两条断言按新语义调整（rows=None 的 `>= 2` → `>= 1`；rows=2 的 `== 2` → `== 1`），并在提交信息中写明协同理由。
+- reported_by: agent-vools-hardening
+- task_id: T0r731
+
+
+
+### FIXED(2026-10-22T12:06:36Z / BUG-317)
+- evidence: vools/data/table.py `Table.from_file` 修复（commit f919f5d）：`if i == 0:` 分支计算 columns 后改 `continue`（不再落到 `data.append(row)`）；`cols` 过滤统一在数据行分支处理。首行只作列名，数据只含真实数据行；`rows` 计数语义保持（仍从文件首行=表头起算）。
+
+修复前实测：t=Table([[1,'a,b','有"引号"'],[2,'line1\nline2','中文'],[3,'plain','']],['id','txt','note']); t.to_file(p) 写 'id,txt,note\n1,...\n2,...\n3,...'；Table.from_file(p) -> **rows=4**，_data[0]==['id','txt','note']（表头被当数据）；自定义分隔符 '|' 与 gbk 编码同样多一行。
+
+修复后 probe 12 项全对：往返 rows=3、列名 ['id','txt','note']、_data[0]==['1','a,b','有"引号"']（真实首行数据）、CSV 引号/内嵌换行/中文均正确保留、自定义分隔符 rows=3、gbk rows=3 且内容正确、rows=0 -> 0、rows=2（表头+1数据）-> 1、rows=None -> 3、cols=[0,2] 列与数据正确、空文件 -> 0 行。
+
+连带：按新语义同步 tests/test_bug252_falsy_trap_regression.py 两处（rows=None 注释与断言改 `>= 1`；rows=2 断言 `== 2` -> `== 1`，并注明 BUG-317 语义）——该文件原注释本身记录着「header + data rows 都在 Table 里」的旧语义。
+
+新增回归 tests/test_table_from_file_header_regression.py 12 项 GREEN；tests/data/ + BUG-252 全套 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-318 [2026-10-23T01:16:35Z] [low] FIXED
+- summary: 四处公开 API docstring 示例被无关的 do(self, f=print, pre_f=None, sub_f=None) 样板方法污染：serialize.decorators 的 serializable/serialize_method/deserialize_method（后两者装饰器用法行悬空、示例断裂）与 decorators.curry_decorator.curry_class，均看不到真实用法
+- detail: 四处公开 API 的 docstring 示例被「do() 样板方法」污染——本应展示该装饰器自身的用法，却粘贴进了一段无关的 `do(self, f=print, pre_f=None, sub_f=None)` 方法体，导致示例断裂、误导用户以为装饰器接受这些参数：
+
+【1】vools/serialize/decorators.py::serializable（L120-143）
+    Example:
+        @serializable(backend='pickle')
+        class MyData:
+            def __init__(self, name: str): self.name = name
+            def do(self, f=print, pre_f=None, sub_f=None):   # ← 污染
+                '''Apply a function for side effects, return self. ...'''
+                ...
+    （示例里完全没有展示 serializable 真正的产出：类级 serialize/deserialize classmethod）
+
+【2】serialize_method（L175-198）—— 断开最严重：
+        class MyService:
+            @serialize_method
+                                         # ← 装饰器用法断在此处
+            def do(self, f=print, pre_f=None, sub_f=None):
+                '''...''' ...
+            def get_state(self): return {"status": "ok"}
+    （`@serialize_method` 后直接是 `def do(...)`，用户看不到正确的「被装饰方法返回 bytes」示例）
+
+【3】deserialize_method（L226-249）—— 同样断裂（`@deserialize_method` 后跟 `def do(...)`，真正的 update_state 被排在后面）
+
+【4】vools/decorators/curry_decorator.py::curry_class（L161-193）—— 用法示例中夹入同样的 do() 样板：
+        @curry_class
+        class T:
+            def add(self, a, b, c): return a + b + c
+            def do(self, f=print, pre_f=None, sub_f=None): ...   # ← 污染
+            def sum_all(self, a, b, c, *c, **k): ...
+
+影响：公开 API 文档失真——用户第一眼看到的示例不是该功能用法而是无关方法；对 `serialize_method`/`deserialize_method` 而言示例语法上都是断的（装饰器悬空），无法照抄。属「文档即实现」契约违背（doc-only，无运行时影响）。severity low。
+
+修复方向：重写四处 Example 为真实可用流程（serializable 展示 MyData.serialize/deserialize；serialize_method 展示被装饰方法调用返回 bytes；deserialize_method 展示传 bytes 参数被还原；curry_class 去掉 do 块只留 add/sum_all 链式示例）。
+- reported_by: agent-vools-hardening
+- task_id: T0r732
+
+
+
+### FIXED(2026-10-23T01:26:49Z / BUG-318)
+- evidence: 修复（commit 04ff871 + 跟进 9a69810）：
+① vools/serialize/decorators.py —— serializable / serialize_method / deserialize_method 的 Example 全部重写为真实可运行示例（serializable 展示 MyData.serialize/deserialize；serialize_method 展示被装饰方法返回 bytes 并可用 Serializer.loads 读回；deserialize_method 展示传 bytes 参数自动还原 dict），删除误粘的 do(self, f=print, pre_f=None, sub_f=None) 样板；
+② vools/decorators/curry_decorator.py —— curry_class 用法示例删除 do() 样板；并**修正示例中错误的返回值承诺**：原 `t.sum_all(1).sum_all(2).sum_all(3, 4)  # 返回 10` 实际返回 CurriedMethod（带 *args/**kwargs 的方法无法累积到齐触发求值，CurriedMethod 也无强制求值入口），改为 `t.sum_all(1, 2, 3, 4)  # 返回 10` 并注明限制。
+
+验证：四处 docstring 均不含 pre_f/sub_f/Apply a function 样板标记；示例经实测可运行——serializable 往返 name=='abc'、serialize_method 返回 bytes 且 loads 得 {'status':'ok'}、deserialize_method 把 b'{"status":"ok"}' 还原为 dict、curry_class `add(1).add(2).add(3)==6`、`add(1,2,3)==6`、`sum_all(1,2,3,4)==10`。
+
+新增回归 tests/test_docstring_no_boilerplate_pollution_regression.py 8 项 GREEN（4 处 docstring 干净 + 4 处文档行为真实成立）；serialize/curry/docstring 相关测试全 GREEN（EXIT=0）。
+
+过程记录（诚实）：①首次提交 04ff871 时回归有 2 项失败（pickle 不能序列化函数内局部类 + curry 示例承诺错误），已用 9a69810 修正；②中途一次正则替换曾把 curry_decorator.py 示例截断造成 SyntaxError，已 git checkout 回退后改为精确行删除/字面替换，import 与全量回归均恢复。
+## BUG-319 [2026-10-23T02:04:17Z] [medium] FIXED
+- summary: Table.substr/split/set_ordinal/concat 对未知列名静默 no-op 或产出部分结果（substr/split/set_ordinal 直接 return self，concat 静默跳过未知列），与同族 get_col/del_col/at/to_num 抛 KeyError 不一致，拼写错误/改名残留调用会让转换与列创建静默失败
+- detail: vools/data/table.py 四处「QAX 风格」列操作方法对**未知列名静默 no-op / 部分结果**，而同族其它方法抛 KeyError，行为不一致且失败不可见：
+
+【1】substr（L1785-1787）
+    col_idx = table._columns.index(trunc_field_name) if trunc_field_name in table._columns else -1
+    if col_idx < 0:
+        return self
+→ `t.substr('new', 'naem', 1, 3)`（源列名拼错）静默返回原表，目标列也没创建；调用方拿到"成功"的表却什么也没发生。
+
+【2】split（L1823-1825）
+    col_idx = self._columns.index(split_field_name) if split_field_name in self._columns else -1
+    if col_idx < 0:
+        return self
+→ 同样静默。
+
+【3】set_ordinal（L903-904）
+    if col_name not in self._columns:
+        return self
+→ docstring 已声明「Raises: IndexError: ordinal 越界（BUG-255）」，但**未知列名**这一支静默返回，连 ordinal 校验都没走到。
+
+【4】concat（L1872-1877）
+    for col_name in concat_array:
+        if col_name in table._columns:
+            ... parts.append(...)
+→ concat_array 里有拼错的列名时**静默跳过**，目标列被写成"其余列的拼接"（部分结果），无任何提示。
+
+对照（同一 Table API 的未知列行为）：get_col / column / at / del_col / to_num / get_cell2 前五个均抛 **KeyError**（get_cell2 按文档返回 default_value 是设计）；select/sort 抛 ValueError（list.index 语义）。即四个新报告的方法与主流不一致。
+
+影响：拼写错误/列改名后残留调用会让「转换没生效、列没生成、部分字符串」这类错误静默通过，正是 BUG-249/250/251/253 修复的「未知列/越界列静默 no-op」族的残留面。severity medium。
+
+修复方向：四处统一改为对该列调用 `_get_col_index(...)`（或显式 raise KeyError），与 get_col/del_col 一致；docstring 补 Raises。
+- reported_by: agent-vools-hardening
+- task_id: T0r733
+
+
+
+### FIXED(2026-10-23T02:11:48Z / BUG-319)
+- evidence: vools/data/table.py 修复（commit a88bb9c）三处：
+① `substr`：`col_idx = table._columns.index(...) if ... else -1; if col_idx < 0: return self` → `col_idx = table._get_col_index(trunc_field_name)`（未知列抛 KeyError）；
+② `split`：同样改为 `self._get_col_index(split_field_name)`；
+③ `concat`：`for col_name in concat_array:` 内原 `if col_name in table._columns:` 静默跳过 → 改为先 `if col_name not in table._columns: raise KeyError(f"列名不存在: {col_name!r}")`。
+**set_ordinal 未改动**：其「未知列静默返回」已被既有回归 `tests/data/test_table_bug_252_253_254_255_regression.py::TestSetOrdinalRangeValidation::test_set_ordinal_nonexistent_col_silent` 锁定（BUG-255 面），尊重既有语义，仅在源码注释中说明。
+
+修复前实测：t.substr('new','naem',1,2) / t.split('naem','-',['p1','p2']) 静默返回原表；t.concat('new',['id','naem']) 产出 [[1,'a-b','1a-b']] 这类「跳过未知列的部分拼接」。
+修复后 probe：三处未知列均抛 KeyError；正常路径不变——substr('new','name',1,1) -> [[1,'a-b','a'],[2,'c-d','c']] 列 ['id','name','new']；split('name','-',['p1','p2']) -> [[1,'a-b','a','b'],[2,'c-d','c','d']]；concat('new',['id','name']) -> [[1,'a-b','1a-b']]；set_ordinal('naem',1) 仍静默返回 self、set_ordinal('name',9) 仍 IndexError。
+
+新增回归 tests/test_table_unknown_column_not_silent_regression.py 8 项 GREEN；tests/data/ 全 GREEN（EXIT=0，含被锁定的 set_ordinal 用例）。commit 已推送 gitcode master。
+## BUG-320 [2026-10-23T02:24:13Z] [low] FIXED
+- summary: Qax.SetColName 对未知列名静默 no-op（except ValueError: return self），改名静默不生效；同文件 QAXColToNum/Str/Date、GetCol、DelCol、QAXSplit、QAXConcat、QAXReplace 对未知列均抛 KeyError，属 BUG-319 同族残留
+- detail: vools/data/qax.py `Qax.SetColName(oldName, newName)` 在 oldName 是**不存在的列名**时静默 no-op，与同族方法抛 KeyError 的口径不一致：
+
+实现（L955-967）：
+    if isinstance(oldName, int):
+        col_num = self._check_1based(oldName, len(self._columns), '列') - 1   # 越界抛 IndexError（BUG-251）
+    else:
+        try:
+            col_num = self._columns.index(oldName)
+        except ValueError:
+            return self                        # ← 未知列名静默返回，改名没发生
+    return self.set_col_name(col_num, newName)
+
+实测（3/3 稳定）：Qax([[1,'a']], columns=['id','name']).SetColName('nope', 'x') -> 返回 self（is_self=True），列名仍为 ['id','name']，无任何错误信号。
+
+对照同文件其它带列名的 Qax 方法（未知列名均抛 KeyError）：
+- QAXColToNum / QAXColToStr / QAXColToDate -> KeyError
+- GetCol / DelCol -> KeyError
+- QAXSplit -> KeyError
+- QAXConcat -> KeyError（BUG-319 后显式 raise）
+- QAXReplace(col='不存在') -> KeyError
+仅 SetColName 静默；且 BUG-319 刚把 Table.substr/split/concat 的同类静默改为 KeyError，此处是同一族的残留。
+
+影响：列改名拼写错误/上游改名后残留调用 → 改名静默不生效，下游按新列名取值再报错（或更糟：继续用旧列名跑出结果），排查成本高。severity low-medium。
+
+附（非缺陷，确认过）：QAXColIndex 对未知列返回 -1 是 docstring 明写的约定（「未找到返回 -1」），不作为缺陷。
+
+修复方向：`except ValueError:` 分支改为 `raise KeyError(f"列名不存在: {oldName!r}")`，与同族一致；docstring 补 Raises: KeyError（保留 int 越界的 IndexError 说明）。
+- reported_by: agent-vools-hardening
+- task_id: T0r734
+
+
+
+### FIXED(2026-10-23T02:29:26Z / BUG-320)
+- evidence: vools/data/qax.py 修复（commit 5690fba）：`Qax.SetColName` 的字符串分支 `except ValueError: return self` → `raise KeyError(f"列名不存在: {oldName!r}")`；docstring 补 `KeyError: oldName 为字符串且列名不存在（BUG-320）`，保留 int 越界的 IndexError 说明（BUG-251）。
+
+修复前实测（3/3 稳定）：Qax([[1,'a']], columns=['id','name']).SetColName('nope','x') -> 返回 self（is_self=True），列名仍 ['id','name']，无错误信号；而同族 QAXColToNum/Str/Date、GetCol、DelCol、QAXSplit、QAXConcat、QAXReplace(未知列) 均 KeyError。
+
+修复后 probe 全对：SetColName('nope','x') -> KeyError；SetColName(9,'x')/(0,'x') -> IndexError（越界语义不变）；按名改名 SetColName('name','title') -> ['id','title']；按 1-based 列号 SetColName(2,'title') -> ['id','title']；同族 DelCol/GetCol/QAXColToNum 未知列仍 KeyError；确认 QAXColIndex('nope')==-1 为文档化约定未被改动。
+
+新增回归 tests/test_qax_set_col_name_unknown_regression.py 10 项 GREEN（未知名 KeyError + 消息含列名 + 两种合法改名 + 3 个 int 越界 IndexError + 5 个同族一致性 + QAXColIndex -1 约定）；tests/data/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+## BUG-321 [2026-10-23T02:42:03Z] [low] FIXED
+- summary: compute 族三处：Table.compute(非 str) 抛内部 AttributeError（应清晰 TypeError）；Qax.QAXCompute(int) 无 func 时同样 AttributeError（带 func 路径支持 1-based 列号，两种调用一好一崩）；Qax.QAXCompute 未匹配表达式返回整表而非 None（_rself_exclude 未含 QAXCompute，与已修的 Table.compute 不一致）
+- detail: `Table.compute` / `Qax.QAXCompute` 三处缺陷（均稳定复现）：
+
+【A】`Table.compute(expression)` 对非 str 实参抛**内部 AttributeError**
+- 签名/文档：`compute(self, expression: str, filter_expr=None, default_value=None)`，文档「expression: 聚合表达式，如 'SUM(price * quantity)'」。
+- 实测：t.compute(3) / t.compute(0) / t.compute(None) / t.compute(['score']) -> 全部 `AttributeError: 'int'/'NoneType'/'list' object has no attribute 'upper'`（内部实现 `expression.upper()`）。
+- 应是清晰的 TypeError（参数类型错误），当前错误信息完全指不到「expression 必须是字符串」。
+
+【B】`Qax.QAXCompute(col)` 在 `func=None` 且 col 为 int 时同样撞 AttributeError
+- 同文件 `QAXCompute` 文档「col: 列名或表达式」；且带 func 的路径**明确支持 1-based 整数列号**（BUG-178/251 修复，回归锁定 `QAXCompute(2,'sum')==30`、`QAXCompute(0,'sum')` -> IndexError）。
+- 实测：q.QAXCompute(3) / (0) / (-1) / (99) -> `AttributeError: 'int' object has no attribute 'upper'`；而 q.QAXCompute(3,'sum') -> 30 正常。同一参数的两种调用一个正常一个崩，且越界没走 _check_1based。
+
+【C】`Qax.QAXCompute(<未匹配表达式>)` 返回**整个 Qax 表**而非 None
+- `Qax` 同样被 `@rself` 装饰，`_rself_exclude = ('max','min','QAXMax','QAXMin')` **未含 QAXCompute**；`Table` 侧同类问题已在 BUG-314 把 `'compute'` 加入豁免。
+- 实测（3/3 稳定）：q.QAXCompute('score') -> 返回 Qax（is_self=True）；q.QAXCompute('BOGUS(x)') -> 同样返回 Qax。而 `Table.compute('score')` -> None ✓（BUG-314 已修），两个 API 行为不一致。
+
+影响：A/B 属内部错误掩盖真因（BUG-235/236/294 族）；C 属 BUG-314 同族残留（未匹配聚合被伪装成「返回整表」）。severity low-medium。
+
+修复方向：
+A. `Table.compute` 入口 `if not isinstance(expression, str): raise TypeError(...)`；
+B. `Qax.QAXCompute` 的 `func is None` 分支：col 为 int 时先 `_check_1based(...)` 解析成列名再 `self.compute(name)`（与带 func 路径一致，越界抛 IndexError）；
+C. `Qax._rself_exclude` 增加 `'QAXCompute'`。
+- reported_by: agent-vools-hardening
+- task_id: T0r735
+
+## BUG-322 [2026-10-23T02:50:57Z] [medium] FIXED
+- summary: Qax._rself_exclude 覆盖而非扩展 Table 的豁免列表，导致 BUG-313（get_cell/get_cell2）与 BUG-314（compute）在 Qax 上全部失效：q.get_cell(99,0)/get_cell2(0,'nope')/compute('BOGUS(x)')/QAXCompute('BOGUS(x)') 均返回整表 self；子类声明 _rself_exclude 时必须重复基类条目，属静默陷阱
+- detail: vools/data/qax.py 的 `Qax._rself_exclude` **直接覆盖**了基类 `Table._rself_exclude`，导致 BUG-313 / BUG-314 的豁免在 Qax 子类上**全部失效**（`@rself` 用 `getattr(type(self), '_rself_exclude', ())` 取的是最派生类的元组，不做 MRO 合并）：
+
+- Table._rself_exclude = ('max', 'min', 'get_cell', 'get_cell2', 'compute')
+- Qax._rself_exclude   = ('max', 'min', 'QAXMax', 'QAXMin', 'QAXCompute')   ← 覆盖，丢了 get_cell/get_cell2/compute
+
+实测（Qax 上这些方法的 None 语义再次被吞）：
+- q = Qax([[1,'a'],[2,'b']], columns=['id','name'])
+- q.get_cell(99, 0)          -> **Qax（is_self=True）**，Table 上已修为 None（BUG-313）
+- q.get_cell(0, 99)          -> Qax
+- q.get_cell2(0, 'nope')     -> Qax
+- q.compute('BOGUS(x)')      -> Qax（Table 上已修为 None，BUG-314）
+- q.QAXCompute('BOGUS(x)')   -> Qax（本轮 BUG-321 想把 QAXCompute 加进豁免，但即使加了，内部 `self.compute(...)` 这层仍被兜底成 self）
+
+即：子类自定义 `_rself_exclude` 时**必须重复列出基类条目**，否则静默丢失基类语义——这是个易复发的设计陷阱（任何继承 Table/Qax 的类都会踩）。
+
+影响：BUG-313/314 的修复对 Qax（以及任何继承 Table 并自定义 _rself_exclude 的类）不生效，越界取值/未匹配聚合再次静默返回整表。severity medium（修复有效面被缩小，且是静默错值）。
+
+修复方向（二选一）：
+A. Qax._rself_exclude 补全为基类并集：('max','min','get_cell','get_cell2','compute','QAXMax','QAXMin','QAXCompute')；
+B. 更稳的根治：rself 的豁免查找改为沿 MRO 合并（`set().union(*[getattr(c,'_rself_exclude',()) for c in type(self).__mro__])`），让子类只声明新增项即可。
+
+建议 A 先落地（不改框架语义），并在注释中写明「本列表覆盖基类，需包含基类条目」；B 作为框架级改进另行评估（涉及所有 @rself 类）。
+- reported_by: agent-vools-hardening
+- task_id: T0r736
+
+
+
+### FIXED(2026-10-23T03:02:17Z / BUG-321, BUG-322)
+- evidence: 修复（commit 348ea59，一并处理 BUG-321 + BUG-322）：
+
+【BUG-321】
+A. vools/data/table.py `Table.compute` 入口加 `if not isinstance(expression, str): raise TypeError("compute 的 expression 必须是 str（如 'SUM(price * quantity)'），收到 <类型>: <值>")`。修复前 t.compute(3)/(0)/(None)/(['score']) 均 `AttributeError: 'X' object has no attribute 'upper'`；修复后清晰 TypeError。
+B. vools/data/qax.py `Qax.QAXCompute` 的 `func is None` 分支：col 为 int 时先 `self._check_1based(col, len(self._columns), '列')` 解析为列名再 compute。修复前 q.QAXCompute(3) -> AttributeError；修复后 QAXCompute(2) -> None（未匹配聚合），越界 0/-1/99 -> IndexError（与带 func 路径 BUG-178/251 一致，既有回归 QAXCompute(2,'sum')==30 不变）。
+
+【BUG-322】root cause：`@rself` 用 `getattr(type(self), '_rself_exclude', ())`，**不做 MRO 合并**——`Qax._rself_exclude` 原为独立元组，覆盖掉 Table 的 ('max','min','get_cell','get_cell2','compute')，使 BUG-313/314 在 Qax 上失效。修复：Qax 元组显式包含基类条目并新增自身项——('max','min','get_cell','get_cell2','compute','QAXMax','QAXMin','QAXCompute')，注释写明「勿删基类条目」。
+
+修复前实测：q.get_cell(99,0)/(0,99)、q.get_cell2(0,'nope')、q.compute('BOGUS(x)')、q.QAXCompute('BOGUS(x)') 全部返回整表 Qax（is_self=True）。
+修复后全部返回 None；正常路径不变（get_cell(0,0)=1、compute('SUM(id)')=3、QAXCompute(1,'sum')=3、QAXMax('id')=2、空表 QAXFilter 后 max()=None）；Table 侧 get_cell/get_cell2/compute 的 None 语义不受影响。
+
+新增回归 tests/test_compute_and_qax_rself_exclusion_regression.py 21 项 GREEN（5 类非 str TypeError + 合法表达式 + Qax int 列/越界 + Qax 继承 5 项 None 语义 + 豁免元组断言 + Table 侧 3 项）；tests/data/ 全 GREEN（EXIT=0）。commit 已推送 gitcode master。
+
+建议（未实施，留作框架级改进）：rself 的豁免查找改为沿 MRO 合并（`set().union(*[getattr(c, '_rself_exclude', ()) for c in type(self).__mro__])`），从根上消除「子类必须重复基类条目」的陷阱。
+## BUG-323 [2026-10-23T03:45:15Z] [medium] FIXED
+- summary: [框架级] rself 的 _rself_exclude 查找不做 MRO 合并（getattr 只取最派生类），子类声明即整体覆盖基类豁免——已使 BUG-313/314 在 Qax 上静默失效；改为沿 __mro__ union 合并后，子类只需声明新增项，Qax 简化为自身三项并可自动继承基类语义
+- detail: vools/decorators/rself.py 的豁免查找**不做 MRO 合并**（BUG-322 报告里建议的框架级根治，本轮落地）：
+
+原实现（__getattribute__ 内）：
+    _exclude = getattr(type(self), '_rself_exclude', ())
+    if name in _exclude:
+        return attr
+`getattr` 只取**最派生类**的元组——子类一旦声明自己的 `_rself_exclude`，基类条目整体失效。
+
+已实证的危害（BUG-322）：`Qax._rself_exclude` 覆盖了 `Table` 的
+('max','min','get_cell','get_cell2','compute')，导致 BUG-313（get_cell/get_cell2 越界返回 None）与 BUG-314（compute 未匹配聚合返回 None）的修复**在 Qax 上全部失效**（实测 q.get_cell(99,0) / compute('BOGUS(x)') 返回整表 self）。任何继承 Table/Qax 并自定义豁免的类都会踩同一陷阱，属易复发设计缺陷。
+
+修复（commit 1b3b1a7）：
+    _exclude = set()
+    for _k in type(self).__mro__:
+        _exclude.update(getattr(_k, '_rself_exclude', ()) or ())
+    if name in _exclude:
+        return attr
+——沿 MRO 合并（基类在前、子类可追加），子类只需声明新增项。随之把 `Qax._rself_exclude` 简化为仅自身三项 ('QAXMax','QAXMin','QAXCompute')，去掉「必须重复基类条目」的维护陷阱。
+
+验证（probe + 回归）：
+- Qax 仅声明自身项，仍正确继承 Table 的 get_cell/get_cell2/compute 豁免（q.get_cell(99,0) -> None、q.compute('BOGUS(x)') -> None）✓
+- Qax 自身豁免生效（QAXCompute 未匹配 -> None）✓
+- 合成子类 `@rself class SubTable(Table): _rself_exclude = ('my_custom',)` —— 基类豁免自动继承（s.get_cell(99,0) -> None）、自身项生效、**未被豁免的方法仍走 None→self 链式兜底**（不过度豁免）✓
+- 重复声明无害、无 `_rself_exclude` 的类行为不变 ✓
+- 新增框架级回归 tests/test_rself_exclude_mro_merge_regression.py 9 项；同步把上一轮「字面包含基类条目」的断言改为行为/MRO 合并断言（旧断言与新框架语义冲突）。
+
+全量测试：EXIT=0。
+- reported_by: agent-vools-hardening
+- task_id: T0r737
+
+
+
+### FIXED(2026-10-23T03:46:12Z / BUG-323)
+- evidence: 修复（commit 1b3b1a7）：vools/decorators/rself.py `__getattribute__` 内豁免查找由 `_exclude = getattr(type(self), '_rself_exclude', ())` 改为沿 MRO 合并：
+    _exclude = set()
+    for _k in type(self).__mro__:
+        _exclude.update(getattr(_k, '_rself_exclude', ()) or ())
+随即简化 `Qax._rself_exclude` 为仅自身三项 ('QAXMax','QAXMin','QAXCompute')（原为兼容覆盖问题而重复列出基类 5 项）。
+
+危害证据（修复前）：Qax 覆盖 Table 的 ('max','min','get_cell','get_cell2','compute') 豁免 → q.get_cell(99,0)/(0,99)、q.get_cell2(0,'nope')、q.compute('BOGUS(x)')、q.QAXCompute('BOGUS(x)') 全部返回整表 Qax（is_self=True），使 BUG-313/314 的修复在子类失效。
+
+修复后验证：Qax 仅声明自身项仍正确继承基类豁免（get_cell/get_cell2/compute 越界或未匹配均 None）；自身 QAXCompute 未匹配 -> None；正常路径不变（get_cell(0,0)=1、compute('SUM(id)')=3、QAXMax('id')=2）；合成子类 `@rself class SubTable(Table): _rself_exclude = ('my_custom',)` 自动继承基类豁免且自身项生效；未被豁免方法仍 None→self 链式兜底（无过度豁免）；重复声明与无声明类行为不变。
+
+新增框架级回归 tests/test_rself_exclude_mro_merge_regression.py 9 项 GREEN；同步把上轮 tests/test_compute_and_qax_rself_exclusion_regression.py 中「Qax 元组字面包含基类条目」的断言改为行为/MRO 合并断言（旧断言与新框架语义冲突）；tests/data/ 与 rself/qax/table/compute 相关测试全 GREEN，**全量测试 EXIT=0**。commit 已推送 gitcode master。
+## BUG-324 [2026-10-23T03:58:54Z] [high] OPEN
+- summary: [rhop-task/bugfind-R5] timeout_min 未接入执行器：命令超时只受 exec.timeout_sec（默认 1 小时）约束，租约却按 timeout_min×60 计算 ⇒ 租约先过期、命令仍在跑 ⇒ 被重复领取执行
+- detail: 现象：任务 `timeout_min=0.05`（3 秒），命令本身 `time.sleep(5)`，实测耗时 **5.29 秒**且状态 `COMPLETED`——超时完全没有生效。
+  根因：`TaskQueue.run_once` 调 `run_payload(payload, policy=self.policy, action_cfg=..., task_type=..., handlers=...)`（vools/rhop/task/queue.py:779）时**没有传 `timeout_min`**；执行器侧的超时只来自 `cli.timeout_sec` 或 `policy.timeout_sec`（exec.py:230，默认 3600 秒）。`timeout_min` 只被写进任务记录（queue.py:460），从未参与命令执行的超时判定。
+  影响面：① 用户按文档用 `timeout_min` 给任务设上限（§5 把它列为『超时与重试策略』列、§13/§15 也这么写），实际命令可以跑到 `exec.timeout_sec`（默认 1 小时）——上限形同虚设；② **更严重**：租约 = `max(lock_ttl_sec, timeout_min×60)`（§15），而命令可能远超 `timeout_min` ⇒ 租约先过期、命令还在跑 ⇒ `clean_stale_locks` 把它回收（`RUNNING→RETRY_PENDING`）⇒ 另一个 worker 再次领取执行 ⇒ **同一任务被重复执行**（正是 BUG-289 那一类重复执行，且这里不是『没续期』而是『超时参数根本没接上』）；③ 长任务若开 `renew_lock` 可绕过租约过期，但命令时长仍不受 `timeout_min` 约束。
+  证据：rhop/tests/boundary/r18_retry_backoff.py 的 R5 探针（可复现）。复现命令：cd rhop && python tests/boundary/r18_retry_backoff.py；输出 R5 行：耗时=5.29s（超时 0.05min=3s，命令睡 5s）；状态=COMPLETED；被约束=False。
+  建议：① `run_payload` 增加 `timeout_sec` 参数，`run_once` 传入 `min(timeout_min×60, policy.timeout_sec)`（或按文档口径以 `timeout_min` 为准）；② 在 exec 层把 `timeout` 优先取任务级 `timeout_min`，`cli.timeout_sec` 作为更细粒度的覆盖；③ 补回归用例：`timeout_min` 很短时命令必须在该时长内被截断（语料 R5 可直接转正）；④ §5/§15 同步写明『命令执行受 timeout_min 约束』。
+- reported_by: explore-bugfind-7
+
