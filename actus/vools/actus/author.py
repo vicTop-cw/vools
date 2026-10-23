@@ -359,35 +359,13 @@ def publish_action(action_id: str, repo_root: Optional[str] = None,
 def _find_action_file(action_id: str, repo_root: str) -> Optional[str]:
     """根据 action_id 在 actions/ 目录中查找对应的动作文件。
 
-    支持双格式：
-    - 旧格式：.actus.md
-    - 新格式：.actus.schema.md
+    **收口到 resolver.find_action_file**（计划 §六.6）：原来这里自己维护
+    候选路径 + 递归搜索，与 resolver / dependency 各写一份。本实现的判据
+    本来是对的（解析后比对 meta['id']），但留着就是第四份漂移源。
     """
     actions_dir = os.path.join(repo_root, 'actions')
-    if not os.path.isdir(actions_dir):
+    try:
+        from .resolver import find_action_file
+        return find_action_file(action_id, actions_dir)
+    except Exception:
         return None
-
-    # 从 id 推算文件名（最后一段）
-    last_segment = action_id.rsplit('.', 1)[-1]
-    candidates = [
-        os.path.join(actions_dir, f'{last_segment}.actus.schema.md'),
-        os.path.join(actions_dir, f'{last_segment}.actus.md'),
-        os.path.join(actions_dir, last_segment, 'index.actus.schema.md'),
-        os.path.join(actions_dir, last_segment, 'index.actus.md'),
-    ]
-
-    # 递归搜索
-    for root, dirs, files in os.walk(actions_dir):
-        for fname in files:
-            if is_action_file(fname):
-                candidates.append(os.path.join(root, fname))
-
-    for path in candidates:
-        if os.path.isfile(path):
-            try:
-                a = parse_cfg_from_file(path)
-                if a.meta.get('id') == action_id:
-                    return path
-            except Exception:
-                continue
-    return None

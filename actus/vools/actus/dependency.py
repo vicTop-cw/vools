@@ -356,18 +356,15 @@ class DependencyResolver:
 
     def _check_action(self, dep: Dependency) -> DepCheckResult:
         """检查动作依赖。"""
-        # 在 actions 目录中搜索
-        for root, dirs, files in os.walk(self._actions_root):
-            for f in files:
-                if not is_action_file(f):
-                    continue
-                path = os.path.join(root, f)
-                try:
-                    content = open(path, encoding="utf-8").read()
-                    if f'"id": "{dep.name}"' in content or f'"id":"{dep.name}"' in content:
-                        return DepCheckResult(dep.name, True, f"动作 {dep.name} 存在: {path}")
-                except Exception:
-                    pass
+        # 在 actions 目录中搜索（按解析后的 meta['id'] 比对，格式无关）
+        found = None
+        try:
+            from .resolver import find_action_file
+            found = find_action_file(dep.name, self._actions_root)
+        except Exception:
+            found = None
+        if found:
+            return DepCheckResult(dep.name, True, f"动作 {dep.name} 存在: {found}")
         return DepCheckResult(dep.name, False, f"动作 {dep.name} 未找到")
 
     def check_all(self, deps: List[Dependency]) -> List[DepCheckResult]:

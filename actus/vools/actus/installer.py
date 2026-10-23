@@ -422,21 +422,17 @@ class ActionInstaller:
         """根据动作 ID 解析本地文件路径。
 
         搜索所有已安装仓库，找到匹配的动作文件。
+        按**解析后的 meta['id']** 比对（格式无关）——原实现用字符串搜
+        `"id": "xxx"` 只认旧格式 JSON，新格式 .actus.schema.md 全部找不到。
         """
+        try:
+            from .resolver import find_action_file
+        except Exception:
+            return None
         for actions_dir in self.discover_actions_dirs():
-            for root, dirs, files in os.walk(actions_dir):
-                for fname in files:
-                    if not is_action_file(fname):
-                        continue
-                    fpath = os.path.join(root, fname)
-                    # 快速检查：读取文件中的 id 字段
-                    try:
-                        with open(fpath, "r", encoding="utf-8") as f:
-                            content = f.read()
-                        if f'"id": "{action_id}"' in content or f'"id":"{action_id}"' in content:
-                            return fpath
-                    except (OSError, UnicodeDecodeError):
-                        continue
+            hit = find_action_file(action_id, actions_dir)
+            if hit:
+                return hit
         return None
 
     # ── Scope 权限 ──
