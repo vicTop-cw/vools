@@ -162,6 +162,28 @@ realpath，必须落在 `base_dir` 或显式声明的共享根之内，否则抛
 > 本轮探针自身错误 1 处：T1 首轮 CONFIRMED 是**我看错了属性**——网络介质的标识在 `SharedPathView`
 > 的内层 `path` 上，不是视图的 `kind`；改为检查内层路径后正常。T2 的调试与语料运行都曾把共享库写到
 > 仓库根，已全部删除并核对 `git status` 干净。
+>
+> **T2 根因更正（BUG-302 收口时）**：初报把成因写成「`shared.write` 没有落点校验」，实测后修正为
+> 「**相对 `store.path` 被按进程 cwd 解析**」——`shared.write` 指向 base_dir 之外**本身不是缺陷**
+> （共享介质本就该在双方约定的位置，如 `/mnt/shared`），真正的缺陷是库没有落在介质里
+> （A/B 会读写不同的库）。已修：相对路径一律相对共享根解析 + 落点必须在共享根之内。
+
+## 第八轮语料（重试与退避状态机，2026-10-23）
+
+运行：`cd rhop && python tests/boundary/r18_retry_backoff.py`（退出码 = 风险成立条数）
+
+| id | 边界类型 | 假设 | 判定 | 证据 / 复现要点 |
+|---|---|---|---|---|
+| R1 | 退避窗口 | `RETRY_PENDING` 在 `retry_delay_min` 内不可重领 | **未成立（行为正确）** | 失败后状态=RETRY_PENDING；窗口内 `claim_next=None` |
+| R2 | 计数累加 | 重试计数跨周期累加，到 `max_retries` 转 FAILED | **未成立** | `max_retries=2`：状态序列 `[RETRY_PENDING, RETRY_PENDING, FAILED]` |
+| R3 | 零重试 | `max_retries=0` 失败即终态 | **未成立** | 首次执行后=FAILED、不再可领 |
+| R4 | 零退避 | `retry_delay_min=0` 立即可重领 | **未成立** | 失败后立刻 `claim_next` 可领 |
+| **R5** | 超时约束 | `timeout_min` 必须真正约束命令执行时长 | **成立（高危：超时未生效）** | `timeout_min=0.05`（3s）、命令睡 5s → 实际耗时 **5.29s**、状态 COMPLETED。根因：`run_payload` 没接 `timeout_min`，命令超时只受 `exec.timeout_sec`（默认 3600s）约束。**连带**：租约按 `timeout_min×60` 算 ⇒ 租约先过期、命令还在跑 ⇒ 被别的 worker 重复领取执行 |
+| R6 | 重置连带 | `retry_failed` 把 FAILED 重置为可重领 | **未成立** | 第1次=RETRY_PENDING、第2次=FAILED、reset 后=PENDING、可领=True |
+
+> 本轮探针自身错误 2 处：① `exec` 是**顶层**配置键，我一开始把它塞进 `queue` 里，导致 `allow_any`
+> 从未生效、命令被白名单挡下（测到的是白名单而非重试）；② R2 里手动 `claim_next` 后又调 `run_once`，
+> 造成双重领取。两处都修正后重跑，重试/退避语义本身全部符合 §6 文档。
 
 ## 已知不报为 bug 的项
 
