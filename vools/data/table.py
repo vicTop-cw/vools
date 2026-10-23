@@ -2299,10 +2299,15 @@ class Table(Seq):
                 last_col = first_col
                 for col in range(first_col, min(first_col + 50, sheet.last_col + 1)):
                     ct = sheet.cell_type(header_row, col)
-                    if ct == 2:  # STRING
+                    if ct == 2:  # STRING：按文本判空（纯空白不算表头）
                         val = sheet.read_str(header_row, col)
                         if val and str(val).strip() != '':
                             last_col = col
+                    elif ct != 0:
+                        # BUG-345: 表头也可能是数字/日期/布尔（如年份列 2024、2025）。
+                        # 原实现只认 STRING，导致**末列为非字符串**时 last_col 不推进，
+                        # 整列被静默丢弃（[2024, 2025] 只读成 1 列）。
+                        last_col = col
                 # 确保至少读取 first_col 到 last_col
 
             # 读取数据
