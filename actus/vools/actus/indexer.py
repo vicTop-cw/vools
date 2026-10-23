@@ -164,11 +164,20 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
                 try:
                     action = parse_cfg_from_file(full)
                 except ActionError as e:
-                    # `.demo.` 文档页是 kind: demo 的非可执行教学资产
-                    # （对应主动作在 xxx.actus.schema.md），无 #!cfg 块属正常，
-                    # 不按无效动作上报。
+                    # `.demo.` 文档页的两种情形必须区分：
+                    # - **没有 front-matter** → 纯教学资产，无 #!cfg 块属正常，跳过；
+                    # - **有 front-matter 却解析失败** → 就是坏动作文件，必须上报。
+                    # 此前一律跳过，实测「有 front-matter 的坏 demo」被完全静默
+                    # 忽略（不在 actions、也不在 invalid），用户毫无提示。
                     if '.demo.' in fn:
-                        continue
+                        from .model import _has_yaml_frontmatter
+                        try:
+                            with open(full, encoding='utf-8') as fh:
+                                raw_text = fh.read()
+                        except OSError:
+                            raw_text = ''
+                        if not _has_yaml_frontmatter(raw_text):
+                            continue
                     problems[rel] = f'parse: {e.message}'
                     continue
                 aid = action.meta.get('id')
@@ -342,9 +351,19 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
             'count': len(graph_issues),
         }
 
-    os.makedirs(meta, exist_ok=True)
-    with open(os.path.join(meta, 'actions.index.json'), 'w', encoding='utf-8') as f:
-        json.dump(index, f, ensure_ascii=False, indent=2)
+    # 落盘门禁：**自定义 actions_dir 且未显式给 meta_dir 时不写盘**。
+    # 此前无条件写 `meta_dir or <repo>/_meta`，于是 `build_index(actions_dir=临时目录)`
+    # 会把仓库主索引覆盖成临时目录的内容——实测测试里这么一调，后续
+    # resolve_target('actus.basics.calculator') 就报「动作 id 不存在」。
+    # 调用方要落盘就显式给 meta_dir，语义才明确。
+    _default_actions = os.path.join(_repo_root(), 'actions')
+    _is_default_target = (
+        actions_dir is None
+        or os.path.abspath(actions_dir) == os.path.abspath(_default_actions))
+    if meta_dir or _is_default_target:
+        os.makedirs(meta, exist_ok=True)
+        with open(os.path.join(meta, 'actions.index.json'), 'w', encoding='utf-8') as f:
+            json.dump(index, f, ensure_ascii=False, indent=2)
 
     return index
 
