@@ -748,6 +748,23 @@ class BaseSqlBuilder(SqlBuilder):
         param_offset = len(self._params)  # BUG-298：从当前 params 长度开始编号
 
         for cond, params in conditions:
+            # BUG-351: 占位符数量与参数数量不匹配时，原实现静默产出
+            # "占位符多/参数少" 的 SQL，直到 DB 执行才报 driver 级错误
+            # （如 sqlite: Incorrect number of bindings supplied），难以定位。
+            # 这里在 build 期按**引号感知**计数并显式报错。
+            _count = 0
+
+            def _count_placeholder(match):
+                nonlocal _count
+                _count += 1
+                return match.group(0)
+
+            self._sub_placeholders(cond, _count_placeholder)
+            if _count != len(params):
+                raise ValueError(
+                    f"条件占位符与参数数量不匹配：条件 {cond!r} 含 {_count} 个占位符，"
+                    f"但传入 {len(params)} 个参数 {params!r}")
+
             def replace_placeholder(match):
                 nonlocal param_offset
                 placeholder = self._placeholder(param_offset)
