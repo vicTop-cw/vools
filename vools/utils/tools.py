@@ -530,15 +530,20 @@ def get_json_keys(field_name):
 
 
 def aggregate_json_keys(keys_list):
-    """合并多个JSON键列表
+    """合并多个JSON键列表（去重，**保持首次出现顺序**）
 
     Args:
         keys_list: 键列表的列表
 
     Returns:
-        合并后的键列表（去重）
+        合并后的键列表（去重；顺序 = 各键首次出现的先后）
+
+    注（BUG-336）：原实现用 `set(...)` 去重，返回顺序取决于字符串哈希，
+    **每次进程运行都可能不同**（PYTHONHASHSEED 随机化）——下游据此生成的
+    列序/字段序不可复现。改为与本文件 `union_ordered_collection` 一致的保序去重。
     """
-    return list(set(key for keys in keys_list for key in keys))
+    flat = [key for keys in keys_list for key in keys]
+    return list(OrderedDict.fromkeys(flat))
 
 
 # ============================================================================
