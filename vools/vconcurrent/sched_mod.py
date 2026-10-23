@@ -145,6 +145,33 @@ class VScheduler:
         return f'VScheduler(pending={len(self.queue)})'
 
 
+def _validate_schedule_args(kind: str, interval: Any, callback: Any) -> None:
+    """校验定时器参数（BUG-397）。
+
+    原实现不校验：`Timer(-1, cb)` / `PeriodicTask(0, cb)` / 非可调用 callback
+    全部被接受。后果：
+
+    * `interval <= 0`：`threading.Timer` 视为立即触发；PeriodicTask 会变成
+      **紧循环**（CPU 打满）；
+    * `callback` 非可调用：回调在**定时器线程内**抛 TypeError，异常被 threading
+      吞掉——调用方完全不知道任务从未执行（静默失败）。
+
+    这里在构造期直接拒绝，问题立刻可见。
+    """
+    if isinstance(interval, bool) or not isinstance(interval, (int, float)):
+        raise TypeError(
+            f"{kind} 的 interval 需要数字（秒），收到 "
+            f"{type(interval).__name__}: {interval!r}")
+    if interval <= 0:
+        raise ValueError(
+            f"{kind} 的 interval 必须 > 0，收到 {interval}"
+            f"（<=0 会立即触发或形成紧循环）")
+    if not callable(callback):
+        raise TypeError(
+            f"{kind} 的 callback 必须可调用，收到 "
+            f"{type(callback).__name__}: {callback!r}")
+
+
 class Timer:
     """
     定时器，支持单次和循环模式
@@ -174,6 +201,7 @@ class Timer:
         repeat: bool = False,
         daemon: bool = True,
     ) -> None:
+        _validate_schedule_args('Timer', interval, callback)
         self._interval = interval
         self._callback = callback
         self._args = args
@@ -256,6 +284,7 @@ class PeriodicTask:
         kwargs: Optional[Dict[str, Any]] = None,
         daemon: bool = True,
     ) -> None:
+        _validate_schedule_args('PeriodicTask', interval, callback)
         self._interval = interval
         self._callback = callback
         self._args = args
@@ -311,6 +340,8 @@ class PeriodicTask:
 
         修改后将在下一次调度时生效（不会中断当前等待中的定时器）。
         """
+        # BUG-397: 与构造期同口径校验（<=0 会紧循环）
+        _validate_schedule_args('PeriodicTask', seconds, self._callback)
         with self._lock:
             self._interval = seconds
             return self
