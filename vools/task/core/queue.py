@@ -28,24 +28,65 @@ class TaskQueue:
     def __setstate__(self, state):
         self.storage = state['storage']
 
-    def submit(self, func: Callable, *args, **kwargs) -> int:
+    # BUG-385: 这些 kwargs 名字是**任务选项**，与函数形参同名时会被静默吞掉。
+    _TASK_OPTION_KEYS = ('priority', 'max_retries', 'depends_on')
+
+    @staticmethod
+    def _func_accepts_names(func: Callable, names) -> list:
+        """返回 names 中该函数**确实会接收**的名字（形参或 **kwargs）。"""
+        import inspect as _inspect
+
+        try:
+            _sig = _inspect.signature(func)
+        except (TypeError, ValueError):
+            return []
+        _params = _sig.parameters
+        _has_var_kw = any(p.kind is _inspect.Parameter.VAR_KEYWORD
+                          for p in _params.values())
+        if _has_var_kw:
+            return list(names)
+        return [n for n in names if n in _params and
+                _params[n].kind in (_inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                    _inspect.Parameter.KEYWORD_ONLY)]
+
+    def submit(self, func: Callable, *args, task_options: Optional[dict] = None,
+               **kwargs) -> int:
         """
         提交任务
 
         Args:
             func: 要执行的函数
             *args: 位置参数
-            **kwargs: 关键字参数，支持特殊参数:
-                - priority: 任务优先级
-                - max_retries: 最大重试次数
+            task_options: 显式任务选项 dict（可选），支持键：
+                ``priority`` / ``max_retries`` / ``depends_on``。
+                提供后 **kwargs 全部作为函数参数转发，不再从中提取选项。
+            **kwargs: 关键字参数；其中 ``priority`` / ``max_retries`` /
+                ``depends_on`` 会被当作**任务选项**提取（若函数本身有同名形参/
+                ``**kwargs``，会显式报错以免静默吞参——改用 task_options）。
 
         Returns:
             任务ID
         """
-        # 提取特殊参数
-        priority = kwargs.pop('priority', 0)
-        max_retries = kwargs.pop('max_retries', 3)
-        depends_on: Set[int] = kwargs.pop('depends_on', None) or set()
+        if task_options is not None:
+            # 显式通道：kwargs 全部转发给函数
+            priority = task_options.get('priority', 0)
+            max_retries = task_options.get('max_retries', 3)
+            depends_on: Set[int] = set(task_options.get('depends_on') or ())
+        else:
+            # BUG-385: 同名冲突检测——原实现直接 pop，函数永远收不到这些参数
+            _collided = [k for k in self._TASK_OPTION_KEYS if k in kwargs]
+            if _collided:
+                _accepted = self._func_accepts_names(func, _collided)
+                if _accepted:
+                    raise ValueError(
+                        f"submit 参数冲突：{_accepted} 既是任务选项又是函数 "
+                        f"{getattr(func, '__name__', func)!r} 的参数名，原实现会把它们"
+                        f"静默吞掉（函数收不到）。请改用 "
+                        f"submit(func, ..., task_options={{...}}) 显式传任务选项，"
+                        f"或重命名函数形参。")
+            priority = kwargs.pop('priority', 0)
+            max_retries = kwargs.pop('max_retries', 3)
+            depends_on = set(kwargs.pop('depends_on', None) or ())
 
         # 序列化函数
         func_data = self._serialize_func(func)
