@@ -90,3 +90,38 @@ class TestInProcess:
 
         register_dialect('temp_bug347', _TempDialect)
         assert get_dialect('temp_bug347') is _TempDialect
+
+class TestRegisterValidation:
+    """BUG-348：注册方言时校验名称与非空 Dialect 子类。"""
+
+    def test_valid_registration(self):
+        from vools.sql.core.dialect import Dialect, get_dialect, register_dialect
+
+        class _Valid(Dialect):
+            name = 'valid'
+
+        register_dialect('valid_bug348', _Valid)
+        assert get_dialect('VALID_BUG348') is _Valid
+
+    @pytest.mark.parametrize('bad', [object, 123, 'not-a-class', None])
+    def test_non_dialect_rejected(self, bad):
+        from vools.sql.core.dialect import register_dialect
+
+        with pytest.raises(TypeError):
+            register_dialect('bad_bug348', bad)
+
+    @pytest.mark.parametrize('bad_name', ['', '   ', None, 123])
+    def test_bad_name_rejected(self, bad_name):
+        from vools.sql.core.dialect import Dialect, register_dialect
+
+        class _Valid2(Dialect):
+            name = 'valid2'
+
+        with pytest.raises(ValueError):
+            register_dialect(bad_name, _Valid2)
+
+    def test_unknown_still_keyerror(self):
+        from vools.sql.core.dialect import get_dialect
+
+        with pytest.raises(KeyError):
+            get_dialect('definitely_not_registered_bug348')

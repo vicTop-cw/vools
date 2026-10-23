@@ -129,6 +129,13 @@ def register_dialect(name: str, dialect_class: type) -> None:
         name: 方言名称
         dialect_class: 方言类（Dialect 的子类）
     """
+    # BUG-348: 文档要求 dialect_class 是 Dialect 的子类，但原实现直接登记——
+    # 传入任意类/非类都会静默接受，直到后续 create_dialect/类型映射才炸。
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(f"方言名称必须是非空字符串，收到 {name!r}")
+    if not isinstance(dialect_class, type) or not issubclass(dialect_class, Dialect):
+        raise TypeError(
+            f"dialect_class 必须是 Dialect 的子类，收到 {dialect_class!r}")
     _DIALECT_REGISTRY[name.lower()] = dialect_class
 
 

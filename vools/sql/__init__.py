@@ -171,6 +171,9 @@ def _load_dialect(name):
               不存在 / 导入失败 / 正在加载（重入）时 False。
     """
     if globals().get(name) is not None:
+        # BUG-347: 模块已加载时也要补齐注册——注册表可能被 clear/unregister
+        # 过（多测试共存时常见），此时仅"已导入"并不代表 manager 里还有它。
+        _auto_register_dialect(name, globals()[name])
         return True
     if name in _LOADING or name in _DIALECT_FAILED:
         return False                       # 重入或已知失败：绝不递归、绝不重试
