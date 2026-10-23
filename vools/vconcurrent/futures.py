@@ -29,6 +29,7 @@ vools.concurrent.futures - concurrent.futures 高级封装
 
 
 import concurrent.futures as _cf
+import queue as _pq
 import threading
 import time
 from collections import deque
@@ -351,6 +352,16 @@ class VThreadPoolExecutor:
         self._completed_count: int = 0
         self._total_submitted: int = 0
         self._shutdown = False
+        # BUG-396: submit_priority 原实现完全忽略 priority（直接
+        # self._executor.submit），而文档承诺「数值越小优先级越高」。
+        # 这里用「优先级队列 + 空闲工作位信号量 + 调度线程」实现真正调度：
+        # 仅当有空闲工作线程时，调度线程才从队列取出**当前最高优先级**任务。
+        _max_workers = getattr(self._executor, "_max_workers", 4) or 4
+        self._priority_queue = _pq.PriorityQueue()
+        self._priority_sem = threading.BoundedSemaphore(_max_workers)
+        self._priority_dispatcher = None
+        self._priority_dispatch_lock = threading.Lock()
+        self._priority_stopping = False
 
     def _track_future(self, future: _cf.Future) -> None:
         """跟踪 future 的完成状态。"""
@@ -378,9 +389,28 @@ class VThreadPoolExecutor:
         """
         if self._shutdown:
             raise RuntimeError("cannot submit to shutdown executor")
-        future = self._executor.submit(fn, *args, **kwargs)
+        # BUG-396: 普通任务**尽量**占用「工作位配额」——否则调度线程会在工作
+        # 线程已被普通任务占满时仍抢到名额，让低优先级任务先跑。用非阻塞
+        # acquire：拿不到就正常排队（避免 submit 阻塞导致"工作线程内再
+        # submit"式死锁）。
+        _consumed = self._priority_sem.acquire(blocking=False)
+        try:
+            future = self._executor.submit(fn, *args, **kwargs)
+        except RuntimeError:
+            if _consumed:
+                self._release_priority_slot()
+            raise
+        if _consumed:
+            future.add_done_callback(lambda _f: self._release_priority_slot())
         self._track_future(future)
         return FutureResult(future)
+
+    def _release_priority_slot(self) -> None:
+        """释放一个工作位配额（BUG-396）。"""
+        try:
+            self._priority_sem.release()
+        except ValueError:
+            pass
 
     def submit_priority(
         self,
@@ -389,12 +419,17 @@ class VThreadPoolExecutor:
         *args: Any,
         **kwargs: Any,
     ) -> FutureResult[T]:
-        """提交带优先级的任务。
+        """提交带优先级的任务（线程池，真正按优先级调度）。
 
-        注意：由于标准 ThreadPoolExecutor 不支持原生优先级，
-        这里通过延迟提交的方式模拟优先级——低优先级任务在单独的调度线程中
-        等待高优先级任务先进入队列。对于简单场景可用，严格优先级请使用
-        自定义队列实现。
+        实现：任务先入内部优先级队列，独立调度线程**先等空闲工作位、再取当前
+        最高优先级任务**提交给底层线程池（BUG-396 起生效；原实现完全忽略
+        priority，执行顺序恒等于提交顺序）。
+
+        语义注意：
+            * 仅当存在排队竞争（工作位被占满）时优先级才体现差异；线程空闲时
+              任务会被立即执行，此时先后顺序不承诺；
+            * 普通 :meth:`submit` 与优先级任务共享工作位配额；
+            * 进程池（:class:`VProcessPoolExecutor`）不支持优先级。
 
         Args:
             priority: 优先级，数值越小优先级越高。
@@ -407,9 +442,109 @@ class VThreadPoolExecutor:
         """
         if self._shutdown:
             raise RuntimeError("cannot submit to shutdown executor")
-        future = self._executor.submit(fn, *args, **kwargs)
-        self._track_future(future)
-        return FutureResult(future)
+        # BUG-396: 真正按优先级调度（见 __init__ 注释），返回的 FutureResult
+        # 包装一个"壳 future"，由调度线程把真实执行结果/异常转交过来。
+        shell = _cf.Future()
+        self._track_future(shell)
+        self._priority_queue.put(_PriorityTask(priority, fn, args, kwargs, shell))
+        self._ensure_priority_dispatcher()
+        return FutureResult(shell)
+
+    def _ensure_priority_dispatcher(self) -> None:
+        with self._priority_dispatch_lock:
+            if self._priority_dispatcher is None or not self._priority_dispatcher.is_alive():
+                th = threading.Thread(
+                    target=self._priority_dispatch_loop,
+                    name="VPriorityDispatcher",
+                    daemon=True,
+                )
+                self._priority_dispatcher = th
+                th.start()
+
+    @staticmethod
+    def _transfer_future(src, dst) -> None:
+        """把真实执行的 future 结果/异常转交给壳 future（BUG-396）。"""
+        if dst.done():
+            return
+        try:
+            if src.cancelled():
+                dst.cancel()
+                return
+            exc = src.exception()
+            if exc is not None:
+                dst.set_exception(exc)
+            else:
+                dst.set_result(src.result())
+        except _cf.CancelledError:
+            dst.cancel()
+        except BaseException as exc:  # pragma: no cover - 防御性
+            try:
+                dst.set_exception(exc)
+            except Exception:
+                pass
+
+    def _priority_dispatch_loop(self) -> None:
+        """调度线程：先等空闲工作位，再取**当前最高优先级**任务提交（BUG-396）。
+
+        注意必须先拿工作位再出队——否则任务会「卡在调度线程手里」，
+        等配额时其它更高优先级任务无法插队，实测退化为提交顺序。
+        """
+        while True:
+            if self._priority_stopping:
+                return
+            if not self._priority_sem.acquire(timeout=0.05):
+                continue
+            try:
+                task = self._priority_queue.get_nowait()
+            except _pq.Empty:
+                self._release_priority_slot()
+                continue
+            if task.func is None:          # 停止哨兵
+                self._release_priority_slot()
+                return
+            if not task.future.set_running_or_notify_cancel():
+                self._release_priority_slot()
+                continue
+            try:
+                real = self._executor.submit(task.func, *task.args, **task.kwargs)
+            except RuntimeError:
+                self._release_priority_slot()
+                task.future.set_exception(
+                    RuntimeError("cannot submit to shutdown executor"))
+                continue
+
+            def _done(f, _shell=task.future) -> None:
+                self._release_priority_slot()
+                self._transfer_future(f, _shell)
+
+            real.add_done_callback(_done)
+
+    def _stop_priority_dispatcher(self) -> None:
+        """停止调度线程：先按优先级排空剩余任务，避免 future 永挂（BUG-396）。"""
+        th = self._priority_dispatcher
+        if th is None:
+            return
+        self._priority_stopping = True
+        while True:
+            try:
+                task = self._priority_queue.get_nowait()
+            except _pq.Empty:
+                break
+            if task.func is None:
+                continue
+            if not task.future.set_running_or_notify_cancel():
+                continue
+            try:
+                real = self._executor.submit(task.func, *task.args, **task.kwargs)
+            except RuntimeError:
+                task.future.set_exception(
+                    RuntimeError("cannot submit to shutdown executor"))
+                continue
+            real.add_done_callback(
+                lambda f, _shell=task.future: self._transfer_future(f, _shell))
+        th.join(timeout=5.0)
+        with self._priority_dispatch_lock:
+            self._priority_dispatcher = None
 
     def map(
         self,
@@ -439,6 +574,7 @@ class VThreadPoolExecutor:
             cancel_futures: 是否取消未开始的任务。
         """
         self._shutdown = True
+        self._stop_priority_dispatcher()
         shutdown_executor(self._executor, wait=wait, cancel_futures=cancel_futures)
 
     def shutdown_graceful(
@@ -454,6 +590,7 @@ class VThreadPoolExecutor:
             wait=True 时，返回是否全部完成；wait=False 时返回 True。
         """
         self._shutdown = True
+        self._stop_priority_dispatcher()
         if not wait:
             self._executor.shutdown(wait=False)
             return True
