@@ -61,6 +61,15 @@ def register_type(
         raise ValueError(f'serialize function is required for type {name}')
     if deserialize is None:
         raise ValueError(f'deserialize function is required for type {name}')
+    # BUG-325: 不同类型注册同名会导致 get_type_deserializer(name) 返回
+    # 首个匹配的反序列化函数（dict 值顺序），后者往返被还原成前者的类型
+    # （实测 B(9) -> A(9)）。注册前检测同名冲突。
+    for existing_type, (existing_name, _, _) in _TYPE_HANDLERS.items():
+        if existing_name == name and existing_type is not type_:
+            raise ValueError(
+                f'Type name {name!r} already registered to {existing_type}. '
+                f'Cannot register {type_} with the same name.'
+            )
     _TYPE_HANDLERS[type_] = (name, serialize, deserialize)
 
 
