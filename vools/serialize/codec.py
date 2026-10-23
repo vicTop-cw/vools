@@ -272,7 +272,13 @@ def _reconstruct_object(type_name: str, state: Dict[str, Any]) -> Any:
     """
     cls = _import_class(type_name)
     if cls is None:
-        return state  # 无法导入类，返回原始 state
+        # BUG-332: 原实现静默 `return state`——写出侧接受任意对象、读回侧模块
+        # 白名单却只覆盖一部分，缺口处会静默降级成内部 dict（uuid 即如此）。
+        # 改为显式报错，让「类型未注册/模块不在白名单」可见。
+        raise ValueError(
+            f"无法还原对象：类型 {type_name!r} 的模块不在反序列化白名单"
+            f"（或类不存在）。请用 register_type 注册该类型，或改用 pickle 后端")
+    
 
     # 处理内置子类
     base_value = state.pop('__base__', None)
@@ -303,6 +309,8 @@ _ALLOWED_IMPORT_PREFIXES = (
 _ALLOWED_IMPORT_MODULES = frozenset({
     'datetime', 'decimal', 'fractions', 'pathlib', 'enum',
     'collections', 'collections.abc', 'typing',
+    'uuid',  # BUG-332: json 后端对 uuid.UUID 写读不对称——写入侧接受任何对象，
+    # 读取侧白名单不含 uuid 时 _reconstruct_object 静默返回 state dict。
     'vools',
 })
 
