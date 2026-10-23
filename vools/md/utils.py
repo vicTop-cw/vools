@@ -34,25 +34,6 @@ def _normalize_metadata(value):
 # ─── 元数据提取 ───
 
 
-
-def _normalize_metadata(value):
-    """将 PyYAML 推断出的 datetime.date/datetime.datetime 值转回 ISO 字符串。
-
-    extract_metadata 的契约是返回 str/int/float/bool/list/dict；
-    PyYAML 会把 `2024-01-01` 解析为 datetime.date，破坏该契约。
-    """
-    import datetime as _dt
-    if isinstance(value, dict):
-        return {k: _normalize_metadata(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_normalize_metadata(v) for v in value]
-    if isinstance(value, (_dt.date, _dt.datetime)):
-        return value.isoformat()
-    return value
-
-
-# ─── 元数据提取 ───
-
 def extract_metadata(markdown_text: str) -> Dict[str, Any]:
     """
     提取 Markdown 文件头部的 YAML front matter 元数据。
