@@ -1991,7 +1991,9 @@ def _handle_evolve_rollback(args: dict):
     version = args.get('version')
     if not action_id or version is None:
         return text_result({'status': 'failed', 'error': {
-            'code': 'missing_params', 'message': 'action_id 和 version 是必需的'}
+            'code': 'missing_param', 'message': 'action_id 和 version 是必需的',
+            'details': {'missing': [k for k, v in (('action_id', action_id),
+                                                   ('version', version)) if not v and v != 0]}}
         }, True)
 
     engine = EvolutionEngine()
@@ -2008,7 +2010,10 @@ def _handle_evolve_compare(args: dict):
     v2 = args.get('v2')
     if not action_id or v1 is None or v2 is None:
         return text_result({'status': 'failed', 'error': {
-            'code': 'missing_params', 'message': 'action_id, v1, v2 是必需的'}
+            'code': 'missing_param', 'message': 'action_id, v1, v2 是必需的',
+            'details': {'missing': [k for k, v in (('action_id', action_id),
+                                                   ('v1', v1), ('v2', v2))
+                                    if not v and v != 0]}}
         }, True)
 
     engine = EvolutionEngine()
