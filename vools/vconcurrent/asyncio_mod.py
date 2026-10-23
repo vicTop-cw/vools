@@ -836,19 +836,34 @@ class AsyncPool:
         async with self._semaphore:
             return await coro
 
-    async def submit(
+    def submit(
         self,
         coro: Coroutine[Any, Any, _T],
     ) -> "asyncio.Task[_T]":
-        """提交一个协程到池中执行。
+        """提交一个协程到池中执行（同步方法，直接返回 Task）。
 
         Args:
             coro: 要执行的协程。
 
         Returns:
-            Task 对象。
+            asyncio.Task 对象（直接 ``await`` 它即可拿到结果）。
+
+        Raises:
+            RuntimeError: 池已关闭。
+
+        Note:
+            BUG-404: 原实现把本方法声明成 ``async def``，调用得到的是**协程**
+            而不是文档承诺的 Task；``await pool.submit(coro)`` 只会运行外层
+            协程并拿到一个**内层 Task**（双重包装），用户往往需要再 await
+            一次才能取到结果，极易静默拿错类型。
         """
         if self._closed:
+            # BUG-404: 拒绝时关闭传入协程，避免 "coroutine was never awaited"
+            # 的 RuntimeWarning（原 async 版本里协程连关闭都没有）。
+            try:
+                coro.close()
+            except Exception:
+                pass
             raise RuntimeError("AsyncPool is closed")
         task = create_task(self._run_with_semaphore(coro))
         self._tasks.append(task)
