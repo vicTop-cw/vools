@@ -37,6 +37,23 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 # ============================================================================
 
 
+def _require_callable(value: Any, what: str) -> None:
+    """校验回调/处理器可调用（BUG-401）。
+
+    原实现把任意对象直接塞进列表/字典：
+    * `EventBus.subscribe('e', 'nope')` → publish 时才 TypeError（且会中断
+      同一事件后续订阅者的分发）；
+    * `Delegate.add('nope')` / `CallbackChain.add('nope')` → invoke/execute 时才炸
+      （CallbackChain 还会静默停止）；
+    * `MessageDispatcher.register('T', 'nope')` → dispatch 时抛
+      ``issubclass() arg 2 must be a class...`` 这种完全跑偏的错误。
+    统一在注册入口拒绝，问题立刻可见。
+    """
+    if not callable(value):
+        raise TypeError(
+            f"{what} 必须可调用，收到 {type(value).__name__}: {value!r}")
+
+
 class Delegate:
     """多播委托，类似 C# 的 delegate。
 
@@ -74,6 +91,7 @@ class Delegate:
         Returns:
             Delegate: 自身，支持链式调用。
         """
+        _require_callable(handler, '回调')
         with self._lock:
             if handler not in self._handlers:
                 self._handlers.append(handler)
@@ -421,6 +439,10 @@ class EventBus:
         Returns:
             EventBus: 自身，支持链式调用。
         """
+        if not isinstance(event, str) or not event.strip():
+            raise ValueError(
+                f"事件名必须是非空字符串，收到 {type(event).__name__}: {event!r}")
+        _require_callable(handler, '事件处理器')
         with self._lock:
             if event not in self._subscribers:
                 self._subscribers[event] = []
@@ -657,6 +679,11 @@ class MessageDispatcher:
         Returns:
             MessageDispatcher: 自身，支持链式调用。
         """
+        if not isinstance(msg_type, type):
+            raise TypeError(
+                f"消息类型必须是类，收到 {type(msg_type).__name__}: {msg_type!r}"
+                f"（dispatch 内部用 issubclass 匹配，非类会抛 issubclass TypeError）")
+        _require_callable(handler, '消息处理器')
         with self._lock:
             if msg_type not in self._handlers:
                 self._handlers[msg_type] = []
@@ -839,6 +866,7 @@ class CallbackChain:
         Returns:
             CallbackChain: 自身，支持链式调用。
         """
+        _require_callable(callback, '链回调')
         with self._lock:
             if callback not in self._callbacks:
                 self._callbacks.append(callback)
