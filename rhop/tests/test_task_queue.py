@@ -402,6 +402,49 @@ class TestCancelAndOps:
         assert result["pending"] is False
         assert "终态" in result["reason"]
 
+    def test_timeout_min_bounds_execution(self, tmp_path):
+        """BUG-324 收口：任务级 timeout_min 必须真正约束命令执行时长。
+
+        原实现只把 timeout_min 写进任务记录、从不传给执行器，命令超时只受
+        exec.timeout_sec（默认 1 小时）约束；而租约按 timeout_min×60 计算 ⇒
+        租约先过期、命令还在跑 ⇒ 被别的 worker 重复领取执行。
+        """
+        import time
+        cfg = TaskConfig.from_dict(
+            {"name": "n", "role": "B", "key": "k", "exec": {"allow_any": True},
+             "queue": {"store": {"kind": "sqlite-local"}, "retry_delay_min": 0,
+                       "max_retries": 2}},
+            base_dir=str(tmp_path), warn_plaintext=False)
+        q = TaskQueue(cfg)
+        try:
+            slow = '"%s" "-c" "import time; time.sleep(5)"' % sys.executable.replace("\\", "/")
+            q.submit([{"task_name": "j", "cli": {"cmd": slow}, "timeout_min": 0.05}])
+            t0 = time.time()
+            q.run_once()
+            elapsed = time.time() - t0
+            assert elapsed < 4.5, "timeout_min 未约束命令执行时长（实测 %.2fs）" % elapsed
+            assert q.get_task("j").state == TaskState.RETRY_PENDING
+        finally:
+            q.close()
+
+    def test_timeout_counts_as_retryable(self, tmp_path):
+        """超时归为可重试（RETRY_PENDING），并在重试计数到顶后转 FAILED。"""
+        cfg = TaskConfig.from_dict(
+            {"name": "n", "role": "B", "key": "k", "exec": {"allow_any": True},
+             "queue": {"store": {"kind": "sqlite-local"}, "retry_delay_min": 0,
+                       "max_retries": 1}},
+            base_dir=str(tmp_path), warn_plaintext=False)
+        q = TaskQueue(cfg)
+        try:
+            slow = '"%s" "-c" "import time; time.sleep(5)"' % sys.executable.replace("\\", "/")
+            q.submit([{"task_name": "j", "cli": {"cmd": slow}, "timeout_min": 0.05}])
+            q.run_once()
+            assert q.get_task("j").state == TaskState.RETRY_PENDING
+            q.run_once()
+            assert q.get_task("j").state == TaskState.FAILED
+        finally:
+            q.close()
+
 
 class TestRunLoops:
     def test_run_until_done(self, queues):
