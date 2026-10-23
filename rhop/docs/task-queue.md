@@ -541,7 +541,7 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 
 ```bash
 cd rhop && python -m pytest -q
-        # 599 passed（600 collected；1 failed 来自并行开发中的 clipboard 测试，需真实剪贴板后端）
+        # 598 passed（600 collected；2 failed 来自并行开发中的 clipboard / watch 测试）
 ```
 
 > 全量 598 条**包含** `test_pg_store.py` 的 38 条（PostgreSQL 后端）。
