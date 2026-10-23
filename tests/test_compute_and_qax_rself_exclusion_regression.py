@@ -92,12 +92,19 @@ class TestQaxInheritsTableExclusions:
         assert q.compute('SUM(id)') == 3
         assert q.QAXMax('id') == 2
 
-    def test_qax_exclude_contains_base_entries(self):
-        ex = Qax._rself_exclude
-        for name in ('max', 'min', 'get_cell', 'get_cell2', 'compute'):
-            assert name in ex, f'Qax._rself_exclude 缺少基类条目 {name}'
-        for name in ('QAXMax', 'QAXMin', 'QAXCompute'):
-            assert name in ex
+    def test_qax_inherits_base_exclusions_via_mro(self):
+        # BUG-322 根治后：rself 的豁免查找沿 MRO 合并，Qax 无需重复声明基类项。
+        # 这里按**行为**断言继承关系（而不是字面包含），并核对合并后的有效集合。
+        merged = set()
+        for k in type(_qax_probe()).__mro__:
+            merged.update(getattr(k, '_rself_exclude', ()) or ())
+        for name in ('max', 'min', 'get_cell', 'get_cell2', 'compute',
+                     'QAXMax', 'QAXMin', 'QAXCompute'):
+            assert name in merged, f'MRO 合并后的豁免缺少 {name}'
+
+
+def _qax_probe():
+    return Qax([[1]], columns=['id'])
 
     def test_table_exclusions_unchanged(self, t):
         assert t.get_cell(99, 0) is None
