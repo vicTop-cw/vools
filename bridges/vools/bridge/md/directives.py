@@ -83,7 +83,18 @@ BLOCK_DIRECTIVE_KEYS: Set[str] = {
 # ═══════════════════════════════════════════════════════
 
 _DIRECTIVE_RE = re.compile(r'#!([a-zA-Z_][\w-]*)(?:=("[^"]*"|\'[^\']*\'|\S+))?')
-_BARE_KEY_RE = re.compile(r"(?:^|\s)([a-zA-Z_][\w-]*)(?:=(\S+))?(?=\s|$)")
+# 裸 key=value：值支持**带引号且含空格**（`title="Calculator App"`）。
+# 原模式值只取 `\S+`，于是 `title="Calculator App"` 被空格截断成 `"Calculator`，
+# 且引号原样保留（实测种子动作的 title 解析出 `'"Calculator"'`）。
+_BARE_KEY_RE = re.compile(
+    r'(?:^|\s)([a-zA-Z_][\w-]*)(?:=("[^"]*"|\'[^\']*\'|\S*))?(?=\s|$)')
+
+
+def _strip_quotes(value: str) -> str:
+    """去掉成对的包裹引号（'…' 或 "…"）。"""
+    if value and len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+        return value[1:-1]
+    return value
 
 # 支持空格分隔值的指令（如 `#!import d.md`、`#!config path.toml`、`import d.md`）。
 # 这些指令的值通常是一个路径/URL/标识符，不含空格；
@@ -135,7 +146,7 @@ def parse_block_directives(directive_str: str) -> Dict[str, str]:
         key = match.group(1)
         value = match.group(2)
         if key not in directives:  # 不覆盖已有 #! 前缀的指令
-            directives[key] = value or ""
+            directives[key] = _strip_quotes(value or "")
 
     # 无显式指令时默认 run
     if not directives:
