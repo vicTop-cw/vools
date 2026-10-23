@@ -1654,12 +1654,21 @@ class Table(Seq):
                 elif key == 'desc':
                     value = value.lower() in ('true', '1', 'yes')
                 kwargs.setdefault(key, value)
+        # BUG-364: 未知查询参数原先被静默忽略——拼错一个键（order_by->
+        # oder_by、where->wheres）就拿到**全量数据**且毫无提示。这里显式报错，
+        # 并把允许键与非法的键都列出来。
+        _allowed_query_keys = {'where', 'order_by', 'desc', 'limit', 'offset', 'select'}
+        _unknown = sorted(set(kwargs) - _allowed_query_keys)
+        if _unknown:
+            raise ValueError(
+                f"query() 收到未知查询参数 {_unknown}；允许的参数为 "
+                f"{sorted(_allowed_query_keys)}")
+
+        # BUG-366: 原实现**先 select 再 where** —— 过滤列不在选取列中时（SQL 里
+        # 完全合法：SELECT name FROM t WHERE id > 1），where 找不到列 -> 逐行
+        # 返回 False -> 静默得到空表。按 SQL 语义重排：
+        #   WHERE -> ORDER BY -> LIMIT/OFFSET -> SELECT（列投影最后做）。
         result = self
-        if 'select' in kwargs:
-            cols = kwargs['select']
-            if isinstance(cols, str):
-                cols = [c.strip() for c in cols.split(',')]
-            result = result.select(*cols)
         if 'where' in kwargs:
             result = result.where(kwargs['where'])
         if 'order_by' in kwargs:
@@ -1669,6 +1678,11 @@ class Table(Seq):
                                  offset=kwargs['offset'])
         elif 'limit' in kwargs:
             result = result.limit(kwargs['limit'])
+        if 'select' in kwargs:
+            cols = kwargs['select']
+            if isinstance(cols, str):
+                cols = [c.strip() for c in cols.split(',')]
+            result = result.select(*cols)
         return result
 
     # ==================== 聚合操作 ====================
@@ -2298,6 +2312,19 @@ class Table(Seq):
         return '\n'.join(lines)
 
     # ==================== Excel IO ====================
+
+    @classmethod
+    def range(cls, start, stop=None, step=1):
+        """Table 不支持整数 range（表格按行组织）。
+
+        `Seq.range` 是继承来的类方法，`Table.range(3)` 会把整数当作"行"传入
+        构造器，触发 `TypeError: object of type 'int' has no len()`（BUG-365）。
+        这里给出可执行的替代写法。
+        """
+        raise TypeError(
+            "Table.range 不适用：表格按行组织，整数序列无法构成行。"
+            "请改用 Table([[v] for v in range(...)], columns=['value']) "
+            "或 Table.of([...])。")
 
     @classmethod
     def read_excel(cls, filename: str, sheet_index: int = 0,
