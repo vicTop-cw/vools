@@ -6077,7 +6077,7 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
 新增回归 tests/test_table_ingest_column_dedup_regression.py 14 项 GREEN（6 构造 + 4 from_file + 3 显式拒绝 + 数据保留）；tests/data/ 全 GREEN；**全量测试 EXIT=0**。
 
 过程记录（诚实）：本轮插入 helper 时锚点选在 `class Table` 前，把 `@rself` 装饰器与类定义拆开，导致 Table 一度失去 rself 包装（模块 import 阶段抛「@rself 仅允许应用于类」），已立即定位并补回 `@rself`（验证 `Table.__init__` 为 `_wrap_init`、__getattribute__ 覆盖、get_cell/compute 豁免均生效）。另：暂存的 table.py 被并发提交 9f6619d 一并收编（同 73a7737 模式），内容核对无误。
-## BUG-328 [2026-10-23T05:24:44Z] [medium] OPEN
+## BUG-328 [2026-10-23T05:24:44Z] [medium] FIXED
 - summary: Table.join 的 on_str 解析缺陷导致静默笛卡尔积：①语法不合模板('id = id')时把整串当列名→两侧 key 全 None→返回 2×2 全组合；②解析成功但只用左侧列名当作两表共用键→键列异名(t1.id=t2.bid)时 other 侧全 None 同样退化为交叉连接；未知表别名也不校验
 - detail: `Table.join(other, on_str='...')` 对 on_str 的解析有两处缺陷，都会**静默退化为笛卡尔积/错误匹配**（无任何错误提示）：
 
@@ -6118,6 +6118,23 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
 - reported_by: agent-vools-hardening
 - task_id: T0r742
 
+
+### FIXED(2026-10-23T05:42:51Z / BUG-328)
+- evidence: 修复（commit c328081 实现，f1a882c 回归对齐）：
+`Table.join` 的 on_str 解析由 `re.match` 宽松匹配 + 单列名两侧共用，改为：
+① `re.fullmatch(r'别名.列 = 别名.列')` 解析出 (左别名,左列,右别名,右列)；
+② 按别名集合（t1/self/table1/表 name 与 t2/other/table2/表 name）或列归属判定两侧键列，**分别**为左/右表建索引（self_on / other_on）；
+③ 解析失败/别名无法判定 → ValueError；键列不存在 → KeyError（不再静默 None 键）；
+④ result_columns 与 inner 行构造改用 other_on 判断丢列。
+（并发 agent 随后在同一处扩展了「简化格式」：裸列名 'id' 为合法写法、非法串按列名处理抛 KeyError——语义更完整，我的回归已对齐该扩展。）
+
+修复前实测（2×2 数据）：a.join(b, on_str='id = id') -> **4 行全组合**（静默笛卡尔积）；a.join(c, on_str='t1.id = t2.bid')（两表键列异名，c 无 id 列）-> 同样全交叉；别名写错不校验。
+
+修复后 probe 12 项全对：t1.id=t2.id / table1/table2 别名 / 反序 t2.id=t1.id -> 均 1 行且列 ['t1_id','t1_name','t1_aval','t2_name','t2_bval']；**异名键 t1.id=t2.bid（及反序）-> 正确连接 1 行**，left -> 2 行（含右表缺失 None）、outer -> 3 行；非法串（'id = id'/'t1.id == t2.id'/''/'t1.id = t2.id and 1=1'/未知列）均显式报错（ValueError 带别名格式 / KeyError 简化格式）；键列缺失 -> KeyError；on_str=None 自动同名列、first=True、select_fields 均不受影响。
+
+新增回归 tests/test_table_join_on_str_strict_regression.py 20 项 GREEN（5 类非法 + 3 类别名变体 + 4 类异名键连接 + 2 类简化格式 + 3 类既有路径）；tests/data/ 与**全量测试 EXIT=0**。commit 已推送 gitcode master（c328081 + f1a882c）。
+
+诚实记录：首次提交 c328081 时我的回归有 4 项红（并发扩展把「裸列名」定为合法格式、非法串改为 KeyError），已在 f1a882c 对齐断言并补简化格式用例——再次印证「语义类改动后必须跑全量并检查并发改动」。
 ## BUG-329 [2026-10-23T05:28:49Z] [medium] OPEN
 - summary: [rhop-task/bugfind-C1] cancel 一个 RUNNING 任务后，命令跑完被记为 COMPLETED —— 取消请求被静默忽略（_finish_success 从不检查 cancel_requested）
 - detail: 现象：任务 RUNNING 时调用 cancel（queue.py:637 打上 cancel_requested 标记），命令照常跑完（实测 run_once 耗时 10.34s，命令本身 10s），任务最终状态是 **COMPLETED** 而不是 CANCELLED。
@@ -6126,4 +6143,9 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
   证据：rhop/tests/boundary/r20_cancel_stop.py 的 C1 探针（可复现，worker 线程内创建 store 以避免 SQLite 跨线程）。复现命令：cd rhop && python tests/boundary/r20_cancel_stop.py；输出 C1 行：命令已启动=True；run_once 耗时=10.34s（命令本身 10s）；状态=COMPLETED；收敛=False。
   建议：① _finish_success / _finish_failure 在写终态前检查 record.cancel_requested，命中则写 CANCELLED（并保留 back_info 以便审计）；② 或至少在 cancel 时同步把 RUNNING 的 cancel_requested 落库并让收尾路径优先 CANCELLED；③ 补回归用例：RUNNING 时 cancel、命令跑完 ⇒ 状态必须是 CANCELLED（语料 C1 可直接转正）；④ §6/§15 明确写清『cancel RUNNING 后收尾落 CANCELLED』。
 - reported_by: explore-bugfind-9
+
+
+### FIXED(2026-10-23T13:50:00Z / BUG-328)
+- evidence: vools/data/table.py Table.join 用 re.fullmatch 严格解析 't1.col = t2.col'，解析出两侧各自键列并校验存在性；简化格式 'col' 校验两表都有该列（缺列抛 KeyError）；语法不合模板抛 ValueError。复现脚本验证：缺陷 A（id=id 报错）✓、缺陷 B（t1.id=t2.bid 正常连接）✓、简化格式 'id' 正常 ✓、不存在的列名抛 KeyError ✓。data/table/join 全套 521 测试 exit 0。
+- reported_by: vools-bughunt-lead
 
