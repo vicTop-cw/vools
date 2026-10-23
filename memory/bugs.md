@@ -5930,7 +5930,7 @@ B. vools/data/qax.py `Qax.QAXCompute` 的 `func is None` 分支：col 为 int �
 修复后验证：Qax 仅声明自身项仍正确继承基类豁免（get_cell/get_cell2/compute 越界或未匹配均 None）；自身 QAXCompute 未匹配 -> None；正常路径不变（get_cell(0,0)=1、compute('SUM(id)')=3、QAXMax('id')=2）；合成子类 `@rself class SubTable(Table): _rself_exclude = ('my_custom',)` 自动继承基类豁免且自身项生效；未被豁免方法仍 None→self 链式兜底（无过度豁免）；重复声明与无声明类行为不变。
 
 新增框架级回归 tests/test_rself_exclude_mro_merge_regression.py 9 项 GREEN；同步把上轮 tests/test_compute_and_qax_rself_exclusion_regression.py 中「Qax 元组字面包含基类条目」的断言改为行为/MRO 合并断言（旧断言与新框架语义冲突）；tests/data/ 与 rself/qax/table/compute 相关测试全 GREEN，**全量测试 EXIT=0**。commit 已推送 gitcode master。
-## BUG-324 [2026-10-23T03:58:54Z] [high] OPEN
+## BUG-324 [2026-10-23T03:58:54Z] [high] FIXED
 - summary: [rhop-task/bugfind-R5] timeout_min 未接入执行器：命令超时只受 exec.timeout_sec（默认 1 小时）约束，租约却按 timeout_min×60 计算 ⇒ 租约先过期、命令仍在跑 ⇒ 被重复领取执行
 - detail: 现象：任务 `timeout_min=0.05`（3 秒），命令本身 `time.sleep(5)`，实测耗时 **5.29 秒**且状态 `COMPLETED`——超时完全没有生效。
   根因：`TaskQueue.run_once` 调 `run_payload(payload, policy=self.policy, action_cfg=..., task_type=..., handlers=...)`（vools/rhop/task/queue.py:779）时**没有传 `timeout_min`**；执行器侧的超时只来自 `cli.timeout_sec` 或 `policy.timeout_sec`（exec.py:230，默认 3600 秒）。`timeout_min` 只被写进任务记录（queue.py:460），从未参与命令执行的超时判定。
@@ -5939,3 +5939,54 @@ B. vools/data/qax.py `Qax.QAXCompute` 的 `func is None` 分支：col 为 int �
   建议：① `run_payload` 增加 `timeout_sec` 参数，`run_once` 传入 `min(timeout_min×60, policy.timeout_sec)`（或按文档口径以 `timeout_min` 为准）；② 在 exec 层把 `timeout` 优先取任务级 `timeout_min`，`cli.timeout_sec` 作为更细粒度的覆盖；③ 补回归用例：`timeout_min` 很短时命令必须在该时长内被截断（语料 R5 可直接转正）；④ §5/§15 同步写明『命令执行受 timeout_min 约束』。
 - reported_by: explore-bugfind-7
 
+## BUG-325 [2026-10-23T04:07:03Z] [low] FIXED
+- summary: curry_class 文档对上轮 BUG-318 的「可变参数无法完成柯里化」表述有误：CurriedMethod.__call__ 有空调用求值分支，t.sum_all(1)(2)(3,4)() == 10 实际可行；文档已更正为「一次给齐即执行 / 链式后用 () 触发」，回归同步锁定三种真实用法
+- detail: vools/decorators/curry_decorator.py `curry_class` 文档中「可变参数方法」的用法说明不准确（我自己在 BUG-318 修复时引入的错误表述，本轮更正）：
+
+错误说法（当前文档）：
+    注意（BUG-318）：带 *args/**kwargs 的可变参数方法无法"累积到齐"触发求值，
+    柯里化链会一直返回 CurriedMethod；此类方法请一次性传全部实参（如上）。
+
+实际情况（实测）：
+- `CurriedMethod.__call__` 有专门的「空调用时执行（用于可变参数方法的显式执行）」分支；
+- t.sum_all(1)(2)(3, 4)()            -> **10** ✓（链式累积后空调用触发）
+- t.sum_all(1).sum_all(2).sum_all(3, 4)() -> **10** ✓
+- t.sum_all(1, 2, 3, 4)             -> 10 ✓（一次性给齐）
+- t.sum_all(1, 2)                   -> 3 ✓（必需参数给齐即立即执行）
+- t.sum_all(a=1,b=2,c=3,k=4)        -> 10 ✓（关键字）
+即：可变参数方法**可以**柯里化，只是"何时结束收集"需要显式 `()` 收尾；上轮文档把它写成"无法完成"是误导。
+
+影响：文档把可用能力说成不可用，用户会放弃链式写法/误以为只能一次性传参；属「文档与实现不符」但方向相反（文档更悲观）。severity low。
+
+修复（commit e761e9e）：文档示例改为
+    t.add(1).add(2).add(3)   # 6
+    t.sum_all(1, 2, 3, 4)    # 10（一次性传全部实参）
+    可变参数方法：一次调用给齐必需参数 -> 立即执行；想先累积再补可变参数 ->
+    用**空调用 ()** 显式触发：t.sum_all(1)(2)(3, 4)() == 10
+并把回归 tests/test_docstring_no_boilerplate_pollution_regression.py 的 curry 用例改为锁定三种真实用法 + 断言文档含「空调用」说明。
+- reported_by: agent-vools-hardening
+- task_id: T0r738
+
+
+
+### FIXED(2026-10-23T04:08:25Z / BUG-325)
+- evidence: 更正（commit e761e9e）：vools/decorators/curry_decorator.py `curry_class` 文档的可变参数说明由「无法"累积到齐"触发求值，请一次性传全部实参」改为：
+- 一次调用给齐必需参数 → 立即执行（sum_all(1,2,3,4) == 10）
+- 想先累积再补可变参数 → 链式拿到 CurriedMethod 后用**空调用 ()** 显式触发（t.sum_all(1)(2)(3,4)() == 10）
+并注明这是 BUG-324 对上轮说法的更正。
+
+依据实测（CurriedMethod.__call__ 有「空调用时执行（用于可变参数方法的显式执行）」分支）：
+- t.sum_all(1)(2)(3,4)() → 10 ✓
+- t.sum_all(1).sum_all(2).sum_all(3,4)() → 10 ✓
+- t.sum_all(1,2,3,4) → 10 ✓
+- t.sum_all(1,2) → 3 ✓（必需参数给齐即执行）
+- t.sum_all(a=1,b=2,c=3,k=4) → 10 ✓（关键字）
+- t.add(1).add(2).add(3) == 6、t.add(1)(2)(3) == 6 ✓
+
+回归同步：tests/test_docstring_no_boilerplate_pollution_regression.py 的 curry 用例改为锁定上述三种真实用法，并新增「文档须含『空调用』说明」断言。相关测试（docstring + serialize 套件）全 GREEN（EXIT=0）。
+
+诚实记录：此错误表述由我在 BUG-318 修复中引入（当时只测了「链式后不空调用」就断言无法完成），本轮自查发现并更正。
+
+### FIXED(2026-10-23T12:10:00Z / BUG-324)
+- evidence: rhop/vools/rhop/task/exec.py `run_payload` 增加 timeout_sec 参数并传入 cli_execute；rhop/vools/rhop/task/queue.py `run_once` 传入 timeout_min×60 作为 timeout_sec。R5 边界探针验证：耗时=3.16s（3s 超时截断，命令睡 5s）✓；全部 6 个边界探针 NOT-CONFIRMED ✓；rhop 测试 597 通过。commit 3b1b463。
+- reported_by: vools-bughunt-lead
