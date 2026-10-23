@@ -110,6 +110,14 @@ def throttle(interval: float):
     Returns:
         装饰器函数
     """
+    if callable(interval) and not isinstance(interval, (int, float, str)):
+        # BUG-373: 裸用 @throttle 时被装饰函数会落到 interval 参数上，返回的
+        # 装饰器替换掉原函数，直到调用才报 "decorator() missing 1 required
+        # positional argument"。这里在装饰期就给出可执行提示。
+        raise TypeError(
+            f"裸用 @throttle 无效：interval 需要显式传参，请写 @throttle(interval=秒数)"
+            f"（收到 {type(interval).__name__}: {getattr(interval, '__name__', interval)!r}）")
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         last_call_time = {}
         lock = threading.Lock()
@@ -137,6 +145,14 @@ def debounce(wait: float):
     Returns:
         装饰器函数
     """
+    if callable(wait) and not isinstance(wait, (int, float, str)):
+        # BUG-373: 裸用 @debounce 时被装饰函数会落到 wait 参数上，返回的
+        # 装饰器替换掉原函数，直到调用才报 "decorator() missing 1 required
+        # positional argument"。这里在装饰期就给出可执行提示。
+        raise TypeError(
+            f"裸用 @debounce 无效：wait 需要显式传参，请写 @debounce(wait=秒数)"
+            f"（收到 {type(wait).__name__}: {getattr(wait, '__name__', wait)!r}）")
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         timer = {}
         lock = threading.Lock()
@@ -194,6 +210,14 @@ def deprecated(reason: str = None):
     Returns:
         装饰器函数
     """
+    if callable(reason) and not isinstance(reason, (int, float, str)):
+        # BUG-373: 裸用 @deprecated 时被装饰函数会落到 reason 参数上，返回的
+        # 装饰器替换掉原函数，直到调用才报 "decorator() missing 1 required
+        # positional argument"。这里在装饰期就给出可执行提示。
+        raise TypeError(
+            f"裸用 @deprecated 无效：reason 需要显式传参，请写 @deprecated() 或 @deprecated(reason=...)"
+            f"（收到 {type(reason).__name__}: {getattr(reason, '__name__', reason)!r}）")
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> T:
@@ -256,6 +280,14 @@ def with_timeout(timeout: float):
     Returns:
         装饰器函数
     """
+    if callable(timeout) and not isinstance(timeout, (int, float, str)):
+        # BUG-373: 裸用 @with_timeout 时被装饰函数会落到 timeout 参数上，返回的
+        # 装饰器替换掉原函数，直到调用才报 "decorator() missing 1 required
+        # positional argument"。这里在装饰期就给出可执行提示。
+        raise TypeError(
+            f"裸用 @with_timeout 无效：timeout 需要显式传参，请写 @with_timeout(timeout=秒数)"
+            f"（收到 {type(timeout).__name__}: {getattr(timeout, '__name__', timeout)!r}）")
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> T:
@@ -372,6 +404,14 @@ def cache_with_ttl(ttl: float):
     Returns:
         装饰器函数
     """
+    if callable(ttl) and not isinstance(ttl, (int, float, str)):
+        # BUG-373: 裸用 @cache_with_ttl 时被装饰函数会落到 ttl 参数上，返回的
+        # 装饰器替换掉原函数，直到调用才报 "decorator() missing 1 required
+        # positional argument"。这里在装饰期就给出可执行提示。
+        raise TypeError(
+            f"裸用 @cache_with_ttl 无效：ttl 需要显式传参，请写 @cache_with_ttl(ttl=秒数)"
+            f"（收到 {type(ttl).__name__}: {getattr(ttl, '__name__', ttl)!r}）")
+
     def decorator(func: Callable[..., R]) -> Callable[..., R]:
         cache = {}
         lock = threading.Lock()
