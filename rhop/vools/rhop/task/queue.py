@@ -776,9 +776,16 @@ class TaskQueue(object):
         # 的长任务不会被 clean_stale_locks 判死回收、再被别的 worker 重复执行。
         renewal = self._start_renewal(record, wid)
         try:
+            # BUG-324: timeout_min 必须接入执行器——原实现只写进任务记录、
+            # 从未传给 run_payload，命令超时只受 exec.timeout_sec（默认 1 小时）
+            # 约束。租约却按 max(lock_ttl, timeout_min×60) 计算 ⇒ 租约先过期、
+            # 命令仍在跑 ⇒ 被 clean_stale_locks 回收、重复领取执行。
+            # 现在把 timeout_min×60 作为 timeout_sec 传给 run_payload。
+            _task_timeout_sec = float(record.timeout_min or 60) * 60.0
             outcome = run_payload(payload, policy=self.policy,
                                   action_cfg=self.config.rhop.action_cfg(),
-                                  task_type=record.task_type, handlers=self.handlers)
+                                  task_type=record.task_type, handlers=self.handlers,
+                                  timeout_sec=_task_timeout_sec)
         except ExecDenied as exc:
             result = self._finish_failure(record, str(exc), wid, retryable=False)
             self._sync("push")

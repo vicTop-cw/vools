@@ -398,8 +398,17 @@ def _cmd_name(cmd: Any) -> str:
 
 def run_payload(payload: dict, policy: Optional[ExecPolicy] = None,
                 action_cfg: Optional[dict] = None, task_type: str = "",
-                handlers: Optional[Dict[str, Callable]] = None) -> Dict[str, Any]:
+                handlers: Optional[Dict[str, Callable]] = None,
+                timeout_sec: Optional[float] = None) -> Dict[str, Any]:
     """按指令派发执行，返回统一结果 dict。
+
+    Args:
+        payload:     任务载荷
+        policy:      白名单与默认 workdir/env/timeout
+        action_cfg:  action 通道配置
+        task_type:   任务类型（语言提示）
+        handlers:    处理器映射
+        timeout_sec: 额外超时覆盖（BUG-324：任务级 timeout_min×60 传入此参数）
 
     Returns:
         {
@@ -439,7 +448,7 @@ def run_payload(payload: dict, policy: Optional[ExecPolicy] = None,
                 "cli.shell=true 被拒绝：需要 exec.allow 里显式放行 'cli:shell'，"
                 "或设置 exec.allow_any=true。")
         audit_cli_entry(payload, channel, name, policy)
-        result = cli_execute(payload, policy=policy)
+        result = cli_execute(payload, policy=policy, timeout_sec=timeout_sec)
         return {"ok": bool(result.get("ok")), "channel": channel, "name": name,
                 "result": result, "error": result.get("error")}
 
