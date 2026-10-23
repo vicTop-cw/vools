@@ -985,6 +985,10 @@ def check_omega_gate(action: Action) -> List[str]:
     source = _extract_block_source(action, action.meta.get('entry') or '')
     if 'data.status' in source:
         return errors
+    if not action.meta.get('entry'):
+        # 无 entry 的 bundle 只是成员清单（计划 §3.3：无源码；列出成员动作 id），
+        # 它自身不做跨动作执行 ⇒ Ω-gate 解包要求不适用，豁免即可。
+        return errors
     errors.append(
         'omega-gate: kind=bundle 编排动作未声明 Ω-gate 契约'
         '（meta.contract="omega-gate" 或 entry 内使用 data.status 解包，'

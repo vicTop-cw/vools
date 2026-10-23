@@ -3,7 +3,13 @@
   "title": "Actus Action",
   "description": "Actus 动作契约 — 校验 .actus.md / .actus.schema.md 的元数据（docs/03 §6 + 分类体系 v2.0 docs/03 §2）",
   "type": "object",
-  "required": ["id", "name", "version", "trust", "entry"],
+  "required": ["id", "name", "version", "trust"],
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "exec"}}, "required": ["kind"]},
+      "then": {"required": ["entry"]}
+    }
+  ],
   "additionalProperties": true,
   "properties": {
     "id": {

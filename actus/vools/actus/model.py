@@ -11,7 +11,7 @@ from .errors import ActionError
 from .dependency import get_resolver
 from .frontmatter import strip_frontmatter, parse_action_metadata
 
-_REQUIRED = ('id', 'name', 'version', 'trust', 'entry')
+_REQUIRED = ('id', 'name', 'version', 'trust')
 
 
 @dataclass
@@ -377,8 +377,17 @@ def parse_action_from_schema_md(raw: str, path: str = '') -> Action:
 
 
 def _validate_meta_required(meta: dict) -> None:
-    """校验必填字段。"""
+    """校验必填字段。
+
+    **entry 仅对 kind=exec 必填**（ACTUS_REFACTOR_PLAN 阶段3.6）：
+    无源码动作族 link/alias/bundle/doc/demo/template 没有入口块，
+    若仍硬要求 entry，它们连解析都过不去、更进不了索引。
+    """
     for key in _REQUIRED:
         if key not in meta:
             raise ActionError('action_invalid', f'缺少必填字段: {key}',
                               {'hint': '见 ACTUS_SCHEMA_SPEC.md 区域 1'})
+    if str(meta.get('kind') or 'exec').strip().lower() == 'exec' and 'entry' not in meta:
+        raise ActionError(
+            'action_invalid', '缺少必填字段: entry（仅 kind=exec 要求入口块）',
+            {'hint': '无源码动作族请把 kind 设为 link/alias/bundle/doc/demo/template'})
