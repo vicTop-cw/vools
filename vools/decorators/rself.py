@@ -175,7 +175,15 @@ def rself(cls: Type) -> Type:
         # 排除集合：类可声明 _rself_exclude 以跳过返回值包装（例如 VDate.date()
         # 应返回原生 datetime.date，包装成 VDate 会触发 TypeError 崩溃）。
         # 缺省为空集，不影响既有 @rself 类的行为（BUG-200）。
-        _exclude = getattr(type(self), '_rself_exclude', ())
+        #
+        # BUG-322 根治：原实现只取最派生类的 `_rself_exclude`（getattr 不做
+        # MRO 合并），子类一旦声明自己的豁免元组就会**整体覆盖**基类的条目——
+        # 实测 Qax 因此丢掉了 Table 的 get_cell/get_cell2/compute 豁免，使
+        # BUG-313/314 的修复在子类上静默失效。改为沿 MRO 合并（基类在前、
+        # 子类可追加），子类只需声明新增项，不会再无声丢失基类语义。
+        _exclude = set()
+        for _k in type(self).__mro__:
+            _exclude.update(getattr(_k, '_rself_exclude', ()) or ())
         if name in _exclude:
             return attr
 

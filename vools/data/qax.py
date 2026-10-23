@@ -29,17 +29,10 @@ class Qax(Table):
     # BUG-252: QAXMax/QAXMin 在无匹配数据时应返回 None，与 Table.max/min 一致。
     # 继承自 Table 的 _rself_exclude=('max','min') 只覆盖底层方法名；
     # Qax 子类需显式列出 PascalCase 包装名。
-    # BUG-322: @rself 取 `getattr(type(self), '_rself_exclude', ())`——**不做 MRO
-    # 合并**，子类声明会整体覆盖基类的豁免。故这里必须把 Table 的豁免
-    # （max/min/get_cell/get_cell2/compute，见 BUG-252/313/314）一并列出，
-    # 否则越界取值与未匹配聚合会在 Qax 上再次被兜底成 self（返回整表）。
-    # BUG-321: QAXCompute 未匹配聚合时应返回 None 而非整表。
-    _rself_exclude = (
-        # —— 继承自 Table 的豁免（勿删，见 BUG-322）——
-        'max', 'min', 'get_cell', 'get_cell2', 'compute',
-        # —— Qax 自身新增 ——
-        'QAXMax', 'QAXMin', 'QAXCompute',
-    )
+    # BUG-322: rself 的豁免查找已改为沿 MRO 合并（见 vools/decorators/rself.py），
+    # 子类只需声明**自身新增**的豁免项，Table 的 max/min/get_cell/get_cell2/
+    # compute 会自动继承——不再需要重复基类条目（原写法易静默丢失基类语义）。
+    _rself_exclude = ('QAXMax', 'QAXMin', 'QAXCompute')
 
     """SqlCel QAX 风格的表格数据结构
 
