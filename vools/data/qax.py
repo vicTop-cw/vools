@@ -466,8 +466,12 @@ class Qax(Table):
 
         Raises:
             IndexError: 插入位置超出 1..列数+1（BUG-246）
+            ValueError: 列名已存在（BUG-326）
         """
         col = self._check_1based(col, len(self._columns) + 1, '列')
+        # BUG-326: 与 add_col 一致，拒绝重复列名（列名是按名操作的主键）。
+        if colName in self._columns:
+            raise ValueError(f"列名已存在: {colName!r}")
         col_idx = col - 1
         self._columns.insert(col_idx, colName)
         for row in self._data:

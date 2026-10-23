@@ -857,10 +857,19 @@ class Table(Seq):
         
         Returns:
             self (支持链式)
+        
+        Raises:
+            ValueError: 列名已存在（BUG-326，列名必须唯一）
         """
+        # BUG-326: 列名是表格按名操作的主键（GetCol/DelCol/SetColName/
+        # QAXColTo* 等），重名列会让这些 API 静默命中其中一列（实测
+        # GetCol('id') 返回插入的第 2 列而非第一列）。入口拒绝重名。
+        if col_name in self._columns:
+            raise ValueError(f"列名已存在: {col_name!r}")
         self._columns.append(col_name)
         for row in self._data:
             row.append(default_value)
+        self._row_index.clear()
         return self
     
     def set_col_name(self, col_num: int, new_col_name: str) -> 'Table':
@@ -883,6 +892,10 @@ class Table(Seq):
             raise IndexError(
                 f"列索引必须在 0..{len(self._columns) - 1} 范围内（从0开始），收到 {col_num}"
             )
+        # BUG-326: 改名为**另一已存在列名**同样会制造重名歧义（按名操作命中
+        # 哪一列取决于实现），与 add_col 一致地拒绝；改成自身原名允许（幂等）。
+        if new_col_name in self._columns and self._columns[col_num] != new_col_name:
+            raise ValueError(f"列名已存在: {new_col_name!r}")
         self._columns[col_num] = new_col_name
         self._row_index.clear()
         return self
