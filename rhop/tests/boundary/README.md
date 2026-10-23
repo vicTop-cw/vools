@@ -206,6 +206,26 @@ realpath，必须落在 `base_dir` 或显式声明的共享根之内，否则抛
 > error（exit 2）。这是一行明显笔误，去掉该装饰器后导入恢复，全量测试回到 599 passed / 1 failed。
 > **已明确告知用户我动了这个不属于 rhop 的文件。**
 
+## 第十轮语料（cancel 对在途命令的停止语义，2026-10-23）
+
+运行：`cd rhop && python tests/boundary/r20_cancel_stop.py`（退出码 = 风险成立条数）
+
+第九轮 P4 只验证了「cancel 对 RUNNING 只打标记」——本轮验证**文档口径下的收敛性**：
+取消检查发生在领取时（`queue.py:750`），执行期间不轮询 ⇒ 在途命令会跑完（「等其收尾」），
+但任务必须收敛到 `CANCELLED`。
+
+| id | 边界类型 | 假设 | 判定 | 证据 / 复现要点 |
+|---|---|---|---|---|
+| **C1** | 取消收敛 | cancel 一个 RUNNING 任务后，命令跑完应落 `CANCELLED` | **成立（中危：取消被静默忽略）** | 命令已启动；`run_once` 耗时 10.34s（命令本身 10s，符合「等其收尾」）；**状态=`COMPLETED`**。根因：`_finish_success`（`queue.py:832`）无条件写 COMPLETED，从不检查 `record.cancel_requested` |
+| C2 | 取消后不执行 | 已取消的任务不会被领取执行 | **未成立** | `run_once` action=`idle`、状态=`CANCELLED`、命令标记文件未出现 |
+| C3 | 取消 PENDING | 取消未领取任务直接终态且不再执行 | **未成立** | `cancel` 返回 `pending=False`、状态=`CANCELLED`、再跑一轮后仍 `CANCELLED` |
+
+> 本轮探针自身错误 4 处：① 第一版 C1 用线程跑 `run_once` 但 store 在主线程创建 ⇒ SQLite 跨线程报错
+> （`SQLite objects created in a thread can only be used in that same thread`），改为 **store 在 worker
+> 线程内创建**；② 第二版改用子进程 runner，生成的脚本有语法错误（`runner.py line 7`）；③ C2 的预期
+> 写错——任务在领取前就已取消，`claim_next` 根本不会返回它，`action=idle` 属正确（`cancelled` 只用于
+> 「领取后才发现被取消」的竞态分支）；④ `_queue` 里对同一键 `pop` 两次（第二次无默认值）导致 KeyError。
+
 ## 已知不报为 bug 的项
 
 - P1 / P7：都是**期望行为成立**的证明（并发安全），不是缺陷；按 bugfind「宁缺毋滥」的红线只留作安全证据。
