@@ -548,7 +548,17 @@ def _curry(func: Optional[Callable[..., Any]] = None, *, is_strict: bool = False
     """
     if func is None:
         return lambda f: curry(f, is_strict=is_strict, delaied=delaied)
-    if isfunction(func) and '.' in func.__qualname__ and not isinstance(func, (classmethod, staticmethod)):
+    # BUG-340: 用 `'.' in __qualname__` 判定"方法"会误判**嵌套/局部函数**
+    # （qualname 形如 'outer.<locals>.f'），使其被包成 CurryDescriptor ——
+    # 该对象没有 bound_args，`stuff(...)()` 直接抛
+    # "'CurryDescriptor' object has no attribute 'bound_args'"。
+    # 精确判定：只有当**倒数第二段**不是 '<locals>' 时才是方法
+    # （嵌套类的方法 qualname 为 'outer.<locals>.C.m'，仍应走描述符）。
+    _qualname = getattr(func, '__qualname__', '') or ''
+    _parts = _qualname.split('.')
+    _is_nested_func = len(_parts) >= 2 and _parts[-2] == '<locals>'
+    if (isfunction(func) and len(_parts) > 1 and not _is_nested_func
+            and not isinstance(func, (classmethod, staticmethod))):
         return CurryDescriptor(func, is_strict, delaied)
     return Curried(func, is_strict=is_strict, delaied=delaied)
 
