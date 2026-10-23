@@ -23,6 +23,17 @@ from .frontmatter import strip_frontmatter
 from .model import Action, parse_cfg, parse_cfg_from_file
 from .dependency import Dependency, DependencyResolver, get_resolver
 
+# 运行时版本：优先读已安装分发的元数据（pyproject 的 version = "0.8.0"），
+# 源码方式运行时回退到同一静态值。此前包里**没有 __version__**——
+# pyproject 注释里就写着「dynamic = [version] 但包里没有 __version__，
+# setuptools 直接忽略 dynamic 段」，后果是 CLI 无法提供 --version、
+# 运行期也无法自报版本（排障与缺陷上报的刚需信息）。
+try:  # pragma: no cover - 依赖安装状态
+    from importlib.metadata import version as _dist_version
+    __version__ = _dist_version('vools-actus')
+except Exception:  # pragma: no cover
+    __version__ = '0.8.0'
+
 # 惰性符号表：{导出名: 子模块名}，首次访问时才 import 对应子模块并取属性
 _LAZY = {
     # executor
@@ -136,6 +147,8 @@ _LAZY = {
 
 def __getattr__(name):
     """延迟加载子模块属性（PEP 562）；`sigma` 与 `_LAZY` 表中未加载的模块按需 import。"""
+    if name == '__version__':
+        return __version__
     # sigma：docs/41 主题 A，sigma-Law 规范引擎以子包形式导出（vools.actus.sigma）
     if name == 'sigma':
         return _importlib.import_module('.sigma', __name__)

@@ -44,6 +44,13 @@ def main(argv=None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    # 无子命令时打印帮助并返回 2（argparse 惯例）。
+    # 此前后续所有 `if args.command == ...` 全不命中，最终静默 return ——
+    # 用户敲一个 `actus` 什么都看不到，连「该怎么用」都没有。
+    if not getattr(args, 'command', None):
+        parser.print_help()
+        return 2
+
     if args.command == 'mcp':
         if args.transport == 'sse':
             from .mcp_sse import serve_sse
@@ -65,6 +72,10 @@ def _build_parser():
     """构建 argparse 解析器（供测试和 main() 使用）。"""
     import argparse
     parser = argparse.ArgumentParser(prog='actus', description='Actus — AI 动作执行平台 CLI')
+    from . import __version__ as _actus_version
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s ' + _actus_version,
+                        help='显示版本号并退出')
     sub = parser.add_subparsers(dest='command')
 
     sub.add_parser('scan', help='扫描 actions/ 并重建 _meta/actions.index.json')
