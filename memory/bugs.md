@@ -5990,3 +5990,66 @@ B. vools/data/qax.py `Qax.QAXCompute` 的 `func is None` 分支：col 为 int �
 ### FIXED(2026-10-23T12:10:00Z / BUG-324)
 - evidence: rhop/vools/rhop/task/exec.py `run_payload` 增加 timeout_sec 参数并传入 cli_execute；rhop/vools/rhop/task/queue.py `run_once` 传入 timeout_min×60 作为 timeout_sec。R5 边界探针验证：耗时=3.16s（3s 超时截断，命令睡 5s）✓；全部 6 个边界探针 NOT-CONFIRMED ✓；rhop 测试 597 通过。commit 3b1b463。
 - reported_by: vools-bughunt-lead
+## BUG-326 [2026-10-23T04:27:10Z] [medium] FIXED
+- summary: Table.add_col 与 Qax.AddCol/Qax.InsertCol 允许重复列名，重名后按名 API 静默命中其中一列：q.InsertCol(2,'id',99) 后 GetCol('id') 返回 [99,99] 而非第一列 [1,2]、QAXColIndex('id')→1，后续按名取值/删除/改名都可能作用在错误列且无提示
+- detail: `Table.add_col` / `Qax.AddCol` / `Qax.InsertCol` 允许创建**重复列名**，随后所有按列名的操作会静默命中其中一列（实现相关），造成静默错列/数据污染：
+
+实测（三条路径全部允许重名）：
+- Qax([[1,'a']], columns=['id','name']).AddCol('id', 0)      -> 列 ['id','name','id']
+- Qax(...).InsertCol(1, 'id')                                -> 列 ['id','id','name']
+- Table([[1,'a']], columns=['id','name']).add_col('id', 0)   -> 列 ['id','name','id']
+
+重名后的按名语义（静默歧义）：
+q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
+-> 列 ['id','id','name']，data [[1,99,'a'],[2,99,'b']]
+- q.GetCol('id')      -> **[99, 99]**（命中了插入的第 2 列，而不是第一列 [1,2]）
+- q.QAXColIndex('id') -> **1**（不是 0）
+- q.QAXColToStr('id') -> 把第 2 列（99）转成字符串，而不是第一列
+即：任何后续 `GetCol/DelCol/SetColName/QAXColToNum/...` 按名操作都可能作用在"另一列"上，且完全无提示——列名不再是唯一键。
+
+现有测试均只用新列名新增（test_qax.py:151/173、test_table_qax.py:104、test_qax_index_bounds_regression.py），未覆盖重名场景，故该行为未被锁定/察觉。
+
+影响：列名本应是表格操作的主键（QAX/Table 大量 API 按名定位），重名会让这批 API 静默作用于非预期列——属「静默错列」类（与 BUG-319/320 同族，但后果更重：不会报错，只是算错列、删错列）。severity medium。
+
+修复方向：新增/插入列入口统一校验列名唯一性（`if name in self._columns: raise ValueError(f"列名已存在: {name!r}")`），覆盖 Table.add_col、Qax.AddCol、Qax.InsertCol；顺带检查 `set_col_name`（Table）/`SetColName`（Qax）把列改名为**另一已存在列名**时是否应同样拒绝。
+- reported_by: agent-vools-hardening
+- task_id: T0r739
+
+
+
+### FIXED(2026-10-23T04:42:27Z / BUG-326)
+- evidence: 修复（commit ca5a0d1）：
+① vools/data/table.py `add_col`：append 前 `if col_name in self._columns: raise ValueError(f"列名已存在: {col_name!r}")`（Qax.AddCol 委托此方法，一处生效两处）+ 清 `_row_index` 缓存 + docstring 补 Raises；
+② vools/data/qax.py `Qax.InsertCol`：`_check_1based` 之后同样拒绝重名 + docstring 补 Raises；
+③ `Table.set_col_name`（Qax.SetColName 委托）：改名为**另一已存在列名**时同样 ValueError（改成自身原名保持幂等）。
+
+修复前实测：Qax(...).AddCol('id',0)/InsertCol(1,'id')、Table(...).add_col('id',0) 均允许 → 列变 ['id','name','id'] / ['id','id','name']；重名后 q.GetCol('id') 返回 [99,99]（命中插入的第 2 列而非第一列 [1,2]）、QAXColIndex('id')→1、QAXColToStr('id') 作用在错误列——按名 API 静默错列。
+
+修复后 probe 全对：三条路径 + set_col_name 改名到已存在名均抛 ValueError；合法路径不变（AddCol/InsertCol/add_col 新名、set_col_name 新名、改成自身原名幂等、InsertCol(1) 前插）；失败操作不改动列名；未发生重名时 GetCol('id') == [1]、QAXColIndex('id') == 1（唯一命中）。
+
+新增回归 tests/test_table_duplicate_column_name_regression.py 16 项 GREEN（5 类拒绝 + 6 类合法路径 + 3 类「失败后列名不变」+ 唯一命中）；tests/data/ 全 GREEN；**全量测试 EXIT=0**。commit 已推送 gitcode master。
+## BUG-327 [2026-10-23T04:51:28Z] [medium] OPEN
+- summary: BUG-326 入口残留：Table/Qax 构造函数与 Table.from_file 仍接受重复列名（CSV 重复表头 'id,id,name' 直接读入成 ['id','id','name']），随后 column('id') 静默返回第二列、to_num('id') 只转第二列——按名 API 静默错列，且用户通常不知道源文件表头重复
+- detail: BUG-326 只堵了「新增/插入/改名」三条路径，**构造入口与文件读取入口仍可产生重复列名**，重名后按名 API 静默错列（与 BUG-326 同一危害，但入口更常见）：
+
+【1】构造函数不校验
+- Table([[1,2]], columns=['id','id']) -> 列 ['id','id'] 被接受
+- Qax([[1,2]], columns=['id','id'])   -> 同样
+
+【2】from_file 读重复表头（真实 CSV 常见：导出工具产生同名列）
+- 文件 'id,id,name\n1,2,a\n3,4,b\n' -> Table.from_file(p) -> 列 ['id','id','name']
+- 随后按名操作静默命中**第二列**：
+  - t.column('id')  -> ['2','4']（而不是第一列 ['1','3']）
+  - t.to_num('id')  -> 把第二列转数字，第一列仍是字符串（数据被"半个转换"）
+- 注意 from_file 对空表头已做规范化（补 'col_j' 兜底名），说明该路径本身倾向**规范化**而非拒绝，重复表头却未处理。
+
+【3】select('id','id') 也能造出重复列（列 ['id','id']）
+
+影响：外部 CSV/Excel 只要表头重复，读入后整表就进入"列名不唯一"状态，后续所有按名操作（GetCol/DelCol/SetColName/QAXColTo*/to_num/get_cell2/group_by/agg...）都可能静默作用在非预期列。比 BUG-326 的"用户手动重复添加"更隐蔽——用户往往不知道源文件表头重复。
+
+修复方向（分层，与 BUG-326 保持一致语义）：
+- **摄入入口规范化**（构造函数 + from_file）：重复列名自动去重为 `id`、`id_2`、`id_3`…（与已有 'col_j' 空名兜底同风格），保证数据不丢、列名唯一；
+- **显式操作**（add_col/InsertCol/set_col_name）保持 BUG-326 的 ValueError 拒绝（用户意图明确，静默改名更糟）。
+- reported_by: agent-vools-hardening
+- task_id: T0r740
+
