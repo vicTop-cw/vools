@@ -126,30 +126,42 @@ def _lookup_by_name(name: str, index: dict) -> List[str]:
     return hits
 
 
+def _assert_host_allowed(url: str, allow_hosts: List[str] = None) -> None:
+    """远程下载的主机白名单门禁——**默认拒绝所有远程**。
+
+    此前两处下载函数都写成 `if allow_hosts:`，把「空列表 / None」当成
+    「不校验」⇒ 任何 URL 都能下载，与文档『空列表表示禁止所有远程』相反
+    （SSRF 风险）。现在空白名单即拒，要放行必须显式给 --allow-host。
+    """
+    host = (urlparse(url).hostname or '').lower()
+    allowed = [str(h).strip().lower() for h in (allow_hosts or []) if str(h).strip()]
+    if not allowed:
+        raise ActionError(
+            'remote_host_denied',
+            f'未配置 --allow-host，默认禁止下载远程资源（目标主机 {host!r}）',
+            {'url': url, 'host': host, 'allow_hosts': []})
+    if host not in allowed:
+        raise ActionError(
+            'remote_host_denied',
+            f'远程主机 "{host}" 不在 --allow-host 白名单内（白名单：{allowed}）',
+            {'url': url, 'host': host, 'allow_hosts': allowed})
+
+
 def _download_url(url: str, allow_hosts: List[str] = None) -> str:
     """下载 URL 动作源到临时目录，返回本地路径。
 
     安全约束：
-    - allow_hosts 白名单不为空时，URL 主机必须在白名单内
+    - **默认禁止所有远程**：allow_hosts 为空即拒（要放行须显式给 --allow-host）
+    - SSL 证书校验保持开启（防中间人替换动作源）
     - 文件大小上限 10 MiB
     - 超时 30 秒
     """
     parsed = urlparse(url)
-    if allow_hosts:
-        host = parsed.hostname or ''
-        if host not in allow_hosts:
-            raise ActionError(
-                'remote_host_denied',
-                f'远程主机 "{host}" 不在 --allow-host 白名单内（白列表：{allow_hosts}）',
-                {'url': url, 'host': host, 'allow_hosts': allow_hosts},
-            )
+    _assert_host_allowed(url, allow_hosts)
     try:
         import urllib.request
         import ssl
-        # 跳过 SSL 证书验证（仅用于开发环境）
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
         req = urllib.request.Request(url, headers={'User-Agent': 'Actus-Resolver/1.0'})
         with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
             data = resp.read()
@@ -366,22 +378,16 @@ def resolve_params_extended(params_str: str, allow_hosts: List[str] = None,
 
 
 def _download_json_url(url: str, allow_hosts: List[str] = None) -> dict:
-    """下载 URL 指向的 JSON 文件并解析。"""
+    """下载 URL 指向的 JSON 文件并解析。
+
+    **默认禁止所有远程**（allow_hosts 为空即拒）；SSL 证书校验保持开启。
+    """
     parsed = urlparse(url)
-    if allow_hosts:
-        host = parsed.hostname or ''
-        if host not in allow_hosts:
-            raise ActionError(
-                'remote_host_denied',
-                f'远程主机 "{host}" 不在 --allow-host 白名单内',
-                {'url': url, 'host': host, 'allow_hosts': allow_hosts},
-            )
+    _assert_host_allowed(url, allow_hosts)
     try:
         import urllib.request
         import ssl
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
         req = urllib.request.Request(url, headers={'User-Agent': 'Actus-Resolver/1.0'})
         with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
             data = resp.read()
