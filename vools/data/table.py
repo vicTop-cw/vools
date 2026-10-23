@@ -692,7 +692,14 @@ class Table(Seq):
         data = []
         columns = None
         
-        with open(filepath, 'r', encoding=encoding) as f:
+        # BUG-354: Excel 导出的 CSV 常带 UTF-8 BOM，按 'utf-8' 读会把 BOM 留在
+        # 首列名里（'\ufeffid'）——随后 col('id')/SQL/merge 全部对不上。
+        _encoding = encoding
+        if isinstance(_encoding, str) and _encoding.lower().replace('-', '').replace('_', '') in (
+                'utf8', 'utf8sig'):
+            _encoding = 'utf-8-sig'
+
+        with open(filepath, 'r', encoding=_encoding) as f:
             reader = csv.reader(f, delimiter=delimiter)
             for i, row in enumerate(reader):
                 if rows is not None and i >= rows:
@@ -703,18 +710,35 @@ class Table(Seq):
                     # 表头）→ from_file 往返多出一行「表头数据」，rows() 与
                     # 文件真实数据行数不符。rows 的计数语义保持（仍从表头行
                     # 起算 i，即 rows=N 表示读取文件前 N 行含表头）。
-                    columns = [str(c) if c else f'col_{j}'
+                    columns = [str(c).lstrip('\ufeff') if c else f'col_{j}'
                                for j, c in enumerate(row)]
                     continue
                 if cols is not None:
-                    row = [row[j] if j < len(row) else '' for j in cols]
+                    # BUG-354: 负索引也要有"缺列返回空串"的语义（原来 -1 可取到末列，
+                    # 而 -9 这种越界负索引直接 IndexError，与正索引行为不一致）。
+                    row = [row[j] if -len(row) <= j < len(row) else '' for j in cols]
                 data.append(row)
+
+            # BUG-354: 列数与表头不一致的行会让 row()/to_dict 静默丢列、get_cell
+            # 抛难懂的 TypeError。这里按表头列数对齐：缺列补 ''，多出的列显式报错
+            # （避免数据无声丢失）。
+            _width = (len(cols) if cols is not None
+                      else (len(columns) if columns else 0))
+            if _width:
+                for _ri, _row in enumerate(data):
+                    if len(_row) < _width:
+                        data[_ri] = list(_row) + [''] * (_width - len(_row))
+                    elif len(_row) > _width:
+                        raise ValueError(
+                            f"第 {_ri + 2} 行有 {len(_row)} 个字段，超过表头 {_width} 列"
+                            f"（表头 {columns!r}）：{_row!r}")
         
         # 处理列
         # BUG-268: 原 `if columns and cols:` 是假值陷阱——cols=[] 时表头
         # 不过滤而数据行已取空列，得到 3 列名 + 空数据行的畸形表。
         if columns and cols is not None:
-            columns = [columns[j] if j < len(columns) else f'col_{j}' for j in cols]
+            columns = [columns[j] if -len(columns) <= j < len(columns) else f'col_{j}'
+                       for j in cols]
         
         return cls(data, columns=columns, name=name)
     
