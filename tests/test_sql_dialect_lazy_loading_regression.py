@@ -103,12 +103,22 @@ class TestRegisterValidation:
         register_dialect('valid_bug348', _Valid)
         assert get_dialect('VALID_BUG348') is _Valid
 
-    @pytest.mark.parametrize('bad', [object, 123, 'not-a-class', None])
-    def test_non_dialect_rejected(self, bad):
+    @pytest.mark.parametrize('bad', [123, 'not-a-class', None])
+    def test_non_class_rejected(self, bad):
         from vools.sql.core.dialect import register_dialect
 
         with pytest.raises(TypeError):
             register_dialect('bad_bug348', bad)
+
+    def test_duck_typed_class_allowed(self):
+        # 库内既有用法允许鸭子类型方言（非 Dialect 子类但可实例化）
+        from vools.sql.core.dialect import get_dialect, register_dialect
+
+        class _Duck:
+            name = 'duck'
+
+        register_dialect('duck_bug348', _Duck)
+        assert get_dialect('duck_bug348') is _Duck
 
     @pytest.mark.parametrize('bad_name', ['', '   ', None, 123])
     def test_bad_name_rejected(self, bad_name):
