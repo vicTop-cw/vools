@@ -6135,7 +6135,7 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
 新增回归 tests/test_table_join_on_str_strict_regression.py 20 项 GREEN（5 类非法 + 3 类别名变体 + 4 类异名键连接 + 2 类简化格式 + 3 类既有路径）；tests/data/ 与**全量测试 EXIT=0**。commit 已推送 gitcode master（c328081 + f1a882c）。
 
 诚实记录：首次提交 c328081 时我的回归有 4 项红（并发扩展把「裸列名」定为合法格式、非法串改为 KeyError），已在 f1a882c 对齐断言并补简化格式用例——再次印证「语义类改动后必须跑全量并检查并发改动」。
-## BUG-329 [2026-10-23T05:28:49Z] [medium] OPEN
+## BUG-329 [2026-10-23T05:28:49Z] [medium] FIXED
 - summary: [rhop-task/bugfind-C1] cancel 一个 RUNNING 任务后，命令跑完被记为 COMPLETED —— 取消请求被静默忽略（_finish_success 从不检查 cancel_requested）
 - detail: 现象：任务 RUNNING 时调用 cancel（queue.py:637 打上 cancel_requested 标记），命令照常跑完（实测 run_once 耗时 10.34s，命令本身 10s），任务最终状态是 **COMPLETED** 而不是 CANCELLED。
   根因：_finish_success（vools/rhop/task/queue.py:832）无条件 set_state(COMPLETED)，从不检查 record.cancel_requested；取消标记只在领取期被读一次（queue.py:750，`if record.cancel_requested: return cancelled`），执行期间与收尾时都不再看它。
@@ -6148,4 +6148,49 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
 ### FIXED(2026-10-23T13:50:00Z / BUG-328)
 - evidence: vools/data/table.py Table.join 用 re.fullmatch 严格解析 't1.col = t2.col'，解析出两侧各自键列并校验存在性；简化格式 'col' 校验两表都有该列（缺列抛 KeyError）；语法不合模板抛 ValueError。复现脚本验证：缺陷 A（id=id 报错）✓、缺陷 B（t1.id=t2.bid 正常连接）✓、简化格式 'id' 正常 ✓、不存在的列名抛 KeyError ✓。data/table/join 全套 521 测试 exit 0。
 - reported_by: vools-bughunt-lead
+
+
+### FIXED(2026-10-23T13:50:00Z / BUG-329)
+- evidence: rhop/vools/rhop/task/queue.py _finish_success/_finish_failure 收尾前用 self.store.get_task(record.task_name) 从库重新读取最新 cancel_requested（record 对象在领取时创建，cancel 请求在执行期间落库，record.cancel_requested 可能仍是 False），命中则写 CANCELLED 而非 COMPLETED/RETRY_PENDING/FAILED。C1 边界探针验证：状态=CANCELLED ✓；rhop 测试 599 通过（1 个 clipboard Unicode 编码失败与本修复无关）。commit 即将提交。
+- reported_by: vools-bughunt-lead
+## BUG-330 [2026-10-23T06:02:19Z] [high] OPEN
+- summary: [高危] Table/Qax/Row/Column 的 copy.deepcopy 与 pickle 往返全部损坏：继承自 Seq 的 __getstate__ 只保存 _data，丢失 _columns/_name/_table 等子类状态且行被物化成 dict（deepcopy(Table) 得到无列名畸形表）——影响 serialize 各后端、multiprocessing/task、cache、以及库内任何 deepcopy 表格的路径
+- detail: `Table`/`Qax`/`Row`/`Column` 的 pickling 与 **`copy.deepcopy`** 全部损坏——丢失类自身状态（`_columns`/`_name`/`_table`/索引），且行数据被物化成 **dict**：
+
+实测：
+    t = Table([[1,'a'],[2,'b']], columns=['id','name'], name='T')
+    copy.deepcopy(t) -> Table，**_columns = MISSING**、_name = MISSING、_data = [{'id': 1, 'name': 'a'}, {'id': 2, 'name': 'b'}]
+    pickle.loads(pickle.dumps(t)) -> 同样丢失/变形
+    Qax 同样（_columns MISSING）
+    pickle Row -> _data MISSING；pickle Column -> _data MISSING
+
+根因（vools/data/seq.py）：
+    class Seq:
+        def __getstate__(self):
+            data = list(self._evaluate())
+            return {'_data': data}          # ← 只存序列元素，丢子类状态
+        def __setstate__(self, state):
+            data = state.get('_data', [])
+            self._collection = list(data)   # ← 只恢复 Seq 的迭代状态
+            ...
+`Table/Row/Column/Qax` 都继承 `Seq` 且**未覆盖**这两个方法（grep：Table 无 __setstate__/__getstate__，Row/Column 亦无），于是：
+- 多出来的状态（Table 的 `_columns`/`_name`/`_row_index`，Row 的 `_table`/`_row_index`，Column 的 `_table`/`_col_index`/`_col_name`）**全部丢失**；
+- `_evaluate()` 对 Table 物化出的是 Row/行表示，结果行在序列化后变成 **dict**（而不是 list），表格形状被破坏。
+
+影响面（全都是库自己的路径）：
+1. **`copy.deepcopy(Table)`** —— 最常用的复制语义，直接得到无列名的畸形表（且行变 dict）；
+2. `vools.serialize.dumps(table, backend=...)`（pickle/json 后端经 `__getstate__`）→ 往返损坏；vb_json 则因类型不支持显式报错；
+3. `multiprocessing` / `vools.task` 把 Table 作为参数或返回值时同样损坏；
+4. `vools.cache.persist` / 任何 pickle 缓存 Table 的场景。
+现有测试无一处覆盖 Table/Row/Column 的 pickle/deepcopy（grep 仅见无关的 test_oop_fusion）。
+
+严重度：high（核心数据类型经最常用操作静默损坏，且不会报错）。
+
+修复方向：为这些类补**显式状态协议**（`__getstate__`/`__setstate__`）：
+- Table：`{'_collection': [list(r) for r in self._data], '_columns': [...], '_name': ...}`，恢复时重建 Seq 迭代字段 + `_columns`/`_row_index={}`/`_name`/`_rself_kwargs`（Qax 继承即自动获得）；
+- Row：`{'_table': self._table, '_row_index': self._row_index}`；
+- Column：`{'_table': self._table, '_col_index': self._col_index, '_col_name': self._col_name}`；
+并在恢复时同样初始化 Seq 的 `_collection/_last/_current/_origin/_ops/_active_op`。
+- reported_by: agent-vools-hardening
+- task_id: T0r743
 
