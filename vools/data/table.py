@@ -842,6 +842,19 @@ class Table(Seq):
         Returns:
             单元格值
         """
+        # BUG-375: 传列名会落到下面的 `<` 比较里抛
+        # "TypeError: '<' not supported between instances of 'str' and 'int'"，
+        # 完全看不出是"参数用错了 API"。这里显式提示（按列名请用 get_cell2）。
+        if not isinstance(col_index, int) or isinstance(col_index, bool):
+            raise TypeError(
+                f"get_cell 的列参数需要 int 列索引，收到 "
+                f"{type(col_index).__name__}: {col_index!r}；"
+                f"按列名取值请用 get_cell2(row, col_name)")
+        if not isinstance(row_index, int) or isinstance(row_index, bool):
+            raise TypeError(
+                f"get_cell 的行参数需要 int 行索引，收到 "
+                f"{type(row_index).__name__}: {row_index!r}")
+
         if row_index < 0 or row_index >= len(self._data):
             return default_value
         
@@ -2493,10 +2506,34 @@ class Table(Seq):
             复制属性后的 result
         """
         if isinstance(result, Table) and result is not self:
-            result._columns = list(self._columns)
+            cols = list(self._columns)
+            result._columns = cols
             result._name = self._name
             result._row_index = {}
-            result._rself_kwargs = {'columns': list(self._columns), 'name': self._name}
+            result._rself_kwargs = {'columns': cols, 'name': self._name}
+            # BUG-374: Seq 层方法（take/skip/reverse/sort_by/prepend/extend/
+            # take_while/drop_while/enumerate/zip/...）返回的元素是
+            # `Table._evaluate()` 的 **dict 行**；原实现只拷列名/表名就把它们
+            # 留在 `_data` 里，破坏「行必须是 list」的内部不变量，导致
+            #   get_cell -> TypeError: '<' not supported between 'str' and 'int'
+            #   row(0)   -> {'id': 'id', 'name': 'name'}
+            #   to_list  -> TypeError: unhashable type: 'slice'
+            #   select/where -> KeyError / 静默空表
+            # 这里按列顺序把 dict 行还原成 list 行（tuple 行转 list，标量包一层），
+            # 并通过 `_data` setter 赋值以重置 Seq 迭代状态。
+            raw = getattr(result, '_collection', None)
+            if raw:
+                normalized = []
+                for row in raw:
+                    if isinstance(row, dict):
+                        normalized.append([row.get(c) for c in cols])
+                    elif isinstance(row, (list, tuple)):
+                        normalized.append(list(row))
+                    else:
+                        normalized.append([row])
+                if normalized != [list(r) if isinstance(r, (list, tuple)) else r
+                                  for r in raw]:
+                    result._data = normalized
         return result
 
 
