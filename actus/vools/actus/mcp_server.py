@@ -44,6 +44,31 @@ def text_result(payload: dict, is_error: bool = False) -> dict:
     }
 
 
+def resolve_action_arg(raw: str) -> str:
+    """把 MCP 传入的 id / target 统一解析成标准 action_id（ACTUS_REFACTOR_PLAN §3.1）。
+
+    MCP 侧与 CLI 此前有同一个缺口：直接把参数当 action_id 用，resolver 的
+    六形态（id/name/md5/path/url）一个都不生效。这里统一走 resolver；
+    解析不出来就回退原值（零回归），由下游给出原有错误文案。
+    """
+    try:
+        from vools.actus.resolver import resolve_target
+        resolved = resolve_target(raw)
+        if resolved.action_id:
+            return resolved.action_id
+    except Exception:
+        pass
+    return raw
+
+
+#: target 六形态说明（写进 MCP 工具描述，计划 §四.5：避免调用方猜测）
+TARGET_FORMS_HINT = (
+    'id 支持六种形态：动作 id（actus.ai.translate）/ 可读名（Translate）/ '
+    '内容 md5（32 位 hex）/ 本地动作文件路径（a.actus.md 或 a.actus.schema.md）/ '
+    '本地动作目录（a.actus/）/ http(s) URL（默认禁止，需显式放行域名）'
+)
+
+
 def _input_schema(brief: dict) -> dict:
     """动作 args 契约 → MCP inputSchema（未声明时宽松透传 object）。"""
     args = brief.get('args')
@@ -252,15 +277,17 @@ class MCPServer:
                 'description': {'type': 'string', 'description': '任务描述（自然语言）'},
                 'limit': {'type': 'integer', 'description': '最大推荐数'}}}},
             {'name': 'actus_info',
-             'description': '查看动作元数据与依赖',
+             'description': '查看动作元数据与依赖。' + TARGET_FORMS_HINT,
              'inputSchema': {'type': 'object', 'required': ['id'],
-                             'properties': {'id': {'type': 'string'}}}},
+                             'properties': {'id': {'type': 'string',
+                                                   'description': TARGET_FORMS_HINT}}}},
             {'name': 'actus_status',
              'description': '查询执行状态（缺省 = 最近汇总；可传 exec_id）',
              'inputSchema': {'type': 'object',
                              'properties': {'exec_id': {'type': 'string'}}}},
             {'name': 'actus_preview',
-             'description': '干跑：展示将执行的块/指令/依赖，不执行',
+             'description': '干跑：展示将执行的块/指令/依赖，不执行。' + TARGET_FORMS_HINT + 
+                            '；args 为入参 JSON object',
              'inputSchema': {'type': 'object', 'required': ['id'],
                              'properties': {'id': {'type': 'string'},
                                             'args': {'type': 'object'}}}},
@@ -1147,7 +1174,7 @@ class MCPServer:
             return text_result({'status': 'ok', 'data': {'recommendations': recommendations, 'total': len(recommendations)}})
 
         if name == 'actus_info':
-            aid = args.get('id', '')
+            aid = resolve_action_arg(args.get('id', ''))
             try:
                 action = actuscore.get_action(aid)
             except actuscore.ActionError as e:
@@ -1167,7 +1194,7 @@ class MCPServer:
             return text_result({'status': 'ok', 'data': rec.load_status(None)})
 
         if name == 'actus_preview':
-            aid = args.get('id', '')
+            aid = resolve_action_arg(args.get('id', ''))
             try:
                 p = actuscore.preview(aid, args.get('args') or {})
             except actuscore.ActionError as e:
