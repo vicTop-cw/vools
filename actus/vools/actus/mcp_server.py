@@ -48,16 +48,26 @@ def resolve_action_arg(raw: str) -> str:
     """把 MCP 传入的 id / target 统一解析成标准 action_id（ACTUS_REFACTOR_PLAN §3.1）。
 
     MCP 侧与 CLI 此前有同一个缺口：直接把参数当 action_id 用，resolver 的
-    六形态（id/name/md5/path/url）一个都不生效。这里统一走 resolver；
-    解析不出来就回退原值（零回归），由下游给出原有错误文案。
+    六形态（id/name/md5/path/url）一个都不生效。这里统一走 resolver。
+
+    **歧义必须显式报**（计划 §六.2 名称消歧 UX）：CLI 遇多命中会返回候选
+    列表，MCP 侧此前却只是回退原值、调用方拿到「动作不存在」——完全看不出
+    「其实命中了多个」。现在抛结构化 `ambiguous`（含 candidates），与 CLI 对齐。
+    其它解析失败仍回退原值（零回归，由下游给出原有错误文案）。
     """
     try:
         from vools.actus.resolver import resolve_target
         resolved = resolve_target(raw)
-        if resolved.action_id:
-            return resolved.action_id
     except Exception:
-        pass
+        return raw
+    if getattr(resolved, 'ambiguous', None):
+        from vools.actus.errors import ActionError
+        raise ActionError(
+            'ambiguous',
+            f"目标 {raw!r} 命中多个动作，请用完整 id 指定",
+            {'raw': raw, 'candidates': list(resolved.ambiguous)})
+    if resolved.action_id:
+        return resolved.action_id
     return raw
 
 

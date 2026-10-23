@@ -9,6 +9,8 @@ resolver 的六形态一个都不生效。本轮先把 resolver 接进 MCP 的�
 import ast
 import os
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MCP = os.path.join(ROOT, "vools", "actus", "mcp_server.py")
 
@@ -85,6 +87,36 @@ def test_resolve_action_arg_passthrough_on_failure(monkeypatch):
     assert resolve_action_arg("something.weird") == "something.weird"
 
 
+def test_resolve_action_arg_reports_ambiguity(monkeypatch):
+    """歧义必须显式报（计划 §六.2）：结构化 ambiguous + 候选列表，与 CLI 对齐。"""
+    from vools.actus import resolver
+    from vools.actus.mcp_server import resolve_action_arg
+    from vools.actus.errors import ActionError
+
+    class _R:
+        action_id = ""
+        ambiguous = ["actus.a.one", "actus.b.two"]
+
+    monkeypatch.setattr(resolver, "resolve_target", lambda raw, **kw: _R())
+    with pytest.raises(ActionError) as exc:
+        resolve_action_arg("Dup")
+    assert exc.value.code == "ambiguous", exc.value
+    details = getattr(exc.value, "details", None) or {}
+    assert details.get("candidates") == ["actus.a.one", "actus.b.two"], details
+
+
+def test_resolve_action_arg_falls_back_on_resolver_error(monkeypatch):
+    """解析器自身异常仍回退原值（零回归）。"""
+    from vools.actus import resolver
+    from vools.actus.mcp_server import resolve_action_arg
+
+    def boom(*a, **kw):
+        raise RuntimeError("exploded")
+
+    monkeypatch.setattr(resolver, "resolve_target", boom)
+    assert resolve_action_arg("weird") == "weird"
+
+
 def test_resolve_action_arg_returns_canonical_id(monkeypatch):
     """解析成功时必须返回标准 action_id（name 形态 → id）。"""
     from vools.actus import resolver
@@ -92,6 +124,7 @@ def test_resolve_action_arg_returns_canonical_id(monkeypatch):
 
     class _R:
         action_id = "actus.basics.calculator"
+        ambiguous = []
 
     monkeypatch.setattr(resolver, "resolve_target", lambda raw, **kw: _R())
     assert resolve_action_arg("Calculator") == "actus.basics.calculator"
