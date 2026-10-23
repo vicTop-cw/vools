@@ -2216,16 +2216,38 @@ class Table(Seq):
         Returns:
             True-成功
         """
+        # BUG-355: 原实现 `except Exception: return False` —— 失败原因（目录不存在/
+        # 权限/编码不支持）全部丢失，且**编码失败时会残留半写文件**（先写表头、
+        # 写数据行时才抛错）。改为：同目录临时文件 + 原子替换，失败清理临时文件
+        # 并发出可见告警（返回值契约保持 True/False）。
+        import os as _os
+        import tempfile as _tempfile
+        import warnings as _warnings
+
+        _dir = _os.path.dirname(_os.path.abspath(filepath)) or '.'
+        _tmp_path = None
         try:
-            with open(filepath, 'w', encoding=encoding, newline='') as f:
+            _fd, _tmp_path = _tempfile.mkstemp(
+                dir=_dir, prefix='.vools_tbl_', suffix='.tmp')
+            with _os.fdopen(_fd, 'w', encoding=encoding, newline='') as f:
                 writer = csv.writer(f, delimiter=delimiter)
                 # 写入表头
                 writer.writerow(self._columns)
                 # 写入数据
                 for row in self._data:
                     writer.writerow(row)
+            _os.replace(_tmp_path, filepath)
+            _tmp_path = None
             return True
-        except Exception:
+        except Exception as _e:
+            if _tmp_path is not None:
+                try:
+                    _os.unlink(_tmp_path)
+                except OSError:
+                    pass
+            _warnings.warn(
+                f"Table.to_file 写入失败（返回 False）：{type(_e).__name__}: {_e}",
+                RuntimeWarning, stacklevel=2)
             return False
     
     def show(self, max_rows: int = 10) -> 'Table':
