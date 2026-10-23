@@ -1573,13 +1573,53 @@ class Table(Seq):
             if not common_cols:
                 raise ValueError('No common columns found for join')
             on_col = list(common_cols)[0]
+            self_on, other_on = on_col, on_col
         else:
-            # 解析 on_str: 'table1.id = table2.id'
-            match = re.match(r'(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)', on_str)
+            # BUG-328: 严格解析 'alias.col = alias.col'。原实现用 re.match 宽松匹配
+            # 且只取左侧列名当作**两表共用**的键——①语法不合模板时把整串当列名、
+            # ②两侧键列不同名时误用同一列，两者都会让 key 恒 None 进而**静默退化
+            # 为笛卡尔积**。这里解析出两侧各自的键列并校验存在性，失败即报错。
+            # 同时兼容简化格式 'col'（两表都有该列时自动匹配）。
+            match = re.fullmatch(
+                r'\s*([A-Za-z_]\w*)\.([A-Za-z_]\w*)'
+                r'\s*=\s*'
+                r'([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*',
+                on_str)
             if match:
-                on_col = match.group(2)  # 使用右边的列名
+                l_alias, l_col, r_alias, r_col = match.groups()
+                self_aliases = {'t1', 'self', 'table1', self._name}
+                other_aliases = {'t2', 'other', 'table2', other._name}
+                self_aliases.discard('')
+                other_aliases.discard('')
+                if l_alias in self_aliases and r_alias in other_aliases:
+                    self_on, other_on = l_col, r_col
+                elif l_alias in other_aliases and r_alias in self_aliases:
+                    self_on, other_on = r_col, l_col
+                elif l_col in self._columns and r_col in other._columns:
+                    self_on, other_on = l_col, r_col
+                elif l_col in other._columns and r_col in self._columns:
+                    self_on, other_on = r_col, l_col
+                else:
+                    raise ValueError(
+                        f"join 的 on_str 无法判定两侧键列（别名可用 t1/t2 或表 name）: "
+                        f"{on_str!r}（左表列={self._columns}，右表列={other._columns}）")
             else:
-                on_col = on_str
+                # 简化格式：单列名，两表都必须有该列
+                col = on_str.strip()
+                if col not in self._columns:
+                    raise KeyError(
+                        f"join 键列不存在于左表: {col!r}（左表列={self._columns}）")
+                if col not in other._columns:
+                    raise KeyError(
+                        f"join 键列不存在于右表: {col!r}（右表列={other._columns}）")
+                self_on, other_on = col, col
+            if self_on not in self._columns:
+                raise KeyError(
+                    f"join 键列不存在于左表: {self_on!r}（左表列={self._columns}）")
+            if other_on not in other._columns:
+                raise KeyError(
+                    f"join 键列不存在于右表: {other_on!r}（右表列={other._columns}）")
+            on_col = self_on
         
         # 确定字段前缀
         self_prefix = 't1_'
@@ -1601,13 +1641,13 @@ class Table(Seq):
         result_data = []
         result_columns = (
             [self_prefix + c for c in self_cols] + 
-            [other_prefix + c for c in other_cols if c != on_col or join_type != 'inner']
+            [other_prefix + c for c in other_cols if c != other_on or join_type != 'inner']
         )
         
         # 创建其他表的索引
         other_index = {}
         for i, row in enumerate(other._data):
-            key = row[other._columns.index(on_col)] if on_col in other._columns else None
+            key = row[other._columns.index(other_on)]
             if key not in other_index:
                 other_index[key] = []
             other_index[key].append(row)
@@ -1615,7 +1655,7 @@ class Table(Seq):
         # 执行连接
         matched_other_keys = set()
         for s_row in self._data:
-            key = s_row[self._columns.index(on_col)] if on_col in self._columns else None
+            key = s_row[self._columns.index(self_on)]
             s_vals = [s_row[self._columns.index(c)] if c in self._columns else None for c in self_cols]
 
             if key in other_index:
@@ -1623,7 +1663,7 @@ class Table(Seq):
                 for o_row in other_index[key]:
                     o_vals = [o_row[other._columns.index(c)] if c in other._columns else None for c in other_cols]
                     if join_type == 'inner':
-                        result_data.append(s_vals + [v for c, v in zip(other_cols, o_vals) if c != on_col])
+                        result_data.append(s_vals + [v for c, v in zip(other_cols, o_vals) if c != other_on])
                     else:
                         result_data.append(s_vals + [v for c, v in zip(other_cols, o_vals)])
                     if first:
