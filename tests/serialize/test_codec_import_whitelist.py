@@ -102,12 +102,13 @@ class TestReconstructObject:
 
     def test_reject_os_popen(self):
         """尝试通过 __vools_obj__ 创建 subprocess.Popen 应失败"""
-        result = _reconstruct_object('subprocess.Popen', {'args': ['echo', 'x']})
-        assert result == {'args': ['echo', 'x']}
+        # BUG-332: 不再静默返回 state，改为显式 ValueError（白名单拒绝可见）
+        with pytest.raises(ValueError):
+            _reconstruct_object('subprocess.Popen', {'args': ['echo', 'x']})
 
     def test_reject_fileio(self):
-        result = _reconstruct_object('_io.FileIO', {'name': 'x.txt'})
-        assert result == {'name': 'x.txt'}
+        with pytest.raises(ValueError):
+            _reconstruct_object('_io.FileIO', {'name': 'x.txt'})
 
     def test_normal_vools_class(self):
         from vools.cache.persist import FileLock
