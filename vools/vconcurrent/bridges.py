@@ -490,6 +490,12 @@ class QueueBridge(Generic[_T]):
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._running = False
+        # BUG-402: 记录转发期异常。原 `except Exception: pass` 让 filter_fn/
+        # transform_fn 的 bug **完全不可见**（消息被静默丢弃、is_running 仍为
+        # True，用户只会看到"没消息过来"）。现在保留继续运行的语义，但记录
+        # last_error/error_count 并首次告警。
+        self._last_error: Optional[BaseException] = None
+        self._error_count = 0
 
     def _worker(self) -> None:
         while not self._stop_event.is_set():
@@ -506,8 +512,16 @@ class QueueBridge(Generic[_T]):
                     item = self._transform_fn(item)
 
                 self._destination.put(item)
-            except Exception:
-                pass
+            except Exception as exc:  # BUG-402: 不再静默
+                self._error_count += 1
+                self._last_error = exc
+                if self._error_count == 1:
+                    import warnings as _w
+                    _w.warn(
+                        f"QueueBridge 转发 {item!r} 时出错（filter_fn/transform_fn/"
+                        f"destination.put 抛异常），该条消息已丢弃："
+                        f"{type(exc).__name__}: {exc}（后续同类错误只计数）",
+                        RuntimeWarning, stacklevel=2)
 
     def start(self) -> None:
         """启动桥接。"""
@@ -536,6 +550,16 @@ class QueueBridge(Generic[_T]):
     def is_running(self) -> bool:
         """桥接是否运行中。"""
         return self._running
+
+    @property
+    def last_error(self) -> Optional[BaseException]:
+        """最近一次转发异常（无则 None）——BUG-402。"""
+        return self._last_error
+
+    @property
+    def error_count(self) -> int:
+        """转发异常累计次数——BUG-402。"""
+        return self._error_count
 
     def __enter__(self) -> "QueueBridge[_T]":
         self.start()
@@ -574,6 +598,12 @@ def bridge_queues(
     Returns:
         (forward_bridge, backward_bridge) 元组，未启用的方向为 None
     """
+    # BUG-402: 非法 direction 原实现静默返回 (None, None)——调用方以为已桥接，
+    # 实际两边都没连。入口显式校验。
+    if direction not in ("forward", "backward", "both"):
+        raise ValueError(
+            f"direction 只支持 'forward' / 'backward' / 'both'，收到 {direction!r}")
+
     forward: Optional[QueueBridge] = None
     backward: Optional[QueueBridge] = None
 
