@@ -5,6 +5,7 @@ vools.sql.core.types - Python ↔ SQL 类型映射系统
 简化 SQL 语句构建和结果处理时的类型声明工作。
 """
 
+import functools
 import datetime
 import decimal
 
@@ -52,6 +53,33 @@ SQL_TO_PY = {
 }
 
 
+class _DualMapperMethod:
+    """BUG-353: 让映射方法同时支持两种调用方式。
+
+    - `SqlTypeMapper.get_sql_type(x)`：类调用，使用**类级默认映射**（向后兼容）；
+    - `mapper.get_sql_type(x)`：实例调用，使用**实例自己的映射副本**。
+
+    原实现全是 staticmethod 且写类级字典 —— 任何方言实例初始化时
+    `register_type(...)`（sqlite: str->TEXT/float->REAL；postgres: str->STRING/
+    list->ARRAY）都会**污染全局映射**，结果随方言实例创建顺序而变。
+    """
+
+    def __init__(self, fn):
+        self.fn = fn
+        functools.update_wrapper(self, fn)
+
+    def __get__(self, obj, objtype=None):
+        # obj is None -> 类访问：self 传 None 表示"使用类级字典"
+        return functools.partial(self.fn, obj)
+
+
+def _mapper_maps(obj):
+    """取映射字典：obj 为实例时用实例副本，为 None（类访问）时用类级默认。"""
+    if obj is None:
+        return SqlTypeMapper._py_to_sql, SqlTypeMapper._sql_to_py
+    return obj._py_to_sql, obj._sql_to_py
+
+
 class SqlTypeMapper:
     """
     SQL 类型映射器
@@ -67,8 +95,13 @@ class SqlTypeMapper:
     _py_to_sql = dict(PY_TO_SQL)
     _sql_to_py = dict(SQL_TO_PY)
 
-    @staticmethod
-    def register_type(py_type, sql_type):
+    def __init__(self):
+        # BUG-353: 实例持有映射副本，方言注册不再改类级全局映射
+        self._py_to_sql = dict(type(self)._py_to_sql)
+        self._sql_to_py = dict(type(self)._sql_to_py)
+
+    @_DualMapperMethod
+    def register_type(self, py_type, sql_type):
         """
         注册自定义类型映射
 
@@ -76,11 +109,12 @@ class SqlTypeMapper:
             py_type: Python 类型
             sql_type: 对应的 SQL 类型字符串
         """
-        SqlTypeMapper._py_to_sql[py_type] = sql_type
-        SqlTypeMapper._sql_to_py[sql_type.upper()] = py_type
+        _py_map, _sql_map = _mapper_maps(self)
+        _py_map[py_type] = sql_type
+        _sql_map[sql_type.upper()] = py_type
 
-    @staticmethod
-    def get_sql_type(py_type):
+    @_DualMapperMethod
+    def get_sql_type(self, py_type):
         """
         获取 Python 类型对应的 SQL 类型
 
@@ -90,10 +124,11 @@ class SqlTypeMapper:
         返回：
             SQL 类型字符串，如果未注册则返回 None
         """
-        return SqlTypeMapper._py_to_sql.get(py_type)
+        _py_map, _ = _mapper_maps(self)
+        return _py_map.get(py_type)
 
-    @staticmethod
-    def get_py_type(sql_type):
+    @_DualMapperMethod
+    def get_py_type(self, sql_type):
         """
         获取 SQL 类型对应的 Python 类型
 
@@ -103,10 +138,11 @@ class SqlTypeMapper:
         返回：
             Python 类型，如果未注册则返回 None
         """
-        return SqlTypeMapper._sql_to_py.get(sql_type.upper())
+        _, _sql_map = _mapper_maps(self)
+        return _sql_map.get(sql_type.upper())
 
-    @staticmethod
-    def infer_arg_types(args):
+    @_DualMapperMethod
+    def infer_arg_types(self, args):
         """
         根据参数值推断 SQL 参数类型列表
 
@@ -119,17 +155,18 @@ class SqlTypeMapper:
         返回：
             SQL 类型字符串列表
         """
+        _py_map, _ = _mapper_maps(self)
         result = []
         for arg in args:
             py_type = type(arg)
-            sql_type = SqlTypeMapper._py_to_sql.get(py_type)
+            sql_type = _py_map.get(py_type)
             if sql_type is None:
                 sql_type = 'VARCHAR'
             result.append(sql_type)
         return result
 
-    @staticmethod
-    def infer_ret_type(ret_type):
+    @_DualMapperMethod
+    def infer_ret_type(self, ret_type):
         """
         根据返回类型注解推断 SQL 返回类型
 
@@ -149,21 +186,22 @@ class SqlTypeMapper:
                       if a is not type(None)]
             if len(_inner) == 1:
                 ret_type = _inner[0]
+        _py_map, _ = _mapper_maps(self)
         if isinstance(ret_type, type):
-            sql_type = SqlTypeMapper._py_to_sql.get(ret_type)
+            sql_type = _py_map.get(ret_type)
             if sql_type is not None:
                 return sql_type
         # BUG-352: List[int]/Dict[str, int] 等泛型按 origin 映射（list/dict -> JSON），
         # 原实现落到最后 fallback 'INTEGER'，与 PY_TO_SQL 的声明不一致。
         _origin = getattr(ret_type, '__origin__', None)
         if _origin is not None:
-            sql_type = SqlTypeMapper._py_to_sql.get(_origin)
+            sql_type = _py_map.get(_origin)
             if sql_type is not None:
                 return sql_type
         return 'INTEGER'
 
-    @staticmethod
-    def convert_args(args, sql_types):
+    @_DualMapperMethod
+    def convert_args(self, args, sql_types):
         """
         转换参数值为 SQL 兼容格式
 
@@ -178,8 +216,8 @@ class SqlTypeMapper:
         """
         return list(args)
 
-    @staticmethod
-    def convert_result(result, py_type):
+    @_DualMapperMethod
+    def convert_result(self, result, py_type):
         """
         转换 SQL 结果值为 Python 类型
 
