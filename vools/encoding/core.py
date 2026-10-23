@@ -834,10 +834,22 @@ class Decoder(metaclass=EncoderMeta):
         return self._apply(self._decode, 'decode', encoding=encoding, errors=errors)
     
     @staticmethod
-    def _b64decode(data: Any, encoding: str = 'utf-8') -> str:
+    def _b64decode(data: Any, encoding: str = 'utf-8') -> Any:
         if isinstance(data, str):
             data = data.encode(encoding)
-        return base64.b64decode(data).decode(encoding)
+        raw = base64.b64decode(data)
+        if not encoding:
+            return raw
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            # BUG-370: 二进制载荷（gzip/zlib/lzma/pickle 的 base64 形态）不是合法
+            # UTF-8，原实现直接抛 UnicodeDecodeError —— 且传 encoding='latin-1'
+            # 也无济于事（返回 str，下一步 gzip 仍要求 bytes），使 binary 链
+            # **完全无法往返**。这里返回原始 bytes，后续二进制解码器可继续处理；
+            # 文本载荷仍按 encoding 解码为 str（docstring 示例 ''.base64().data
+            # 期待 str 的行为不变）。
+            return raw
     
     @staticmethod
     def _urldecode(data: Any, encoding: str = 'utf-8') -> str:
