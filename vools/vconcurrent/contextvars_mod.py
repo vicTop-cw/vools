@@ -162,6 +162,9 @@ class ContextScope:
             scope.set('tenant', 'acme')
             # user_id=123, tenant='acme' 在此作用域内有效
         # 已恢复
+
+    同一实例可**重复进入**（BUG-342）：每次进入重新应用已登记的绑定，
+    退出时恢复。
     """
 
     def __init__(self) -> None:
@@ -200,7 +203,9 @@ class ContextScope:
             except (ValueError, LookupError):
                 pass
         self._tokens = []
-        self._bindings = []
+        # BUG-342: 不再清空 `_bindings`——否则同一个 ContextScope 第二次 `with`
+        # 会**静默不生效**（绑定已被 __exit__ 丢弃）。保留初始绑定使其可复用：
+        # 每次 __enter__ 重新应用一遍，退出时恢复。
         self._active = False
 
     def __repr__(self) -> str:
