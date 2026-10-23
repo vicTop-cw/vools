@@ -37,6 +37,56 @@ _RUN_SAFE_BUILTINS = {
 _RUN_SAFE_NAMESPACE = {'__builtins__': _RUN_SAFE_BUILTINS}
 
 
+def _strip_sql_comments(text: str) -> str:
+    """BUG-358: 字面量感知的 SQL 注释剥离。
+
+    原实现用正则 `--.*?$|/\*.*?\*/` 直接全局删除——**字符串/标识符字面量内**
+    的 `--`、`/* */` 也会被当成注释删掉，整条 SQL 被截断：
+
+        SELECT '--x' AS c;          ->  SELECT '            （后半句丢失）
+        SELECT '/*y*/' AS c;        ->  SELECT '' AS c;
+
+    这里按字符扫描，跳过单引号/双引号/反引号内的内容（含 '' 与 "" 转义），
+    只移除引号外的 `-- 行注释` 与 `/* 块注释 */`。
+    """
+    out = []
+    i = 0
+    n = len(text)
+    quote = None
+    while i < n:
+        ch = text[i]
+        if quote is not None:
+            out.append(ch)
+            if ch == quote:
+                if i + 1 < n and text[i + 1] == quote:
+                    out.append(text[i + 1])
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"', '`'):
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '-' and i + 1 < n and text[i + 1] == '-':
+            j = text.find('\n', i)
+            if j == -1:
+                break
+            i = j
+            continue
+        if ch == '/' and i + 1 < n and text[i + 1] == '*':
+            j = text.find('*/', i + 2)
+            if j == -1:
+                break
+            i = j + 2
+            continue
+        out.append(ch)
+        i += 1
+    return ''.join(out)
+
+
 @rself
 class VText(str):
     """链式文本类，继承自 str"""
@@ -365,7 +415,7 @@ class VText(str):
         Returns:
             去注释后的 VText
         """
-        ss = re.sub(r'--.*?$|/\*.*?\*/', '', str(self), flags=re.MULTILINE | re.DOTALL)
+        ss = _strip_sql_comments(str(self))
         result = [line for line in ss.split('\n') if line.strip()]
         return self.__class__("\n".join(result))
 
