@@ -43,20 +43,31 @@ def c():
 
 class TestStrictParsing:
     @pytest.mark.parametrize('bad', [
-        'id = id',          # 缺别名
-        'id',               # 只有列名
-        't1.id == t2.id',   # 双等号
-        '',                 # 空串
-        't1.id = t2.id and 1=1',
+        'id = id',                 # 缺别名
+        't1.id == t2.id',          # 双等号
+        '',                        # 空串
+        't1.id = t2.id and 1=1',   # 多余条件
+        'nope',                    # 不存在的列名
     ])
     def test_malformed_on_str_raises(self, a, b, bad):
-        # 修复前：退化为笛卡尔积（a.rows * b.rows 行）
-        with pytest.raises(ValueError, match='on_str'):
+        # 修复前：退化为笛卡尔积（a.rows * b.rows 行）。
+        # 简化格式下非法串按"列名"处理 -> KeyError；带别名格式 -> ValueError。
+        with pytest.raises((ValueError, KeyError)):
             a.join(b, on_str=bad)
 
     def test_missing_key_column_raises(self, a, b):
         with pytest.raises(KeyError):
             a.join(b, on_str='t1.nope = t2.id')
+
+    def test_simplified_single_column_format(self, a, b):
+        # 简化格式（并发扩展）：裸列名，两表都必须有该列
+        out = a.join(b, on_str='id')
+        assert out.rows() == 1
+        assert out._columns[0] == 't1_id'
+
+    def test_simplified_missing_column_raises(self, a, b):
+        with pytest.raises(KeyError):
+            a.join(b, on_str='nope')
 
 
 class TestSameNameJoin:
