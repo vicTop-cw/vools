@@ -473,20 +473,39 @@ class Stuff:
 
         duration = self.config.cache_duration
 
+        _names = list(providers['keys'].keys())
+        _target = getattr(self.main_func, '__name__', self.main_func)
+
         @memorize(duration=duration)
         @wraps(func)
         def wrapper():
             result = func()
-            return IndexedDict(result, providers_pos=providers_pos, providers=list(providers['keys'].keys()))
+            return IndexedDict(result, providers_pos=providers_pos, providers=_names)
+
+        def _access(key):
+            """BUG-341: 提供者返回值与参数不匹配时给出可诊断的错误。
+
+            原实现直接 `wrapper()[key]`：值不够长时抛裸 `KeyError('b')` 或
+            `tuple index out of range`，既不知道是哪个函数、也不知道期望/实际。
+            """
+            try:
+                return wrapper()[key]
+            except (KeyError, IndexError):
+                _expected = providers_pos + len(_names)
+                raise ValueError(
+                    f"Stuff 提供者 {getattr(func, '__name__', func)!r} 的返回值无法满足 "
+                    f"{_target!r}：缺少键/位置 {key!r}（期望至少 {_expected} 个值："
+                    f"位置 {providers_pos} 个 + 关键字 {_names}），实际 {wrapper()!r}"
+                ) from None
 
         args = []
         if providers['pos']:
             for i in range(providers_pos):
-                args.append(lambda i=i: wrapper()[i])
+                args.append(lambda i=i: _access(i))
         kws = {}
-        if providers['keys']:
-            for k in providers['keys'].keys():
-                kws[k] = lambda k=k: wrapper()[k]
+        if _names:
+            for k in _names:
+                kws[k] = lambda k=k: _access(k)
 
         self.curried = self.curried(*args, **kws)
         return self
