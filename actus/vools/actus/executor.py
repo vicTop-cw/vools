@@ -295,7 +295,10 @@ def execute(action_id: str, params: dict = None,
     dep_check = None
     try:
         from .indexer import get_action
-        action_obj = load_and_validate(get_action(action_id, actions_dir).path)
+        # 零散动作（scattered path）不在索引里，若给了 preparsed_action 就跳过查找，
+        # 否则会先抛 action_not_found、走不到后面的 preparsed 分支。
+        action_obj = preparsed_action if preparsed_action is not None \
+            else load_and_validate(get_action(action_id, actions_dir).path)
 
         # ── 阶段3：非 exec kind 的执行语义（ACTUS_REFACTOR_PLAN §3.3）──
         # 此前执行器完全不感知 kind：link/alias 会被当成普通 exec 动作执行

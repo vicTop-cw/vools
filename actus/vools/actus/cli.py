@@ -651,8 +651,42 @@ def _dispatch(args) -> int:
 
     if args.command == 'run':
         confirmed = args.confirm or args.yes
-        r = actuscore.execute(args.action_id, _parse_params(args.params),
-                              confirmed=confirmed)
+        # ── ACTUS_REFACTOR_PLAN 阶段1：接入 resolver ──
+        # <target> 支持 id / name / md5 / path / url 六形态。
+        # 此前直接把参数当 action_id 传给 execute，resolver.py 写完从未被
+        # 任何模块调用 ⇒ 六种 target 形态与七种入参形态全部不生效。
+        target = args.action_id
+        _scattered_action = None
+        try:
+            from .resolver import resolve_target
+            resolved = resolve_target(target)
+            if resolved.ambiguous:
+                _out({'status': 'failed',
+                      'error': {'code': 'ambiguous',
+                                'message': f"目标 {target!r} 命中多个动作，请用完整 id 指定",
+                                'details': {'candidates': resolved.ambiguous}}})
+                return 1
+            if resolved.source == 'path' and resolved.path:
+                # 散落动作不在索引里：解析成 Action 走 preparsed_action 通道
+                from .scattered import resolve_scattered, _apply_scattered_defaults
+                from .model import parse_cfg_from_file
+                sc = resolve_scattered(resolved.path)
+                action = parse_cfg_from_file(sc.path)
+                _apply_scattered_defaults(action, sc)
+                _scattered_action = action
+                target = resolved.action_id or action.meta.get('id') or target
+            elif resolved.action_id:
+                target = resolved.action_id
+        except Exception:
+            # 解析失败不阻断旧路径（零回归）：原值交给 execute，给出原有错误文案
+            pass
+        try:
+            from .resolver import resolve_params_extended
+            params = resolve_params_extended(args.params)
+        except Exception:
+            params = _parse_params(args.params)
+        r = actuscore.execute(target, params, confirmed=confirmed,
+                              preparsed_action=_scattered_action)
         _out(r)
         if r['status'] == 'awaiting_confirmation':
             print(f"待人类确认：再次执行并加 --confirm / --yes 放行（exec: {r['exec_id']}）",
