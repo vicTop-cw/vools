@@ -1,3 +1,13 @@
+---
+id: actus.basics.todo_list.demo
+name: Todo List Demo
+version: 1.0.0
+trust: sandbox
+kind: demo
+platform: desktop
+description: Todo List 的用法演示（kind=demo 的非可执行资产）
+---
+
 # Todo List 演示
 
 > 本文件是 `actus.basics.todo_list` 的演示（`demo:` 字段指向这里）。

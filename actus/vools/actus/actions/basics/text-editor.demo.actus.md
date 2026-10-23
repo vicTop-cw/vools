@@ -1,3 +1,13 @@
+---
+id: actus.basics.text_editor.demo
+name: Text Editor Demo
+version: 1.0.0
+trust: sandbox
+kind: demo
+platform: desktop
+description: Text Editor 的用法演示（kind=demo 的非可执行资产）
+---
+
 # Text Editor 演示
 
 > 本文件是 `actus.basics.text_editor` 的演示（`demo:` 字段指向这里）。

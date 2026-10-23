@@ -1,3 +1,13 @@
+---
+id: actus.basics.image_viewer.demo
+name: Image Viewer Demo
+version: 1.0.0
+trust: sandbox
+kind: demo
+platform: desktop
+description: Image Viewer 的用法演示（kind=demo 的非可执行资产）
+---
+
 # Image Viewer 演示
 
 > 本文件是 `actus.basics.image_viewer` 的演示（`demo:` 字段指向这里）。

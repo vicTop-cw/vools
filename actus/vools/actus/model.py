@@ -247,6 +247,23 @@ def parse_cfg(body: str) -> dict:
                       {'hint': '动作文件必须内联元数据，保证单文件自包含'})
 
 
+def _has_yaml_frontmatter(raw: str) -> bool:
+    """严格判定是否是 YAML front-matter（而不是 Markdown 分隔线 / AIGC 块）。
+
+    条件：首行为 `---`、60 行内找到闭合 `---`、**且中间有 `id:` 行**
+    （动作的定义性字段）。只看 `key: value` 不够——旧格式文件开头的 AIGC
+    元数据块（`AIGC:` / `Label: "1"` …）也会命中，实测 actions/foo.actus.md。
+    """
+    lines = raw.lstrip('\ufeff').splitlines()
+    if not lines or lines[0].strip() != '---':
+        return False
+    for i in range(1, min(len(lines), 60)):
+        if lines[i].strip() == '---':
+            body = lines[1:i]
+            return any(ln.strip().startswith('id:') for ln in body)
+    return False
+
+
 def parse_cfg_from_file(path: str) -> Action:
     """读取动作文件：剥离 AIGC front-matter → 解析元数据 → 摘取块信息。
 
@@ -269,11 +286,16 @@ def parse_cfg_from_file(path: str) -> Action:
     sha = hashlib.sha256(raw.encode('utf-8')).hexdigest()
     md5 = hashlib.md5(raw.encode('utf-8')).hexdigest()
 
-    # 格式检测：.actus.schema.md 后缀走 YAML front-matter 解析
+    # 格式检测：**后缀优先 + 内容兜底**。
+    # 只看 `.actus.schema.md` 后缀不够：计划 §3.4 的后缀矩阵里
+    # *.demo.actus.md / *.link.actus.md / *.template.actus.md 也是 YAML
+    # front-matter 形态，按后缀会丢进旧格式分支（实测 4 个 demo 全中招）。
+    # 但也不能只看「首行是 ---」——旧格式文件里 `---` 常是 Markdown 分隔线
+    # （实测 actions/foo.actus.md 就是这样），所以用严格判定。
     basename = os.path.basename(path)
     is_schema_md = basename.endswith('.actus.schema.md')
 
-    if is_schema_md:
+    if is_schema_md or _has_yaml_frontmatter(raw):
         # md5 必须一起传：漏传会让新格式动作的 Action.md5 恒为 ''，进而
         # 索引 by_md5 收不到它们、resolver 的「32 位 hex 内容指纹」形态失效。
         return _parse_schema_md_action(raw, path, sha, md5)
