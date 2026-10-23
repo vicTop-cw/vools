@@ -134,7 +134,16 @@ def _extract_file_directives(text: str) -> Tuple[FileDirectives, str]:
 # 代码块提取（复用 vools.md 或内置）
 # ═══════════════════════════════════════════════════════
 
-_FENCE_RE = re.compile(r"^```(\w*)\s*(.*)$")
+# CommonMark 围栏：0-3 空格缩进 + 3 个以上反引号或波浪号 + 可选语言 + 信息串。
+# 原实现是 `^```(\w*)\s*(.*)$`——只认列 0 的反引号，于是 `~~~` 围栏和
+# 缩进 ≤3 空格的围栏（两者都是合法 CommonMark）会被整块漏掉，动作文件
+# 于是报「entry 未找到」，用户完全看不出是围栏写法的问题。
+_FENCE_RE = re.compile(r"^( {0,3})(`{3,}|~{3,})[ \t]*(\w*)[ \t]*(.*)$")
+
+
+def _fence_close_re(char: str, length: int):
+    """闭合围栏：同种字符、长度不短于开启围栏、只允许尾随空白。"""
+    return re.compile(r"^ {0,3}%s{%d,}[ \t]*$" % (re.escape(char), length))
 
 
 def _extract_blocks_builtin(text: str) -> List[tuple]:
@@ -154,16 +163,18 @@ def _extract_blocks_builtin(text: str) -> List[tuple]:
             i += 1
             continue
 
-        language = m.group(1) or ""
-        directive_str = m.group(2).strip()
+        fence = m.group(2)
+        language = m.group(3) or ""
+        directive_str = m.group(4).strip()
+        close_re = _fence_close_re(fence[0], len(fence))
         i += 1
 
         content_lines = []
-        while i < len(lines) and not lines[i].strip().startswith("```"):
+        while i < len(lines) and not close_re.match(lines[i]):
             content_lines.append(lines[i])
             i += 1
 
-        # 跳过闭合 ```
+        # 跳过闭合围栏
         if i < len(lines):
             i += 1
 
