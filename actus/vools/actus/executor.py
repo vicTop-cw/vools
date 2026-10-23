@@ -324,7 +324,10 @@ def execute(action_id: str, params: dict = None,
                 action_obj, action_id, params, kind,
                 confirmed=confirmed, meta_dir=meta_dir, actions_dir=actions_dir,
                 force=force, artifacts_dir=artifacts_dir)
-        if kind != 'exec':
+        # 演示模式递归回来时（_demo_ctx.active=True），demo 应按 exec 执行，
+        # 不能落到下面的 kind_unsupported 分支——否则 demo 递归把自己否掉。
+        _demo_inner = kind == 'demo' and getattr(_demo_ctx, 'active', False)
+        if kind != 'exec' and not _demo_inner:
             return {
                 'status': 'failed',
                 'data': None,
