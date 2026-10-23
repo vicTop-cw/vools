@@ -134,6 +134,55 @@ _forward_ctx = threading.local()
 _demo_ctx = threading.local()
 
 
+def _execute_template_kind(action, action_id, params, **kw):
+    """阶段3：template 动作——按声明调用 scaffold 生成动作文件（计划 §3.3）。"""
+    from .scaffold import scaffold_action
+    desc = action.meta.get('template') or action.meta.get('description') or ''
+    if isinstance(desc, dict):
+        desc = desc.get('description') or desc.get('text') or ''
+    if not str(desc).strip():
+        return {
+            'status': 'failed', 'data': None,
+            'error': {'code': 'param_invalid',
+                      'message': f"kind=template 的动作 {action_id} 缺少模板描述"
+                                 f"（meta['template'] 或 description）"},
+        }
+    try:
+        result = scaffold_action(description=str(desc),
+                                 action_id=action.meta.get('target') or None,
+                                 trust=action.meta.get('trust') or 'audit')
+    except Exception as exc:
+        return {
+            'status': 'failed', 'data': None,
+            'error': {'code': 'runtime',
+                      'message': f"template 动作 {action_id} 生成失败: {exc}"},
+        }
+    return {'status': 'ok', 'data': {'scaffold': result,
+                                     'template_params': params or {}}}
+
+
+def _execute_bundle_kind(action, action_id, params, **kw):
+    """阶段3：bundle 动作——列出成员动作 id 列表（计划 §3.3）。"""
+    members = action.meta.get('members') or []
+    if isinstance(members, str):
+        members = [m.strip() for m in members.split(',') if m.strip()]
+    if not members:
+        target = action.meta.get('target')
+        members = [target] if target else []
+    return {'status': 'ok', 'data': {'members': list(members),
+                                     'count': len(members)}}
+
+
+def _execute_doc_kind(action, action_id, params, **kw):
+    """阶段3：doc 动作——仅渲染，不执行任何代码（计划 §3.3）。"""
+    body = getattr(action, 'body', '') or ''
+    return {'status': 'ok',
+            'data': {'rendered': True,
+                     'description': action.meta.get('description') or '',
+                     'body': body,
+                     'entry': action.meta.get('entry') or None}}
+
+
 def _attach_demo_expansion(result, action):
     """阶段3：demo 演示模式——把全部代码块源码按 only-code 展开附在出参里。
 
@@ -264,6 +313,12 @@ def execute(action_id: str, params: dict = None,
             finally:
                 _demo_ctx.active = False
             return _attach_demo_expansion(result, action_obj)
+        if kind == 'template':
+            return _execute_template_kind(action_obj, action_id, params)
+        if kind == 'bundle':
+            return _execute_bundle_kind(action_obj, action_id, params)
+        if kind == 'doc':
+            return _execute_doc_kind(action_obj, action_id, params)
         if kind in ('alias', 'link'):
             return _execute_forwarding_kind(
                 action_obj, action_id, params, kind,
