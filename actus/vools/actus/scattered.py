@@ -115,10 +115,15 @@ class ScatteredAction:
 # ── C1/C2.1：形态判定与路径安全 ─────────────────────────────────────────
 
 def is_scattered_path(path: str) -> bool:
-    """路径看起来像零散动作（单文件 `<id>.actus.md` 或目录 `<id>.actus/`）。"""
+    """路径看起来像零散动作（单文件 `<id>.actus.md` / `<id>.actus.schema.md` 或目录 `<id>.actus/`）。
+
+    单文件判定走 `constants.is_action_file`（双后缀单一真源）——此前只认
+    `.actus.md`，新格式 `.actus.schema.md` 的散落路径一律判 False。
+    """
     p = (path or '').rstrip('\\/')
     base = os.path.basename(p)
-    if base.endswith(SCATTERED_FILE_SUFFIX):
+    from .constants import is_action_file
+    if is_action_file(base):
         return True
     return base.endswith(SCATTERED_DIR_SUFFIX) and os.path.isdir(p)
 
@@ -165,10 +170,12 @@ def resolve_scattered(path: str, authorized_root: Optional[str] = None) -> Scatt
     root = os.path.abspath(authorized_root) if authorized_root else authorized_root_for(raw)
 
     if os.path.isfile(raw):
-        if not raw.endswith(SCATTERED_FILE_SUFFIX):
+        from .constants import is_action_file
+        if not is_action_file(os.path.basename(raw)):
             raise ScatteredError(
                 'action_not_found',
-                f'不是零散动作文件（需以 {SCATTERED_FILE_SUFFIX} 结尾）：{raw}',
+                f'不是零散动作文件（需以 {SCATTERED_FILE_SUFFIX} 或 '
+                f'.actus.schema.md 结尾）：{raw}',
                 {'path': raw.replace(os.sep, '/')})
         _assert_inside(root, raw, '动作文件')
         return ScatteredAction(raw, root, 'file')
