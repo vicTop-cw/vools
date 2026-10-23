@@ -211,17 +211,22 @@ class TaskStorage:
             params = list(updates.values()) + [task_id]
 
             # 只允许更新属于该worker的任务或未分配任务
+            # BUG-383: 已取消（CANCEL）的任务不能被 worker 的完成/失败/重试回写
+            # 覆盖 —— 原实现只按 worker_id 过滤，实测「取消进行中任务 → 状态
+            # CANCEL → worker 回写 SUCCESS → 最终 SUCCESS」，取消被静默撤销、
+            # 结果仍被落库。这里终态回写一律拒绝 CANCEL。
             if worker_id:
                 cursor = conn.execute(f"""
                     UPDATE tasks
                     SET {set_clause}
                     WHERE id = ? AND (worker_id = ? OR worker_id IS NULL)
+                      AND status != 'CANCEL'
                 """, params + [worker_id])
             else:
                 cursor = conn.execute(f"""
                     UPDATE tasks
                     SET {set_clause}
-                    WHERE id = ?
+                    WHERE id = ? AND status != 'CANCEL'
                 """, params)
 
             return cursor.rowcount > 0
