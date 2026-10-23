@@ -558,22 +558,13 @@ class EvolutionEngine:
         except Exception:
             pass
 
-        # 2) 搜索本地 actions/ 目录
+        # 2) 搜索本地 actions/ 目录（按解析后的 meta['id'] 比对，格式无关）
         actions_dir = os.path.join(self._repo_root, 'actions')
-        if os.path.isdir(actions_dir):
-            for root, dirs, files in os.walk(actions_dir):
-                for fname in files:
-                    if not is_action_file(fname):
-                        continue
-                    fpath = os.path.join(root, fname)
-                    try:
-                        with open(fpath, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                        if f'"id": "{action_id}"' in content or f'"id":"{action_id}"' in content:
-                            return fpath
-                    except (OSError, UnicodeDecodeError):
-                        continue
-        return None
+        try:
+            from .resolver import find_action_file
+            return find_action_file(action_id, actions_dir)
+        except Exception:
+            return None
 
     def _result(self, status: str, action_id: str, rounds: int,
                 path: str = None, reason: str = "") -> dict:

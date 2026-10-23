@@ -88,3 +88,27 @@ def test_seed_actions_resolvable_via_shared_helper():
                         "vools", "actus", "actions")
     hit = find_action_file("actus.basics.calculator", root)
     assert hit is not None, "种子动作找不到 —— 三轨收口未生效"
+
+
+def test_no_string_search_identity_antipattern():
+    """禁止再用『字符串搜 \"id\": \"xxx\"』判断动作身份（计划 §六.6 反模式）。
+
+    这类写法只认旧格式 JSON 的带引号 id，新格式 YAML front-matter 的动作
+    全部匹配不上。允许的例外：mdtest.py 是**生成**夹具的模板，不是查找。
+     """
+    import glob
+    import os
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "vools", "actus")
+    offenders = []
+    for path in glob.glob(os.path.join(base, "**", "*.py"), recursive=True):
+        name = os.path.basename(path)
+        if name in ("mdtest.py",):        # 夹具生成器，允许
+            continue
+        try:
+            text = open(path, encoding="utf-8").read()
+        except OSError:
+            continue
+        if '"id": "{"' in text or '"id":"{"' in text:
+            offenders.append(name)
+    assert not offenders, "仍有『字符串搜 id』的判断: %s" % offenders
