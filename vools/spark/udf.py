@@ -52,7 +52,7 @@ from pyspark.sql.types import (
 
 def _vDate_native(dt, fmt=None, diff_days=0):
     """vDate 纯 Python 实现。"""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, date
     import re
 
     if isinstance(diff_days, str) or isinstance(fmt, (float, int)):
@@ -94,6 +94,11 @@ def _vDate_native(dt, fmt=None, diff_days=0):
             result = datetime.strptime(dt, fmt)
     elif isinstance(dt, datetime):
         result = dt
+    elif isinstance(dt, date):
+        # BUG-346: Spark 的 date 列给出的是 datetime.date（不是 datetime），
+        # 原实现落入 else -> **静默返回 None**（整列变 null）。date 按当日零点处理
+        # （datetime 是 date 子类，必须先判断 datetime）。
+        result = datetime(dt.year, dt.month, dt.day)
     else:
         return None
 
