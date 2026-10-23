@@ -35,7 +35,15 @@ def vic_execute(func: Optional[Callable] = None, max_workers: int = 3, use_proce
     def decorator(func):
         @wraps(func)
         def wrapper(iterable):
-            its = iterable if isinstance(iterable, Iterable) else [iterable]
+            # BUG-359: str/bytes/bytearray 也是 Iterable —— 原实现会把单个字符串
+            # **逐字符**展开执行（up('abc') -> ['A','B','C']、bytes -> 整数列表），
+            # 这是最容易踩的静默错值。按"单个值"处理，其余可迭代对象照旧逐元素。
+            if isinstance(iterable, (str, bytes, bytearray)):
+                its = [iterable]
+            elif isinstance(iterable, Iterable):
+                its = iterable
+            else:
+                its = [iterable]
             
             pool = ProcessPoolExecutor if use_process else ThreadPoolExecutor
             
