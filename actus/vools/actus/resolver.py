@@ -362,6 +362,32 @@ def resolve_target(target: str, allow_hosts: List[str] = None,
     )
 
 
+def find_action_file(action_id: str, actions_root: str) -> Optional[str]:
+    """按 id 在动作根下查找动作文件——**按解析后的 meta['id'] 比对，格式无关**。
+
+    计划 §六.6：此前有三套查找逻辑（resolver / author / dependency 各一份），
+    其中 dependency 用字符串搜 `"id": "xxx"` 判断身份 —— 只认旧格式 JSON，
+    新格式 YAML front-matter 的 `.actus.schema.md` 全部找不到（实测 4 个
+    种子动作在 dependency 里全部返回 None）。这里统一为单一实现，供各模块复用。
+    """
+    if not action_id or not actions_root or not os.path.isdir(actions_root):
+        return None
+    from .constants import is_action_file
+    from .model import parse_cfg_from_file
+    for root, _dirs, files in os.walk(actions_root):
+        for fname in files:
+            if not is_action_file(fname):
+                continue
+            path = os.path.join(root, fname)
+            try:
+                action = parse_cfg_from_file(path)
+            except Exception:
+                continue
+            if action.meta.get('id') == action_id:
+                return path
+    return None
+
+
 def resolve_params_extended(params_str: str, allow_hosts: List[str] = None,
                             max_action_depth: int = 3) -> dict:
     """扩展入参解析器（ACTUS_REFACTOR_PLAN.md §3.2）。

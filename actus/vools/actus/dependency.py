@@ -595,19 +595,17 @@ class DependencyResolver:
         }
 
     def _find_action_file(self, action_id: str) -> Optional[str]:
-        """查找动作文件路径。"""
-        for root, dirs, files in os.walk(self._actions_root):
-            for f in files:
-                if not is_action_file(f):
-                    continue
-                path = os.path.join(root, f)
-                try:
-                    content = open(path, encoding="utf-8").read()
-                    if f'"id": "{action_id}"' in content or f'"id":"{action_id}"' in content:
-                        return path
-                except Exception:
-                    pass
-        return None
+        """查找动作文件路径（委托给 resolver.find_action_file，格式无关）。
+
+        原实现用字符串搜 `"id": "xxx"` 判断身份，**只认旧格式 JSON**——
+        新格式 YAML front-matter 的 `.actus.schema.md` 全部找不到（实测 4 个
+        种子动作全返回 None）。计划 §六.6 要求『并入 resolver，避免双轨漂移』。
+        """
+        try:
+            from .resolver import find_action_file
+            return find_action_file(action_id, self._actions_root)
+        except Exception:
+            return None
 
     def _extract_deps_from_file(self, path: str) -> list:
         """从动作文件中提取 deps。"""
