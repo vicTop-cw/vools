@@ -1729,6 +1729,45 @@ class Table(Seq):
     
     # ==================== 数据操作 (QAX 风格) ====================
     
+    def count_by(self, key=None):
+        """按 key 计数（支持**列名**或 callable，与 group_by 口径一致）。
+
+        BUG-376: 原样继承 Seq.count_by（只接受 callable），传列名会抛
+        ``TypeError: 'str' object is not callable``——而同类方法 group_by(col)
+        接受列名，用户自然会写 ``table.count_by('city')``。
+
+        Returns:
+            两列表格（key, count）—— 列名默认 ``col_0``/``col_1``。
+        """
+        if isinstance(key, str):
+            _col = key
+            key = lambda _row, _c=_col: _row[_c]
+        elif key is not None and not callable(key):
+            raise TypeError(
+                f"count_by 的 key 需要列名(str)或 callable，收到 "
+                f"{type(key).__name__}: {key!r}")
+        return self._rows_as_lists(Seq.count_by(self, key))
+
+    def reduce_by(self, key=None, func=None):
+        """按 key 分组后 reduce（支持**列名**或 callable，与 group_by 口径一致）。
+
+        BUG-376: 同 count_by —— 原样继承只接受 callable。
+
+        Returns:
+            两列表格（key, reduced_value）。
+        """
+        if isinstance(key, str):
+            _col = key
+            key = lambda _row, _c=_col: _row[_c]
+        elif key is not None and not callable(key):
+            raise TypeError(
+                f"reduce_by 的 key 需要列名(str)或 callable，收到 "
+                f"{type(key).__name__}: {key!r}")
+        if func is not None and not callable(func):
+            raise TypeError(
+                f"reduce_by 的 func 需要 callable，收到 {type(func).__name__}: {func!r}")
+        return self._rows_as_lists(Seq.reduce_by(self, key, func))
+
     def join(self, other: 'Table', select_fields: List[str] = None,
              on_str: str = None, join_type: str = 'inner',
              first: bool = False, fld_type: int = 0) -> 'Table':
@@ -2496,6 +2535,29 @@ class Table(Seq):
     def __str__(self):
         return self.__repr__()
     
+    @staticmethod
+    def _rows_as_lists(result):
+        """把结果里的 tuple/dict 行规范成 list 行（BUG-376）。
+
+        Seq 层方法常常 `self.__class__(gen())` 直接构造 Table，行是 tuple
+        （如 count_by/reduce_by 的 (key, value)）；而 Table 的内部不变量是
+        「行必须是 list」。这里统一归一化（不含列名拷贝）。
+        """
+        if isinstance(result, Table):
+            raw = getattr(result, '_collection', None)
+            if raw and any(not isinstance(r, list) for r in raw):
+                normalized = []
+                for row in raw:
+                    if isinstance(row, dict):
+                        cols = list(result._columns or [])
+                        normalized.append([row.get(c) for c in cols])
+                    elif isinstance(row, (list, tuple)):
+                        normalized.append(list(row))
+                    else:
+                        normalized.append([row])
+                result._data = normalized
+        return result
+
     def _with_attrs(self, result):
         """将当前表的属性（列名、表名等）复制到结果表中
         
