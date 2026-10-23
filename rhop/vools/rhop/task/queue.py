@@ -831,8 +831,33 @@ class TaskQueue(object):
 
     def _finish_success(self, record: TaskRecord, outcome: Dict[str, Any],
                         worker_id: str) -> Dict[str, Any]:
-        """成功：写 COMPLETED + 结果（可加密）。"""
+        """成功：写 COMPLETED + 结果（可加密）。
+
+        BUG-329: 若任务在执行期间被 cancel，终态应是 CANCELLED 而非
+        COMPLETED——取消标记只在领取期被读一次，执行期间与收尾时都不再看它，
+        导致 cancel RUNNING 任务后命令跑完被记为 COMPLETED，取消语义不完整。
+        """
         now = utcnow_iso()
+        # BUG-329: 收尾前检查 cancel_requested。record 对象在领取时创建，
+        # cancel 请求是在执行期间通过 set_cancel_requested 落库的，
+        # record.cancel_requested 可能仍是 False——必须从库重新读取最新值。
+        latest = self.store.get_task(record.task_name)
+        cancelled = bool(latest and latest.cancel_requested)
+        if cancelled:
+            self.store.set_state(record.task_name, TaskState.CANCELLED, now=now,
+                                 end_time=now, last_err=None,
+                                 back_info=self.encode_result({
+                                     "channel": outcome.get("channel"),
+                                     "name": outcome.get("name"),
+                                     "result": outcome.get("result"),
+                                     "cancelled": True,
+                                     "finished_at": now,
+                                     "worker_id": worker_id,
+                                 }), worker_id=worker_id)
+            self.log.info("任务 %s 已取消（命令跑完后收尾落 CANCELLED）",
+                          record.task_name)
+            return {"action": "cancelled", "task_name": record.task_name,
+                    "worker_id": worker_id}
         info = {
             "channel": outcome.get("channel"),
             "name": outcome.get("name"),
@@ -852,8 +877,30 @@ class TaskQueue(object):
     def _finish_failure(self, record: TaskRecord, message: str, worker_id: str,
                         retryable: bool = True,
                         detail: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """失败：按重试策略落 RETRY_PENDING 或 FAILED。"""
+        """失败：按重试策略落 RETRY_PENDING 或 FAILED。
+
+        BUG-329: 若任务在执行期间被 cancel，终态应是 CANCELLED 而非
+        RETRY_PENDING/FAILED——取消优先级高于重试策略。
+        """
         now = utcnow_iso()
+        # BUG-329: 收尾前检查 cancel_requested。record 对象在领取时创建，
+        # cancel 请求是在执行期间通过 set_cancel_requested 落库的，
+        # record.cancel_requested 可能仍是 False——必须从库重新读取最新值。
+        latest = self.store.get_task(record.task_name)
+        cancelled = bool(latest and latest.cancel_requested)
+        if cancelled:
+            self.store.set_state(record.task_name, TaskState.CANCELLED, now=now,
+                                 end_time=now, last_err=message,
+                                 back_info=self.encode_result({
+                                     "error": message,
+                                     "cancelled": True,
+                                     "finished_at": now,
+                                     "worker_id": worker_id,
+                                 }), worker_id=None, lock_time=None)
+            self.log.info("任务 %s 已取消（命令失败后收尾落 CANCELLED）",
+                          record.task_name)
+            return {"action": "cancelled", "task_name": record.task_name,
+                    "worker_id": worker_id}
         attempts = int(record.retry_count) + 1
         will_retry = bool(retryable) and int(record.retry_count) < int(record.max_retries)
         state = TaskState.RETRY_PENDING if will_retry else TaskState.FAILED
