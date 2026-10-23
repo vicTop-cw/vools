@@ -29,7 +29,17 @@ class Qax(Table):
     # BUG-252: QAXMax/QAXMin 在无匹配数据时应返回 None，与 Table.max/min 一致。
     # 继承自 Table 的 _rself_exclude=('max','min') 只覆盖底层方法名；
     # Qax 子类需显式列出 PascalCase 包装名。
-    _rself_exclude = ('max', 'min', 'QAXMax', 'QAXMin')
+    # BUG-322: @rself 取 `getattr(type(self), '_rself_exclude', ())`——**不做 MRO
+    # 合并**，子类声明会整体覆盖基类的豁免。故这里必须把 Table 的豁免
+    # （max/min/get_cell/get_cell2/compute，见 BUG-252/313/314）一并列出，
+    # 否则越界取值与未匹配聚合会在 Qax 上再次被兜底成 self（返回整表）。
+    # BUG-321: QAXCompute 未匹配聚合时应返回 None 而非整表。
+    _rself_exclude = (
+        # —— 继承自 Table 的豁免（勿删，见 BUG-322）——
+        'max', 'min', 'get_cell', 'get_cell2', 'compute',
+        # —— Qax 自身新增 ——
+        'QAXMax', 'QAXMin', 'QAXCompute',
+    )
 
     """SqlCel QAX 风格的表格数据结构
 
@@ -680,6 +690,12 @@ class Qax(Table):
             计算结果
         """
         if func is None:
+            # BUG-321: col 为 int 时原实现把 int 直接传给 Table.compute ->
+            # `int.upper()` AttributeError；带 func 的路径已支持 1-based 列号
+            # （BUG-178/251），此处对齐：先 _check_1based 解析为列名。
+            if isinstance(col, int):
+                col = self._columns[self._check_1based(
+                    col, len(self._columns), '列') - 1]
             return self.compute(col)
         if callable(func):
             values = self.column(col)
