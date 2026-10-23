@@ -101,9 +101,14 @@ def validate_action(action: Action) -> List[str]:
         errors.append(f'schema: {getattr(e, "message", str(e))}')
 
     # 2) 必填字段（双重保险，即使无 jsonschema 也强制）
-    for k in ('id', 'name', 'version', 'trust', 'entry'):
+    #    entry 仅对 kind=exec 必填：阶段3 的无源码动作族（link/alias/bundle/doc/
+    #    demo/template）没有入口块，若仍要求 entry，它们根本无法落地。
+    effective_kind = str(meta.get('kind') or 'exec').lower()
+    for k in ('id', 'name', 'version', 'trust'):
         if not meta.get(k):
             errors.append(f'schema: 必填字段缺失: {k}')
+    if effective_kind == 'exec' and not meta.get('entry'):
+        errors.append('schema: 必填字段缺失: entry（仅 kind=exec 要求入口块）')
 
     # 2b) platform 必填 + 取值合法（future_plan §3 #1：不再缺省全平台）
     if not meta.get('platform'):
@@ -128,8 +133,9 @@ def validate_action(action: Action) -> List[str]:
     if 'usage' in meta and not isinstance(meta.get('usage'), str):
         errors.append(f'schema: usage 必须是字符串，实际为 {type(meta.get("usage")).__name__}')
 
-    # 4) entry 指向存在的代码块
-    errors.extend(check_entry_block(action))
+    # 4) entry 指向存在的代码块（kind=exec 才校验；非 exec 无源码动作豁免）
+    if effective_kind == 'exec':
+        errors.extend(check_entry_block(action))
 
     # 4b) 代码块语言标记合法且可路由（docs/03 §6.2 后半句 + §6.5，docs/41 §A1）
     errors.extend(check_block_languages(action))

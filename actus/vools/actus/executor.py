@@ -130,6 +130,49 @@ def _payload_depth(obj) -> int:
     return maxd
 
 
+_forward_ctx = threading.local()
+
+
+def _execute_forwarding_kind(action, action_id, params, kind, **kw):
+    """阶段3：alias 直接转发；link 做参数浅合并后转发（ACTUS_REFACTOR_PLAN §3.3）。
+
+    link 的 args 作为基底、调用方入参覆盖同名键（浅合并）。
+    转发通过 execute 递归完成（走完整的门禁链），并用线程局部深度计数防环（上限 5）。
+    """
+    target = str(getattr(action, 'target', '') or '').strip()
+    if not target:
+        return {
+            'status': 'failed', 'data': None,
+            'error': {'code': 'param_invalid',
+                      'message': f"kind={kind} 的动作 {action_id} 缺少 target 字段"},
+        }
+    forwarded = dict(params or {})
+    if kind == 'link':
+        # Action 没有 args 属性，入参契约在 meta['args']（docs/03 §3 元数据字段总表）
+        link_args = action.meta.get('args') or {}
+        if isinstance(link_args, dict):
+            merged = dict(link_args)
+            merged.update(forwarded)
+            forwarded = merged
+    depth = getattr(_forward_ctx, 'depth', 0)
+    if depth >= 5:
+        return {
+            'status': 'failed', 'data': None,
+            'error': {'code': 'param_invalid',
+                      'message': f"link/alias 转发层级 ≥5，疑似环（{action_id} → {target}）"},
+        }
+    _forward_ctx.depth = depth + 1
+    try:
+        return execute(target, forwarded,
+                       confirmed=kw.get('confirmed', False),
+                       meta_dir=kw.get('meta_dir'),
+                       actions_dir=kw.get('actions_dir'),
+                       force=kw.get('force', False),
+                       artifacts_dir=kw.get('artifacts_dir'))
+    finally:
+        _forward_ctx.depth = depth
+
+
 def execute(action_id: str, params: dict = None,
             confirmed: bool = False, meta_dir: str = None,
             actions_dir: str = None, force: bool = False,
@@ -175,6 +218,29 @@ def execute(action_id: str, params: dict = None,
     try:
         from .indexer import get_action
         action_obj = load_and_validate(get_action(action_id, actions_dir).path)
+
+        # ── 阶段3：非 exec kind 的执行语义（ACTUS_REFACTOR_PLAN §3.3）──
+        # 此前执行器完全不感知 kind：link/alias 会被当成普通 exec 动作执行
+        # （无 entry 的报 entry_no_output、有 entry 的会跑错代码），阶段3 的
+        # 出口条件『link 合并参数执行』因此不达标。
+        kind = str(getattr(action_obj, 'kind', '') or 'exec').lower()
+        if kind in ('alias', 'link'):
+            return _execute_forwarding_kind(
+                action_obj, action_id, params, kind,
+                confirmed=confirmed, meta_dir=meta_dir, actions_dir=actions_dir,
+                force=force, artifacts_dir=artifacts_dir)
+        if kind != 'exec':
+            return {
+                'status': 'failed',
+                'data': None,
+                'error': {
+                    'code': 'kind_unsupported',
+                    'message': f"kind={kind!r} 的执行语义尚未落地（阶段3 目前只实现 "
+                               f"alias/link 转发）；动作 id={action_id}",
+                    'details': {'kind': kind, 'action_id': action_id},
+                },
+            }
+
         if action_obj.dependencies:
             resolver = DependencyResolver(actions_root=actions_dir)
             dep_states = []
