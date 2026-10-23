@@ -31,8 +31,11 @@ def t():
 
 class TestComputeReturnsDefault:
     def test_unmatched_expression(self, t):
-        # 修复前：返回整个 Table
-        assert t.compute('BOGUS(x)') is None
+        # BUG-378 起：未识别的聚合形式**显式报错**（原先静默返回 default_value，
+        # 函数名拼错时毫无提示）。"匹配但无数值 → default_value" 的语义仍保留，
+        # 见 test_all_non_numeric_column / test_explicit_default_value。
+        with pytest.raises(ValueError):
+            t.compute('BOGUS(x)')
 
     def test_all_non_numeric_column(self, t):
         # name 列全是字符串 → nums 为空 → default_value(None)
@@ -42,7 +45,9 @@ class TestComputeReturnsDefault:
         assert t.compute('MIN(name)') is None
 
     def test_explicit_default_value(self, t):
-        assert t.compute('BOGUS(x)', default_value=-1) == -1
+        # 未识别形式 → ValueError（BUG-378）；匹配但无数值 → default_value
+        with pytest.raises(ValueError):
+            t.compute('BOGUS(x)', default_value=-1)
         assert t.compute('SUM(name)', default_value='N/A') == 'N/A'
 
     def test_normal_aggregations_unchanged(self, t):

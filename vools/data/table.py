@@ -2051,56 +2051,84 @@ class Table(Seq):
     
     def compute(self, expression: str, filter_expr: str = None, default_value: Any = None) -> Any:
         """计算聚合表达式 (对应 QAXCompute)
-        
+
         Args:
-            expression: 聚合表达式，如 'SUM(price * quantity)'
+            expression: 聚合表达式，如 'SUM(price)'、'AVG(amount)'、
+                'COUNT(name)'、'MAX(v)'、'MIN(v)'。聚合函数只作用于**单列**；
+                不支持 'SUM(price * quantity)' 这类列间运算（BUG-378 修正了原
+                docstring 中不可用的示例）。
             filter_expr: 过滤条件，如 'quantity > 0'
-            default_value: 默认值
-        
+            default_value: 命中聚合但**没有可用数值**时返回的值
+
         Returns:
             计算结果
+
+        Raises:
+            ValueError: expression 不是可识别的聚合形式（避免函数名拼错时
+                静默返回 default_value / None）
+            KeyError: 表达式中引用的列不存在（错误信息带表达式上下文）
+
+        Note:
+            BUG-321: 入口校验 expression 必须是 str（原实现直接 `.upper()`
+            抛 AttributeError，掩盖真因）。
         """
-        # BUG-321: 非 str 实参原实现直接 `expression.upper()`，抛
-        # AttributeError: 'int' object has no attribute 'upper'（内部错误掩盖
-        # 真因）。入口显式类型校验，给出可操作提示。
         if not isinstance(expression, str):
             raise TypeError(
-                f"compute 的 expression 必须是 str（如 'SUM(price * quantity)'），"
+                f"compute 的 expression 必须是 str（如 'SUM(price)'），"
                 f"收到 {type(expression).__name__}: {expression!r}")
         table = self
         if filter_expr:
             table = table.where(filter_expr)
-        
-        # 简单解析表达式
+
+        def _col_values(_name):
+            # BUG-378: 列不存在时补表达式上下文，避免只看到裸 KeyError('nope')
+            try:
+                return table.column(_name)
+            except KeyError:
+                raise KeyError(
+                    f"compute 表达式 {expression!r} 引用了不存在的列 {_name!r}"
+                ) from None
+
         expr_lower = expression.upper().strip()
-        
-        # 提取列名和操作
+
+        # BUG-378: 形如 'max(v)-min(v)' 的**列间运算**原会落到列名解析里抛
+        # KeyError('v)-min(v')（难以理解）。这里先按"括号内不得含运算符"判定，
+        # 给出明确的"只支持单列聚合"提示。
+        if expression.rstrip().endswith(')'):
+            _lp = expression.find('(')
+            if _lp > 0:
+                _inner = expression[_lp + 1:].rstrip()[:-1]
+                if any(_op in _inner for _op in '+-*/(),'):
+                    raise ValueError(
+                        f"compute 的聚合表达式只支持**单列名**（不支持列间运算）: "
+                        f"{expression!r}；如需组合计算请分步调用")
+
         if expr_lower.startswith('SUM(') and expr_lower.endswith(')'):
-            col_name = expression[4:-1]
-            values = table.column(col_name)
+            values = _col_values(expression[4:-1])
             nums = [v for v in values if isinstance(v, (int, float))]
             return sum(nums) if nums else default_value
         elif expr_lower.startswith('AVG(') and expr_lower.endswith(')'):
-            col_name = expression[4:-1]
-            values = table.column(col_name)
+            values = _col_values(expression[4:-1])
             nums = [v for v in values if isinstance(v, (int, float))]
             return sum(nums) / len(nums) if nums else default_value
         elif expr_lower.startswith('COUNT(') and expr_lower.endswith(')'):
-            col_name = expression[6:-1]
-            values = table.column(col_name)
+            values = _col_values(expression[6:-1])
             return len([v for v in values if v is not None])
         elif expr_lower.startswith('MAX(') and expr_lower.endswith(')'):
-            col_name = expression[4:-1]
-            values = table.column(col_name)
+            values = _col_values(expression[4:-1])
             nums = [v for v in values if isinstance(v, (int, float))]
             return max(nums) if nums else default_value
         elif expr_lower.startswith('MIN(') and expr_lower.endswith(')'):
-            col_name = expression[4:-1]
-            values = table.column(col_name)
+            values = _col_values(expression[4:-1])
             nums = [v for v in values if isinstance(v, (int, float))]
             return min(nums) if nums else default_value
-        
-        return default_value
+
+        # BUG-378: 未识别的表达式原先静默返回 default_value（默认 None）——
+        # 函数名拼错（'SUMM(v)'）也毫无提示。显式报错并列出支持的形式。
+        raise ValueError(
+            f"compute 无法识别的聚合表达式: {expression!r}；支持 "
+            f"SUM(...) / AVG(...) / COUNT(...) / MAX(...) / MIN(...) 形式"
+            f"（单列聚合，如 'SUM(price)'）")
 
     def aggregate(self, col: str, agg_func: Callable[[List], Any]) -> Dict[Any, Any]:
         """聚合
