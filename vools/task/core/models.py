@@ -56,6 +56,16 @@ class _SafeUnpickler(pickle.Unpickler):
         'decimal': {'Decimal'},
         'uuid': {'UUID'},
         'collections': {'OrderedDict', 'defaultdict', 'deque', 'Counter'},
+        # BUG-331: 本库数据类型必须可往返——任务实参/返回值里出现 Table/Qax/
+        # VList/VText/Row/Column/VDate 时，`_dump_json` 会 pickle 成标记，
+        # 若这里不放行就会被拒绝并静默降级成标记字符串。**只**放行这些确定
+        # 的数据类型，不放行整个 `vools.` 前缀（保留 BUG-207 的防护面）。
+        'vools.data.table': {'Table', 'Row', 'Column'},
+        'vools.data.qax': {'Qax'},
+        'vools.data.vlist': {'VList'},
+        'vools.data.vtext': {'VText'},
+        'vools.data.seq': {'Seq', 'SeqBase'},
+        'vools.datetime.vdate_class': {'VDate'},
     }
 
     def find_class(self, module, name):
@@ -91,7 +101,16 @@ def _restore_pickle(obj):
             return _safe_pickle_loads(
                 base64.b64decode(obj[len(_PICKLE_MARKER):].encode("ascii"))
             )
-        except Exception:
+        except Exception as _e:
+            # BUG-331: 不再静默降级——白名单拒绝/解码失败时给出可见告警，
+            # 避免「任务实参/返回值被换成标记字符串」这类静默数据损坏。
+            import warnings as _warnings
+            _warnings.warn(
+                f"任务载荷中的对象无法安全恢复（安全白名单拒绝或解码失败，"
+                f"{type(_e).__name__}: {_e}），已按原始标记字符串返回",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             return obj
     if isinstance(obj, list):
         return [_restore_pickle(x) for x in obj]
