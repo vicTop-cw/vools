@@ -172,10 +172,12 @@ def curry_class(cls: type):
     
     t = T()
     t.add(1).add(2).add(3)        # 返回 6（定长参数逐个累积，第 3 个参数时求值）
-    t.sum_all(1, 2, 3, 4)         # 返回 10
+    t.sum_all(1, 2, 3, 4)         # 返回 10（一次性传全部实参）
 
-    注意（BUG-318）：带 *args/**kwargs 的可变参数方法无法"累积到齐"触发求值，
-    柯里化链会一直返回 CurriedMethod；此类方法请一次性传全部实参（如上）。
+    可变参数（*args/**kwargs）方法无法判断"何时收集完毕"，因此：
+    - 若一次调用就把必需参数给齐 -> 立即执行并返回结果（如上 sum_all(1,2,3,4)）；
+    - 若想先累积再补可变参数 -> 链式拿到 CurriedMethod 后，用**空调用 `()`**
+      显式触发执行：t.sum_all(1)(2)(3, 4)() == 10（BUG-324 更正上轮说法）。
     """
     if not inspect.isclass(cls):
         raise TypeError(f"@curry_class 装饰器仅允许应用于类，当前类型为: {type(cls).__name__}")
