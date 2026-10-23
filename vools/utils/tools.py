@@ -554,11 +554,20 @@ def excel_column_to_number(col):
     """根据Excel列字母返回列数字
 
     Args:
-        col: Excel列字母
+        col: Excel列字母（仅字母 A-Z/a-z）
 
     Returns:
-        列数字
+        列数字（从 1 开始）
+
+    Raises:
+        ValueError: col 为空、含非字母字符或不是字符串（BUG-338：原实现把非字母
+            也按 ord-64 计算，'A1' -> 11、'0' -> -16、' A' -> -831 等静默垃圾值）
     """
+    if not isinstance(col, str):
+        raise TypeError(f"col 必须是 str（Excel 列字母），收到 {type(col).__name__}")
+    if not col or not col.isalpha() or not col.isascii():
+        raise ValueError(
+            f"col 必须是 Excel 列字母（仅 A-Z/a-z），收到 {col!r}")
     col = col.upper()
     result = 0
     for char in col:
@@ -570,11 +579,18 @@ def excel_number_to_column(num):
     """根据数字返回Excel列字母
 
     Args:
-        num: 列数字
+        num: 列数字（从 1 开始的正整数）
 
     Returns:
         Excel列字母
+
+    Raises:
+        ValueError: num 不是正整数（BUG-338：原实现 0/负数静默返回空串）
     """
+    if isinstance(num, bool) or not isinstance(num, int):
+        raise TypeError(f"num 必须是 int，收到 {type(num).__name__}")
+    if num <= 0:
+        raise ValueError(f"num 必须是正整数（列号从 1 开始），收到 {num}")
     result = ""
     while num > 0:
         num -= 1
