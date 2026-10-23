@@ -1,3 +1,13 @@
+---
+id: actus.basics.calculator.demo
+name: Calculator Demo
+version: 1.0.0
+trust: sandbox
+kind: demo
+platform: desktop
+description: Calculator 的用法演示（kind=demo 的非可执行资产）
+---
+
 # Calculator 演示
 
 > 本文件是 `actus.basics.calculator` 的演示（`demo:` 字段指向这里）。
