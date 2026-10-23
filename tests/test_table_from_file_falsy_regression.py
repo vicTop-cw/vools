@@ -28,10 +28,13 @@ class TestRowsFalsyTrap:
         assert Table.from_file(csv_path, rows=0).rows() == 0
 
     def test_rows_positive_truncates(self, csv_path):
-        assert Table.from_file(csv_path, rows=2).rows() == 2
+        # BUG-317: rows 从文件首行（表头）起算，但表头不再作为数据行，
+        # 故 rows=2 = 表头 + 1 数据行 → data 1 行
+        assert Table.from_file(csv_path, rows=2).rows() == 1
 
     def test_rows_none_reads_all(self, csv_path):
-        assert Table.from_file(csv_path).rows() == 3
+        # BUG-317: 表头只作列名不计入 data → 2 个数据行
+        assert Table.from_file(csv_path).rows() == 2
 
 
 class TestColsFalsyTrap:
@@ -48,6 +51,6 @@ class TestColsFalsyTrap:
     def test_cols_specific(self, csv_path):
         t = Table.from_file(csv_path, cols=[0, 2])
         assert t.columns() == ['a', 'c']
-        # 注意：from_file 的表头行也作为数据第 0 行保留（既有语义）
-        assert t._data[0] == ['a', 'c']
-        assert t._data[1] == ['1', '3']
+        # BUG-317: 表头行不再作为数据保留（旧语义会把它当 data[0]）
+        assert t._data[0] == ['1', '3']
+        assert t._data[1] == ['4', '6']
