@@ -121,6 +121,10 @@ def is_scattered_path(path: str) -> bool:
     `.actus.md`，新格式 `.actus.schema.md` 的散落路径一律判 False。
     """
     p = (path or '').rstrip('\\/')
+    # URL 不是本地路径：`https://…/a.actus.schema.md` 会被后缀判定误判成本地
+    # 散落文件，从而在 resolve_target 的优先级链里抢先命中、把 URL 分支吞掉。
+    if '://' in p:
+        return False
     base = os.path.basename(p)
     from .constants import is_action_file
     if is_action_file(base):
