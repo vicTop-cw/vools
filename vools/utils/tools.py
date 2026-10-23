@@ -301,6 +301,8 @@ def get_date_seq(nums=15, date_type='day', fmt='%m%d', run_ds=None, duo=True, re
         dss = [d.date() for d in _generate_date_range(run_date, nums, freq='D')]
         return [f"{d.strftime(fmt)}-{d.strftime(fmt)}" for d in dss] if duo else [d.strftime(fmt) for d in dss]
 
+    _run_date_d = run_date.date()
+
     if freq == 'W':
         temp_run_date = run_date
         if run_date.weekday() != 6:
@@ -310,9 +312,15 @@ def get_date_seq(nums=15, date_type='day', fmt='%m%d', run_ds=None, duo=True, re
         dss = [d.date() for d in _generate_date_range(temp_run_date, nums, freq='W')]
 
         result = []
-        for i, d in enumerate(dss):
+        for d in dss:
             start_date = d - timedelta(days=6)
-            end_date = d if i > 0 else run_date
+            # BUG-335: _generate_date_range 返回「最旧在前」，原实现把 i==0（最旧
+            # 那一项）的结束日设成 run_date，产出跨多周期的超长区间（如
+            # '1229-0115' 跨 3 周）。正确语义：只有**包含 run_date 的那个周期**
+            # 截到 run_date，其余用自然周期末（周日）。
+            # 注意：run_date 是 datetime、d/start_date 是 date（BUG-335 修复时
+            # 统一按 date 比较，避免 datetime/date 混比 TypeError）
+            end_date = _run_date_d if start_date <= _run_date_d <= d else d
             if duo:
                 result.append(f"{start_date.strftime(fmt)}-{end_date.strftime(fmt)}")
             else:
@@ -326,9 +334,11 @@ def get_date_seq(nums=15, date_type='day', fmt='%m%d', run_ds=None, duo=True, re
     dss = [d.date() for d in _generate_date_range(end_of_month, nums, freq='M')]
 
     result = []
-    for i, d in enumerate(dss):
+    for d in dss:
         start_date = d.replace(day=1)
-        end_date = d if i > 0 else run_date
+        # BUG-335: 同 week 分支——只把**包含 run_date 的月份**截到 run_date，
+        # 其余月份用自然月末（原实现把最旧月份的端日错设成 run_date）。
+        end_date = _run_date_d if start_date <= _run_date_d <= d else d
         if duo:
             result.append(f"{start_date.strftime(fmt)}-{end_date.strftime(fmt)}")
         else:
