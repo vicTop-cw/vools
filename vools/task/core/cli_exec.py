@@ -220,10 +220,17 @@ def cli_execute(payload: Dict[str, Any], timeout_sec: Optional[float] = None,
         # shell=True 时必须传字符串，否则 Windows 会把列表首元素当可执行文件
         if shell:
             # BUG-152: 之前只取 full_cmd[0]（即 cmd_str），cli.args 追加参数被丢弃。
-            # 这里把 args 拼接到 cmd_str 之后，保证 shell 模式下追加参数生效。
-            cmd_str_safe = str(full_cmd[0]) if full_cmd else ""
-            extra_args = [str(a) for a in full_cmd[1:]]
-            run_cmd = " ".join([cmd_str_safe] + extra_args) if extra_args else cmd_str_safe
+            # BUG-381: 追加参数原先直接以空格拼接、**未做引号化**——含空格的路径或
+            # 参数会被 shell 拆开（实测 'E:\Program Files\...' 被拆成 'E:\Program'）；
+            # 且 shell 模式下 script/script_path **被静默丢弃**（还返回 ok=True）。
+            # 这里：cmd 字符串保持原样（shell 语法由调用方负责），其后每个追加参数
+            # 按当前平台引号化，脚本路径同样作为参数追加。
+            _parts = [str(cmd_parts[0])] if full_cmd else []
+            for _a in full_cmd[1:]:
+                _parts.append(_quote_shell_arg(_a))
+            if script_arg is not None:
+                _parts.append(_quote_shell_arg(script_arg))
+            run_cmd = " ".join(_parts)
         else:
             run_cmd = full_cmd
         proc = subprocess.run(
@@ -245,7 +252,7 @@ def cli_execute(payload: Dict[str, Any], timeout_sec: Optional[float] = None,
             "exit_code": exit_code,
             "stdout": stdout,
             "stderr": stderr,
-            "cmd": full_cmd if not shell else full_cmd[0],
+            "cmd": full_cmd if not shell else run_cmd,
             "duration_ms": duration,
             "error": None,
             "task_type": task_type_norm,
@@ -285,6 +292,20 @@ def _fail(message: str, t0: float, task_type: Optional[str], exit_code: Optional
     if extra:
         out.update(extra)
     return out
+
+
+def _quote_shell_arg(arg: Any) -> str:
+    """BUG-381: shell=True 时对追加参数做平台正确的引号化。
+
+    cmd 字符串本身按 shell 语义原样使用；其后的 args / 脚本路径必须作为
+    **单个参数**传入，否则含空格的路径（Windows 的 'C:\\Program Files\\...'）
+    或含空格的参数会被 shell 拆分。
+    """
+    _arg = str(arg)
+    if os.name == "nt":
+        # list2cmdline 按 Windows 命令行规则加引号/转义
+        return subprocess.list2cmdline([_arg])
+    return shlex.quote(_arg)
 
 
 def _safe_cmd(cmd_str, lang):
