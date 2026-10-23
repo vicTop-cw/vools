@@ -131,6 +131,29 @@ def _payload_depth(obj) -> int:
 
 
 _forward_ctx = threading.local()
+_demo_ctx = threading.local()
+
+
+def _attach_demo_expansion(result, action):
+    """阶段3：demo 演示模式——把全部代码块源码按 only-code 展开附在出参里。
+
+    计划 §3.4：「demo 动作的全部块默认视为 only-code 展开」。
+    """
+    expanded = []
+    for block in action.blocks:
+        src = block.get('source') or block.get('content') or ''
+        if src:
+            expanded.append({
+                'language': block.get('language'),
+                'tags': block.get('tags') or [],
+                'only_code': True,
+                'source': src,
+            })
+    data = result.get('data')
+    if isinstance(data, dict):
+        data['demo'] = {'expanded': expanded,
+                        'block_count': len(expanded)}
+    return result
 
 
 def _execute_forwarding_kind(action, action_id, params, kind, **kw):
@@ -224,6 +247,17 @@ def execute(action_id: str, params: dict = None,
         # （无 entry 的报 entry_no_output、有 entry 的会跑错代码），阶段3 的
         # 出口条件『link 合并参数执行』因此不达标。
         kind = str(getattr(action_obj, 'kind', '') or 'exec').lower()
+        if kind == 'demo' and not getattr(_demo_ctx, 'active', False):
+            # 阶段3：demo 演示模式 = 执行入口块 + 把全部代码块按 only-code 展开输出。
+            # 用线程局部标志避免 execute 递归回来再次进入演示分支。
+            _demo_ctx.active = True
+            try:
+                result = execute(action_id, params, confirmed=confirmed,
+                                 meta_dir=meta_dir, actions_dir=actions_dir,
+                                 force=force, artifacts_dir=artifacts_dir)
+            finally:
+                _demo_ctx.active = False
+            return _attach_demo_expansion(result, action_obj)
         if kind in ('alias', 'link'):
             return _execute_forwarding_kind(
                 action_obj, action_id, params, kind,
