@@ -1717,6 +1717,13 @@ class Table(Seq):
         Returns:
             计算结果
         """
+        # BUG-321: 非 str 实参原实现直接 `expression.upper()`，抛
+        # AttributeError: 'int' object has no attribute 'upper'（内部错误掩盖
+        # 真因）。入口显式类型校验，给出可操作提示。
+        if not isinstance(expression, str):
+            raise TypeError(
+                f"compute 的 expression 必须是 str（如 'SUM(price * quantity)'），"
+                f"收到 {type(expression).__name__}: {expression!r}")
         table = self
         if filter_expr:
             table = table.where(filter_expr)
