@@ -18,6 +18,7 @@ Type registry for vools.serialize
 """
 
 import datetime
+import uuid
 import decimal
 import enum
 import fractions
@@ -262,11 +263,37 @@ def _deserialize_enum(state: Dict[str, Any]) -> Any:
 
 
 def _serialize_path(obj: pathlib.PurePath) -> Dict[str, Any]:
-    return {'path': str(obj)}
+    # BUG-333: 只存 str 会丢失**具体风格**——PurePosixPath 在 Windows 上往返后会
+    # 变成 PureWindowsPath（pathlib.PurePath(...) 按当前平台取子类），
+    # isinstance / parts / 分隔符语义随之静默改变。这里显式记录 flavor。
+    state = {'path': str(obj)}
+    if isinstance(obj, pathlib.PurePosixPath):
+        state['flavor'] = 'posix'
+    elif isinstance(obj, pathlib.PureWindowsPath):
+        state['flavor'] = 'windows'
+    # BUG-333 补充：具体 Path（有 exists/read_text 等 IO 能力）与抽象 Pure* 必须
+    # 区分——否则往返后 `Path` 退化成 `PureWindowsPath`，文件操作直接 AttributeError。
+    state['concrete'] = isinstance(obj, pathlib.Path)
+    return state
 
 
 def _deserialize_path(state: Dict[str, Any]) -> pathlib.PurePath:
-    return pathlib.PurePath(state['path'])
+    import os as _os
+
+    flavor = state.get('flavor')
+    path_str = state['path']
+    if state.get('concrete'):
+        cur_flavor = 'posix' if _os.name == 'posix' else 'windows'
+        # 具体 Path 只能在**本平台**风格下构造（WindowsPath 在 POSIX 上不可实例化），
+        # 同平台则还原为具体 Path（保留 IO 能力）。
+        if flavor is None or flavor == cur_flavor:
+            return pathlib.Path(path_str)
+    if flavor == 'posix':
+        return pathlib.PurePosixPath(path_str)
+    if flavor == 'windows':
+        return pathlib.PureWindowsPath(path_str)
+    # 无风格信息（旧 payload / 抽象 PurePath）：保持历史行为
+    return pathlib.PurePath(path_str)
 
 
 def _serialize_bytearray(obj: bytearray) -> Dict[str, Any]:
@@ -293,6 +320,18 @@ def _deserialize_frozenset(state: Dict[str, Any]) -> frozenset:
     return frozenset(state['items'])
 
 
+# BUG-332: uuid 是业务常见标识类型（GUID/请求 ID），但此前既不在类型注册表、
+# 也不在 codec._import_class 的模块白名单里 —— json 后端会写出
+# `__vools_obj__` 标记却读不回来（静默降级成 state dict）。此处按 __vools_type__
+# 通道补上专用处理器（与 Decimal/date 同路径），json/vb_json 均可正确往返。
+def _serialize_uuid(obj: uuid.UUID) -> Dict[str, Any]:
+    return {'hex': obj.hex}
+
+
+def _deserialize_uuid(state: Dict[str, Any]) -> uuid.UUID:
+    return uuid.UUID(state['hex'])
+
+
 # 注册内置类型处理器
 # 注意：子类应优先注册，因此 datetime 在 date 之前
 register_type(datetime.datetime, 'datetime.datetime', _serialize_datetime, _deserialize_datetime)
@@ -307,3 +346,4 @@ register_type(pathlib.PurePath, 'pathlib.PurePath', _serialize_path, _deserializ
 register_type(bytearray, 'bytearray', _serialize_bytearray, _deserialize_bytearray)
 register_type(frozenset, 'frozenset', _serialize_frozenset, _deserialize_frozenset)
 register_type(set, 'set', _serialize_set, _deserialize_set)
+register_type(uuid.UUID, 'uuid.UUID', _serialize_uuid, _deserialize_uuid)
