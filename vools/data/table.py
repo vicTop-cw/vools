@@ -1828,6 +1828,16 @@ class Table(Seq):
         Returns:
             连接后的新 Table
         """
+        # BUG-391: join_type 未校验——'bogus' / '' / 'LEFT' 等非法值会静默落到
+        # 默认分支（行数按 inner、列却按左连接口径），调用方毫无提示。这里统一
+        # 规范化大小写并显式校验。
+        _jt = join_type.strip().lower() if isinstance(join_type, str) else None
+        if _jt not in ('inner', 'left', 'right', 'outer'):
+            raise ValueError(
+                f"join_type 只支持 'inner' / 'left' / 'right' / 'outer'，"
+                f"收到 {join_type!r}")
+        join_type = _jt
+
         if on_str is None:
             # 自动查找同名列作为连接键
             common_cols = set(self._columns) & set(other._columns)
