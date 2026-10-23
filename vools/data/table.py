@@ -1828,6 +1828,14 @@ class Table(Seq):
         Returns:
             连接后的新 Table
         """
+        # BUG-393: other 不是 Table 时原实现直接访问 `_columns`/`_name`，抛裸
+        # AttributeError（'list' object has no attribute '_columns'），看不出是
+        # 「参数类型错了」。入口显式校验。
+        if not isinstance(other, Table):
+            raise TypeError(
+                f"join 的 other 需要 Table/Qax，收到 "
+                f"{type(other).__name__}: {other!r}")
+
         # BUG-391: join_type 未校验——'bogus' / '' / 'LEFT' 等非法值会静默落到
         # 默认分支（行数按 inner、列却按左连接口径），调用方毫无提示。这里统一
         # 规范化大小写并显式校验。
@@ -1981,6 +1989,14 @@ class Table(Seq):
         Returns:
             合并后的新 Table
         """
+        # BUG-393: other 不是 Table 时原实现直接访问 `_columns`/`_name`，抛裸
+        # AttributeError（'list' object has no attribute '_columns'），看不出是
+        # 「参数类型错了」。入口显式校验。
+        if not isinstance(other, Table):
+            raise TypeError(
+                f"merge 的 other 需要 Table/Qax，收到 "
+                f"{type(other).__name__}: {other!r}")
+
         if vertical:
             # 纵向合并（追加行）- 要求列结构相同
             if self._columns != other._columns:
