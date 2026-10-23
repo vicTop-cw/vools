@@ -66,12 +66,42 @@ class _SafeUnpickler(pickle.Unpickler):
         'vools.data.vtext': {'VText'},
         'vools.data.seq': {'Seq', 'SeqBase'},
         'vools.datetime.vdate_class': {'VDate'},
+        # BUG-334: 常见标准库类型——不放行会让任务实参/返回值静默降级成
+        # 标记字符串（路径丢 parts/风格）。无代码执行面。
+        'pathlib': {
+            'PurePath', 'PurePosixPath', 'PureWindowsPath',
+            'PosixPath', 'WindowsPath', 'Path',
+        },
     }
+    # 内建类型补充（bytearray 走 builtins 白名单）
+    _ALLOWED['builtins'].add('bytearray')
+
+    # BUG-334: 用户枚举放行规则（与 type_registry._is_allowed_enum_module 同口径）
+    _ENUM_MODULE_ALLOW = frozenset({'enum', '__main__'})
+    _ENUM_MODULE_PREFIXES = ('vools', 'tests')
+
+    @classmethod
+    def _is_allowed_enum_module(cls, module: str) -> bool:
+        if module in cls._ENUM_MODULE_ALLOW:
+            return True
+        return any(module.startswith(p) for p in cls._ENUM_MODULE_PREFIXES)
 
     def find_class(self, module, name):
         allowed = self._ALLOWED.get(module)
         if allowed and name in allowed:
             return super().find_class(module, name)
+        # BUG-334: 用户模块里的枚举类按「枚举模块白名单 + 必须 issubclass(Enum)」
+        # 放行；非枚举类一律拒绝（保持 BUG-207 防护面）。
+        if self._is_allowed_enum_module(module):
+            try:
+                import enum as _enum
+                import importlib as _importlib
+                _mod = _importlib.import_module(module)
+                _cls = getattr(_mod, name)
+                if isinstance(_cls, type) and issubclass(_cls, _enum.Enum):
+                    return _cls
+            except Exception:
+                pass
         raise pickle.UnpicklingError(
             f"forbidden global {module}.{name} in vools task payload (BUG-207)"
         )
@@ -121,11 +151,43 @@ def _restore_pickle(obj):
     return obj
 
 
+def _json_prepare(obj):
+    """BUG-334: JSON 编码前的预转换。
+
+    `enum.IntEnum`/`enum.StrEnum` 与 `VText` 这类 **int/str 子类**会被
+    `json.dumps` 直接按数字/字符串编码（不触发 default 回调），往返后类型丢失
+    （IntEnum -> int、VText -> str）。这里先把「Enum 实例」与「非原生 str 子类」
+    转成 pickle 标记字符串；普通 str/int 不受影响（用户字面量绝不会被误转）。
+    """
+    import enum as _enum
+
+    if isinstance(obj, _enum.Enum):
+        try:
+            payload = pickle.dumps(obj)
+            return _PICKLE_MARKER + base64.b64encode(payload).decode("ascii")
+        except Exception:
+            return obj
+    if isinstance(obj, str) and type(obj) is not str:
+        # str 子类（如 VText）：JSON 会当普通字符串编码，需打标记保留类型
+        try:
+            payload = pickle.dumps(obj)
+            return _PICKLE_MARKER + base64.b64encode(payload).decode("ascii")
+        except Exception:
+            return str(obj)
+    if isinstance(obj, list):
+        return [_json_prepare(x) for x in obj]
+    if isinstance(obj, tuple):
+        return [_json_prepare(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _json_prepare(v) for k, v in obj.items()}
+    return obj
+
+
 def _dump_json(value):
     """JSON 序列化（带 pickle fallback），None 保留为 None"""
     if value is None:
         return None
-    return json.dumps(value, ensure_ascii=False, default=_json_default)
+    return json.dumps(_json_prepare(value), ensure_ascii=False, default=_json_default)
 
 
 def _load_json(value):
