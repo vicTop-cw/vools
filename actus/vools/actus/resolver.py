@@ -49,6 +49,7 @@ class ResolvedTarget:
     downloaded: bool = False  # 是否已落盘
     sha256: str = ''          # 下载内容的 sha256（source=url 时）
     digest_verified: bool = False  # 是否已通过期望指纹校验（计划 §六.3）
+    signature_verified: bool = False  # 是否已通过签名校验（计划 §六.3）
 
     def to_dict(self) -> dict:
         return {
@@ -61,6 +62,7 @@ class ResolvedTarget:
             'downloaded': self.downloaded,
             'sha256': self.sha256,
             'digest_verified': self.digest_verified,
+            'signature_verified': self.signature_verified,
         }
 
 
@@ -204,7 +206,8 @@ def _download_url(url: str, allow_hosts: List[str] = None) -> str:
 
 
 def resolve_target(target: str, allow_hosts: List[str] = None,
-                   expect_digest: Optional[str] = None) -> ResolvedTarget:
+                   expect_digest: Optional[str] = None,
+                   expect_signature_key: Optional[str] = None) -> ResolvedTarget:
     """解析目标字符串为 ResolvedTarget（ACTUS_REFACTOR_PLAN.md §3.1 优先级链）。
 
     Args:
@@ -294,6 +297,27 @@ def resolve_target(target: str, allow_hosts: List[str] = None,
                     f'远程动作指纹不匹配（期望 {want}，实际 {got}）——拒绝执行',
                     {'url': raw, 'expected': want, 'actual': got})
             result.digest_verified = True
+        if expect_signature_key:
+            # 签名校验（计划 §六.3）：指纹只能证明「内容没变」，不能证明
+            # 「谁发的」——白名单域名被攻破时攻击者可以连指纹一起换掉。
+            # 这里下载同名 .sig 并用本地可信公钥验签，失败即拒绝。
+            sig_url = raw + '.sig'
+            try:
+                local_sig = _download_url(sig_url, allow_hosts=allow_hosts)
+            except Exception as exc:
+                raise ActionError(
+                    'remote_signature_missing',
+                    f'远程动作缺少可用的签名文件（{sig_url}）：{exc}',
+                    {'url': raw, 'sig_url': sig_url})
+            from .trust_model import SignatureVerifier
+            vres = SignatureVerifier().verify_file(
+                local_path, sig_path=local_sig, key_name=expect_signature_key)
+            if vres.get('status') != 'ok':
+                raise ActionError(
+                    'remote_signature_invalid',
+                    f"远程动作签名校验失败：{vres.get('message')}",
+                    {'url': raw, 'sig_url': sig_url, 'verify': vres})
+            result.signature_verified = True
         # 尝试解析出 id
         try:
             from .model import parse_cfg_from_file
