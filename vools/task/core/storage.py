@@ -149,10 +149,21 @@ class TaskStorage:
 
             # 领取可用任务（兼容旧版 SQLite，不使用 RETURNING）
             # 先查 id，再更新，再查询完整行（在事务内保证原子性）
+            # BUG-384: DAG 依赖门控。原 SQL 只看 status='PENDING'，完全无视
+            # task_dependencies —— 实测「上游 FAILED，下游照常执行并 SUCCESS」，
+            # 依赖只是被记录、从不生效（与新 backends 的 PENDING→READY 状态机
+            # 语义不一致）。这里要求所有上游依赖都处于 SUCCESS 才可领取。
             row_cursor = conn.execute("""
-                SELECT id FROM tasks
-                WHERE status = 'PENDING'
-                ORDER BY priority DESC, created_at ASC
+                SELECT t.id FROM tasks t
+                WHERE t.status = 'PENDING'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM task_dependencies d
+                      JOIN tasks dep ON dep.id = d.depends_on_id
+                      WHERE d.task_id = t.id
+                        AND dep.status NOT IN ('SUCCESS', 'COMPLETED')
+                  )
+                ORDER BY t.priority DESC, t.created_at ASC
                 LIMIT 1
             """)
             row = row_cursor.fetchone()
@@ -229,7 +240,46 @@ class TaskStorage:
                     WHERE id = ? AND status != 'CANCEL'
                 """, params)
 
-            return cursor.rowcount > 0
+            _changed = cursor.rowcount > 0
+            # BUG-384: 上游终态失败 → 尚未开始的下游任务级联置 SKIPPED（与
+            # vools.task.backends._dag.skip_after_failure 语义一致），避免下游
+            # 永久 PENDING 卡死或（修复前）照常执行。
+            if _changed and status in (TaskStatus.FAILED, TaskStatus.CANCEL):
+                self._cascade_skip(conn, task_id, reason=status.value)
+            return _changed
+
+    def _cascade_skip(self, conn: sqlite3.Connection, task_id: int, reason: str) -> List[int]:
+        """把 task_id 的（传递）下游中尚未启动的任务置为 SKIPPED。"""
+        skipped: List[int] = []
+        seen = set()
+        stack = [task_id]
+        while stack:
+            current = stack.pop()
+            rows = conn.execute(
+                "SELECT task_id FROM task_dependencies WHERE depends_on_id = ?",
+                (current,),
+            ).fetchall()
+            for (child,) in rows:
+                if child in seen:
+                    continue
+                seen.add(child)
+                row = conn.execute(
+                    "SELECT status FROM tasks WHERE id = ?", (child,)
+                ).fetchone()
+                if not row:
+                    continue
+                if row[0] in ('PENDING', 'READY', 'RETRY_PENDING', 'RETRYING', 'LOCKED'):
+                    conn.execute(
+                        """UPDATE tasks
+                           SET status = 'SKIPPED',
+                               error_message = ?,
+                               updated_at = CURRENT_TIMESTAMP
+                           WHERE id = ?""",
+                        (f"上游任务 {task_id} {reason}，级联跳过（BUG-384）", child),
+                    )
+                    skipped.append(child)
+                    stack.append(child)
+        return skipped
 
     def _get_retry_count(self, conn: sqlite3.Connection, task_id: int) -> int:
         """获取当前重试次数"""
@@ -263,18 +313,28 @@ class TaskStorage:
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND status IN ('PENDING', 'RUNNING', 'RETRYING')
             """, (task_id,))
-            return cursor.rowcount > 0
+            _ok = cursor.rowcount > 0
+            if _ok:
+                # BUG-384: 取消同样向下游级联 SKIPPED
+                self._cascade_skip(conn, task_id, reason='CANCEL')
+            return _ok
 
     def retry_task(self, task_id: int) -> bool:
-        """手动重试失败任务"""
+        """手动重试失败/被级联跳过的任务。
+
+        BUG-384: 上游失败会级联把下游置 SKIPPED；用户修复/重跑上游后需要能
+        复活下游，故这里同时接受 SKIPPED（复活后仍是 PENDING，依赖门控保证
+        上游全部成功才会真正执行）。
+        """
         with self._transaction(immediate=True) as conn:
             cursor = conn.execute("""
                 UPDATE tasks
                 SET status = 'PENDING',
                     worker_id = NULL,
                     lease_timeout = NULL,
+                    error_message = NULL,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status = 'FAILED'
+                WHERE id = ? AND status IN ('FAILED', 'SKIPPED')
             """, (task_id,))
             return cursor.rowcount > 0
 
