@@ -111,6 +111,38 @@ def _check_expr_dangerous(expr: str) -> None:
             raise NameError(
                 f"dunder name '{node.id}' is not allowed (BUG-208)"
             )
+        # BUG-363: 上面的检查只看**字面量** dunder。而 getattr 在受限 builtins 里
+        # （DSL 属性链需要），配合字符串拼接即可在运行时拼出 dunder 名字：
+        #   getattr(getattr(getattr(x,'_'+'_class_'+'_'),'_'+'_base_'+'_'),
+        #           '_'+'_subclasses_'+'_')()      -> 拿到全部已加载类（RCE 链）
+        # 对策：getattr/setattr/delattr/hasattr 的属性名必须是**普通字符串字面量**
+        # （字面量里的 dunder 已被上面的常量检查拦下）；operator.attrgetter 等
+        # 动态取属性工具整体禁止。
+        if isinstance(node, ast.Call):
+            _fn = node.func
+            _fname = None
+            if isinstance(_fn, ast.Name):
+                _fname = _fn.id
+            elif isinstance(_fn, ast.Attribute):
+                _fname = _fn.attr
+            if _fname in ('getattr', 'setattr', 'delattr', 'hasattr'):
+                # 允许：字符串字面量（dunder 字面量已被上面的常量检查拦下）；
+                # 或普通变量名 —— DSL 属性链编译产物即 getattr(x0, <随机名>)，
+                # 随机名由 DSL 生成并指向普通属性名，不允许表达式自行拼接：
+                #   getattr(x, '_'+'_class_'+'_')      -> BinOp，拒绝
+                #   getattr(x, f'__{1}__')             -> JoinedStr，拒绝
+                _arg = node.args[1] if len(node.args) >= 2 else None
+                _ok = isinstance(_arg, ast.Name) or (
+                    isinstance(_arg, ast.Constant) and isinstance(_arg.value, str))
+                if not _ok:
+                    raise NameError(
+                        f"动态属性名不允许（{_fname} 的属性名必须是字符串字面量或变量名），"
+                        f"疑似绕过 dunder 检查 (BUG-363)"
+                    )
+            elif _fname in ('attrgetter', 'methodcaller', 'itemgetter'):
+                raise NameError(
+                    f"'{_fname}' 属于动态取属性工具，不允许在占位符 DSL 中使用 (BUG-363)"
+                )
 
 
 # 随机名称缓存
