@@ -22,9 +22,14 @@ from .vlist import VList
 # vicText 加密模块默认密钥（仅兜底用；生产务必用环境变量 VQ_ENC_KEY 独立存放）
 _VQ_ENC_KEY_DEFAULT = b"sparksql_exe_2026_share_key_0123456789ab"
 
-# BUG-206: _run 的 exec/eval 必须使用受限命名空间，杜绝 __import__/open/
-# getattr/exec/eval/compile 等 builtins 造成的任意代码执行。
-# 只保留纯函数/容器/算术类 builtins；'1+1' 等算术表达式仅依赖内建运算符，不受影响。
+# BUG-206: _run 的 exec/eval 使用受限命名空间，挡掉 __import__/open/getattr/
+# exec/eval/compile 等 builtins 的**直接**调用。
+#
+# BUG-362 更正：受限 builtins **不是沙箱** —— `().__class__.__base__.__subclasses__()`
+# 仍可沿 MRO 拿到任意已加载类（实测 400+ 个，含 Popen）。因此：
+#   * `eval` 路径在求值前追加 AST 守卫（拒绝下划线属性/名称、format 逃逸、import）；
+#   * `exec` 路径**无法等价加固**（语句执行），属"显式执行代码"，调用方必须自行
+#     保证输入可信——不要在 _run("exec") 上处理不可信文本。
 _RUN_SAFE_BUILTINS = {
     'True': True, 'False': False, 'None': None,
     'abs': abs, 'len': len, 'min': min, 'max': max, 'sum': sum, 'round': round,
@@ -35,6 +40,15 @@ _RUN_SAFE_BUILTINS = {
     'sorted': sorted, 'reversed': reversed, 'print': print,
 }
 _RUN_SAFE_NAMESPACE = {'__builtins__': _RUN_SAFE_BUILTINS}
+
+
+def _validate_run_expression(text: str) -> None:
+    """BUG-362: `_run('eval')` 求值前的 AST 校验（复用共享守卫）。"""
+    from ..security.expr_guard import ExpressionGuardError, validate_expression
+    try:
+        validate_expression(text)
+    except ExpressionGuardError as exc:
+        raise ValueError(f"VText._run 拒绝执行该表达式：{exc}") from None
 
 
 def _strip_sql_comments(text: str) -> str:
@@ -483,12 +497,18 @@ class VText(str):
             # BUG-206: exec 必须用受限命名空间，杜绝 __import__/open 等任意代码执行
             if func is exec:
                 return exec(text, _RUN_SAFE_NAMESPACE)
+            if func is eval:
+                # BUG-362: 受限 builtins 挡不住 MRO 逃逸，表达式先过 AST 守卫
+                _validate_run_expression(text)
+                return eval(text, _RUN_SAFE_NAMESPACE)
             return func(text)
         if isinstance(func, str):
             lowered = func.lower()
             if lowered == "exec":
                 return exec(text, _RUN_SAFE_NAMESPACE)
             if lowered == "eval":
+                # BUG-362: 同 func is eval —— AST 守卫后再求值
+                _validate_run_expression(text)
                 return eval(text, _RUN_SAFE_NAMESPACE)
             if lowered == "spark.sql":
                 # BUG-170: 原 `from .core import get_spark` 指向不存在的 vools.data.core。
