@@ -2177,7 +2177,23 @@ class Table(Seq):
         # BUG-319: 未知源列原为静默 return self（转换没发生却无任何信号），
         # 与 get_col/del_col/to_num 的 KeyError 不一致，统一改抛 KeyError。
         col_idx = table._get_col_index(trunc_field_name)
-        
+
+        # BUG-392: 位置参数未校验。文档声明 start_pos 从 1 开始，但面积
+        #   start_pos=0 / 负数 -> start = max(0, start_pos-1) 静默从头截取；
+        #   end_pos=-1 -> val[start:-1] 静默丢掉末字符（Python 负索引语义）。
+        # 均无任何提示。这里显式校验为「整数且 >= 1」。
+        for _name, _val in (('start_pos', start_pos), ('end_pos', end_pos)):
+            if _val is None:
+                continue
+            if not isinstance(_val, int) or isinstance(_val, bool):
+                raise TypeError(
+                    f"substr 的 {_name} 需要 int（从1开始），收到 "
+                    f"{type(_val).__name__}: {_val!r}")
+            if _val < 1:
+                raise ValueError(
+                    f"substr 的 {_name} 从 1 开始，收到 {_val}"
+                    f"（0/负数原本会被静默夹取成从头截取或丢掉末尾字符）")
+
         # 添加目标列
         if to_field_name not in table._columns:
             table._columns.append(to_field_name)
