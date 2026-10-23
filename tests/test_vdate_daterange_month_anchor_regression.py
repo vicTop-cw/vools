@@ -84,3 +84,35 @@ class TestOtherFreqUnchanged:
     def test_neither_end_nor_periods(self, d):
         with pytest.raises(ValueError):
             d.getDateRange(start='2026-01-01')
+
+class TestGetDateRangeEx:
+    """BUG-390：getDateRangeEx 三者同给时同样静默忽略 periods。"""
+
+    def test_three_given_rejected(self):
+        d = VDate('2026-01-15')
+        with pytest.raises(ValueError) as ei:
+            d.getDateRangeEx(start='2026-01-01', end='2026-01-05', periods=2)
+        assert 'periods' in str(ei.value)
+
+    def test_order_swapped(self):
+        d = VDate('2026-01-15')
+        # 文档承诺「自动调整 start/end 顺序，返回从早到晚」
+        assert d.getDateRangeEx(start='2026-01-05', end='2026-01-01') == [
+            '2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04', '2026-01-05']
+
+    def test_two_given_ok(self):
+        d = VDate('2026-01-15')
+        assert d.getDateRangeEx(start='2026-01-01', periods=2) == [
+            '2026-01-01', '2026-01-02']
+        assert d.getDateRangeEx(end='2026-01-05', periods=2) == [
+            '2026-01-04', '2026-01-05']
+
+    def test_month_anchor_applies(self):
+        d = VDate('2026-01-15')
+        assert d.getDateRangeEx(start='2026-01-31', periods=3, freq='M') == [
+            '2026-01-31', '2026-02-28', '2026-03-31']
+
+    def test_none_rejected(self):
+        d = VDate('2026-01-15')
+        with pytest.raises(ValueError):
+            d.getDateRangeEx()

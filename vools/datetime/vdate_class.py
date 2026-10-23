@@ -412,6 +412,12 @@ class VDate(datetime):
             ValueError: end 和 periods 至少需要提供一个
         """
         p1, p2, p3 = start is not None, end is not None, periods is not None
+        # BUG-390: 三者同给时第一个分支（p1 and p2）会**静默忽略 periods**，
+        # 与 getDateRange 的口径保持一致：显式报错（BUG-389）。
+        if p1 and p2 and p3:
+            raise ValueError(
+                "start / end / periods 最多给其中两个：三者同时给出时会静默忽略 "
+                "periods（BUG-390），请去掉其中一个")
         cls = self.__class__
         dt_f = lambda x: cls(x, '%Y-%m-%d').strftime('%Y-%m-%d')
 
