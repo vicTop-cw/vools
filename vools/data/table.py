@@ -55,6 +55,47 @@ class Row(Seq):
     """
     # BUG-314: map(func=None) 返回 None（打印模式），不能被 rself 兜底成 self。
     _rself_exclude = ('map',)
+
+    # BUG-330: 覆盖 Seq.__getstate__/__setstate__。Seq 的实现只保存
+    # `{'_data': list(self._evaluate())}`——对本类会丢失自身状态
+    # （Row 的 _table/_row_index）且把行物化成 dict，导致 pickle / copy.deepcopy 往返损坏
+    # （deepcopy(Table) 得到无列名的畸形表）。这里完整保存槽字段与 __dict__。
+    _RSTATE_SLOTS = ('_last', '_collection', '_current')
+    # 瞬态/不可序列化的字段：_active_op 是 lambda、_origin 是迭代器（json 后端
+    # 会因此报 not serializable），都不进状态，恢复时给默认值。
+    _RSTATE_TRANSIENT = ('_active_op', '_ops', '_origin')
+
+    def __getstate__(self):
+        state = {'__dict__': {
+            k: v for k, v in self.__dict__.items()
+            if k not in self._RSTATE_TRANSIENT}}
+        for _slot in self._RSTATE_SLOTS:
+            try:
+                state[_slot] = getattr(self, _slot)
+            except AttributeError:
+                pass
+        return state
+
+    def __setstate__(self, state):
+        if isinstance(state, dict) and '__dict__' in state:
+            for _slot in self._RSTATE_SLOTS:
+                if _slot in state:
+                    setattr(self, _slot, state[_slot])
+            self.__dict__.update(state.get('__dict__', {}))
+            self.__dict__.setdefault('_ops', [])
+            self.__dict__.setdefault('_active_op', lambda x: x)
+            try:
+                self._origin = iter([])
+            except AttributeError:
+                pass
+        else:
+            # 兼容旧 Seq 状态 {'_data': [...]}（历史 pickle）
+            data = state.get('_data', []) if isinstance(state, dict) else []
+            self._collection = list(data)
+            self._last = len(self._collection) - 1
+            self._current = -1
+            self._origin = iter([])
+
     
     def __init__(self, *args, **kwargs):
         self._table = None
@@ -209,6 +250,47 @@ class Column(Seq):
     """
     # BUG-314: map(func=None) 返回 None（打印模式），不能被 rself 兜底成 self。
     _rself_exclude = ('map',)
+
+    # BUG-330: 覆盖 Seq.__getstate__/__setstate__。Seq 的实现只保存
+    # `{'_data': list(self._evaluate())}`——对本类会丢失自身状态
+    # （Column 的 _table/_col_index/_col_name）且把行物化成 dict，导致 pickle / copy.deepcopy 往返损坏
+    # （deepcopy(Table) 得到无列名的畸形表）。这里完整保存槽字段与 __dict__。
+    _RSTATE_SLOTS = ('_last', '_collection', '_current')
+    # 瞬态/不可序列化的字段：_active_op 是 lambda、_origin 是迭代器（json 后端
+    # 会因此报 not serializable），都不进状态，恢复时给默认值。
+    _RSTATE_TRANSIENT = ('_active_op', '_ops', '_origin')
+
+    def __getstate__(self):
+        state = {'__dict__': {
+            k: v for k, v in self.__dict__.items()
+            if k not in self._RSTATE_TRANSIENT}}
+        for _slot in self._RSTATE_SLOTS:
+            try:
+                state[_slot] = getattr(self, _slot)
+            except AttributeError:
+                pass
+        return state
+
+    def __setstate__(self, state):
+        if isinstance(state, dict) and '__dict__' in state:
+            for _slot in self._RSTATE_SLOTS:
+                if _slot in state:
+                    setattr(self, _slot, state[_slot])
+            self.__dict__.update(state.get('__dict__', {}))
+            self.__dict__.setdefault('_ops', [])
+            self.__dict__.setdefault('_active_op', lambda x: x)
+            try:
+                self._origin = iter([])
+            except AttributeError:
+                pass
+        else:
+            # 兼容旧 Seq 状态 {'_data': [...]}（历史 pickle）
+            data = state.get('_data', []) if isinstance(state, dict) else []
+            self._collection = list(data)
+            self._last = len(self._collection) - 1
+            self._current = -1
+            self._origin = iter([])
+
     
     def __init__(self, *args, **kwargs):
         self._table = None
@@ -422,6 +504,47 @@ class Table(Seq):
     # BUG-314: compute 未匹配表达式/全非数值列时返回 default_value(None)，
     # 被 rself 兜底成 self 会把「算不出来」伪装成「返回整个表」。
     _rself_exclude = ('max', 'min', 'get_cell', 'get_cell2', 'compute')
+
+    # BUG-330: 覆盖 Seq.__getstate__/__setstate__。Seq 的实现只保存
+    # `{'_data': list(self._evaluate())}`——对本类会丢失自身状态
+    # （Table 的 _columns/_name/_row_index）且把行物化成 dict，导致 pickle / copy.deepcopy 往返损坏
+    # （deepcopy(Table) 得到无列名的畸形表）。这里完整保存槽字段与 __dict__。
+    _RSTATE_SLOTS = ('_last', '_collection', '_current')
+    # 瞬态/不可序列化的字段：_active_op 是 lambda、_origin 是迭代器（json 后端
+    # 会因此报 not serializable），都不进状态，恢复时给默认值。
+    _RSTATE_TRANSIENT = ('_active_op', '_ops', '_origin')
+
+    def __getstate__(self):
+        state = {'__dict__': {
+            k: v for k, v in self.__dict__.items()
+            if k not in self._RSTATE_TRANSIENT}}
+        for _slot in self._RSTATE_SLOTS:
+            try:
+                state[_slot] = getattr(self, _slot)
+            except AttributeError:
+                pass
+        return state
+
+    def __setstate__(self, state):
+        if isinstance(state, dict) and '__dict__' in state:
+            for _slot in self._RSTATE_SLOTS:
+                if _slot in state:
+                    setattr(self, _slot, state[_slot])
+            self.__dict__.update(state.get('__dict__', {}))
+            self.__dict__.setdefault('_ops', [])
+            self.__dict__.setdefault('_active_op', lambda x: x)
+            try:
+                self._origin = iter([])
+            except AttributeError:
+                pass
+        else:
+            # 兼容旧 Seq 状态 {'_data': [...]}（历史 pickle）
+            data = state.get('_data', []) if isinstance(state, dict) else []
+            self._collection = list(data)
+            self._last = len(self._collection) - 1
+            self._current = -1
+            self._origin = iter([])
+
 
     """二维表格数据结构
 
