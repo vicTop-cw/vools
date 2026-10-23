@@ -2405,34 +2405,46 @@ class Table(Seq):
         return self
     
     def _repr_html(self, max_rows: int = 10) -> str:
-        """HTML 格式的表格表示"""
+        """HTML 格式的表格表示
+
+        BUG-380: 单元格与列名原先**直接拼接进 HTML**——
+        `Table([['<script>alert(1)</script>']]).show()` 会把标签原样插入，
+        在 Jupyter / 网页里构成 HTML 注入（XSS），普通值如 `a&b` 也会破坏排版。
+        这里统一 `html.escape` 转义（表名/列名/单元格值）。
+        """
+        import html as _html
+
+        def _esc(value: Any) -> str:
+            return _html.escape('' if value is None else str(value))
+
         lines = []
-        lines.append(f'<strong>Table: {self._name or "unnamed"} ({self.rows()} rows x {self.cols()} cols)</strong>')
+        lines.append(
+            f'<strong>Table: {_esc(self._name or "unnamed")} '
+            f'({self.rows()} rows x {self.cols()} cols)</strong>')
         lines.append('<table border="1">')
-        
+
         # 表头
         lines.append('<tr>')
         for col in self._columns[:10]:
-            lines.append(f'<th>{col}</th>')
+            lines.append(f'<th>{_esc(col)}</th>')
         if len(self._columns) > 10:
             lines.append('<th>...</th>')
         lines.append('</tr>')
-        
+
         # 数据
         for i, row in enumerate(self._data[:max_rows]):
             lines.append('<tr>')
             for val in row[:10]:
-                val_str = str(val) if val is not None else ''
-                lines.append(f'<td>{val_str}</td>')
+                lines.append(f'<td>{_esc(val)}</td>')
             if len(row) > 10:
                 lines.append('<td>...</td>')
             lines.append('</tr>')
-        
+
         lines.append('</table>')
-        
+
         if self.rows() > max_rows:
             lines.append(f'<em>... and {self.rows() - max_rows} more rows</em>')
-        
+
         return '\n'.join(lines)
 
     # ==================== Excel IO ====================
