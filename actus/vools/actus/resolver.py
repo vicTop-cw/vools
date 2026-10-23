@@ -47,6 +47,8 @@ class ResolvedTarget:
     ambiguous: List[str] = field(default_factory=list)  # 多命中候选
     url: str = ''             # 原始 URL（source=url 时）
     downloaded: bool = False  # 是否已落盘
+    sha256: str = ''          # 下载内容的 sha256（source=url 时）
+    digest_verified: bool = False  # 是否已通过期望指纹校验（计划 §六.3）
 
     def to_dict(self) -> dict:
         return {
@@ -57,6 +59,8 @@ class ResolvedTarget:
             'ambiguous': self.ambiguous,
             'url': self.url,
             'downloaded': self.downloaded,
+            'sha256': self.sha256,
+            'digest_verified': self.digest_verified,
         }
 
 
@@ -199,7 +203,8 @@ def _download_url(url: str, allow_hosts: List[str] = None) -> str:
     return local_path
 
 
-def resolve_target(target: str, allow_hosts: List[str] = None) -> ResolvedTarget:
+def resolve_target(target: str, allow_hosts: List[str] = None,
+                   expect_digest: Optional[str] = None) -> ResolvedTarget:
     """解析目标字符串为 ResolvedTarget（ACTUS_REFACTOR_PLAN.md §3.1 优先级链）。
 
     Args:
@@ -271,6 +276,24 @@ def resolve_target(target: str, allow_hosts: List[str] = None) -> ResolvedTarget
         result.url = raw
         result.path = local_path
         result.downloaded = True
+        # 指纹校验（计划 §六.3）：远程动作「下载即执行」的供应链风险——
+        # 白名单只挡主机、SSL 只挡传输层，白名单域名内被替换内容仍会执行，
+        # 所以必须比对内容哈希。给了 expect_digest 就必须匹配，否则拒绝。
+        import hashlib
+        try:
+            with open(local_path, 'rb') as fh:
+                result.sha256 = hashlib.sha256(fh.read()).hexdigest()
+        except OSError:
+            result.sha256 = ''
+        if expect_digest:
+            want = str(expect_digest).strip().lower()
+            got = str(result.sha256).lower()
+            if want != got:
+                raise ActionError(
+                    'remote_digest_mismatch',
+                    f'远程动作指纹不匹配（期望 {want}，实际 {got}）——拒绝执行',
+                    {'url': raw, 'expected': want, 'actual': got})
+            result.digest_verified = True
         # 尝试解析出 id
         try:
             from .model import parse_cfg_from_file

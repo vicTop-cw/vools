@@ -100,6 +100,12 @@ def _build_parser():
                        help='audit 级动作：人类已确认，放行执行')
     p_run.add_argument('--yes', action='store_true',
                        help='非交互确认（等价 --confirm，语义同 docs/07 §2 回执）')
+    p_run.add_argument('--allow-host', action='append', default=None,
+                       help='远程动作源/入参的域名白名单（可重复；缺省禁止所有远程）')
+    p_run.add_argument('--expect-digest', default=None,
+                       help='远程动作源的期望 sha256 指纹（计划 §六.3：不匹配即拒绝执行）')
+    p_run.add_argument('--allow-unverified-remote', action='store_true',
+                       help='允许执行未经指纹校验的远程动作（默认拒绝，自担供应链风险）')
 
     p_status = sub.add_parser('status', help='查询执行状态')
     p_status.add_argument('exec_id', nargs='?', help='缺省 = 最近执行汇总')
@@ -659,12 +665,26 @@ def _dispatch(args) -> int:
         _scattered_action = None
         try:
             from .resolver import resolve_target
-            resolved = resolve_target(target)
+            resolved = resolve_target(
+                target,
+                allow_hosts=getattr(args, 'allow_host', None),
+                expect_digest=getattr(args, 'expect_digest', None))
             if resolved.ambiguous:
                 _out({'status': 'failed',
                       'error': {'code': 'ambiguous',
                                 'message': f"目标 {target!r} 命中多个动作，请用完整 id 指定",
                                 'details': {'candidates': resolved.ambiguous}}})
+                return 1
+            # 计划 §六.3：远程动作「下载即执行」的供应链风险 ⇒ 默认拒绝未校验远程
+            if resolved.source == 'url' and not resolved.digest_verified \
+                    and not getattr(args, 'allow_unverified_remote', False):
+                _out({'status': 'failed',
+                      'error': {'code': 'remote_unverified',
+                                'message': '拒绝执行未经指纹校验的远程动作：请用 '
+                                           '--expect-digest <sha256> 指定期望指纹，'
+                                           '或显式 --allow-unverified-remote 自担风险',
+                                'details': {'url': resolved.url,
+                                            'sha256': resolved.sha256}}})
                 return 1
             if resolved.source == 'path' and resolved.path:
                 # 散落动作不在索引里：解析成 Action 走 preparsed_action 通道
