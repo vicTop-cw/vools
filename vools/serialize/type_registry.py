@@ -56,12 +56,33 @@ def register_type(
             deserialize=lambda state: MyClass(state['value']),
         )
     """
+    # BUG-399: 入口校验（同 encoding/crypto 注册表 BUG-398 的口径）。
+    # 原实现只在 name 为空时才访问 type_.__module__，传字符串等非类对象会抛
+    # 裸 AttributeError；serialize/deserialize 只查 None，传不可调用对象能
+    # 注册成功，直到真正 dumps 时才炸。
+    if not isinstance(type_, type):
+        raise TypeError(
+            f"register_type 的 type_ 必须是类，收到 "
+            f"{type(type_).__name__}: {type_!r}")
+    if name is not None:
+        if not isinstance(name, str):
+            raise TypeError(
+                f"register_type 的 name 必须是字符串，收到 "
+                f"{type(name).__name__}: {name!r}")
+        if not name.strip():
+            raise ValueError("register_type 的 name 不能为空字符串")
     if name is None:
         name = f'{type_.__module__}.{type_.__qualname__}'
     if serialize is None:
         raise ValueError(f'serialize function is required for type {name}')
     if deserialize is None:
         raise ValueError(f'deserialize function is required for type {name}')
+    if not callable(serialize):
+        raise TypeError(
+            f"serialize 必须可调用，收到 {type(serialize).__name__}: {serialize!r}")
+    if not callable(deserialize):
+        raise TypeError(
+            f"deserialize 必须可调用，收到 {type(deserialize).__name__}: {deserialize!r}")
     # BUG-325: 不同类型注册同名会导致 get_type_deserializer(name) 返回
     # 首个匹配的反序列化函数（dict 值顺序），后者往返被还原成前者的类型
     # （实测 B(9) -> A(9)）。注册前检测同名冲突。
