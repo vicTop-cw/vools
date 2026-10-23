@@ -268,13 +268,28 @@ def _execute_forwarding_kind(action, action_id, params, kind, **kw):
         }
     forwarded = _merge_link_params(action, params) if kind == 'link' else dict(params or {})
     depth = getattr(_forward_ctx, 'depth', 0)
+    chain = list(getattr(_forward_ctx, 'chain', None) or [])
+    # 真环：目标已经在这条转发链上（或指向自己）。此前只数深度，把「深链」
+    # 和「成环」报成同一个 param_invalid「疑似环」——直线链 a1→a8 其实不是环。
+    if target in chain or target == action_id:
+        full = chain + [action_id, target]
+        return {
+            'status': 'failed', 'data': None,
+            'error': {'code': 'action_ref_cycle',
+                      'message': f"link/alias 转发成环：{' → '.join(full)}",
+                      'details': {'chain': full}},
+        }
     if depth >= 5:
         return {
             'status': 'failed', 'data': None,
             'error': {'code': 'param_invalid',
-                      'message': f"link/alias 转发层级 ≥5，疑似环（{action_id} → {target}）"},
+                      'message': f"link/alias 转发层级 ≥5（{action_id} → {target}）："
+                                 f"链上无重复节点，属**深度超限**而非成环；"
+                                 f"如确需更深转发请拆分动作",
+                      'details': {'chain': chain + [action_id]}},
         }
     _forward_ctx.depth = depth + 1
+    _forward_ctx.chain = chain + [action_id]
     try:
         return execute(target, forwarded,
                        confirmed=kw.get('confirmed', False),
@@ -284,6 +299,7 @@ def _execute_forwarding_kind(action, action_id, params, kind, **kw):
                        artifacts_dir=kw.get('artifacts_dir'))
     finally:
         _forward_ctx.depth = depth
+        _forward_ctx.chain = chain
 
 
 def execute(action_id: str, params: dict = None,
