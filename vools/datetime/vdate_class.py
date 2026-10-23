@@ -57,7 +57,14 @@ class VDate(datetime):
     #（包装成 VDate 会 TypeError 崩溃）。
     _rself_exclude = {'date'}
 
-    def __init__(self, dt=None, fmt=None):
+    def __init__(self, dt=None, fmt=None, *args, **kwargs):
+        # BUG-386: 组件签名构造（见 __new__）——实例已由 datetime.__new__ 建好，
+        # 这里只需补 VDate 自己的记录器/格式，不能再走「解析 dt」的分支。
+        if args or kwargs or isinstance(fmt, int):
+            _has_time = bool(self.hour or self.minute or self.second or self.microsecond)
+            self.fmt = '%Y-%m-%d %H:%M:%S' if _has_time else '%Y-%m-%d'
+            self._date_processor = DateProcessor(self.strftime('%Y-%m-%d'))
+            return
         """初始化 VDate 实例。
         
         Args:
@@ -428,7 +435,16 @@ class VDate(datetime):
 
         return [d.strftime(self.fmt) for d in dates]
 
-    def __new__(cls, dt=None, fmt=None):
+    def __new__(cls, dt=None, fmt=None, *args, **kwargs):
+        # BUG-386: datetime 的 C 实现（now()/today()/fromtimestamp()/replace()/
+        # astimezone()/combine()/fromisoformat()…）在内部用**组件签名**重新构造
+        # 实例：cls(year, month, day, hour, minute, second, microsecond[, tzinfo[, fold]])。
+        # 原签名只接受 (dt, fmt)，这些 API 全部
+        #   TypeError: VDate.__new__() takes from 1 to 3 positional arguments but 9 were given
+        # 且 @rself 的 __getattr__ 回退到 _date_processor 时还会形成 RecursionError。
+        # 这里识别「有额外组件参数 / 第二参是 int（月份）」的形式，交给 datetime.__new__。
+        if args or kwargs or isinstance(fmt, int):
+            return super().__new__(cls, dt, fmt, *args, **kwargs)
         """创建新的 VDate 实例（override datetime.__new__）。
         
         Args:
@@ -699,6 +715,15 @@ class VDate(datetime):
                 return False
         return False
 
+    def __hash__(self) -> int:
+        """哈希值（BUG-387）。
+
+        `date`/`datetime` 本可哈希，但本类定义了 `__eq__`（按 (year, month, day)
+        比较，忽略时间）后 Python 会把 `__hash__` 置为 None → VDate 变成不可哈希，
+        无法作为 dict 键/set 元素。这里按与 `__eq__` 一致的粒度实现哈希。
+        """
+        return hash((self.year, self.month, self.day))
+
     def __lt__(self, other: object) -> bool:
         """小于比较。
         
@@ -791,10 +816,29 @@ class VDate(datetime):
         """
         if name in self.__dict__:
             return self.__dict__[name]
+        # BUG-386: datetime 的 C 方法（replace/astimezone/…）构造的实例 __dict__
+        # 为空（C 层不调用 __init__），这里为 fmt 提供按时间分量推导的惰性默认。
+        if name == 'fmt':
+            _fmt = '%Y-%m-%d %H:%M:%S' if (self.hour or self.minute or
+                                            self.second or self.microsecond) else '%Y-%m-%d'
+            object.__setattr__(self, 'fmt', _fmt)
+            return _fmt
+        # BUG-386: 内部属性（含 _date_processor 自身）缺失时必须直接 AttributeError，
+        # 否则回退分支 `getattr(self._date_processor, name)` 会再次触发 __getattr__，
+        # 形成无限递归（实测 replace()/astimezone() → RecursionError）。
+        if name.startswith('_'):
+            raise AttributeError(name)
         try:
             return getattr(super(), name)
-        except Exception:
-            return getattr(self._date_processor, name)
+        except AttributeError:
+            _proc = self.__dict__.get('_date_processor')
+            if _proc is None:
+                try:
+                    _proc = DateProcessor(self.strftime('%Y-%m-%d'))
+                    object.__setattr__(self, '_date_processor', _proc)
+                except Exception:
+                    raise AttributeError(name) from None
+            return getattr(_proc, name)
 
     def __dir__(self) -> List[str]:
         """返回所有可用属性列表。
