@@ -248,6 +248,16 @@ class VDate(datetime):
         Returns:
             datetime 对象列表
         """
+        # BUG-368: freq 非法（如 'X'，甚至小写 'd'）时下面三个分支的
+        # if/elif 全不命中 -> current 从不推进：
+        #   * periods 分支 -> 静默返回 periods 个**重复日期**；
+        #   * start+end 分支 -> `while current <= end_date` **死循环挂死**。
+        # 这里先规范化并校验 freq（大小写不敏感，仅 D/W/M）。
+        if not isinstance(freq, str) or freq.strip().upper() not in ('D', 'W', 'M'):
+            raise ValueError(
+                f"freq 只支持 'D'（天）/ 'W'（周）/ 'M'（月），收到 {freq!r}")
+        freq = freq.strip().upper()
+
         dates = []
 
         if end_date is not None and periods is not None:
