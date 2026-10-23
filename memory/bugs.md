@@ -6428,7 +6428,7 @@ severity medium。
 - reported_by: agent-vools-hardening
 - task_id: T0r751
 
-## BUG-336 [2026-10-23T14:27:49Z] [high] OPEN
+## BUG-336 [2026-10-23T14:27:49Z] [high] FIXED
 - summary: [actus/resolver] 远程下载白名单语义反转（未配置 allow_hosts 时放行任意 URL ⇒ SSRF）+ SSL 证书校验被禁用（CERT_NONE ⇒ MITM）
 - detail: 现象（实测）：
   1. `resolve_params_extended('@https://example.invalid/a.json')`（未配置 --allow-host）**直接发起下载**，而不是拒绝——白名单形同虚设。
@@ -6447,4 +6447,64 @@ severity medium。
 
 ### FIXED(2026-10-23T22:30:00Z / BUG-335)
 - evidence: vools/utils/tools.py get_date_seq week/month 序列端日归位修复。复现脚本验证：周端日 0112-0115/0105-0111/1229-0104 ✓；月端日 0101-0115/1201-1231/1101-1130 ✓。
+- reported_by: vools-bughunt-lead
+
+### FIXED(2026-10-23T22:35:00Z / BUG-336)
+- evidence: actus/vools/actus/resolver.py 新增 _assert_host_allowed()（空白名单即拒 remote_host_denied），两处下载函数改用 ssl.create_default_context() 默认校验。复现脚本验证：未配置 allow_hosts 时拒绝远程下载（code=remote_host_denied）✓；白名单内下载失败（预期）✓。
+- reported_by: vools-bughunt-lead
+## BUG-337 [2026-10-23T17:21:37Z] [medium] FIXED
+- summary: [actus/model] 新格式 .actus.schema.md 漏传 md5 → 索引 by_md5 缺 4 个种子动作 → resolver 的 md5 target 形态失效
+- detail: 现象：resolver 的『32 位 hex 内容指纹』target 形态对 4 个种子动作（calculator / image-viewer / text-editor / todo-list）全部失效——按它们的 md5 走 resolve_target 直接抛『未找到指纹匹配的动作』。
+  根因：`parse_cfg_from_file`（vools/actus/model.py:277）在 `.actus.schema.md` 分支调用 `_parse_schema_md_action(raw, path, sha)` 时**漏传 md5**——md5 就在上一行（:270）算好了却没往下传。旧格式分支（:376）传了，所以只有新格式动作中招。
+  后果链条：`Action.md5` 恒为 `''` → 索引 `by_md5` 收不到这些动作（索引 7 条里只有旧格式的 3 条有 md5）→ resolver 的 md5 形态形同虚设。
+  影响面：① 计划 §3.1 承诺的六种 target 形态里有一种（内容指纹）对新格式动作完全不可用；② 按指纹定位动作的场景（内容寻址、防篡改引用）在新格式上全部落空；③ 与 §3.5『索引扩展：md5 指纹』的口径不符——字段存在但恒空，属『有字段没数据』的静默失效。
+  证据：actus/tests/test_md5_form.py（新增 2 用例）。复现：修前 `python -c "from vools.actus.model import parse_cfg_from_file; print(repr(parse_cfg_from_file('vools/actus/actions/basics/calculator.actus.schema.md').md5))"` → `''`；修后 → 32 位 hex。
+  修复：`return _parse_schema_md_action(raw, path, sha, md5)`。修完需**重建索引**（`build_index()`）才能让 by_md5 生效——实测 md5 非空 3/7 → 7/7、by_md5 3 → 7、按 md5 解析 source='md5'。
+  建议：① 索引重建目前要手工触发，建议在索引里记录 md5/sha256 生成时间或版本，格式解析逻辑变更时自动失效重建；② 可补一条『索引里凡是 status=valid 的动作，md5 都必须是 32 hex』的整体不变量用例，防止同类静默失效再发生。
+- reported_by: explore-bugfind-13
+
+## BUG-338 [2026-10-23T17:45:11Z] [medium] FIXED
+- summary: [actus/dependency] _find_action_file 用字符串搜 "id": "xxx"，只认旧格式 → 新格式 .actus.schema.md 的动作在依赖解析里全部找不到（4 个种子动作全 None）
+- detail: 现象：`DependencyResolver._find_action_file('actus.basics.calculator')` 返回 **None**（文件明明存在），4 个种子动作（calculator / image-viewer / text-editor / todo-list）全部如此。
+  根因：`dependency.py:597` 的 `_find_action_file` 用**字符串搜索**判断动作身份——`if f'"id": "{action_id}"' in content or f'"id":"{action_id}"' in content`。这只能匹配**旧格式**（`#!cfg` JSON）的 `"id": "xxx"`；新格式 `.actus.schema.md` 用 YAML front-matter 的 `id: xxx`（无引号、无冒号后空格），**一个都匹配不上**。对比：`author._find_action_file` 是解析后比对 `meta['id']`（格式无关、正确），resolver 也是。三套实现语义不一致（计划 §六.6 只提到『双轨』，实际是三轨）。
+  影响面：① 依赖解析（dep-tree / deps 检查 / workflow 编排）对新格式动作完全失明——明明文件在，却判定找不到；② 新格式是官方推荐格式（双后缀之一），意味着**新建的动作在依赖图里是隐形的**；③ 与 §六.6 『避免双轨漂移』的要求直接冲突。
+  证据：actus/tests/test_action_lookup.py（新增 6 用例，含真实种子动作可查的断言）。复现：`python -c "from vools.actus.dependency import DependencyResolver; print(DependencyResolver(actions_root='vools/actus/actions')._find_action_file('actus.basics.calculator'))"` → 修前 None、修后返回真实路径。
+  修复：新增 `resolver.find_action_file(action_id, actions_root)`——走 `constants.is_action_file`（双后缀单一真源）+ 解析后比对 `meta['id']`，格式无关，坏文件跳过；`dependency._find_action_file` 改为委托给它，删掉字符串搜的旧实现。
+  建议：① 把 `author._find_action_file` 也收口到同一个实现（它语义正确但是纯重复，留着就是第四套漂移源）；② 依赖解析的做法同类风险——凡是用『字符串搜文件内容判断身份』的地方都该改成解析，建议加一条 lint/用例兜底。
+- reported_by: explore-bugfind-14
+
+## BUG-339 [2026-10-23T19:08:44Z] [medium] FIXED
+- summary: [actus/model] 格式检测只看 .actus.schema.md 后缀 → 计划后缀矩阵里的 demo/link/template 等新格式文件全部解析失败；4 个 demo 文件同时缺 front-matter
+- detail: 现象：对仓库内 11 个动作文件逐个独立校验，**4 个 demo 文件全部解析失败**——`calculator.demo.actus.md` / `image-viewer.demo.actus.md` / `text-editor.demo.actus.md` / `todo-list.demo.actus.md`，报错都是『缺少 ```json #!cfg 元数据块（docs/03 §2 形式 A）』。
+  根因两层：
+  1. `parse_cfg_from_file`（vools/actus/model.py:272）的格式检测**只看后缀** `.actus.schema.md`。而计划 §3.4 的后缀矩阵里 `*.demo.actus.md` / `*.link.actus.md` / `*.template.actus.md` 同样是 **YAML front-matter 形态**，按后缀判定会被丢进旧格式分支（要求 `#!cfg` JSON 块），必然失败。
+  2. 这 4 个 demo 文件本身也**缺 front-matter**（只有正文 markdown），与 §3.3『demo = kind: demo 的非可执行资产』不符。
+  影响面：① 任何遍历动作文件的工具（索引、安装、依赖检查、审计）碰到 demo 都会抛异常或跳过——新引入的 kind 家族（link/template/demo/bundle/doc）只要换了后缀就会重复踩这个坑；② 这正是计划 §六.5『存量 error』的味道：**新格式后缀放开后，校验规则没同步放开**。
+  证据：actus/tests/test_format_detection.py（新增 4 用例，含『仓库内所有动作文件都必须能解析』的常驻守卫）。复现：`python -c "from vools.actus.model import parse_cfg_from_file; parse_cfg_from_file('vools/actus/actions/basics/calculator.demo.actus.md')"` → 修前抛 action_invalid、修后正常返回 kind=demo。
+  修复：① 4 个 demo 补 front-matter；② 格式检测改为『后缀优先 + 内容兜底』，新增 `_has_yaml_frontmatter` 严格判定（首行 `---` + 60 行内有闭合 `---` + **中间含 `id:` 行**）。
+  判据迭代的教训（值得记）：第一版只看『首行是 ---』→ 误伤旧格式 `actions/foo.actus.md`（开头的 `---` 是 Markdown 分隔线，后面跟 AIGC 元数据块）；第二版『中间含 key: value』→ 仍误伤（AIGC 块里有 `Label: "1"`）；第三版『中间含 id: 行』才旧新全对。**启发式要用定义性字段做锚，不要用通用语法特征。**
+  建议：① 保留 `test_all_shipped_action_files_parse` 这条常驻守卫；② 后续新增 kind 后缀（如 `*.doc.actus.md`）时，格式检测不需要再改——但**文件必须有 front-matter**，建议在 scaffold 模板里默认生成。
+- reported_by: explore-bugfind-16
+
+## BUG-340 [2026-10-23T19:59:12Z] [high] FIXED
+- summary: [actus/workflow] DAGScheduler 静默丢弃不存在的依赖 → 本该串行的节点并发执行，workflow「成功」但结果错
+- detail: 现象：DAG 里某节点 `depends` 了一个**不存在的节点 id**（改名、拼错、删除节点都会造成），调度器**不做任何提示**，直接把这条边丢掉。于是该节点入度为 0，和它的「上游」落在**同一层并发执行**。
+  实测：`nodes=[{id:a}, {id:b, depends:[ghost]}]` → 修前 `topological_sort()` 返回 `[['a','b']]`（并发），修后抛 `dag_missing_dep: DAG 节点依赖了不存在的节点: b -> ['ghost']`。
+  根因：`workflow.py:62` 的 `if dep in self.nodes:` —— 对未知依赖是**静默 continue 语义**。
+  影响面（高危）：
+  - **静默的数据竞争**：本该「先跑 a 再跑 b」的编排，变成 a/b 并发。若 b 读 a 的产物、或两者写同一资源，结果是错的，而 workflow 报成功。
+  - **修改节点 id 后极易触发**：重命名一个节点却漏改下游 depends，整条依赖链静默失效。
+  - 环检测（dag_cycle）反而对这种场景无感——因为边根本不存在，图看起来是无环的。
+  证据：actus/tests/test_dag_scheduler.py（新增 8 用例，其中 `test_missing_dependency_does_not_silently_parallelize` 是核心防复发断言——修前会 pytest.fail 并打印错误分层）。
+  修复：`_build_graph` 收集未知依赖，发现即抛 `ActionError('dag_missing_dep', …, {'unknown': {node: [missing_deps]}})`。
+  建议：① 该错误码应进入 MCP 工具描述的错误码表；② 考虑在 workflow 定义期（而非调度期）就校验一次，让作者早点发现；③ 同类风险点：任何「用 `if x in collection` 跳过非法引用」的写法都值得扫一遍——它把数据错误降级成了静默容错。
+- reported_by: explore-bugfind-20
+
+
+### FIXED(2026-10-24T08:00:00Z / BUG-337/338/339/340 batch)
+- evidence: vools-bughunt-lead 验证四件均已修复：
+  BUG-337: calculator.actus.schema.md md5 = 32 位 hex ✓
+  BUG-338: 4 个种子动作（正确 id 带下划线）_find_action_file 全部命中 ✓
+  BUG-339: 4 个 demo 文件全部解析成功 kind=demo ✓
+  BUG-340: test_dag_scheduler.py 8 用例全绿 ✓
 - reported_by: vools-bughunt-lead
