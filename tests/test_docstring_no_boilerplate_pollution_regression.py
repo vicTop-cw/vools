@@ -87,6 +87,12 @@ class TestDocumentedBehaviour:
         # 定长参数：可逐个累积到齐触发求值
         assert _CurriedT().add(1).add(2).add(3) == 6
         assert _CurriedT().add(1, 2, 3) == 6
-        # 可变参数（*args/**kwargs）：柯里化链无法"累积到齐"（永远返回
-        # CurriedMethod），文档示例已注明须一次性传全部实参
+        # 可变参数（*args/**kwargs）：一次性给齐必需参数会立即执行；
+        # 想先累积再补可变参数时，用**空调用 ()** 显式触发（BUG-324 更正）
         assert _CurriedT().sum_all(1, 2, 3, 4) == 10
+        assert _CurriedT().sum_all(1)(2)(3, 4)() == 10
+        assert _CurriedT().sum_all(1, 2) == 3
+
+    def test_curry_class_doc_mentions_empty_call(self):
+        doc = inspect.getdoc(curry_class) or ''
+        assert '空调用' in doc, '文档需说明可变参数的 () 显式求值方式'
