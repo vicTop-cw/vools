@@ -104,6 +104,9 @@ def _build_parser():
                        help='远程动作源/入参的域名白名单（可重复；缺省禁止所有远程）')
     p_run.add_argument('--expect-digest', default=None,
                        help='远程动作源的期望 sha256 指纹（计划 §六.3：不匹配即拒绝执行）')
+    p_run.add_argument('--require-signature', default=None,
+                       help='远程动作源必须携带可用签名：给出本地可信公钥名（如 default），'
+                            '下载同名 .sig 并验签，失败即拒绝（计划 §六.3）')
     p_run.add_argument('--allow-unverified-remote', action='store_true',
                        help='允许执行未经指纹校验的远程动作（默认拒绝，自担供应链风险）')
 
@@ -668,7 +671,8 @@ def _dispatch(args) -> int:
             resolved = resolve_target(
                 target,
                 allow_hosts=getattr(args, 'allow_host', None),
-                expect_digest=getattr(args, 'expect_digest', None))
+                expect_digest=getattr(args, 'expect_digest', None),
+                expect_signature_key=getattr(args, 'require_signature', None))
             if resolved.ambiguous:
                 _out({'status': 'failed',
                       'error': {'code': 'ambiguous',
