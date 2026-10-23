@@ -250,8 +250,16 @@ class VProcessPool:
         self._nproc: int = processes or cpu_count()
         self._pool: Optional[Any] = None
         self._async_results: List[Any] = []
+        # BUG-403: close()/terminate() 后再次 add_task 原会**静默重建**进程池
+        # （_ensure_pool 见 _pool 为 None 就新建），使"已关闭"的池悄悄复活，
+        # 与 VThreadPoolExecutor.shutdown 后 submit 抛 RuntimeError 的语义不一致。
+        self._closed = False
 
     def _ensure_pool(self) -> None:
+        if self._closed:
+            raise RuntimeError(
+                "进程池已关闭（close/terminate 之后不能再提交任务或 start）；"
+                "如需继续请新建 VProcessPool 实例（BUG-403）")
         if self._pool is None:
             ctx = multiprocessing.get_context()
             self._pool = ctx.Pool(processes=self._nproc)
@@ -336,6 +344,7 @@ class VProcessPool:
 
     def close(self) -> None:
         """关闭进程池，等待所有已提交任务完成。"""
+        self._closed = True
         if self._pool is not None:
             self._pool.close()
             self._pool.join()
@@ -344,6 +353,7 @@ class VProcessPool:
 
     def terminate(self) -> None:
         """立即终止进程池，不等待任务完成。"""
+        self._closed = True
         if self._pool is not None:
             self._pool.terminate()
             self._pool = None
