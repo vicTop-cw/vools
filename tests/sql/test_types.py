@@ -19,10 +19,23 @@ class TestSqlTypeMapper:
         assert SqlTypeMapper.get_sql_type(int) == 'INTEGER'
 
     def test_get_sql_type_float(self):
-        assert SqlTypeMapper.get_sql_type(float) == 'REAL'
+        # BUG-353: 类级映射只受显式类注册影响，不再被方言实例污染。
+        # 方言专属命名（REAL/TEXT）见 test_dialect_instance_isolation。
+        assert SqlTypeMapper.get_sql_type(float) == 'DOUBLE'
 
     def test_get_sql_type_str(self):
-        assert SqlTypeMapper.get_sql_type(str) == 'TEXT'
+        assert SqlTypeMapper.get_sql_type(str) == 'VARCHAR'
+
+    def test_dialect_instance_isolation(self):
+        # BUG-353: SqliteDialect 的类型映射只作用于它自己的 mapper 实例
+        from vools.sql.sqlite.dialect import SqliteDialect
+
+        mapper = SqliteDialect().get_type_mapper()
+        assert mapper.get_sql_type(str) == 'TEXT'
+        assert mapper.get_sql_type(float) == 'REAL'
+        # 类级默认不受影响
+        assert SqlTypeMapper.get_sql_type(str) == 'VARCHAR'
+        assert SqlTypeMapper.get_sql_type(float) == 'DOUBLE'
 
     def test_get_sql_type_bytes(self):
         assert SqlTypeMapper.get_sql_type(bytes) == 'BLOB'
@@ -50,8 +63,9 @@ class TestSqlTypeMapper:
         assert SqlTypeMapper.get_py_type('UNKNOWN_TYPE') is None
 
     def test_infer_arg_types_mixed(self):
+        # BUG-353: 类级默认映射（float->DOUBLE, str->VARCHAR），不再受方言实例影响
         types = SqlTypeMapper.infer_arg_types([1, 2.5, 'hello', b'raw'])
-        assert types == ['INTEGER', 'REAL', 'TEXT', 'BLOB']
+        assert types == ['INTEGER', 'DOUBLE', 'VARCHAR', 'BLOB']
 
     def test_infer_arg_types_empty(self):
         assert SqlTypeMapper.infer_arg_types([]) == []

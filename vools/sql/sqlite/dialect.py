@@ -58,7 +58,7 @@ class SqliteDialect(Dialect):
         基于基础 SqlTypeMapper，注册 SQLite 特有的类型。
         SQLite 的类型亲和性：INTEGER, REAL, TEXT, BLOB, NUMERIC
         """
-        self._type_mapper = SqlTypeMapper
+        self._type_mapper = SqlTypeMapper()  # BUG-353: 用实例，避免污染全局映射
 
         self._type_mapper.register_type(int, 'INTEGER')
         self._type_mapper.register_type(float, 'REAL')

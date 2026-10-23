@@ -60,7 +60,7 @@ class SparkSqlDialect(Dialect):
         FloatType, BooleanType, DateType, TimestampType, DecimalType,
         ArrayType, MapType, StructType, BinaryType
         """
-        self._type_mapper = SqlTypeMapper
+        self._type_mapper = SqlTypeMapper()  # BUG-353: 用实例，避免污染全局映射
 
         self._type_mapper.register_type(str, 'STRING')
         self._type_mapper.register_type(int, 'INTEGER')
