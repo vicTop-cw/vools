@@ -162,13 +162,25 @@ def _execute_template_kind(action, action_id, params, **kw):
 
 
 def _execute_bundle_kind(action, action_id, params, **kw):
-    """阶段3：bundle 动作——列出成员动作 id 列表（计划 §3.3）。"""
+    """阶段3：bundle 动作——列出成员动作 id 列表（计划 §3.3）。
+
+    空成员必须报错：`kind=bundle` 却一个成员都没有属于**声明错误**，此前
+    返回 `status=ok, members=[], count=0` —— 空操作却报成功，与 link/alias
+    缺 target 时抛 param_invalid 的行为不一致。
+    """
     members = action.meta.get('members') or []
     if isinstance(members, str):
         members = [m.strip() for m in members.split(',') if m.strip()]
     if not members:
         target = action.meta.get('target')
         members = [target] if target else []
+    if not members:
+        return {
+            'status': 'failed', 'data': None,
+            'error': {'code': 'param_invalid',
+                      'message': f"kind=bundle 的动作 {action_id} 缺少成员"
+                                 f"（meta['members'] 或 target）"},
+        }
     return {'status': 'ok', 'data': {'members': list(members),
                                      'count': len(members)}}
 

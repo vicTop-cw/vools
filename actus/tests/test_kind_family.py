@@ -38,11 +38,17 @@ def test_bundle_accepts_comma_string_and_target_fallback():
     assert result["data"]["members"] == ["myapp.only"]
 
 
-def test_bundle_without_members_is_empty_not_error():
+def test_bundle_without_members_is_param_invalid():
+    """契约变更（第 20 轮）：空成员返回 param_invalid，不再静默 ok。
+
+    原契约是 `status=ok, count=0`，但那意味着「空操作报成功」——调用方会
+    以为真的列了成员。同族 link/alias 缺 target 时都抛 param_invalid，
+    bundle 缺成员属同一类**声明错误**，统一为 param_invalid。
+    """
     bundle = _action("myapp.empty", "bundle")
     result = _execute_bundle_kind(bundle, "myapp.empty", {})
-    assert result["status"] == "ok"
-    assert result["data"]["count"] == 0
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "param_invalid"
 
 
 # --------------------------------------------------------------------------
