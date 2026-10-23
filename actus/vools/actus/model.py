@@ -274,7 +274,9 @@ def parse_cfg_from_file(path: str) -> Action:
     is_schema_md = basename.endswith('.actus.schema.md')
 
     if is_schema_md:
-        return _parse_schema_md_action(raw, path, sha)
+        # md5 必须一起传：漏传会让新格式动作的 Action.md5 恒为 ''，进而
+        # 索引 by_md5 收不到它们、resolver 的「32 位 hex 内容指纹」形态失效。
+        return _parse_schema_md_action(raw, path, sha, md5)
 
     # 传统 #!cfg JSON 解析（向后兼容）
     body = strip_frontmatter(raw)
