@@ -59,11 +59,18 @@ class TestInvalidPositions:
             _fresh().substr('sub', 'text', start, 3)
         assert 'start_pos' in str(ei.value)
 
-    @pytest.mark.parametrize('end', [0, -1, -5])
-    def test_end_must_be_positive(self, end):
+    @pytest.mark.parametrize('end', [-1, -5])
+    def test_negative_end_rejected(self, end):
         with pytest.raises(ValueError) as ei:
             _fresh().substr('sub', 'text', 1, end)
         assert 'end_pos' in str(ei.value)
+
+    def test_zero_end_means_empty_string(self):
+        # BUG-249 既有语义：end_pos=0 → 截 0 个字符 = 空串（QAXSubstr length=0 走这条）
+        t = _fresh()
+        t.substr('sub', 'text', 1, 0)
+        assert t._data[0][-1] == ''
+        assert t._data[1][-1] == ''
 
     @pytest.mark.parametrize('bad', ['1', 1.5, True])
     def test_non_int_rejected(self, bad):
