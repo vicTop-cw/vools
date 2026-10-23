@@ -900,6 +900,10 @@ class Table(Seq):
         Raises:
             IndexError: ordinal 越界（BUG-255）
         """
+        # 未知列名静默返回是**既有并已被回归锁定**的行为
+        # （tests/data/test_table_bug_252_253_254_255_regression.py::
+        #   test_set_ordinal_nonexistent_col_silent），故保持；BUG-319 只统一
+        # substr/split/concat 三处（它们无既有锁定）。
         if col_name not in self._columns:
             return self
 
@@ -1782,9 +1786,9 @@ class Table(Seq):
         if filter_str:
             table = Table([r[:] for r in self._data], columns=list(self._columns), name=self._name)
         
-        col_idx = table._columns.index(trunc_field_name) if trunc_field_name in table._columns else -1
-        if col_idx < 0:
-            return self
+        # BUG-319: 未知源列原为静默 return self（转换没发生却无任何信号），
+        # 与 get_col/del_col/to_num 的 KeyError 不一致，统一改抛 KeyError。
+        col_idx = table._get_col_index(trunc_field_name)
         
         # 添加目标列
         if to_field_name not in table._columns:
@@ -1820,9 +1824,8 @@ class Table(Seq):
         Returns:
             self (修改自身)
         """
-        col_idx = self._columns.index(split_field_name) if split_field_name in self._columns else -1
-        if col_idx < 0:
-            return self
+        # BUG-319: 同 substr——未知列名抛 KeyError，不再静默返回。
+        col_idx = self._get_col_index(split_field_name)
         
         # 确保目标列存在
         for field in to_fields_arr:
@@ -1871,10 +1874,13 @@ class Table(Seq):
         for row in table._data:
             parts = []
             for col_name in concat_array:
-                if col_name in table._columns:
-                    col_idx = table._columns.index(col_name)
-                    if col_idx < len(row) and row[col_idx]:
-                        parts.append(str(row[col_idx]))
+                # BUG-319: 未知列原被静默跳过，产出"其余列的拼接"这种部分结果；
+                # 改为显式 KeyError，避免拼写错误静默生效。
+                if col_name not in table._columns:
+                    raise KeyError(f"列名不存在: {col_name!r}")
+                col_idx = table._columns.index(col_name)
+                if col_idx < len(row) and row[col_idx]:
+                    parts.append(str(row[col_idx]))
             row[to_idx] = ''.join(parts)
         
         return self
