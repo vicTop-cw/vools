@@ -387,7 +387,30 @@ def delayed_call(
     Returns:
         直接调用：threading.Timer 实例
         装饰器模式：包装后的函数
+
+    Raises:
+        TypeError: seconds 不是数字，或 func 既不是 None 也不可调用
+        ValueError: seconds < 0
+
+    Note:
+        BUG-400: 原实现把参数原样交给 ``threading.Timer``，零校验：
+        ``delayed_call('x', print)`` / ``delayed_call(1, 'nope')`` 都被接受，
+        真正的 TypeError 发生在**后台定时器线程**里并被 threading 吞掉
+        （只在 stderr 留下 "Exception in thread"），调用方拿到 Timer 对象却
+        永远等不到回调——静默失败。这里在调用/装饰期直接校验。
     """
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+        raise TypeError(
+            f"delayed_call 的 seconds 需要数字（秒），收到 "
+            f"{type(seconds).__name__}: {seconds!r}")
+    if seconds < 0:
+        raise ValueError(
+            f"delayed_call 的 seconds 不能为负，收到 {seconds}"
+            f"（负值原本会立即触发）")
+    if func is not None and not callable(func):
+        raise TypeError(
+            f"delayed_call 的 func 必须可调用，收到 "
+            f"{type(func).__name__}: {func!r}")
     if func is None:
         # 装饰器模式：delayed_call(5.0)(func)
         def decorator(fn: Callable) -> Callable:
