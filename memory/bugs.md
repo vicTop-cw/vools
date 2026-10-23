@@ -6153,7 +6153,7 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
 ### FIXED(2026-10-23T13:50:00Z / BUG-329)
 - evidence: rhop/vools/rhop/task/queue.py _finish_success/_finish_failure 收尾前用 self.store.get_task(record.task_name) 从库重新读取最新 cancel_requested（record 对象在领取时创建，cancel 请求在执行期间落库，record.cancel_requested 可能仍是 False），命中则写 CANCELLED 而非 COMPLETED/RETRY_PENDING/FAILED。C1 边界探针验证：状态=CANCELLED ✓；rhop 测试 599 通过（1 个 clipboard Unicode 编码失败与本修复无关）。commit 即将提交。
 - reported_by: vools-bughunt-lead
-## BUG-330 [2026-10-23T06:02:19Z] [high] OPEN
+## BUG-330 [2026-10-23T06:02:19Z] [high] FIXED
 - summary: [高危] Table/Qax/Row/Column 的 copy.deepcopy 与 pickle 往返全部损坏：继承自 Seq 的 __getstate__ 只保存 _data，丢失 _columns/_name/_table 等子类状态且行被物化成 dict（deepcopy(Table) 得到无列名畸形表）——影响 serialize 各后端、multiprocessing/task、cache、以及库内任何 deepcopy 表格的路径
 - detail: `Table`/`Qax`/`Row`/`Column` 的 pickling 与 **`copy.deepcopy`** 全部损坏——丢失类自身状态（`_columns`/`_name`/`_table`/索引），且行数据被物化成 **dict**：
 
@@ -6194,3 +6194,78 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
 - reported_by: agent-vools-hardening
 - task_id: T0r743
 
+
+### FIXED(2026-10-23T14:20:00Z / BUG-330)
+- evidence: vools/data/table.py Table/Qax/Row/Column 覆盖 Seq.__getstate__/__setstate__，完整保存 _RSTATE_SLOTS + __dict__（排除 _RSTATE_TRANSIENT）。复现脚本验证：deepcopy(Table) 保留 _columns/_name/_data ✓；pickle 往返 ✓；serialize 往返 ✓。data/table/deepcopy/pickle 全套 576 测试 exit 0。
+- reported_by: vools-bughunt-lead
+
+
+### FIXED(2026-10-23T06:23:33Z / BUG-330)
+- evidence: 修复（commit a604bb2）：vools/data/table.py 为 `Row`/`Column`/`Table` 各自补显式状态协议：
+- `_RSTATE_SLOTS = ('_last','_collection','_current')`、`_RSTATE_TRANSIENT = ('_active_op','_ops','_origin')`
+- `__getstate__`：保存槽字段 + 过滤瞬态后的 `__dict__`
+- `__setstate__`：恢复槽字段与 `__dict__`；瞬态给默认（`_ops=[]`、`_active_op=lambda x: x`、`_origin=iter([])`）；兼容旧 `{'_data': [...]}` 状态
+（Qax 继承 Table 自动获得）
+
+修复前实测：copy.deepcopy(Table([[1,'a'],[2,'b']], ['id','name'], name='T')) -> _columns=MISSING、_name=MISSING、_data=[{'id':1,'name':'a'},...]（行变 dict）；pickle 同样；Qax/Row/Column 同；serialize pickle/json 后端往返损坏。
+修复后实测：deepcopy/pickle 均完整保留 _columns/_data/_name，副本独立可链式；Qax pickle 保持 Qax 类型；Row/Column pickle 值正确；serialize[pickle] 与 serialize[json] 往返 (['id','name'], [[1,'a'],[2,'b']]) ✓；list[Table,Qax] 嵌套 ✓；旧 `_data` 状态兼容 ✓；瞬态字段恢复默认且 callable ✓。vb_json 对自定义类仍显式 TypeError（BUG-303 设计，非本条范围）。
+
+新增回归 tests/test_table_pickle_deepcopy_regression.py 21 项 GREEN（5 deepcopy + 5 pickle 类型 + 3 serialize 集成 + 2 旧状态/瞬态 + 6 数据细节）；tests/data/ 全 GREEN；**全量测试 EXIT=0**。commit 已推送 gitcode master。
+
+过程记录：首次注入后 pickle 因 `_active_op` lambda 失败（Can't pickle local object），随即把 `_active_op/_ops` 列为瞬态；二次注入后 json 后端因 `_origin` 迭代器失败（list_iterator not serializable），再把 `_origin` 列为瞬态并恢复默认，最终三后端（pickle/json/vb_json 显式报错）行为清晰。
+## BUG-331 [2026-10-23T07:17:54Z] [high] FIXED
+- summary: [高危] 任务载荷的 pickle 标记读取被安全白名单拒绝后静默回退成字符串：_dump_json 对任意对象都 pickle 成 __vools_pickle__ 标记，而 _SafeUnpickler 只允许 builtins/datetime/decimal/uuid/collections——Table/Qax/VList/VText/用户类作为任务实参或返回值到达 worker 时变成 str(实测 TaskQueue 端到端 ('str',None,None,None))，且无任何告警
+- detail: 任务载荷（args/kwargs/result）对非 JSON 原生类型会**静默损坏成标记字符串**——`_dump_json` 与 `_safe_pickle_loads` 的白名单不对齐：
+
+写入侧（vools/task/core/models.py）：
+    def _json_default(obj):
+        payload = pickle.dumps(obj)
+        return _PICKLE_MARKER + base64.b64encode(payload).decode("ascii")   # 任何对象都 pickle 成标记
+读取侧：
+    class _SafeUnpickler(pickle.Unpickler):
+        _ALLOWED = {'builtins': {...}, 'datetime': {...}, 'decimal': {...},
+                    'uuid': {...}, 'collections': {...}}        # 只允许这些
+        def find_class(self, module, name):
+            if allowed and name in allowed: return super().find_class(module, name)
+            raise pickle.UnpicklingError(...)                    # 其它一律拒绝
+    def _restore_pickle(obj):
+        ...
+        try: return _safe_pickle_loads(...)
+        except Exception: return obj                             # ← 静默回退成标记字符串
+
+实测（端到端 TaskQueue + Worker）：
+    def consume(table): return (type(table).__name__, getattr(table,'_columns',None), ...)
+    tid = q.submit(consume, Table([[1,'a'],[2,'b']], columns=['id','name'], name='ARG'))
+    w._process_one_task(); q.get_result(tid)
+    -> ('str', None, None, None)      # 实参变成了 "__vools_pickle__:..." 标记字符串
+任务**返回值**里含 Table 时同样变成 str（('str', ...)）。
+
+复现（最小）：models._load_json(models._dump_json([Table(...)])) -> ['__vools_pickle__:...']（列表里是 str 而非 Table）；kwargs 同理。
+
+影响：
+- 任何**非 JSON 原生类型**作为任务实参/返回值都会被静默换成字符串：vools 自己的 Table/Qax/VList/VText/VDate、以及用户自定义类实例；
+- 反序列化失败**无任何提示**（不抛错、不告警），worker 侧拿到 str，业务函数往往直到很晚才炸或算出错误结果；
+- 与 BUG-330 修复直接相关：Table 现在可以正确 pickle 了，但任务通道仍会把它降级成字符串 —— 等于修复被白名单抵消。
+（datetime/decimal/uuid/OrderedDict 等在白名单内的类型可正常往返；tuple 会变 list。）
+
+修复方向：
+1. **对齐白名单**：把本库的**数据类型白名单**加入 `_SafeUnpickler._ALLOWED`（`vools.data.table.{Table,Row,Column}`、`vools.data.qax.Qax`、`vools.data.vlist.VList`、`vools.data.vtext.VText`、`vools.data.seq.{Seq,SeqBase}`、`vools.datetime.vdate_class.VDate`），既保留 BUG-207 的「不实例化任意类」防护，又让本库对象可往返；**不**放行整个 `vools.` 前缀（避免把任意库内类暴露给受限 unpickler）。
+2. **失败不再静默**：`_restore_pickle` 捕获到拒绝时 `warnings.warn(...)` 说明「该载荷类型不在安全白名单，已按原始字符串返回」，让降级可见。
+- reported_by: agent-vools-hardening
+- task_id: T0r746
+
+
+
+### FIXED(2026-10-23T07:37:33Z / BUG-331)
+- evidence: 修复（commit 0e097c8）vools/task/core/models.py：
+① `_SafeUnpickler._ALLOWED` 增补本库数据类型显式白名单：`vools.data.table: {Table, Row, Column}`、`vools.data.qax: {Qax}`、`vools.data.vlist: {VList}`、`vools.data.vtext: {VText}`、`vools.data.seq: {Seq, SeqBase}`、`vools.datetime.vdate_class: {VDate}`（**不**放行整个 `vools.` 前缀，保留 BUG-207 的「不实例化任意类」防护面）；
+② `_restore_pickle` 的 except 分支改为 `warnings.warn(..., RuntimeWarning)` 明示「无法安全恢复，已按原始标记字符串返回」——降级可见，不再静默。
+
+修复前实测（端到端 TaskQueue + Worker）：q.submit(consume, Table(..., name='ARG')) -> worker 收到 `'__vools_pickle__:...'` 字符串，结果 ('str', None, None, None)；任务返回 Table 时同样变 str。最小复现：_load_json(_dump_json([Table(...)])) -> ['__vools_pickle__:...']。
+
+修复后实测：list[Table] -> Table（列/数据/name 完整）、dict 值 Qax -> Qax、VList -> VList、嵌套 dict/list 内 Table -> Table、Row/Column -> 各自类型且值正确；**TaskQueue 端到端** -> ['Table', ['id','name'], [[1,'a'],[2,'b']], 'ARG']；任务返回 Table -> Table(['x'])；datetime/Decimal 等既有白名单类型不受影响。
+安全回归（不回退）：恶意 `__reduce__`(os.system) 载荷仍被拒（返回原标记字符串）且产生 RuntimeWarning、未执行任何代码；未在白名单的用户类同样被拒并告警。既有 tests/test_task_pickle_no_rce_regression.py 在全量运行中正常通过并打印该新告警。
+
+新增回归 tests/test_task_payload_allowlist_regression.py 10 项 GREEN（5 类本库类型往返 + 2 项 TaskQueue 端到端 + 3 项安全/兼容）；tests/task/ 与**全量测试 EXIT=0**。
+
+附记（已知限制，未纳入修复）：VText 是 str 子类，json.dumps 会直接按普通字符串编码（不触发 default 回调），故往返后是 str 而非 VText——内容不丢、仅子类型降级；如需要可按 vools.serialize 的类型注册表另行处理。
