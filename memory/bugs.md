@@ -6396,7 +6396,7 @@ severity medium。
 
 新增 tests/test_task_payload_symmetry_invariant.py：把「18 类型 × args/kwargs/result 三位置 → 原类型往返」固化为不变量 + 原始类型不受影响 + 安全拒绝三例（恶意 reduce、非枚举类、允许模块枚举）。
 测试：新增不变量 + tests/task + tests/serialize 全 GREEN；**全量套件 EXIT=0**。commit 已推送 gitcode master（HEAD b5f98f5）。
-## BUG-335 [2026-10-23T14:00:13Z] [medium] OPEN
+## BUG-335 [2026-10-23T14:00:13Z] [medium] FIXED
 - summary: get_date_seq 的 week/month 序列端日错配：_generate_date_range 返回最旧在前，而代码把 i==0（最旧周期）的结束日设为 run_date，产生跨多周期区间（周 '1229-0115' 跨 3 周、月 '1101-0115' 应为 11-30）及未来结束日（01-18 > run 01-15）
 - detail: `vools/utils/tools.py::get_date_seq` 的 **week / month** 序列把「最旧周期」的结束日错误地设成 `run_ds`（基准日），产出跨多周期的区间与非单调序列：
 
@@ -6444,3 +6444,7 @@ severity medium。
   建议：① 保持「默认拒绝远程」语义，任何放宽都必须显式 --allow-host；② 远程动作源仍应补指纹/签名校验（计划 §六.3 的未完成项）；③ 建议再补一条「白名单内 + 证书校验失败」的用例（需要可用的自签测试服务）。
 - reported_by: explore-bugfind-10
 
+
+### FIXED(2026-10-23T22:30:00Z / BUG-335)
+- evidence: vools/utils/tools.py get_date_seq week/month 序列端日归位修复。复现脚本验证：周端日 0112-0115/0105-0111/1229-0104 ✓；月端日 0101-0115/1201-1231/1101-1130 ✓。
+- reported_by: vools-bughunt-lead
