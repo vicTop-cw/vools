@@ -393,6 +393,12 @@ class Box(AOP):
             index = int(name[1:]) - 1
             return self._getitem_by_index(index)
 
+        # BUG-349: `__hasattr__` 文档承诺支持 `_-1` 等负索引属性，但 `__getattr__`
+        # 只有正索引分支 —— `b.__hasattr__('_-1')` 为 True 而 `b._-1` 抛
+        # AttributeError。补齐负索引（_getitem_by_index 本身已支持负值）。
+        if name.startswith('_-') and name[2:].isdigit():
+            return self._getitem_by_index(-int(name[2:]))
+
         if name in ('copy', 'map', 'filter', 'reduce', 'run', '_get_keys', '_getitem_by_index', '_getitem_by_slice'):
             return getattr(type(self), name).__get__(self, type(self))
 
@@ -589,7 +595,9 @@ class Box(AOP):
         box_methods = {'map', 'filter', 'reduce', 'copy', 'run'}
         st = st | box_methods
 
-        if isinstance(base, (dict, list, tuple)) and len(base) > 0:
+        # BUG-349: 原只认 (dict, list, tuple)，而 Box 包装结果是 VList/VText 等
+        # 非 list 子类 —— 文档承诺的 `_1, _2, ...` 属性在 dir() 里根本看不到。
+        if (isinstance(base, dict) or self._is_indexable(base)) and len(base) > 0:
             max_items = min(len(base), 100)
             for i in range(1, max_items + 1):
                 st.add(f'_{i}')
@@ -625,17 +633,20 @@ class Box(AOP):
         Returns:
             如果属性存在则返回 True，否则返回 False
         """
-        if name.startswith('_') and len(name) > 1:
+        base = self.__wrapped__
+        # BUG-349: 数值索引属性（_1/_2/_-1）的可访问性判定必须与 `__getattr__`
+        # 一致——原实现只认 (dict, list, tuple)，而包装结果是 VList，
+        # 导致 `b._1` 能取到值、`b.__hasattr__('_1')` 却返回 False。
+        _n = None
+        if isinstance(base, dict) or self._is_indexable(base):
+            _n = len(base)
+        if _n is not None and name.startswith('_') and len(name) > 1:
             if name[1:].isdigit():
                 index = int(name[1:]) - 1
-                base = self.__wrapped__
-                if isinstance(base, (dict, list, tuple)):
-                    return 0 <= index < len(base)
+                return 0 <= index < _n
             if name.startswith('_-') and name[2:].isdigit():
                 index = -int(name[2:])
-                base = self.__wrapped__
-                if isinstance(base, (dict, list, tuple)):
-                    return -len(base) <= index < 0
+                return -_n <= index < 0
 
         return name in self.__dir__()
 
