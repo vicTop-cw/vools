@@ -68,9 +68,13 @@ class TestBuiltinRegistryTypesRoundTrip:
 
 class TestUnknownTypesStillRejected:
     def test_uuid_still_raises(self):
+        # BUG-332: uuid 已加入类型注册表，vb_json 不再拒绝——改为验证可正确往返
         import uuid
-        with pytest.raises(TypeError):
-            dumps(uuid.uuid4(), backend='vb_json')
+        u = uuid.uuid4()
+        data = dumps(u, backend='vb_json')
+        result = loads(data, backend='vb_json')
+        assert isinstance(result, uuid.UUID)
+        assert result == u
 
     def test_custom_object_still_raises(self):
         class Plain:

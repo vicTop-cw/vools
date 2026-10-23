@@ -6269,3 +6269,33 @@ q = Qax([[1,'a'],[2,'b']], columns=['id','name']); q.InsertCol(2, 'id', 99)
 新增回归 tests/test_task_payload_allowlist_regression.py 10 项 GREEN（5 类本库类型往返 + 2 项 TaskQueue 端到端 + 3 项安全/兼容）；tests/task/ 与**全量测试 EXIT=0**。
 
 附记（已知限制，未纳入修复）：VText 是 str 子类，json.dumps 会直接按普通字符串编码（不触发 default 回调），故往返后是 str 而非 VText——内容不丢、仅子类型降级；如需要可按 vools.serialize 的类型注册表另行处理。
+
+### FIXED(2026-10-23T15:30:00Z / BUG-331)
+- evidence: vools/task/core/models.py _SafeUnpickler._ALLOWED 白名单加入 vools 数据类型（Table/Row/Column/Qax/VList/VText/Seq/SeqBase/VDate），任务实参/返回值里的 vools 类型可正确往返。复现脚本验证：Table/Qax/VList 往返类型与状态正确 ✓。task/payload/pickle 全套 289 测试 exit 0。
+- reported_by: vools-bughunt-lead
+## BUG-332 [2026-10-23T08:02:35Z] [medium] OPEN
+- summary: serialize json 后端对 uuid 写读不对称：dumps(uuid, 'json') 成功但 loads 静默返回内部 state dict（{'int': ...}）而非 UUID——vools_default 写出 __vools_obj__ 通用标记，_import_class 的模块白名单不含 uuid，_reconstruct_object 在 cls is None 时直接 return state（静默降级，无提示）
+- detail: `vools.serialize` 的 json 后端对 `uuid.UUID` **写读不对称**：写入成功、读回静默降级成内部 state dict：
+
+实测：
+- dumps(uuid.UUID('12345678-...'), backend='json')  -> OK
+- loads(...) -> **dict** `{'int': 24197857161011715162171839636988778104}`（不是 UUID，也无异常）
+- 对照：自定义类 dumps 时**显式** TypeError（好行为）；Table/VList 已可正确往返（BUG-330 修复后）
+- pickle 后端：uuid 正常往返 UUID ✓
+
+根因（codec.py + type_registry.py）：
+1. `vools_default(obj)` 对 uuid 输出通用标记 `{'__vools_obj__': True, 'type': 'uuid.UUID', 'state': {'int': ...}}`（**写入侧接受任何对象**）；
+2. `vools_object_hook` 见 `__vools_obj__` → `_reconstruct_object('uuid.UUID', state)`；
+3. `_import_class` 的白名单 `_ALLOWED_IMPORT_MODULES` = {datetime, decimal, fractions, pathlib, enum, collections, typing, vools}——**不含 uuid** → 返回 None；
+4. `_reconstruct_object` 在 `cls is None` 时 `return state`（**静默返回 dict**，无任何提示）。
+
+即：写入侧"什么都能写"，读取侧的模块白名单却只覆盖一部分，缺口处**静默降级成内部结构**。BUG-303（vb_json 未知类型改显式报错）修的是同类问题的另一个后端，此处是 json 后端残留。
+
+影响：`dumps(uuid, 'json')` 之后 `loads` 得到 dict，调用方 `isinstance(x, uuid.UUID)` 失败、`str(x)` 变成字典文本；若继续传给下游（如 SQL/字典键）会静默错值。uuid 是业务里常见的标识类型（GUID/请求 ID），且 json 是默认常用后端。
+
+修复方向：
+A. **类型注册表补齐 uuid**：`type_registry` 增加 `uuid.UUID` 的专用处理器（`__vools_type__` 标记 + `{'hex': ...}`），与 Decimal/date 同路径 → json/vb_json 均可正确往返；
+B. **失败不再静默**：`codec._reconstruct_object` 在 `cls is None`（模块不在白名单/类无法导入）时抛 `ValueError`（说明类型名与白名单限制），而不是 `return state` —— 避免未来新增类型再静默降级。
+- reported_by: agent-vools-hardening
+- task_id: T0r748
+
