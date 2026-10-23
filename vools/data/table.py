@@ -1155,8 +1155,12 @@ class Table(Seq):
             if col_idx < len(row) and row[col_idx]:
                 try:
                     if isinstance(row[col_idx], str):
-                        # 尝试解析日期字符串
-                        for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S']:
+                        # BUG-357: 补上本库自己的主格式 `%Y%m%d`（from_file/
+                        # get_date_seq/VDate 都用它）；原实现遇到 '20260115'
+                        # 静默保持字符串，列类型悄悄没转。
+                        for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y-%m-%d %H:%M:%S',
+                                    '%Y/%m/%d %H:%M:%S', '%Y%m%d',
+                                    '%Y%m%d%H%M%S', '%Y.%m.%d']:
                             try:
                                 row[col_idx] = datetime.strptime(row[col_idx], fmt)
                                 break
