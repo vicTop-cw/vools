@@ -2182,17 +2182,25 @@ class Table(Seq):
         #   start_pos=0 / 负数 -> start = max(0, start_pos-1) 静默从头截取；
         #   end_pos=-1 -> val[start:-1] 静默丢掉末字符（Python 负索引语义）。
         # 均无任何提示。这里显式校验为「整数且 >= 1」。
-        for _name, _val in (('start_pos', start_pos), ('end_pos', end_pos)):
-            if _val is None:
-                continue
-            if not isinstance(_val, int) or isinstance(_val, bool):
+        # start_pos 从 1 开始；end_pos 例外允许 0（BUG-249 语义：截 0 个字符 →
+        # 空串，QAXSubstr 的 length=0 会换算成 end_pos=0）。
+        if not isinstance(start_pos, int) or isinstance(start_pos, bool):
+            raise TypeError(
+                f"substr 的 start_pos 需要 int（从1开始），收到 "
+                f"{type(start_pos).__name__}: {start_pos!r}")
+        if start_pos < 1:
+            raise ValueError(
+                f"substr 的 start_pos 从 1 开始，收到 {start_pos}"
+                f"（0/负数原本会被静默夹取成从头截取）")
+        if end_pos is not None:
+            if not isinstance(end_pos, int) or isinstance(end_pos, bool):
                 raise TypeError(
-                    f"substr 的 {_name} 需要 int（从1开始），收到 "
-                    f"{type(_val).__name__}: {_val!r}")
-            if _val < 1:
+                    f"substr 的 end_pos 需要 int（0 表示空串），收到 "
+                    f"{type(end_pos).__name__}: {end_pos!r}")
+            if end_pos < 0:
                 raise ValueError(
-                    f"substr 的 {_name} 从 1 开始，收到 {_val}"
-                    f"（0/负数原本会被静默夹取成从头截取或丢掉末尾字符）")
+                    f"substr 的 end_pos 不能为负，收到 {end_pos}"
+                    f"（负值原本会走 Python 负索引、静默丢掉末尾字符）")
 
         # 添加目标列
         if to_field_name not in table._columns:
