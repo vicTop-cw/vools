@@ -35,6 +35,14 @@ class Row:
             columns: 列名列表
             values: 值元组
         """
+        # BUG-350: 原实现不做任何一致性检查——列数与值数不一致的 Row 会静默
+        # 构造成功，随后 row['缺失列'] 抛 IndexError、as_dict()/repr 产出错位数据。
+        # 构造期即校验，并统一 values 为 tuple（类型契约）。
+        values = tuple(values)
+        if len(columns) != len(values):
+            raise ValueError(
+                f"Row 的列数({len(columns)})与值数({len(values)})不一致："
+                f"columns={list(columns)!r}, values={values!r}")
         object.__setattr__(self, '_columns', columns)
         object.__setattr__(self, '_values', values)
 
