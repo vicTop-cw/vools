@@ -146,7 +146,9 @@ class CryptoRegistry:
         Returns:
             所有已注册算法的列表
         """
-        return list(set(cls._encryptors.keys()) | set(cls._decryptors.keys()))
+        # BUG-337: 同 CodecRegistry.supported_formats——set 合并顺序每进程
+        # 不同，对外列表/错误信息应稳定；统一按字母序返回。
+        return sorted(set(cls._encryptors.keys()) | set(cls._decryptors.keys()))
     
     @classmethod
     def is_algorithm_supported(cls, algorithm_name: str) -> bool:
