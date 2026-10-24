@@ -120,6 +120,13 @@ class RuleSet(VoolsBase):
 
     def __or__(self, other: 'RuleSet') -> 'RuleSet':
         """OR 组合：任一规则通过即返回"""
+        # BUG-435: other 必须是 RuleSet，否则 `other._rules` 会抛
+        # AttributeError（对 int/str 等完全看不出原因）。
+        if not isinstance(other, RuleSet):
+            raise TypeError(
+                f"RuleSet 组合运算需要另一个 RuleSet，收到 "
+                f"{type(other).__name__}: {other!r}")
+
         def or_condition(ctx: Dict[str, Any]) -> Result:
             for rule in self._rules + other._rules:
                 r = rule.condition(ctx)
@@ -143,6 +150,13 @@ class RuleSet(VoolsBase):
 
     def __add__(self, other: 'RuleSet') -> 'RuleSet':
         """顺序组合：按 priority 排序后顺序执行所有规则"""
+        # BUG-435: other 必须是 RuleSet，否则 `other._rules` 会抛
+        # AttributeError（对 int/str 等完全看不出原因）。
+        if not isinstance(other, RuleSet):
+            raise TypeError(
+                f"RuleSet 组合运算需要另一个 RuleSet，收到 "
+                f"{type(other).__name__}: {other!r}")
+
         merged = sorted(
             self._rules + other._rules,
             key=lambda r: -r.priority
@@ -151,6 +165,13 @@ class RuleSet(VoolsBase):
 
     def __and__(self, other: 'RuleSet') -> 'RuleSet':
         """AND 组合：两条规则都通过才执行"""
+        # BUG-435: other 必须是 RuleSet，否则 `other._rules` 会抛
+        # AttributeError（对 int/str 等完全看不出原因）。
+        if not isinstance(other, RuleSet):
+            raise TypeError(
+                f"RuleSet 组合运算需要另一个 RuleSet，收到 "
+                f"{type(other).__name__}: {other!r}")
+
         def and_condition(ctx: Dict[str, Any]) -> Result:
             for rule_set in (self, other):
                 for rule in rule_set._rules:
