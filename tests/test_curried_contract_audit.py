@@ -139,3 +139,96 @@ class TestDecoratorHelpers:
 
     def test_excepts_handler(self):
         assert c.excepts(ValueError, lambda e: "err")(int)("x") == "err"
+
+
+class TestNestedUpdates:
+    """set_in / update_in 的参数顺序是 (keys, value/fn, d)，且都是纯函数。"""
+
+    def test_set_in(self):
+        assert c.set_in(["a", "b"], 1, {"a": {}}) == {"a": {"b": 1}}
+        assert c.set_in(["a", "b"], 1, {}) == {"a": {"b": 1}}
+
+    def test_set_in_is_pure(self):
+        d = {"a": {"b": 1}}
+        out = c.set_in(["a", "b"], 99, d)
+        assert d == {"a": {"b": 1}}
+        assert out == {"a": {"b": 99}}
+
+    def test_update_in(self):
+        assert c.update_in(["a", "b"], c.inc, {"a": {"b": 1}}) == {"a": {"b": 2}}
+
+    def test_update_in_is_pure(self):
+        d = {"a": {"b": 1}}
+        out = c.update_in(["a", "b"], c.inc, d)
+        assert d == {"a": {"b": 1}}
+        assert out == {"a": {"b": 2}}
+
+    def test_wrong_order_is_loud(self):
+        """toolz 顺序 set_in(d, keys, value) 在本库会响亮失败，不会静默错值。"""
+        with pytest.raises(Exception):
+            c.set_in({"a": {}}, ["a", "b"], 1)
+
+
+class TestMerge:
+    def test_merge(self):
+        assert c.merge({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
+        assert c.merge({"a": 1}, {"a": 2}) == {"a": 2}      # 后者覆盖
+        assert c.merge() == {}
+
+    def test_merge_with_curried(self):
+        assert c.merge_with(sum)({"a": 1, "b": 2}, {"a": 10}) == {"a": 11, "b": 2}
+
+    def test_merge_with_positional_dicts_rejected(self):
+        # merge_with 是 curry(fn) -> Callable 形态
+        with pytest.raises(Exception):
+            c.merge_with(sum, {"a": 1})
+
+
+class TestWalk:
+    """walk(fn, iterable) 是"就地副作用遍历"，返回 None（文档 -> None）。"""
+
+    def test_side_effects_applied(self):
+        seen = []
+        assert c.walk(seen.append, [1, 2, 3]) is None
+        assert seen == [1, 2, 3]
+
+    def test_does_not_flatten(self):
+        seen = []
+        c.walk(seen.append, [[1, 2], [3]])
+        assert seen == [[1, 2], [3]]
+
+
+class TestPartitionSemantics:
+    """partition 末组不齐；partition_all 末组补 None 到 n（BUG-213 文档契约）。"""
+
+    def test_partition_no_padding(self):
+        assert c.partition(2, [1, 2, 3, 4, 5]) == [[1, 2], [3, 4], [5]]
+
+    def test_partition_all_pads_with_none(self):
+        assert c.partition_all(2, [1, 2, 3]) == [[1, 2], [3, None]]
+        assert c.partition_all(2, [1, 2, 3, 4]) == [[1, 2], [3, 4]]
+
+
+class TestAccessors:
+    def test_nth_second_last(self):
+        assert c.nth(1, [1, 2, 3]) == 2
+        assert c.second([1, 2, 3]) == 2
+        assert c.last([1, 2, 3]) == 3
+
+    def test_nth_out_of_range_is_none(self):
+        assert c.nth(9, [1]) is None
+
+    def test_unique_with_key(self):
+        assert list(c.unique([1, 1, 2])) == [1, 2]
+        assert list(c.iunique([1, 1, 2])) == [1, 2]
+        assert list(c.unique([1, 1, 2], key=lambda x: 0)) == [1]
+
+    def test_mapcat_pluck(self):
+        assert list(c.mapcat(lambda x: [x, x], [1, 2])) == [1, 1, 2, 2]
+        assert list(c.pluck("a", [{"a": 1}, {"a": 2}])) == [1, 2]
+
+    def test_pluck_missing_key_is_loud(self):
+        """本库对缺失键响亮失败（toolz 会产出 None）。"""
+        with pytest.raises(Exception):
+            list(c.pluck("zz", [{"a": 1}]))
+
