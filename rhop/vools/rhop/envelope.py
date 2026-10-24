@@ -1,6 +1,6 @@
 """vools.rhop.envelope - 任务信封 (.rhop 文件格式)
 
-Py3.6 基线：不用 dataclasses，用 attrs 代替。
+Py3.6 兼容：用 vools.core.dataclass_compat 的 dataclass 代替 attrs。
 
 设计要点：
   - v: 1 写在第一个字段（向前兼容）
@@ -14,29 +14,29 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional
 
-import attr
+from vools.core.dataclass_compat import dataclass, field
 
 from .core import Side, TaskStatus
 
 
-@attr.s(slots=True)
+@dataclass
 class Envelope:
     """任务信封：镜像任务中继协议的最小传递单位。"""
 
-    task_id = attr.ib(type=str)
-    status = attr.ib(type=TaskStatus)
-    payload = attr.ib(type=dict)                           # 任务载荷
-    result = attr.ib(type=object, default=None)            # 执行结果
-    error = attr.ib(type=str, default=None)                # 错误信息
-    side = attr.ib(type=Side, default=Side.REQUESTER)      # 谁创建的
-    version = attr.ib(type=int, default=1)                 # 乐观锁版本号
-    created_at = attr.ib(type=str, default="")             # ISO 时间戳
-    updated_at = attr.ib(type=str, default="")
-    hops_seen = attr.ib(factory=list)                      # 审计链
-    signature = attr.ib(type=str, default=None)            # 真机签名
-    checksum = attr.ib(type=str, default="")               # 内容哈希
+    task_id: str
+    status: TaskStatus
+    payload: dict
+    result: Optional[object] = None
+    error: Optional[str] = None
+    side: Side = Side.REQUESTER
+    version: int = 1
+    created_at: str = ""
+    updated_at: str = ""
+    hops_seen: List[str] = field(default_factory=list)
+    signature: Optional[str] = None
+    checksum: str = ""
 
-    def __attrs_post_init__(self):
+    def __post_init__(self):
         """Compute checksum on construction if not provided."""
         if not self.checksum:
             self.checksum = self._compute_checksum()
@@ -84,27 +84,36 @@ class Envelope:
     @classmethod
     def from_rhop_bytes(cls, raw):
         """从 .rhop 字节反序列化 + 校验。"""
-        data = json.loads(raw.decode("utf-8"))
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (ValueError, TypeError, UnicodeDecodeError) as exc:
+            raise ValueError("envelope JSON 解析失败: %s" % exc)
         checksum = data.pop("checksum", "")
         expected = "sha256:" + hashlib.sha256(
             json.dumps(data, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
         if checksum != expected:
             raise ValueError("checksum mismatch: envelope may be corrupted")
-        return cls(
-            task_id=data["task_id"],
-            status=TaskStatus(data["status"]),
-            payload=data["payload"],
-            result=data.get("result"),
-            error=data.get("error"),
-            side=Side(data.get("side", "requester")),
-            version=data.get("version", 1),
-            created_at=data.get("created_at", ""),
-            updated_at=data.get("updated_at", ""),
-            hops_seen=data.get("hops_seen", []),
-            signature=data.get("signature"),
-            checksum=checksum,
-        )
+        # 缺失必填字段时抛 ValueError（而非 KeyError），保证 IntegrityChecker 能捕获
+        try:
+            return cls(
+                task_id=data["task_id"],
+                status=TaskStatus(data["status"]),
+                payload=data["payload"],
+                result=data.get("result"),
+                error=data.get("error"),
+                side=Side(data.get("side", "requester")),
+                version=data.get("version", 1),
+                created_at=data.get("created_at", ""),
+                updated_at=data.get("updated_at", ""),
+                hops_seen=data.get("hops_seen", []),
+                signature=data.get("signature"),
+                checksum=checksum,
+            )
+        except KeyError as exc:
+            raise ValueError("envelope 缺少必填字段: %s" % exc)
+        except ValueError as exc:
+            raise ValueError("envelope 字段值非法: %s" % exc)
 
     def to_dict(self):
         """转为 dict（便于序列化存储）。"""

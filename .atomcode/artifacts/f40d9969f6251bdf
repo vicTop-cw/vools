@@ -1,0 +1,2481 @@
+     1	"""actus — Actus 命令行（docs/08 §6：validate 通过才入索引上 MCP）。
+     2	
+     3	用法：
+     4	    python -m actus scan                       # 扫描并重建索引
+     5	    python -m actus list [--all]               # 列出动作（默认仅 valid）
+     6	    python -m actus validate [id]              # 校验动作/全仓库
+     7	    python -m actus info <id>                  # 查看动作元数据与依赖
+     8	    python -m actus preview <id> [json参数]     # 干跑：展示将执行的块
+     9	    python -m actus run <id> [json参数] [--confirm] [--yes]
+    10	    python -m actus status [exec_id]           # 查询执行状态
+    11	    python -m actus probe [--force-refresh] [--json] [--max-age N] [--verbose]  # 环境探测（ProbeReport）
+    12	    python -m actus mcp [--transport stdio|sse] [--port 8765]  # 启动聚合 MCP server
+    13	    python -m actus config <client>            # 生成 MCP 接入配置（claude/cursor/cline/vscode）
+    14	    python -m actus scaffold <description>     # AI：根据描述生成动作骨架
+    15	    python -m actus author <id> <instruction>  # AI：修改已有动作
+    16	    python -m actus vault set <key> <value> [--scope] [--desc]  # 存储密钥
+    17	    python -m actus vault get <key> [--scope]       # 获取密钥
+    18	    python -m actus vault list [--scope]            # 列出密钥（不含值）
+    19	    python -m actus vault delete <key> [--scope]    # 删除密钥
+    20	    python -m actus runtimes                        # 列出可用多语言运行时
+    21	    python -m actus execute --language <lang> --code <code>  # 执行代码片段
+    22	    python -m actus records list [--action-id] [--limit] [--offset]  # 列出执行记录
+    23	    python -m actus records export [--action-id] [--format json|csv|summary] [--output]  # 导出记录
+    24	    python -m actus artifacts list [--action-id] [--exec-id] [--type]  # 列出产物
+    25	    python -m actus artifacts cleanup [--max-age-days] [--max-count]  # 清理产物
+    26	    python -m actus triggers add <action_id> <type> [--expr] [--path] [--key]  # 注册触发器
+    27	    python -m actus triggers list               # 列出所有触发器
+    28	    python -m actus triggers status             # 引擎状态
+    29	    python -m actus triggers remove <action_id> # 移除触发器
+    30	"""
+    31	import json
+    32	import sys
+    33	from pathlib import Path
+    34	
+    35	__all__ = ['main']
+    36	
+    37	
+    38	def _out(obj):
+    39	    print(json.dumps(obj, ensure_ascii=False, indent=2))
+    40	
+    41	
+    42	def main(argv=None) -> int:
+    43	    """CLI 入口。"""
+    44	    parser = _build_parser()
+    45	    args = parser.parse_args(argv)
+    46	
+    47	    if args.command == 'mcp':
+    48	        if args.transport == 'sse':
+    49	            from .mcp_sse import serve_sse
+    50	            serve_sse(port=args.port)
+    51	        else:
+    52	            from .mcp_server import serve
+    53	            serve()
+    54	        return 0
+    55	
+    56	    try:
+    57	        return _dispatch(args)
+    58	    except Exception as e:
+    59	        _out({'status': 'failed', 'error': {
+    60	            'code': getattr(e, 'code', 'internal'), 'message': str(e)}})
+    61	        return 1
+    62	
+    63	
+    64	def _build_parser():
+    65	    """构建 argparse 解析器（供测试和 main() 使用）。"""
+    66	    import argparse
+    67	    parser = argparse.ArgumentParser(prog='actus', description='Actus — AI 动作执行平台 CLI')
+    68	    sub = parser.add_subparsers(dest='command')
+    69	
+    70	    sub.add_parser('scan', help='扫描 actions/ 并重建 _meta/actions.index.json')
+    71	
+    72	    p_list = sub.add_parser('list', help='列出动作')
+    73	    p_list.add_argument('--all', action='store_true', help='包含 invalid/conflict')
+    74	    p_list.add_argument('--kind', help='按执行类型过滤（exec/link/demo/template/alias/bundle/doc）')
+    75	    p_list.add_argument('--purpose', help='按用途过滤（source/sink/transform/.../utility）')
+    76	    p_list.add_argument('--industry', help='按行业过滤（devops/finance/.../general）')
+    77	    p_list.add_argument('--tag', help='按标签过滤（逗号分隔）')
+    78	
+    79	    p_val = sub.add_parser('validate', help='校验动作')
+    80	    p_val.add_argument('action_id', nargs='?', help='动作 id（缺省 = 全仓库）')
+    81	
+    82	    p_info = sub.add_parser('info', help='查看动作详情')
+    83	    p_info.add_argument('action_id')
+    84	
+    85	    p_prev = sub.add_parser('preview', help='干跑：不执行代码，支持语法高亮')
+    86	    p_prev.add_argument('action_id')
+    87	    p_prev.add_argument('params', nargs='?', default='{}', help='JSON 入参')
+    88	    p_prev.add_argument('--html', action='store_true',
+    89	                        help='输出 HTML 高亮（默认终端 ANSI 高亮）')
+    90	    p_prev.add_argument('--theme', default='github-dark',
+    91	                        help='Shiki 主题（默认 github-dark）')
+    92	    p_prev.add_argument('--lang', default='python',
+    93	                        help='代码语言（默认 python）')
+    94	    p_prev.add_argument('--file', help='直接高亮指定文件（跳过动作预览）')
+    95	
+    96	    p_run = sub.add_parser('run', help='执行动作')
+    97	    p_run.add_argument('action_id')
+    98	    p_run.add_argument('params', nargs='?', default='{}', help='JSON 入参')
+    99	    p_run.add_argument('--confirm', action='store_true',
+   100	                       help='audit 级动作：人类已确认，放行执行')
+   101	    p_run.add_argument('--yes', action='store_true',
+   102	                       help='非交互确认（等价 --confirm，语义同 docs/07 §2 回执）')
+   103	
+   104	    p_status = sub.add_parser('status', help='查询执行状态')
+   105	    p_status.add_argument('exec_id', nargs='?', help='缺省 = 最近执行汇总')
+   106	
+   107	    p_loop = sub.add_parser('loop', help='loop_prompt 死循环会话管理')
+   108	    loop_sub = p_loop.add_subparsers(dest='loop_command')
+   109	    p_loop_stop = loop_sub.add_parser('stop', help='请求停止：向会话项目目录写 stop 文件')
+   110	    p_loop_stop.add_argument('session', help='会话 id（loop-YYYYmmdd-HHMMSS）或其项目路径')
+   111	    p_loop_status = loop_sub.add_parser('status', help='查看会话进度（最新或指定会话）')
+   112	    p_loop_status.add_argument('session', nargs='?', help='缺省 = 最新会话')
+   113	    loop_sub.add_parser('list', help='列出全部会话')
+   114	
+   115	    p_mcp = sub.add_parser('mcp', help='启动聚合 MCP server')
+   116	    p_mcp.add_argument('--transport', choices=['stdio', 'sse'], default='stdio',
+   117	                       help='传输协议（默认 stdio）')
+   118	    p_mcp.add_argument('--port', type=int, default=8765,
+   119	                       help='SSE 传输监听端口（默认 8765，仅 sse 有效）')
+   120	
+   121	    # probe 子命令 — 环境探测器（analysis/PROBE_PLAN.md §9 Phase 3）
+   122	    p_probe = sub.add_parser('probe', help='环境探测器：一键探测本机能力，输出 ProbeReport')
+   123	    p_probe.add_argument('--force-refresh', '--force', action='store_true',
+   124	                         dest='force_refresh', help='强制刷新（忽略缓存）')
+   125	    p_probe.add_argument('--max-age', type=int, default=3600,
+   126	                         help='缓存有效期秒数（默认 3600）')
+   127	    p_probe.add_argument('--json', action='store_true', dest='as_json',
+   128	                         help='输出 JSON（机器消费）')
+   129	    p_probe.add_argument('--verbose', action='store_true',
+   130	                         help='打印每个探测器的详细进度')
+   131	
+   132	    # dialog 子命令 — 快速调用 C# 弹窗
+   133	    p_dialog = sub.add_parser('dialog', help='弹出 C# 交互弹窗（alert/input/single/multi/form/wait）')
+   134	    p_dialog.add_argument('mode', choices=['alert', 'input', 'single', 'multi', 'form', 'wait'],
+   135	                          help='弹窗模式')
+   136	    p_dialog.add_argument('--message', '-m', help='提示文本')
+   137	    p_dialog.add_argument('--title', '-t', default='Actus', help='弹窗标题')
+   138	    p_dialog.add_argument('--options', help='选项列表（逗号分隔，single/multi 模式）')
+   139	    p_dialog.add_argument('--password', action='store_true', help='密码模式（input）')
+   140	    p_dialog.add_argument('--multiline', action='store_true', help='多行模式（input）')
+   141	    p_dialog.add_argument('--timeout', type=int, default=0, help='超时秒数（wait 模式）')
+   142	    p_dialog.add_argument('--fields', help='表单字段 JSON（form 模式）')
+   143	
+   144	    p_config = sub.add_parser('config', help='生成 MCP 接入配置片段')
+   145	    p_config.add_argument('client', choices=['claude', 'cursor', 'cline', 'vscode'],
+   146	                          help='目标 AI 客户端类型')
+   147	
+   148	    p_scaffold = sub.add_parser('scaffold', help='AI：根据自然语言描述生成动作骨架')
+   149	    p_scaffold.add_argument('description', help='动作用途的自然语言描述')
+   150	    p_scaffold.add_argument('--id', dest='action_id', help='指定动作 id（缺省自动生成）')
+   151	    p_scaffold.add_argument('--trust', choices=['audit', 'trusted', 'sandbox'],
+   152	                            default='audit', help='信任级别（默认 audit）')
+   153	
+   154	    p_author = sub.add_parser('author', help='AI：修改已有动作')
+   155	    p_author.add_argument('action_id', help='要修改的动作 id')
+   156	    p_author.add_argument('instruction', help='修改指令（自然语言）')
+   157	
+   158	    p_wf = sub.add_parser('workflow', help='运行 DAG 工作流')
+   159	    p_wf.add_argument('workflow_id', help='工作流动作 id')
+   160	    p_wf.add_argument('--params', default='{}', help='工作流级参数 JSON')
+   161	    p_wf.add_argument('--max-workers', type=int, default=4, dest='max_workers',
+   162	                      help='并行执行线程数（默认 4）')
+   163	    p_wf.add_argument('--confirmed', action='store_true',
+   164	                      help='跳过人类确认')
+   165	
+   166	    # vault 子命令
+   167	    p_vault = sub.add_parser('vault', help='密钥保险库操作')
+   168	    vault_sub = p_vault.add_subparsers(dest='vault_command')
+   169	
+   170	    p_vault_set = vault_sub.add_parser('set', help='存储密钥')
+   171	    p_vault_set.add_argument('key', help='密钥名称')
+   172	    p_vault_set.add_argument('value', help='密钥值')
+   173	    p_vault_set.add_argument('--scope', default='global', help='作用域')
+   174	    p_vault_set.add_argument('--desc', default='', help='密钥描述')
+   175	
+   176	    p_vault_get = vault_sub.add_parser('get', help='获取密钥')
+   177	    p_vault_get.add_argument('key', help='密钥名称')
+   178	    p_vault_get.add_argument('--scope', default='global', help='作用域')
+   179	
+   180	    p_vault_list = vault_sub.add_parser('list', help='列出密钥')
+   181	    p_vault_list.add_argument('--scope', help='作用域过滤')
+   182	
+   183	    p_vault_delete = vault_sub.add_parser('delete', help='删除密钥')
+   184	    p_vault_delete.add_argument('key', help='密钥名称')
+   185	    p_vault_delete.add_argument('--scope', default='global', help='作用域')
+   186	
+   187	    # runtimes 子命令
+   188	    sub.add_parser('runtimes', help='列出可用多语言运行时')
+   189	
+   190	    # execute 子命令
+   191	    p_exec = sub.add_parser('execute', help='执行代码片段（多语言运行时）')
+   192	    p_exec.add_argument('--language', required=True, help='语言：python/shell/node/go/rust/ruby/php')
+   193	    p_exec.add_argument('--code', help='要执行的代码')
+   194	    p_exec.add_argument('--file', help='从文件读取代码')
+   195	    p_exec.add_argument('--args', help='命令行参数')
+   196	    p_exec.add_argument('--stdin', help='标准输入')
+   197	    p_exec.add_argument('--env', help='环境变量（JSON）')
+   198	    p_exec.add_argument('--timeout', type=int, default=30, help='超时秒数（默认 30）')
+   199	
+   200	    # records 子命令
+   201	    p_records = sub.add_parser('records', help='执行记录管理')
+   202	    records_sub = p_records.add_subparsers(dest='records_command')
+   203	
+   204	    p_records_list = records_sub.add_parser('list', help='列出执行记录')
+   205	    p_records_list.add_argument('--action-id', help='按动作 id 过滤')
+   206	    p_records_list.add_argument('--limit', type=int, default=50, help='最多返回条数')
+   207	    p_records_list.add_argument('--offset', type=int, default=0, help='跳过条数')
+   208	
+   209	    p_records_export = records_sub.add_parser('export', help='导出执行记录')
+   210	    p_records_export.add_argument('--action-id', help='按动作 id 过滤')
+   211	    p_records_export.add_argument('--format', default='json', help='输出格式：json/csv/summary')
+   212	    p_records_export.add_argument('--output', help='输出文件路径')
+   213	    p_records_export.add_argument('--limit', type=int, default=100, help='最多导出条数')
+   214	
+   215	    # artifacts 子命令
+   216	    p_artifacts = sub.add_parser('artifacts', help='产物管理')
+   217	    artifacts_sub = p_artifacts.add_subparsers(dest='artifacts_command')
+   218	
+   219	    p_artifacts_list = artifacts_sub.add_parser('list', help='列出产物')
+   220	    p_artifacts_list.add_argument('--action-id', help='按动作 id 过滤')
+   221	    p_artifacts_list.add_argument('--exec-id', help='按执行 id 过滤')
+   222	    p_artifacts_list.add_argument('--type', help='按产物类型过滤')
+   223	
+   224	    p_artifacts_cleanup = artifacts_sub.add_parser('cleanup', help='清理产物')
+   225	    p_artifacts_cleanup.add_argument('--max-age-days', type=int, default=30, help='保留天数')
+   226	    p_artifacts_cleanup.add_argument('--max-count', type=int, default=1000, help='最多保留条数')
+   227	
+   228	    # triggers 子命令
+   229	    p_triggers = sub.add_parser('triggers', help='触发器引擎管理')
+   230	    triggers_sub = p_triggers.add_subparsers(dest='triggers_command')
+   231	
+   232	    p_triggers_add = triggers_sub.add_parser('add', help='注册触发器')
+   233	    p_triggers_add.add_argument('action_id', help='要触发的动作 id')
+   234	    p_triggers_add.add_argument('type', help='触发器类型：cron/watch/webhook/hotkey')
+   235	    p_triggers_add.add_argument('--expr', help='cron 表达式')
+   236	    p_triggers_add.add_argument('--path', help='监控路径')
+   237	    p_triggers_add.add_argument('--events', nargs='+', default=['create', 'modify'],
+   238	                                 help='监控事件')
+   239	    p_triggers_add.add_argument('--recursive', action='store_true', help='递归监控')
+   240	    p_triggers_add.add_argument('--key', help='热键组合')
+   241	    p_triggers_add.add_argument('--args', default='{}', help='传递给动作的参数（JSON）')
+   242	
+   243	    triggers_sub.add_parser('list', help='列出所有触发器')
+   244	    triggers_sub.add_parser('status', help='引擎状态')
+   245	
+   246	    p_triggers_remove = triggers_sub.add_parser('remove', help='移除触发器')
+   247	    p_triggers_remove.add_argument('action_id', help='动作 id')
+   248	
+   249	    # registry 子命令（动作市场）
+   250	    p_registry = sub.add_parser('registry', help='动作注册表管理')
+   251	    registry_sub = p_registry.add_subparsers(dest='registry_command')
+   252	
+   253	    p_registry_build = registry_sub.add_parser('build', help='构建当前仓库的注册表索引')
+   254	    p_registry_build.add_argument('--output', help='输出路径（默认 .actus.registry.json）')
+   255	
+   256	    p_registry_validate = registry_sub.add_parser('validate', help='校验注册表索引')
+   257	    p_registry_validate.add_argument('--index', help='索引文件路径')
+   258	
+   259	    p_registry_info = registry_sub.add_parser('info', help='查看注册表信息')
+   260	    p_registry_info.add_argument('--index', help='索引文件路径')
+   261	
+   262	    # install 子命令
+   263	    p_install = sub.add_parser('install', help='从 Git 仓库安装动作')
+   264	    p_install.add_argument('url', help='Git 仓库 URL（如 git@github.com:user/repo.git）')
+   265	    p_install.add_argument('--branch', default='main', help='分支名（默认 main）')
+   266	    p_install.add_argument('--tag', help='标签名')
+   267	    p_install.add_argument('--commit', help='commit hash')
+   268	    p_install.add_argument('--scope', help='权限范围（trusted/community/sandbox）')
+   269	    p_install.add_argument('--dir', help='安装目录（默认 ~/.actus/actions）')
+   270	
+   271	    # uninstall 子命令
+   272	    p_uninstall = sub.add_parser('uninstall', help='卸载已安装的动作仓库')
+   273	    p_uninstall.add_argument('--url', help='仓库 URL')
+   274	    p_uninstall.add_argument('--name', help='安装名称')
+   275	
+   276	    # publish 子命令
+   277	    p_publish = sub.add_parser('publish', help='发布当前仓库到动作市场')
+   278	    p_publish.add_argument('--registry', help='注册表索引文件路径')
+   279	    p_publish.add_argument('--sign', action='store_true', help='签名所有动作')
+   280	    p_publish.add_argument('--dry-run', action='store_true', help='仅验证不发布')
+   281	
+   282	    # search 子命令
+   283	    p_search = sub.add_parser('search', help='搜索动作')
+   284	    p_search.add_argument('query', nargs='?', help='搜索关键词')
+   285	    p_search.add_argument('--category', help='分类过滤')
+   286	    p_search.add_argument('--author', help='作者过滤')
+   287	    p_search.add_argument('--tag', help='标签过滤（多个用逗号分隔，如 "file,network"）')
+   288	    p_search.add_argument('--source', help='搜索来源（local/installed/url）', default='local')
+   289	    p_search.add_argument('--url', help='远程仓库 URL（source=url 时使用）')
+   290	    p_search.add_argument('--limit', type=int, default=20, help='最大返回数')
+   291	
+   292	    # deps 子命令
+   293	    p_deps = sub.add_parser('deps', help='检查动作依赖（编译产物、Python/npm 包、系统命令）')
+   294	    p_deps.add_argument('action_id', help='动作 id（如 actus.system.dialog_alert）')
+   295	    p_deps.add_argument('--auto-install', action='store_true', dest='auto_install',
+   296	                        help='尝试自动安装缺失依赖（pip install / dotnet build）')
+   297	
+   298	    # dep-tree 子命令
+   299	    p_dep_tree = sub.add_parser('dep-tree', help='递归展示动作的依赖树')
+   300	    p_dep_tree.add_argument('action_id', help='动作 id')
+   301	
+   302	    # desktop 子命令
+   303	    p_desktop = sub.add_parser('desktop', help='启动 Actus Desktop Web UI')
+   304	    p_desktop.add_argument('--host', default='127.0.0.1', help='监听地址 (默认 127.0.0.1)')
+   305	    p_desktop.add_argument('--port', type=int, default=8765, help='监听端口 (默认 8765)')
+   306	    p_desktop.add_argument('--no-browser', action='store_true', help='不自动打开浏览器')
+   307	
+   308	    # events 子命令
+   309	    p_events = sub.add_parser('events', help='查看事件总线事件')
+   310	    p_events.add_argument('--type', help='过滤事件类型')
+   311	    p_events.add_argument('--limit', type=int, default=20, help='返回条数')
+   312	
+   313	    # selfheal 子命令
+   314	    p_selfheal = sub.add_parser('selfheal', help='自愈引擎状态管理')
+   315	    p_selfheal.add_argument('action', choices=['status', 'reset', 'patterns'],
+   316	                            help='status=查看状态 / reset=重置 / patterns=错误模式')
+   317	
+   318	    # template 子命令
+   319	    p_template = sub.add_parser('template', help='动作模板管理')
+   320	    p_template.add_argument('action', choices=['list', 'apply'],
+   321	                            help='list=列出模板 / apply=应用模板')
+   322	    p_template.add_argument('--id', help='模板 ID')
+   323	    p_template.add_argument('--action-id', help='目标动作 ID')
+   324	    p_template.add_argument('--name', help='动作名称')
+   325	    p_template.add_argument('--output', help='输出目录')
+   326	
+   327	    # export 子命令
+   328	    p_export = sub.add_parser('export', help='导出动作执行历史')
+   329	    p_export.add_argument('--format', choices=['json', 'csv', 'markdown', 'md', 'html'],
+   330	                          default='json', help='导出格式')
+   331	    p_export.add_argument('--limit', type=int, default=0, help='记录数限制')
+   332	    p_export.add_argument('--output', help='输出文件路径')
+   333	
+   334	    # project 子命令
+   335	    p_project = sub.add_parser('project', help='项目导入导出')
+   336	    p_project.add_argument('action', choices=['export', 'import', 'validate'],
+   337	                           help='export=导出 / import=导入 / validate=验证')
+   338	    p_project.add_argument('--file', help='.actus 文件路径')
+   339	    p_project.add_argument('--output', help='输出路径')
+   340	    p_project.add_argument('--meta', action='store_true', help='包含元数据')
+   341	
+   342	    # viz 子命令
+   343	    p_viz = sub.add_parser('viz', help='工作流可视化')
+   344	    p_viz.add_argument('--format', choices=['ascii', 'mermaid', 'dot', 'html'],
+   345	                       default='ascii', help='输出格式')
+   346	    p_viz.add_argument('--output', help='输出文件路径')
+   347	    p_viz.add_argument('--action', help='指定动作 ID（可视化其工作流）')
+   348	
+   349	    # replay 子命令
+   350	    p_replay = sub.add_parser('replay', help='重放历史执行')
+   351	    p_replay.add_argument('--run-id', help='执行记录 ID')
+   352	    p_replay.add_argument('--dry-run', action='store_true', help='仅打印不执行')
+   353	
+   354	    # notify 子命令
+   355	    p_notify = sub.add_parser('notify', help='通知系统管理')
+   356	    p_notify.add_argument('action', choices=['test', 'history', 'stats'],
+   357	                          help='test=测试通知 / history=历史 / stats=统计')
+   358	
+   359	    # health 子命令
+   360	    p_health = sub.add_parser('health', help='系统健康检查')
+   361	    p_health.add_argument('--json', action='store_true', help='JSON 格式输出')
+   362	    p_health.add_argument('--check', help='只运行指定检查项')
+   363	
+   364	    # sync 子命令
+   365	    p_sync = sub.add_parser('sync', help='同步已安装的动作仓库')
+   366	    p_sync.add_argument('--url', help='指定仓库 URL（默认全部）')
+   367	    p_sync.add_argument('--name', help='指定安装名称')
+   368	    p_sync.add_argument('--force', action='store_true', help='强制重新安装')
+   369	
+   370	    # list-installed 子命令
+   371	    p_list_inst = sub.add_parser('list-installed', help='列出已安装的仓库')
+   372	
+   373	    # rollback 子命令
+   374	    p_rollback = sub.add_parser('rollback', help='回滚已安装的仓库到指定版本')
+   375	    p_rollback.add_argument('--url', help='仓库 URL')
+   376	    p_rollback.add_argument('--name', help='安装名称')
+   377	    p_rollback.add_argument('--version', type=int, required=True, help='回滚版本号（1=上一版本）')
+   378	
+   379	    # check-update 子命令
+   380	    p_check = sub.add_parser('check-update', help='检查已安装仓库是否有可用更新')
+   381	    p_check.add_argument('--url', help='仓库 URL')
+   382	    p_check.add_argument('--name', help='安装名称')
+   383	
+   384	    # keygen 子命令
+   385	    p_keygen = sub.add_parser('keygen', help='生成签名密钥对')
+   386	    p_keygen.add_argument('--name', default='default', help='密钥名称')
+   387	    p_keygen.add_argument('--output', help='输出目录（默认 ~/.actus/keys）')
+   388	
+   389	    # sign 子命令
+   390	    p_sign = sub.add_parser('sign', help='签名动作文件')
+   391	    p_sign.add_argument('path', help='动作文件路径')
+   392	    p_sign.add_argument('--key', default='default', help='密钥名称')
+   393	
+   394	    # verify 子命令
+   395	    p_verify = sub.add_parser('verify', help='验证动作文件签名')
+   396	    p_verify.add_argument('path', help='动作文件路径')
+   397	    p_verify.add_argument('--key', default='default', help='公钥名称')
+   398	
+   399	    # approve 子命令
+   400	    p_approve = sub.add_parser('approve', help='审批动作')
+   401	    p_approve.add_argument('action_id', help='动作 id')
+   402	    p_approve.add_argument('--reject', action='store_true', help='拒绝而非批准')
+   403	    p_approve.add_argument('--reason', default='', help='拒绝原因')
+   404	
+   405	    # pending 子命令
+   406	    p_pending = sub.add_parser('pending', help='列出待审批的动作')
+   407	
+   408	    # evolve 子命令
+   409	    p_evolve = sub.add_parser('evolve', help='自进化循环：AI 写动作→测试→修复直到通过')
+   410	    p_evolve.add_argument('description', nargs='?', help='动作用途的自然语言描述')
+   411	    p_evolve.add_argument('--action-id', help='指定动作 id（修复已有动作）')
+   412	    p_evolve.add_argument('--max-rounds', type=int, default=5, help='最大修复轮次（默认 5）')
+   413	    p_evolve.add_argument('--expect', help='期望条件 JSON')
+   414	    p_evolve.add_argument('--repair', action='store_true', help='修复已有动作模式')
+   415	    p_evolve.add_argument('--status', metavar='ACTION_ID', help='查询进化状态')
+   416	    p_evolve.add_argument('--history', metavar='ACTION_ID', help='查看进化历史')
+   417	    p_evolve.add_argument('--rollback', metavar='ACTION_ID', help='回滚到指定版本')
+   418	    p_evolve.add_argument('--version', type=int, help='回滚目标版本号')
+   419	    p_evolve.add_argument('--compare', metavar='ACTION_ID', help='A/B 对比两个版本')
+   420	    p_evolve.add_argument('--v1', type=int, help='对比版本 1')
+   421	    p_evolve.add_argument('--v2', type=int, help='对比版本 2')
+   422	    p_evolve.add_argument('--list', action='store_true', help='列出所有进化任务')
+   423	
+   424	    # webhook 子命令
+   425	    p_webhook = sub.add_parser('webhook', help='Webhook 接收器管理')
+   426	    p_webhook.add_argument('--port', type=int, default=8765, help='监听端口（默认 8765）')
+   427	    p_webhook.add_argument('--host', default='0.0.0.0', help='监听地址（默认 0.0.0.0）')
+   428	    p_webhook.add_argument('--secret', default='', help='Webhook 密钥')
+   429	    p_webhook.add_argument('--no-signature', action='store_true', help='禁用签名验证')
+   430	    p_webhook.add_argument('--register', nargs=2, metavar=('EVENT', 'ACTION_ID'),
+   431	                           help='注册事件路由（事件类型 动作id）')
+   432	    p_webhook.add_argument('--unregister', metavar='EVENT', help='移除事件路由')
+   433	    p_webhook.add_argument('--status', action='store_true', help='查看运行状态')
+   434	    p_webhook.add_argument('--logs', type=int, metavar='LIMIT', help='查看请求日志')
+   435	    p_webhook.add_argument('--stop', action='store_true', help='停止接收器')
+   436	
+   437	    # project-mgmt 子命令（多语言项目管理，避免与 project 导入导出冲突）
+   438	    p_project_mgmt = sub.add_parser('project-mgmt', help='多语言项目管理')
+   439	    p_project_mgmt.add_argument('--work-dir', default='.', help='工作目录（默认当前目录）')
+   440	    p_project_mgmt.add_argument('--project-file', default='.actus-project.json',
+   441	                                help='项目定义文件路径')
+   442	    p_project_mgmt.add_argument('--detect', action='store_true', help='自动检测语言和模块')
+   443	    p_project_mgmt.add_argument('--build', action='store_true', help='执行构建')
+   444	    p_project_mgmt.add_argument('--test', action='store_true', help='执行测试')
+   445	    p_project_mgmt.add_argument('--status', action='store_true', help='查看状态')
+   446	    p_project.add_argument('--validate', action='store_true', help='验证项目定义')
+   447	    p_project.add_argument('--phase', help='指定阶段（build/test/deploy/lint）')
+   448	    p_project.add_argument('--add-module', nargs=3,
+   449	                           metavar=('ID', 'LANG', 'PATH'),
+   450	                           help='添加模块（id 语言 路径）')
+   451	    p_project.add_argument('--remove-module', metavar='ID', help='移除模块')
+   452	
+   453	    # visibility 子命令
+   454	    p_visibility = sub.add_parser('visibility', help='动作可见性管理')
+   455	    visibility_sub = p_visibility.add_subparsers(dest='visibility_command')
+   456	
+   457	    p_vis_get = visibility_sub.add_parser('get', help='查询动作可见性')
+   458	    p_vis_get.add_argument('action_id', help='动作 id')
+   459	
+   460	    p_vis_set = visibility_sub.add_parser('set', help='设置动作可见性')
+   461	    p_vis_set.add_argument('action_id', help='动作 id')
+   462	    p_vis_set.add_argument('--level', required=True,
+   463	                           choices=['public', 'unlisted', 'private', 'team'],
+   464	                           help='可见性级别')
+   465	    p_vis_set.add_argument('--team', help='团队名称（team 级别时必填）')
+   466	
+   467	    # reg 子命令（多注册表管理）
+   468	    p_reg = sub.add_parser('reg', help='多注册表管理')
+   469	    reg_sub = p_reg.add_subparsers(dest='reg_command')
+   470	
+   471	    p_reg_add = reg_sub.add_parser('add', help='添加注册表')
+   472	    p_reg_add.add_argument('name', help='注册表名称')
+   473	    p_reg_add.add_argument('url', help='注册表 URL')
+   474	    p_reg_add.add_argument('--type', default='http',
+   475	                       choices=['http', 'git', 'private'],
+   476	                       help='注册表类型（默认 http）')
+   477	    p_reg_add.add_argument('--branch', default='main', help='分支（默认 main）')
+   478	    p_reg_add.add_argument('--priority', type=int, default=50, help='优先级')
+   479	
+   480	    p_reg_rm = reg_sub.add_parser('remove', help='移除注册表')
+   481	    p_reg_rm.add_argument('name', help='注册表名称')
+   482	
+   483	    reg_sub.add_parser('list', help='列出所有注册表')
+   484	
+   485	    # private 子命令
+   486	    p_priv = sub.add_parser('private', help='私有动作管理')
+   487	    priv_sub = p_priv.add_subparsers(dest='private_command')
+   488	
+   489	    priv_sub.add_parser('list', help='列出私有动作')
+   490	
+   491	    p_priv_add = priv_sub.add_parser('add', help='添加私有动作')
+   492	    p_priv_add.add_argument('action_id', help='动作 id')
+   493	    p_priv_add.add_argument('--author', default='', help='作者')
+   494	    p_priv_add.add_argument('--path', default='', help='本地路径')
+   495	
+   496	    p_priv_rm = priv_sub.add_parser('remove', help='移除私有动作')
+   497	    p_priv_rm.add_argument('action_id', help='动作 id')
+   498	
+   499	    # team 子命令
+   500	    p_team = sub.add_parser('team', help='团队管理')
+   501	    team_sub = p_team.add_subparsers(dest='team_command')
+   502	
+   503	    p_team_create = team_sub.add_parser('create', help='创建团队')
+   504	    p_team_create.add_argument('name', help='团队名称')
+   505	    p_team_create.add_argument('--creator', required=True, help='创建者用户 id')
+   506	
+   507	    p_team_add = team_sub.add_parser('add-member', help='添加团队成员')
+   508	    p_team_add.add_argument('--team', required=True, help='团队名称')
+   509	    p_team_add.add_argument('--user', required=True, help='用户 id')
+   510	    p_team_add.add_argument('--role', default='member',
+   511	                            choices=['admin', 'member', 'viewer'],
+   512	                            help='角色（默认 member）')
+   513	
+   514	    p_team_rm = team_sub.add_parser('remove-member', help='移除团队成员')
+   515	    p_team_rm.add_argument('--team', required=True, help='团队名称')
+   516	    p_team_rm.add_argument('--user', required=True, help='用户 id')
+   517	
+   518	    p_team_list = team_sub.add_parser('list', help='列出团队')
+   519	    p_team_list.add_argument('--team', help='团队名称（可选，不填列出所有）')
+   520	
+   521	    # omega 子命令
+   522	    p_omega = sub.add_parser('omega', help='Ω-gate 验证引擎')
+   523	    omega_sub = p_omega.add_subparsers(dest='omega_command')
+   524	
+   525	    p_omega_verify = omega_sub.add_parser('verify', help='验证动作输出')
+   526	    p_omega_verify.add_argument('action_id', help='动作 ID')
+   527	    p_omega_verify.add_argument('--output', required=True, help='实际输出 JSON 字符串或文件路径')
+   528	    p_omega_verify.add_argument('--spec', help='spec 文件路径（可选，自动查找）')
+   529	    p_omega_verify.add_argument('--loop', action='store_true', help='启用 Ω-loop 修复循环')
+   530	    p_omega_verify.add_argument('--diff', action='store_true', help='显示差异报告')
+   531	
+   532	    p_omega_template = omega_sub.add_parser('template', help='生成 spec 模板')
+   533	    p_omega_template.add_argument('action_id', help='动作 ID')
+   534	    p_omega_template.add_argument('--example', required=True, help='输出示例 JSON')
+   535	
+   536	    p_omega_learn = omega_sub.add_parser('learn', help='从历史执行推断 spec')
+   537	    p_omega_learn.add_argument('--action-id', help='动作 ID（可选）')
+   538	    p_omega_learn.add_argument('--limit', type=int, default=100, help='历史记录数量')
+   539	
+   540	    p_omega_batch = omega_sub.add_parser('batch', help='批量验证')
+   541	    p_omega_batch.add_argument('--spec', required=True, help='spec 文件路径')
+   542	    p_omega_batch.add_argument('--inputs', required=True, help='输入 JSON 数组文件')
+   543	
+   544	    p_omega_format = omega_sub.add_parser('format', help='格式化验证报告')
+   545	    p_omega_format.add_argument('--report', required=True, help='验证报告 JSON')
+   546	
+   547	    # concurrency 子命令
+   548	    p_concurrency = sub.add_parser('concurrency', help='动作并发执行控制')
+   549	    concurrency_sub = p_concurrency.add_subparsers(dest='concurrency_command')
+   550	
+   551	    p_conc_status = concurrency_sub.add_parser('status', help='查看并发状态')
+   552	    p_conc_status.add_argument('--action', help='动作 ID（可选，不填列出所有）')
+   553	
+   554	    p_conc_set = concurrency_sub.add_parser('set', help='设置并发上限')
+   555	    p_conc_set.add_argument('--action', required=True, help='动作 ID')
+   556	    p_conc_set.add_argument('--max', type=int, required=True, help='最大实例数（0=无上限）')
+   557	
+   558	    p_conc_reset = concurrency_sub.add_parser('reset', help='清除并发状态')
+   559	    p_conc_reset.add_argument('--action', help='动作 ID（可选，不填清除所有）')
+   560	
+   561	    p_conc_list = concurrency_sub.add_parser('list', help='列出运行中实例')
+   562	    p_conc_list.add_argument('--action', help='动作 ID（可选）')
+   563	
+   564	    return parser
+   565	
+   566	
+   567	def _dispatch(args) -> int:
+   568	    import vools.actus as actuscore
+   569	    # vools.actus 包没有把 indexer.build_index 转出来（Actus 侧 actuscore/__init__.py 有），
+   570	    # 直取子模块，否则 scan / validate 两条命令一调用就 AttributeError。
+   571	    from vools.actus.indexer import build_index
+   572	
+   573	    if args.command == 'scan':
+   574	        idx = build_index()
+   575	        n = sum(1 for a in idx['actions'].values() if a.get('status') == 'valid')
+   576	        _out({'status': 'ok', 'data': {
+   577	            'total': len(idx['actions']), 'valid': n,
+   578	            'index': '_meta/actions.index.json'}})
+   579	        return 0
+   580	
+   581	    if args.command == 'list':
+   582	        idx = actuscore.load_index()
+   583	        # 分类体系 v2.0（docs/03 §2）：kind/purpose/industry/tag 过滤
+   584	        kind_f = (getattr(args, 'kind', None) or '').strip().lower() or None
+   585	        purpose_f = (getattr(args, 'purpose', None) or '').strip().lower() or None
+   586	        industry_f = (getattr(args, 'industry', None) or '').strip().lower() or None
+   587	        tag_f = (getattr(args, 'tag', None) or '').strip().lower() or None
+   588	        tags = tag_f.split(',') if tag_f else None
+   589	        rows = []
+   590	        for aid, a in idx['actions'].items():
+   591	            if aid.startswith('_invalid:') and not args.all:
+   592	                continue
+   593	            if a.get('status') != 'valid' and not args.all:
+   594	                continue
+   595	            if kind_f and (a.get('kind') or 'exec') != kind_f:
+   596	                continue
+   597	            if purpose_f and purpose_f not in (a.get('purpose') or ['utility']):
+   598	                continue
+   599	            if industry_f and industry_f not in (a.get('industry') or ['general']):
+   600	                continue
+   601	            if tags and not any(t in (a.get('tags') or []) for t in tags):
+   602	                continue
+   603	            rows.append({k: a.get(k) for k in
+   604	                         ('id', 'name', 'version', 'trust', 'status', 'description',
+   605	                          'kind', 'purpose', 'industry', 'tags')})
+   606	        _out({'status': 'ok', 'data': {'actions': rows, 'count': len(rows)}})
+   607	        return 0
+   608	
+   609	    if args.command == 'validate':
+   610	        if not args.action_id:
+   611	            idx = build_index()
+   612	            bad = {aid: a.get('errors') for aid, a in idx['actions'].items()
+   613	                   if a.get('status') != 'valid'}
+   614	            _out({'status': 'ok', 'data': {'valid': not bad, 'invalid': bad}})
+   615	            return 0 if not bad else 1
+   616	        action = actuscore.get_action(args.action_id)
+   617	        errs = actuscore.validate_action(action)
+   618	        _out({'status': 'ok' if not errs else 'failed',
+   619	              'data': {'id': args.action_id, 'errors': errs}})
+   620	        return 0 if not errs else 1
+   621	
+   622	    if args.command == 'info':
+   623	        action = actuscore.get_action(args.action_id)
+   624	        _out({'status': 'ok', 'data': action.brief()})
+   625	        return 0
+   626	
+   627	    if args.command == 'preview':
+   628	        # 文件高亮模式
+   629	        if args.file:
+   630	            from vools.actus.highlight import highlight_file
+   631	            mode = "html" if args.html else "terminal"
+   632	            result = highlight_file(args.file, theme=args.theme, mode=mode)
+   633	            print(result)
+   634	            return 0
+   635	
+   636	        # 动作预览 + 代码高亮
+   637	        p = actuscore.preview(args.action_id, _parse_params(args.params))
+   638	        if args.html:
+   639	            from vools.actus.highlight import highlight_code
+   640	            # 对预览结果中的代码块进行高亮
+   641	            if 'code_blocks' in p.get('data', {}):
+   642	                for block in p['data']['code_blocks']:
+   643	                    block['highlighted'] = highlight_code(
+   644	                        block.get('code', ''),
+   645	                        block.get('language', args.lang),
+   646	                        theme=args.theme,
+   647	                        mode='html'
+   648	                    )
+   649	        _out({'status': 'ok', 'data': p})
+   650	        return 0
+   651	
+   652	    if args.command == 'run':
+   653	        confirmed = args.confirm or args.yes
+   654	        r = actuscore.execute(args.action_id, _parse_params(args.params),
+   655	                              confirmed=confirmed)
+   656	        _out(r)
+   657	        if r['status'] == 'awaiting_confirmation':
+   658	            print(f"待人类确认：再次执行并加 --confirm / --yes 放行（exec: {r['exec_id']}）",
+   659	                  file=sys.stderr)
+   660	        return 0 if r['status'] == 'ok' else 1
+   661	
+   662	    if args.command == 'status':
+   663	        from vools.actus import records as rec
+   664	        if args.exec_id:
+   665	            r = rec.load_run_record(None, args.exec_id)
+   666	            if r is None:
+   667	                _out({'status': 'failed', 'error': {
+   668	                    'code': 'action_not_found', 'message': f'执行记录不存在: {args.exec_id}'}})
+   669	                return 1
+   670	            _out({'status': 'ok', 'data': r})
+   671	        else:
+   672	            _out({'status': 'ok', 'data': rec.load_status(None)})
+   673	        return 0
+   674	
+   675	    if args.command == 'loop':
+   676	        return _dispatch_loop(args)
+   677	
+   678	    if args.command == 'config':
+   679	        return _gen_config(args.client)
+   680	
+   681	    if args.command == 'scaffold':
+   682	        from vools.actus.scaffold import scaffold_action
+   683	        r = scaffold_action(args.description, action_id=args.action_id, trust=args.trust)
+   684	        _out({'status': 'ok', 'data': r})
+   685	        return 0
+   686	
+   687	    if args.command == 'author':
+   688	        from vools.actus.author import author_action
+   689	        r = author_action(args.action_id, args.instruction)
+   690	        _out({'status': 'ok', 'data': r})
+   691	        return 0
+   692	
+   693	    if args.command == 'workflow':
+   694	        from vools.actus.workflow import run_workflow
+   695	        repo_root = os.environ.get('ACTUS_REPO_ROOT', '')
+   696	        meta_dir = os.path.join(repo_root, '_meta')
+   697	        r = run_workflow(args.workflow_id, meta_dir=meta_dir,
+   698	                         max_workers=args.max_workers, confirmed=args.confirmed)
+   699	        _out({'status': 'ok', 'data': r})
+   700	        return 0
+   701	
+   702	    if args.command == 'vault':
+   703	        return _dispatch_vault(args)
+   704	
+   705	    if args.command == 'runtimes':
+   706	        from vools.actus.runtimes import get_available_runtimes
+   707	        langs = get_available_runtimes()
+   708	        _out({'status': 'ok', 'available': langs})
+   709	        return 0
+   710	
+   711	    if args.command == 'execute':
+   712	        return _dispatch_execute(args)
+   713	
+   714	    if args.command == 'records':
+   715	        return _dispatch_records(args)
+   716	
+   717	    if args.command == 'artifacts':
+   718	        return _dispatch_artifacts(args)
+   719	
+   720	    if args.command == 'triggers':
+   721	        return _dispatch_triggers(args)
+   722	
+   723	    # 动作市场命令
+   724	    if args.command == 'registry':
+   725	        return _cmd_registry(args)
+   726	
+   727	    if args.command == 'install':
+   728	        return _cmd_install(args)
+   729	
+   730	    if args.command == 'uninstall':
+   731	        return _cmd_uninstall(args)
+   732	
+   733	    if args.command == 'publish':
+   734	        return _cmd_publish(args)
+   735	
+   736	    if args.command == 'search':
+   737	        return _cmd_search(args)
+   738	
+   739	    if args.command == 'sync':
+   740	        return _cmd_sync(args)
+   741	
+   742	    if args.command == 'list-installed':
+   743	        return _cmd_list_installed(args)
+   744	
+   745	    if args.command == 'rollback':
+   746	        return _cmd_rollback(args)
+   747	
+   748	    if args.command == 'check-update':
+   749	        return _cmd_check_update(args)
+   750	
+   751	    # 信任模型命令
+   752	    if args.command == 'keygen':
+   753	        return _cmd_keygen(args)
+   754	
+   755	    if args.command == 'sign':
+   756	        return _cmd_sign(args)
+   757	
+   758	    if args.command == 'verify':
+   759	        return _cmd_verify(args)
+   760	
+   761	    if args.command == 'approve':
+   762	        return _cmd_approve(args)
+   763	
+   764	    if args.command == 'pending':
+   765	        return _cmd_pending(args)
+   766	
+   767	    # 进化命令
+   768	    if args.command == 'evolve':
+   769	        return _cmd_evolve(args)
+   770	
+   771	    # Dialog 命令
+   772	    if args.command == 'dialog':
+   773	        return _cmd_dialog(args)
+   774	
+   775	    # Webhook 命令
+   776	    if args.command == 'webhook':
+   777	        return _cmd_webhook(args)
+   778	
+   779	    # Project 命令
+   780	    if args.command == 'project':
+   781	        return _cmd_project_io(args)
+   782	
+   783	    # Project-mgmt 命令
+   784	    if args.command == 'project-mgmt':
+   785	        return _cmd_project(args)
+   786	
+   787	    # Omega 命令
+   788	    if args.command == 'omega':
+   789	        return _cmd_omega(args)
+   790	
+   791	    # Concurrency 命令
+   792	    if args.command == 'concurrency':
+   793	        return _cmd_concurrency(args)
+   794	
+   795	    # Deps 命令
+   796	    if args.command == 'deps':
+   797	        return _cmd_deps(args)
+   798	
+   799	    # Dep-tree 命令
+   800	    if args.command == 'dep-tree':
+   801	        return _cmd_dep_tree(args)
+   802	
+   803	    # Desktop 命令
+   804	    if args.command == 'desktop':
+   805	        return _cmd_desktop(args)
+   806	
+   807	    # Events 命令
+   808	    if args.command == 'events':
+   809	        return _cmd_events(args)
+   810	
+   811	    # Selfheal 命令
+   812	    if args.command == 'selfheal':
+   813	        return _cmd_selfheal(args)
+   814	
+   815	    # Template 命令
+   816	    if args.command == 'template':
+   817	        return _cmd_template(args)
+   818	
+   819	    # Export 命令
+   820	    if args.command == 'export':
+   821	        return _cmd_export(args)
+   822	
+   823	    # Viz 命令
+   824	    if args.command == 'viz':
+   825	        return _cmd_viz(args)
+   826	
+   827	    # Replay 命令
+   828	    if args.command == 'replay':
+   829	        return _cmd_replay(args)
+   830	
+   831	    # Notify 命令
+   832	    if args.command == 'notify':
+   833	        return _cmd_notify(args)
+   834	
+   835	    # Health 命令
+   836	    if args.command == 'health':
+   837	        return _cmd_health(args)
+   838	
+   839	    # Probe 命令（环境探测器，PROBE_PLAN.md §9 Phase 3）
+   840	    if args.command == 'probe':
+   841	        return _cmd_probe(args)
+   842	
+   843	    return 2
+   844	
+   845	
+   846	def _dispatch_loop(args) -> int:
+   847	    """loop_prompt 会话管理（docs/25 §6.5）：stop / status / list。
+   848	
+   849	    stop 语义：向会话项目目录写 .loop_prompt.stop 信号文件，
+   850	    循环在下一个 tick 内退出并删除该文件（非硬杀，保证留痕完整）。
+   851	    """
+   852	    import glob as _glob
+   853	    import os
+   854	    from vools.actus.indexer import _repo_root
+   855	
+   856	    _meta_base = os.environ.get('ACTUS_META_DIR') or os.path.join(_repo_root(), '_meta')
+   857	    loops_dir = os.path.join(_meta_base, 'loops')
+   858	    sessions = sorted(_glob.glob(os.path.join(loops_dir, 'loop-*.json')))
+   859	
+   860	    if args.loop_command == 'list':
+   861	        rows = []
+   862	        for p in sessions:
+   863	            try:
+   864	                with open(p, 'r', encoding='utf-8') as f:
+   865	                    s = json.load(f)
+   866	            except (OSError, ValueError):
+   867	                continue
+   868	            rows.append({
+   869	                'session_id': s.get('session_id'),
+   870	                'project_dir': s.get('project_dir'),
+   871	                'started_at': s.get('started_at'),
+   872	                'finished_at': s.get('finished_at'),
+   873	                'exit_reason': s.get('exit_reason'),
+   874	                'rounds_delivered': len(s.get('rounds') or []),
+   875	            })
+   876	        _out({'status': 'ok', 'data': {'sessions': rows, 'count': len(rows)}})
+   877	        return 0
+   878	
+   879	    if args.loop_command == 'status':
+   880	        if args.session:
+   881	            matches = [p for p in sessions
+   882	                       if os.path.basename(p).startswith(args.session)]
+   883	            if not matches:
+   884	                _out({'status': 'failed', 'error': {
+   885	                    'code': 'action_not_found',
+   886	                    'message': f'会话不存在: {args.session}'}})
+   887	                return 1
+   888	            path = matches[-1]
+   889	        else:
+   890	            if not sessions:
+   891	                _out({'status': 'failed', 'error': {
+   892	                    'code': 'action_not_found', 'message': '尚无 loop_prompt 会话'}})
+   893	                return 1
+   894	            path = sessions[-1]
+   895	        try:
+   896	            with open(path, 'r', encoding='utf-8') as f:
+   897	                s = json.load(f)
+   898	        except (OSError, ValueError) as e:
+   899	            _out({'status': 'failed', 'error': {'code': 'internal',
+   900	                                                'message': str(e)}})
+   901	            return 1
+   902	        ticks_path = path[:-len('.json')] + '.ticks.jsonl'
+   903	        recent = []
+   904	        if os.path.exists(ticks_path):
+   905	            with open(ticks_path, 'r', encoding='utf-8') as f:
+   906	                for line in f.readlines()[-5:]:
+   907	                    try:
+   908	                        recent.append(json.loads(line))
+   909	                    except ValueError:
+   910	                        pass
+   911	        _out({'status': 'ok', 'data': {'session': s, 'recent_ticks': recent}})
+   912	        return 0
+   913	
+   914	    if args.loop_command == 'stop':
+   915	        target = args.session
+   916	        proj_dir = None
+   917	        for p in sessions:
+   918	            if os.path.basename(p).startswith(target):
+   919	                try:
+   920	                    with open(p, 'r', encoding='utf-8') as f:
+   921	                        s = json.load(f)
+   922	                except (OSError, ValueError):
+   923	                    continue
+   924	                if s.get('finished_at'):
+   925	                    _out({'status': 'failed', 'error': {
+   926	                        'code': 'param_invalid',
+   927	                        'message': f"会话已结束（exit_reason={s.get('exit_reason')}）"}})
+   928	                    return 1
+   929	                proj_dir = s.get('project_dir')
+   930	                break
+   931	        if proj_dir is None and os.path.isdir(target):
+   932	            proj_dir = target  # 也接受直接给项目路径
+   933	        if proj_dir is None:
+   934	            _out({'status': 'failed', 'error': {
+   935	                'code': 'action_not_found',
+   936	                'message': f'找不到进行中的会话或有效项目目录: {target}'}})
+   937	            return 1
+   938	        stop_path = os.path.join(proj_dir, '.loop_prompt.stop')
+   939	        with open(stop_path, 'w', encoding='utf-8') as f:
+   940	            f.write('')
+   941	        _out({'status': 'ok', 'data': {
+   942	            'stop_file': stop_path.replace(os.sep, '/'),
+   943	            'hint': '循环将在下一个 tick 内退出并清理 stop 文件'}})
+   944	        return 0
+   945	
+   946	    _out({'status': 'failed', 'error': {
+   947	        'code': 'param_invalid', 'message': '用法: actus loop stop|status|list'}})
+   948	    return 1
+   949	
+   950	
+   951	def _dispatch_vault(args) -> int:
+   952	    """密钥保险库子命令分发。"""
+   953	    from vools.actus.vault import Vault
+   954	    import os as _os
+   955	
+   956	    repo_root = _os.environ.get('ACTUS_REPO_ROOT', '')
+   957	    meta_dir = _os.path.join(repo_root, '_meta')
+   958	    vault = Vault(meta_dir)
+   959	
+   960	    if args.vault_command == 'set':
+   961	        r = vault.set(args.key, args.value, args.scope, args.desc)
+   962	        _out(r)
+   963	        return 0
+   964	    elif args.vault_command == 'get':
+   965	        val = vault.get(args.key, args.scope)
+   966	        if val is None:
+   967	            _out({'status': 'not_found', 'message': f'密钥不存在: {args.key}'})
+   968	            return 1
+   969	        _out({'status': 'ok', 'key': args.key, 'scope': args.scope, 'value': val})
+   970	        return 0
+   971	    elif args.vault_command == 'list':
+   972	        keys = vault.list(args.scope)
+   973	        _out({'status': 'ok', 'keys': keys})
+   974	        return 0
+   975	    elif args.vault_command == 'delete':
+   976	        deleted = vault.delete(args.key, args.scope)
+   977	        _out({'status': 'ok' if deleted else 'not_found', 'deleted': deleted})
+   978	        return 0 if deleted else 1
+   979	    else:
+   980	        _out({'status': 'failed', 'error': {'code': 'invalid_command',
+   981	                                            'message': 'vault 子命令: set/get/list/delete'}})
+   982	        return 2
+   983	
+   984	
+   985	def _dispatch_triggers(args) -> int:
+   986	    """触发器引擎子命令分发。"""
+   987	    import os as _os
+   988	    from vools.actus.triggers import Trigger, validate_trigger, TriggerEngine
+   989	
+   990	    repo_root = _os.environ.get('ACTUS_REPO_ROOT', '')
+   991	    meta_dir = _os.path.join(repo_root, '_meta')
+   992	
+   993	    def _executor(trigger, event=None):
+   994	        import vools.actus as actuscore
+   995	        try:
+   996	            actuscore.execute(trigger.action_id, trigger.args or {})
+   997	        except Exception:
+   998	            pass
+   999	
+  1000	    engine = TriggerEngine(_executor, meta_dir)
+  1001	
+  1002	    if args.triggers_command == 'add':
+  1003	        config = {'type': args.type}
+  1004	        if args.expr:
+  1005	            config['expr'] = args.expr
+  1006	        if args.path:
+  1007	            config['path'] = args.path
+  1008	        if args.events:
+  1009	            config['events'] = args.events
+  1010	        if args.recursive:
+  1011	            config['recursive'] = True
+  1012	        if args.key:
+  1013	            config['key'] = args.key
+  1014	        try:
+  1015	            trigger_args = json.loads(args.args) if args.args else {}
+  1016	            config['args'] = trigger_args
+  1017	        except json.JSONDecodeError:
+  1018	            pass
+  1019	
+  1020	        errors = validate_trigger(config)
+  1021	        if errors:
+  1022	            _out({'status': 'failed', 'error': {'code': 'validation_error',
+  1023	                                                'message': '; '.join(errors)}})
+  1024	            return 1
+  1025	
+  1026	        trigger = Trigger(args.action_id, config)
+  1027	        engine.add_trigger(trigger)
+  1028	        _out({'status': 'ok', 'action_id': args.action_id, 'type': args.type})
+  1029	        return 0
+  1030	
+  1031	    elif args.triggers_command == 'list':
+  1032	        result = {}
+  1033	        for aid, triggers in engine._triggers.items():
+  1034	            result[aid] = [t.config for t in triggers]
+  1035	        _out({'status': 'ok', 'triggers': result})
+  1036	        return 0
+  1037	
+  1038	    elif args.triggers_command == 'status':
+  1039	        status = engine.status()
+  1040	        _out({'status': 'ok', 'engine': status})
+  1041	        return 0
+  1042	
+  1043	    elif args.triggers_command == 'remove':
+  1044	        engine.remove_trigger(args.action_id)
+  1045	        _out({'status': 'ok', 'removed': args.action_id})
+  1046	        return 0
+  1047	
+  1048	    else:
+  1049	        _out({'status': 'failed', 'error': {'code': 'invalid_command',
+  1050	                                            'message': 'triggers 子命令: add/list/status/remove'}})
+  1051	        return 2
+  1052	
+  1053	
+  1054	def _dispatch_execute(args) -> int:
+  1055	    """执行代码段子命令分发。"""
+  1056	    from vools.actus.runtimes import execute_block, get_available_runtimes
+  1057	
+  1058	    # 获取代码
+  1059	    code = args.code
+  1060	    if args.file:
+  1061	        with open(args.file, 'r', encoding='utf-8') as f:
+  1062	            code = f.read()
+  1063	    if not code:
+  1064	        _out({'status': 'failed', 'error': {'code': 'missing_code',
+  1065	                                            'message': '请通过 --code 或 --file 提供代码'}})
+  1066	        return 1
+  1067	
+  1068	    # 检查语言是否可用
+  1069	    available = get_available_runtimes()
+  1070	    if args.language not in available:
+  1071	        _out({'status': 'failed', 'error': {
+  1072	            'code': 'unsupported_language',
+  1073	            'message': f'不支持的语言: {args.language}。可用: {", ".join(available)}'
+  1074	        }})
+  1075	        return 1
+  1076	
+  1077	    # 构建执行上下文
+  1078	    context = {}
+  1079	    if args.args:
+  1080	        context['args'] = args.args
+  1081	    if args.stdin:
+  1082	        context['stdin'] = args.stdin
+  1083	    if args.env:
+  1084	        try:
+  1085	            context['env'] = json.loads(args.env)
+  1086	        except json.JSONDecodeError:
+  1087	            pass
+  1088	
+  1089	    try:
+  1090	        stdout, stderr, exit_code = execute_block(args.language, code, context)
+  1091	        _out({'status': 'ok', 'language': args.language,
+  1092	              'stdout': stdout, 'stderr': stderr, 'exit_code': exit_code})
+  1093	        return exit_code
+  1094	    except Exception as e:
+  1095	        _out({'status': 'failed', 'error': {'code': 'execution_error',
+  1096	                                            'message': f'{type(e).__name__}: {e}'}})
+  1097	        return 1
+  1098	
+  1099	
+  1100	def _dispatch_records(args) -> int:
+  1101	    """执行记录子命令分发。"""
+  1102	    from vools.actus.records import list_run_records, export_records
+  1103	
+  1104	    if args.records_command == 'list':
+  1105	        records = list_run_records(None, args.action_id, args.limit, args.offset)
+  1106	        _out({'status': 'ok', 'total': len(records), 'records': records})
+  1107	        return 0
+  1108	    elif args.records_command == 'export':
+  1109	        if args.format not in ('json', 'csv', 'summary'):
+  1110	            _out({'status': 'failed', 'error': {'code': 'invalid_format',
+  1111	                                                'message': '输出格式必须是 json/csv/summary'}})
+  1112	            return 1
+  1113	        result = export_records(None, args.action_id, args.format,
+  1114	                                args.output, args.limit)
+  1115	        _out({'status': 'ok', **result})
+  1116	        return 0
+  1117	    else:
+  1118	        _out({'status': 'failed', 'error': {'code': 'invalid_command',
+  1119	                                            'message': 'records 子命令: list/export'}})
+  1120	        return 2
+  1121	
+  1122	
+  1123	def _dispatch_artifacts(args) -> int:
+  1124	    """产物管理子命令分发。"""
+  1125	    from vools.actus.records import list_artifacts, cleanup_artifacts
+  1126	
+  1127	    if args.artifacts_command == 'list':
+  1128	        artifacts = list_artifacts(None, args.action_id, args.exec_id, args.type)
+  1129	        _out({'status': 'ok', 'total': len(artifacts), 'artifacts': artifacts})
+  1130	        return 0
+  1131	    elif args.artifacts_command == 'cleanup':
+  1132	        result = cleanup_artifacts(None, args.max_age_days, args.max_count)
+  1133	        _out({'status': 'ok', **result})
+  1134	        return 0
+  1135	    else:
+  1136	        _out({'status': 'failed', 'error': {'code': 'invalid_command',
+  1137	                                            'message': 'artifacts 子命令: list/cleanup'}})
+  1138	        return 2
+  1139	
+  1140	
+  1141	def _gen_config(client: str) -> int:
+  1142	    """生成指定 AI 客户端的 MCP server 配置片段（docs/10 §A.4）。"""
+  1143	    import os
+  1144	    import sys
+  1145	
+  1146	    # 自动检测 Python 解释器路径与仓库根
+  1147	    python_path = sys.executable
+  1148	    # 仓库根 = engine 的上两级目录
+  1149	    engine_dir = os.path.dirname(os.path.abspath(__file__))
+  1150	    repo_root = os.path.dirname(os.path.dirname(engine_dir))
+  1151	
+  1152	    mcp_args = json.dumps(["-m", "actus", "mcp"])
+  1153	    env_block = json.dumps({
+  1154	        "PYTHONPATH": repo_root + "/engine",
+  1155	        "PYTHONIOENCODING": "utf-8"
+  1156	    }, indent=4)
+  1157	
+  1158	    configs = {
+  1159	        'claude': (
+  1160	            '将以下配置添加到 Claude Desktop 的 claude_desktop_config.json：\n'
+  1161	            '(菜单 → File → Settings → Developer → Edit Config → mcpServers)\n\n'
+  1162	            '```json\n'
+  1163	            '{\n'
+  1164	            '  "mcpServers": {\n'
+  1165	            '    "actus": {\n'
+  1166	            f'      "command": {json.dumps(python_path)},\n'
+  1167	            f'      "args": {mcp_args},\n'
+  1168	            f'      "env": {env_block}\n'
+  1169	            '    }\n'
+  1170	            '  }\n'
+  1171	            '}\n'
+  1172	            '```'
+  1173	        ),
+  1174	        'cursor': (
+  1175	            '将以下配置添加到 Cursor 的 .cursor/mcp.json（项目级）或全局设置：\n\n'
+  1176	            '```json\n'
+  1177	            '{\n'
+  1178	            '  "mcpServers": {\n'
+  1179	            '    "actus": {\n'
+  1180	            f'      "command": {json.dumps(python_path)},\n'
+  1181	            f'      "args": {mcp_args},\n'
+  1182	            f'      "env": {env_block}\n'
+  1183	            '    }\n'
+  1184	            '  }\n'
+  1185	            '}\n'
+  1186	            '```'
+  1187	        ),
+  1188	        'cline': (
+  1189	            '将以下配置添加到 Cline / Continue 的 MCP 设置：\n\n'
+  1190	            '```json\n'
+  1191	            '{\n'
+  1192	            '  "mcpServers": {\n'
+  1193	            '    "actus": {\n'
+  1194	            f'      "command": {json.dumps(python_path)},\n'
+  1195	            f'      "args": {mcp_args},\n'
+  1196	            f'      "env": {env_block}\n'
+  1197	            '    }\n'
+  1198	            '  }\n'
+  1199	            '}\n'
+  1200	            '```'
+  1201	        ),
+  1202	        'vscode': (
+  1203	            '将以下配置添加到 VS Code 的 settings.json（.vscode/settings.json）：\n\n'
+  1204	            '```json\n'
+  1205	            '{\n'
+  1206	            '  "mcp.servers": {\n'
+  1207	            '    "actus": {\n'
+  1208	            '      "type": "stdio",\n'
+  1209	            f'      "command": {json.dumps(python_path)},\n'
+  1210	            f'      "args": {mcp_args},\n'
+  1211	            f'      "env": {env_block}\n'
+  1212	            '    }\n'
+  1213	            '  }\n'
+  1214	            '}\n'
+  1215	            '```'
+  1216	        ),
+  1217	    }
+  1218	
+  1219	    print(configs[client])
+  1220	    print()
+  1221	    print('提示：配置生效可能需要重启 AI 客户端。')
+  1222	    return 0
+  1223	
+  1224	
+  1225	def _parse_params(s: str) -> dict:
+  1226	    if not s or s == '{}':
+  1227	        return {}
+  1228	    try:
+  1229	        v = json.loads(s)
+  1230	    except json.JSONDecodeError as e:
+  1231	        raise ValueError(f'入参不是合法 JSON: {e}') from e
+  1232	    if not isinstance(v, dict):
+  1233	        raise ValueError('入参必须是 JSON object')
+  1234	    return v
+  1235	
+  1236	
+  1237	# ── 动作市场命令 ──
+  1238	
+  1239	def _cmd_registry(args) -> int:
+  1240	    """registry 子命令：构建/校验/查看注册表索引。"""
+  1241	    from vools.actus.registry import ActionRegistry
+  1242	
+  1243	    reg = ActionRegistry()
+  1244	
+  1245	    if args.registry_command == 'build':
+  1246	        repo_dir = os.getcwd()
+  1247	        index = reg.build_from_directory(repo_dir)
+  1248	        output = args.output or os.path.join(repo_dir, '.actus.registry.json')
+  1249	        print(f'✅ 注册表索引已构建: {output}')
+  1250	        print(f'   动作数量: {len(index.get("actions", []))}')
+  1251	        return 0
+  1252	
+  1253	    elif args.registry_command == 'validate':
+  1254	        index_path = args.index or os.path.join(os.getcwd(), '.actus.registry.json')
+  1255	        if not os.path.isfile(index_path):
+  1256	            print(f'❌ 索引文件不存在: {index_path}')
+  1257	            return 1
+  1258	        index = reg.load_from_file(index_path)
+  1259	        repo_dir = os.path.dirname(os.path.abspath(index_path))
+  1260	        actions = index.get('actions', [])
+  1261	        valid_count = 0
+  1262	        for raw in actions:
+  1263	            entry = raw if isinstance(raw, dict) else raw.to_dict() if hasattr(raw, 'to_dict') else {}
+  1264	            # 简单校验
+  1265	            aid = entry.get('id', '')
+  1266	            if aid:
+  1267	                valid_count += 1
+  1268	        print(f'✅ 注册表校验通过: {valid_count}/{len(actions)} 个动作有效')
+  1269	        return 0
+  1270	
+  1271	    elif args.registry_command == 'info':
+  1272	        index_path = args.index or os.path.join(os.getcwd(), '.actus.registry.json')
+  1273	        if not os.path.isfile(index_path):
+  1274	            print(f'❌ 索引文件不存在: {index_path}')
+  1275	            return 1
+  1276	        index = reg.load_from_file(index_path)
+  1277	        print(f'📦 注册表: {index.get("name", "unknown")}')
+  1278	        print(f'   版本: {index.get("version", "?")}')
+  1279	        print(f'   作者: {index.get("author", "?")}')
+  1280	        print(f'   描述: {index.get("description", "?")}')
+  1281	        print(f'   动作数: {len(index.get("actions", []))}')
+  1282	        for a in index.get('actions', []):
+  1283	            print(f'   - {a.get("id", "?")} ({a.get("version", "?")})')
+  1284	        return 0
+  1285	
+  1286	    else:
+  1287	        print('请指定子命令: build / validate / info')
+  1288	        return 1
+  1289	
+  1290	
+  1291	def _cmd_install(args) -> int:
+  1292	    """install 子命令：从 Git 仓库安装动作。"""
+  1293	    from vools.actus.installer import ActionInstaller
+  1294	
+  1295	    kwargs = {'repo_url': args.url}
+  1296	    if args.branch:
+  1297	        kwargs['branch'] = args.branch
+  1298	    if args.tag:
+  1299	        kwargs['tag'] = args.tag
+  1300	    if args.commit:
+  1301	        kwargs['commit'] = args.commit
+  1302	    if args.scope:
+  1303	        kwargs['scope'] = args.scope
+  1304	    if args.dir:
+  1305	        kwargs['install_dir'] = args.dir
+  1306	
+  1307	    installer = ActionInstaller()
+  1308	    result = installer.install(**kwargs)
+  1309	
+  1310	    if result.get('status') == 'ok':
+  1311	        print(f'✅ 安装成功: {result.get("name")}')
+  1312	        print(f'   路径: {result.get("path")}')
+  1313	        print(f'   动作数: {result.get("action_count", 0)}')
+  1314	        for aid in result.get('actions', []):
+  1315	            print(f'   - {aid}')
+  1316	        return 0
+  1317	    else:
+  1318	        print(f'❌ 安装失败: {result.get("message", "未知错误")}')
+  1319	        return 1
+  1320	
+  1321	
+  1322	def _cmd_uninstall(args) -> int:
+  1323	    """uninstall 子命令：卸载已安装的动作仓库。"""
+  1324	    from vools.actus.installer import ActionInstaller
+  1325	
+  1326	    installer = ActionInstaller()
+  1327	    result = installer.uninstall(repo_url=args.url, name=args.name)
+  1328	
+  1329	    if result.get('status') == 'ok':
+  1330	        print(f'✅ 已卸载: {result.get("removed")}')
+  1331	        return 0
+  1332	    else:
+  1333	        print(f'❌ 卸载失败: {result.get("message", "未知错误")}')
+  1334	        return 1
+  1335	
+  1336	
+  1337	def _cmd_publish(args) -> int:
+  1338	    """publish 子命令：发布当前仓库到动作市场。"""
+  1339	    from vools.actus.registry import ActionRegistry
+  1340	
+  1341	    repo_dir = os.getcwd()
+  1342	    reg = ActionRegistry()
+  1343	
+  1344	    # 构建索引
+  1345	    index = reg.build_from_directory(repo_dir)
+  1346	
+  1347	    if args.dry_run:
+  1348	        print('🔍 干跑模式（不实际发布）:')
+  1349	        print(f'   动作数: {len(index.get("actions", []))}')
+  1350	        for a in index.get('actions', []):
+  1351	            print(f'   - {a.get("id", "?")} ({a.get("version", "?")})')
+  1352	        return 0
+  1353	
+  1354	    if args.sign:
+  1355	        print('✏️  签名动作（待实现）...')
+  1356	
+  1357	    print(f'✅ 注册表索引已生成: {os.path.join(repo_dir, ".actus.registry.json")}')
+  1358	    print(f'   动作数: {len(index.get("actions", []))}')
+  1359	    print()
+  1360	    print('📋 发布步骤:')
+  1361	    print('   1. git add .actus.registry.json')
+  1362	    print('   2. git commit -m "update registry"')
+  1363	    print('   3. git push origin main')
+  1364	    print('   4. （可选）提交 PR 到官方市场')
+  1365	    return 0
+  1366	
+  1367	
+  1368	def _cmd_search(args) -> int:
+  1369	    """search 子命令：搜索动作。"""
+  1370	    from vools.actus.registry import ActionRegistry
+  1371	
+  1372	    reg = ActionRegistry()
+  1373	
+  1374	    if args.source == 'local':
+  1375	        reg.load_from_repo(os.getcwd())
+  1376	    elif args.source == 'installed':
+  1377	        # 加载所有已安装仓库
+  1378	        from vools.actus.installer import ActionInstaller
+  1379	        installer = ActionInstaller()
+  1380	        for manifest in installer.list_installed():
+  1381	            local_path = manifest.get('local_path')
+  1382	            if local_path and os.path.isdir(local_path):
+  1383	                reg.load_from_repo(local_path)
+  1384	    elif args.source == 'url' and args.url:
+  1385	        # 尝试从缓存加载
+  1386	        cached = reg.load_cached_index(args.url)
+  1387	        if cached:
+  1388	            for raw in cached.get('actions', []):
+  1389	                pass  # 已缓存
+  1390	        else:
+  1391	            print(f'⚠️  远程搜索需要缓存索引，请先安装: actus install {args.url}')
+  1392	            return 1
+  1393	
+  1394	    tags = args.tag.split(',') if args.tag else None
+  1395	    results = reg.search(
+  1396	        query=args.query,
+  1397	        category=args.category,
+  1398	        author=args.author,
+  1399	        tags=tags,
+  1400	        limit=args.limit
+  1401	    )
+  1402	
+  1403	    if not results:
+  1404	        print('🔍 未找到匹配的动作')
+  1405	        return 0
+  1406	
+  1407	    print(f'🔍 找到 {len(results)} 个动作:')
+  1408	    for entry in results:
+  1409	        print(f'   [{entry.trust_level:10s}] {entry.id} ({entry.version})')
+  1410	        print(f'   {"":12s} {entry.description[:60]}')
+  1411	        print(f'   {"":12s} 作者: {entry.author} | 分类: {entry.category} | 标签: {", ".join(entry.tags)}')
+  1412	        print()
+  1413	    return 0
+  1414	
+  1415	
+  1416	def _cmd_sync(args) -> int:
+  1417	    """sync 子命令：同步已安装的动作仓库。"""
+  1418	    from vools.actus.installer import ActionInstaller
+  1419	
+  1420	    installer = ActionInstaller()
+  1421	
+  1422	    if args.force:
+  1423	        # 强制重新安装
+  1424	        manifests = installer.list_installed()
+  1425	        for m in manifests:
+  1426	            url = m.get('url')
+  1427	            if url:
+  1428	                installer.install(repo_url=url, branch=m.get('branch', 'main'))
+  1429	        print('✅ 强制同步完成')
+  1430	        return 0
+  1431	
+  1432	    if args.url or args.name:
+  1433	        result = installer.update(repo_url=args.url, name=args.name)
+  1434	        if result.get('status') == 'ok':
+  1435	            print(f'✅ 更新成功: {result.get("name")}')
+  1436	            return 0
+  1437	        else:
+  1438	            print(f'❌ 更新失败: {result.get("message", "未知错误")}')
+  1439	            return 1
+  1440	    else:
+  1441	        results = installer.sync_all()
+  1442	        print(f'🔄 同步 {len(results)} 个仓库:')
+  1443	        for r in results:
+  1444	            status = r.get('result', {}).get('status', 'unknown')
+  1445	            symbol = '✅' if status == 'ok' else '❌'
+  1446	            print(f'   {symbol} {r.get("url", r.get("name", "?"))}')
+  1447	        return 0
+  1448	
+  1449	
+  1450	def _cmd_list_installed(args) -> int:
+  1451	    """list-installed 子命令：列出已安装的仓库。"""
+  1452	    from vools.actus.installer import ActionInstaller
+  1453	
+  1454	    installer = ActionInstaller()
+  1455	    manifests = installer.list_installed()
+  1456	
+  1457	    if not manifests:
+  1458	        print('📦 未安装任何动作仓库')
+  1459	        print('   安装命令: actus install <url>')
+  1460	        return 0
+  1461	
+  1462	    print(f'📦 已安装 {len(manifests)} 个仓库:')
+  1463	    for m in manifests:
+  1464	        print(f'   📁 {m.get("cache_key", "?")}')
+  1465	        print(f'      URL: {m.get("url", "?")}')
+  1466	        print(f'      分支: {m.get("branch", "?")}')
+  1467	        print(f'      路径: {m.get("local_path", "?")}')
+  1468	        print(f'      动作数: {len(m.get("actions", []))}')
+  1469	        print()
+  1470	    return 0
+  1471	
+  1472	
+  1473	def _cmd_rollback(args) -> int:
+  1474	    """rollback 子命令：回滚已安装的仓库到指定版本。"""
+  1475	    from vools.actus.installer import ActionInstaller
+  1476	
+  1477	    installer = ActionInstaller()
+  1478	    result = installer.rollback(repo_url=args.url, name=args.name, version=args.version)
+  1479	
+  1480	    if result.get('status') == 'ok':
+  1481	        print(f"✅ 回滚成功:")
+  1482	        print(f"   提交: {result.get('commit')}")
+  1483	        print(f"   消息: {result.get('message')}")
+  1484	        return 0
+  1485	    else:
+  1486	        print(f"❌ 回滚失败: {result.get('message')}")
+  1487	        return 1
+  1488	
+  1489	
+  1490	def _cmd_check_update(args) -> int:
+  1491	    """check-update 子命令：检查已安装仓库是否有可用更新。"""
+  1492	    from vools.actus.installer import ActionInstaller
+  1493	
+  1494	    installer = ActionInstaller()
+  1495	    result = installer.check_update(repo_url=args.url, name=args.name)
+  1496	
+  1497	    if result.get('status') == 'ok':
+  1498	        if result.get('has_update'):
+  1499	            print(f"🔄 有新版本可用:")
+  1500	            print(f"   本地: {result.get('local_commit', '?')[:8]}")
+  1501	            print(f"   远程: {result.get('remote_commit', '?')[:8]}")
+  1502	            print(f"   更新命令: actus sync")
+  1503	        else:
+  1504	            print(f"✅ 已是最新版本")
+  1505	            print(f"   提交: {result.get('local_commit', '?')[:8]}")
+  1506	        return 0
+  1507	    else:
+  1508	        print(f"❌ 检查失败: {result.get('message')}")
+  1509	        return 1
+  1510	
+  1511	
+  1512	# ── 信任模型命令 ──
+  1513	
+  1514	def _cmd_keygen(args) -> int:
+  1515	    """keygen 子命令：生成签名密钥对。"""
+  1516	    from vools.actus.trust_model import KeyManager
+  1517	
+  1518	    km = KeyManager(keys_dir=args.output)
+  1519	    priv_path, pub_path = km.generate_keypair(args.name)
+  1520	    print(f'✅ 密钥对已生成:')
+  1521	    print(f'   私钥: {priv_path}')
+  1522	    print(f'   公钥: {pub_path}')
+  1523	    return 0
+  1524	
+  1525	
+  1526	def _cmd_sign(args) -> int:
+  1527	    """sign 子命令：签名动作文件。"""
+  1528	    from vools.actus.trust_model import SignatureVerifier
+  1529	
+  1530	    verifier = SignatureVerifier()
+  1531	    result = verifier.sign_file(args.path, key_name=args.key)
+  1532	
+  1533	    if result.get('status') == 'ok':
+  1534	        print(f'✅ 签名成功:')
+  1535	        print(f'   文件: {args.path}')
+  1536	        print(f'   签名: {result.get("output")}')
+  1537	        print(f'   摘要: {result.get("signature")}')
+  1538	        return 0
+  1539	    else:
+  1540	        print(f'❌ 签名失败: {result.get("message", "未知错误")}')
+  1541	        return 1
+  1542	
+  1543	
+  1544	def _cmd_verify(args) -> int:
+  1545	    """verify 子命令：验证动作文件签名。"""
+  1546	    from vools.actus.trust_model import SignatureVerifier
+  1547	
+  1548	    verifier = SignatureVerifier()
+  1549	    result = verifier.verify_file(args.path, key_name=args.key)
+  1550	
+  1551	    if result.get('status') == 'ok':
+  1552	        print(f'✅ 签名验证通过:')
+  1553	        print(f'   文件: {args.path}')
+  1554	        print(f'   签名者: {result.get("signer", "?")}')
+  1555	        print(f'   算法: {result.get("algorithm", "?")}')
+  1556	        return 0
+  1557	    else:
+  1558	        print(f'❌ 验证失败: {result.get("message", "未知错误")}')
+  1559	        return 1
+  1560	
+  1561	
+  1562	def _cmd_approve(args) -> int:
+  1563	    """approve 子命令：审批或拒绝动作。"""
+  1564	    from vools.actus.trust_model import ApprovalManager
+  1565	
+  1566	    am = ApprovalManager()
+  1567	
+  1568	    if args.reject:
+  1569	        record = am.reject(args.action_id, reason=args.reason)
+  1570	        if record:
+  1571	            print(f'❌ 已拒绝: {args.action_id}')
+  1572	            if args.reason:
+  1573	                print(f'   原因: {args.reason}')
+  1574	            return 0
+  1575	        else:
+  1576	            print(f'⚠️  未找到审批记录: {args.action_id}')
+  1577	            return 1
+  1578	    else:
+  1579	        record = am.approve(args.action_id)
+  1580	        if record:
+  1581	            print(f'✅ 已批准: {args.action_id}')
+  1582	            return 0
+  1583	        else:
+  1584	            print(f'⚠️  未找到审批记录（可能需要先安装动作）: {args.action_id}')
+  1585	            return 1
+  1586	
+  1587	
+  1588	def _cmd_pending(args) -> int:
+  1589	    """pending 子命令：列出待审批的动作。"""
+  1590	    from vools.actus.trust_model import ApprovalManager
+  1591	
+  1592	    am = ApprovalManager()
+  1593	    pending = am.list_pending()
+  1594	
+  1595	    if not pending:
+  1596	        print('📋 没有待审批的动作')
+  1597	        return 0
+  1598	
+  1599	    print(f'📋 待审批 {len(pending)} 个动作:')
+  1600	    for p in pending:
+  1601	        print(f'   ⏳ {p.get("action_id", "?")}')
+  1602	        print(f'      来源: {p.get("source_url", "?")}')
+  1603	        print(f'      权限: {", ".join(p.get("permissions", []))}')
+  1604	        print()
+  1605	    return 0
+  1606	
+  1607	
+  1608	# ── 进化命令 ──
+  1609	
+  1610	def _cmd_dialog(args) -> int:
+  1611	    """dialog 子命令：调用 C# 弹窗。"""
+  1612	    import json
+  1613	    import os
+  1614	    import subprocess
+  1615	    import sys
+  1616	
+  1617	    exe = os.path.join(os.path.dirname(__file__), '..', '..', 'actions', 'system', 'cs_forms', 'build', 'Dialogs', 'net8.0-windows', 'actus-dialogs.exe')
+  1618	    if not os.path.exists(exe):
+  1619	        print(f'❌ actus-dialogs.exe 未编译')
+  1620	        print(f'   请先运行: cd actions/system/cs_forms && scripts/hot_reload.bat build')
+  1621	        return 1
+  1622	
+  1623	    req = {"mode": args.mode, "title": args.title}
+  1624	    if args.message:
+  1625	        req["message"] = args.message
+  1626	    if args.options:
+  1627	        req["options"] = [o.strip() for o in args.options.split(',')]
+  1628	    if args.password:
+  1629	        req["password"] = True
+  1630	    if args.multiline:
+  1631	        req["multiline"] = True
+  1632	    if args.timeout:
+  1633	        req["timeout"] = args.timeout
+  1634	    if args.fields:
+  1635	        try:
+  1636	            req["fields"] = json.loads(args.fields)
+  1637	        except json.JSONDecodeError as e:
+  1638	            print(f'❌ fields JSON 解析失败: {e}')
+  1639	            return 1
+  1640	
+  1641	    try:
+  1642	        r = subprocess.run([exe, json.dumps(req, ensure_ascii=False)], capture_output=True, text=True, timeout=(args.timeout or 120) + 30)
+  1643	        if r.returncode != 0:
+  1644	            print(f'❌ 弹窗进程退出码 {r.returncode}')
+  1645	            if r.stderr:
+  1646	                print(r.stderr)
+  1647	            return 1
+  1648	        result = json.loads(r.stdout.strip())
+  1649	        print(json.dumps(result, ensure_ascii=False, indent=2))
+  1650	        return 0 if result.get('ok') else 1
+  1651	    except subprocess.TimeoutExpired:
+  1652	        print('❌ 弹窗超时')
+  1653	        return 1
+  1654	    except json.JSONDecodeError:
+  1655	        print(f'❌ 无法解析输出: {r.stdout[:200]}')
+  1656	        return 1
+  1657	
+  1658	
+  1659	def _cmd_evolve(args) -> int:
+  1660	    """evolve 子命令：自进化循环。"""
+  1661	    from vools.actus.evolution import EvolutionEngine, EvolutionConfig
+  1662	
+  1663	    config = EvolutionConfig(max_rounds=args.max_rounds, auto_promote=False)
+  1664	    engine = EvolutionEngine(config=config)
+  1665	
+  1666	    # --list
+  1667	    if args.list:
+  1668	        actions = engine.list_evolved_actions()
+  1669	        if not actions:
+  1670	            print('🧬 没有进化记录')
+  1671	            return 0
+  1672	        print(f'🧬 {len(actions)} 个动作有进化历史:')
+  1673	        for a in actions:
+  1674	            print(f'   - {a}')
+  1675	        return 0
+  1676	
+  1677	    # --status
+  1678	    if args.status:
+  1679	        result = engine.get_status(args.status)
+  1680	        print(json.dumps(result, ensure_ascii=False, indent=2))
+  1681	        return 0
+  1682	
+  1683	    # --history
+  1684	    if args.history:
+  1685	        history = engine.get_history(args.history)
+  1686	        if not history:
+  1687	            print(f'📜 无进化历史: {args.history}')
+  1688	            return 0
+  1689	        print(f'📜 进化历史 ({len(history)} 条):')
+  1690	        for h in history:
+  1691	            print(f'   Round {h.get("round_num")}: {h.get("phase")} - {h.get("status")}')
+  1692	            print(f'      {h.get("message", "")}')
+  1693	        return 0
+  1694	
+  1695	    # --rollback
+  1696	    if args.rollback:
+  1697	        if args.version is None:
+  1698	            print('❌ 需要 --version 参数')
+  1699	            return 1
+  1700	        result = engine.rollback(args.rollback, args.version)
+  1701	        print(json.dumps(result, ensure_ascii=False, indent=2))
+  1702	        return 0
+  1703	
+  1704	    # --compare
+  1705	    if args.compare:
+  1706	        if args.v1 is None or args.v2 is None:
+  1707	            print('❌ 需要 --v1 和 --v2 参数')
+  1708	            return 1
+  1709	        result = engine.compare_versions(args.compare, args.v1, args.v2)
+  1710	        print(json.dumps(result, ensure_ascii=False, indent=2))
+  1711	        return 0
+  1712	
+  1713	    # --repair 模式
+  1714	    if args.repair:
+  1715	        if not args.action_id:
+  1716	            print('❌ 需要 --action-id 参数')
+  1717	            return 1
+  1718	        expect = _parse_expect(args.expect) if args.expect else {}
+  1719	        print(f'🔧 开始修复 {args.action_id}...')
+  1720	        result = engine.repair(args.action_id, expect=expect)
+  1721	        print(json.dumps(result, ensure_ascii=False, indent=2))
+  1722	        return 0
+  1723	
+  1724	    # 进化新模式（description 必需）
+  1725	    if not args.description:
+  1726	        print('❌ 需要自然语言描述（或 --repair/--status/--list 等子选项）')
+  1727	        return 1
+  1728	
+  1729	    expect = _parse_expect(args.expect) if args.expect else {}
+  1730	    print(f'🧬 开始进化: {args.description[:60]}...')
+  1731	    print(f'   最大轮次: {args.max_rounds}')
+  1732	    print()
+  1733	
+  1734	    result = engine.evolve(args.description, action_id=args.action_id, expect=expect)
+  1735	
+  1736	    print(f'状态: {result.get("status")}')
+  1737	    print(f'动作 ID: {result.get("action_id")}')
+  1738	    print(f'轮次: {result.get("rounds")}')
+  1739	    if result.get('path'):
+  1740	        print(f'路径: {result["path"]}')
+  1741	    if result.get('reason'):
+  1742	        print(f'原因: {result["reason"]}')
+  1743	    print()
+  1744	    print('进化历史:')
+  1745	    for h in result.get('history', []):
+  1746	        symbol = '✅' if h.get('status') == 'pass' else '❌'
+  1747	        print(f'   {symbol} Round {h.get("round_num")}: {h.get("phase")} - {h.get("status")}')
+  1748	        if h.get('message'):
+  1749	            print(f'      {h["message"][:80]}')
+  1750	
+  1751	    return 0 if result.get('status') == 'ok' else 1
+  1752	
+  1753	
+  1754	def _parse_expect(s: str) -> dict:
+  1755	    """解析期望条件 JSON。"""
+  1756	    if not s:
+  1757	        return {}
+  1758	    try:
+  1759	        return json.loads(s)
+  1760	    except json.JSONDecodeError:
+  1761	        return {}
+  1762	
+  1763	
+  1764	# ── Webhook 命令 ──
+  1765	
+  1766	def _cmd_webhook(args) -> int:
+  1767	    """webhook 子命令：Webhook 接收器管理。"""
+  1768	    from vools.actus.webhook import WebhookReceiver, create_receiver
+  1769	
+  1770	    # 使用全局接收器实例（简化状态管理）
+  1771	    receiver = getattr(_cmd_webhook, '_receiver', None)
+  1772	
+  1773	    # --stop
+  1774	    if args.stop:
+  1775	        if receiver and receiver.is_running:
+  1776	            receiver.stop()
+  1777	            _cmd_webhook._receiver = None
+  1778	            print("⏹️  Webhook 接收器已停止")
+  1779	        else:
+  1780	            print("⚠️  没有运行中的 Webhook 接收器")
+  1781	        return 0
+  1782	
+  1783	    # --status
+  1784	    if args.status:
+  1785	        if receiver and receiver.is_running:
+  1786	            status = receiver.get_status()
+  1787	            print(json.dumps(status, ensure_ascii=False, indent=2))
+  1788	        else:
+  1789	            print("⚠️  Webhook 接收器未运行")
+  1790	        return 0
+  1791	
+  1792	    # --logs
+  1793	    if args.logs:
+  1794	        if receiver:
+  1795	            logs = receiver.get_logs(limit=args.logs)
+  1796	            print(f"📋 最近 {len(logs)} 条请求日志:")
+  1797	            for log in logs:
+  1798	                ts = log.get('timestamp', 0)
+  1799	                from datetime import datetime
+  1800	                ts_str = datetime.fromtimestamp(ts).strftime('%H:%M:%S')
+  1801	                print(f"   [{ts_str}] {log.get('client_ip')} "
+  1802	                      f"{log.get('event_type')} -> {log.get('action_id', '(无路由)')}")
+  1803	        else:
+  1804	            print("⚠️  Webhook 接收器未运行")
+  1805	        return 0
+  1806	
+  1807	    # --register
+  1808	    if args.register:
+  1809	        event_type, action_id = args.register
+  1810	        if not receiver or not receiver.is_running:
+  1811	            print("⚠️  请先启动接收器: actus webhook")
+  1812	            return 1
+  1813	        receiver.register_route(event_type, action_id)
+  1814	        print(f"✅ 路由注册: {event_type} -> {action_id}")
+  1815	        return 0
+  1816	
+  1817	    # --unregister
+  1818	    if args.unregister:
+  1819	        if not receiver or not receiver.is_running:
+  1820	            print("⚠️  Webhook 接收器未运行")
+  1821	            return 1
+  1822	        removed = receiver.unregister_route(args.unregister)
+  1823	        if removed:
+  1824	            print(f"✅ 路由移除: {args.unregister} -> {removed}")
+  1825	        else:
+  1826	            print(f"⚠️  路由不存在: {args.unregister}")
+  1827	        return 0
+  1828	
+  1829	    # 默认启动（前台阻塞模式）
+  1830	    secret = args.secret or os.environ.get('ACTUS_WEBHOOK_SECRET', '')
+  1831	    require_signature = not args.no_signature
+  1832	
+  1833	    receiver = create_receiver(
+  1834	        host=args.host,
+  1835	        port=args.port,
+  1836	        secret=secret,
+  1837	        require_signature=require_signature
+  1838	    )
+  1839	    _cmd_webhook._receiver = receiver
+  1840	    print(f"🚀 启动 Webhook 接收器: http://{args.host}:{args.port}")
+  1841	    receiver.start()  # 阻塞
+  1842	    _cmd_webhook._receiver = None
+  1843	    return 0
+  1844	
+  1845	
+  1846	# ── Project 命令 ──
+  1847	
+  1848	def _cmd_project(args) -> int:
+  1849	    """project 子命令：多语言项目管理。"""
+  1850	    from vools.actus.project import (
+  1851	        ProjectOrchestrator, load_project, detect_modules,
+  1852	        detect_languages, ModuleConfig
+  1853	    )
+  1854	
+  1855	    work_dir = args.work_dir or '.'
+  1856	    project_file = args.project_file or '.actus-project.json'
+  1857	
+  1858	    # --detect
+  1859	    if args.detect:
+  1860	        modules = detect_modules(work_dir)
+  1861	        languages = detect_languages(work_dir)
+  1862	        print(f"🔍 检测到 {len(modules)} 个模块:")
+  1863	        for mid, mod in modules.items():
+  1864	            print(f"   - {mid}: {mod.language} ({mod.path})")
+  1865	        print(f"   语言: {', '.join(languages)}")
+  1866	        return 0
+  1867	
+  1868	    # --validate
+  1869	    if args.validate:
+  1870	        try:
+  1871	            orch = load_project(project_file, work_dir)
+  1872	            valid, errors = orch.validate()
+  1873	            if valid:
+  1874	                print("✅ 项目定义有效")
+  1875	            else:
+  1876	                print(f"❌ 项目定义无效 ({len(errors)} 个错误):")
+  1877	                for e in errors:
+  1878	                    print(f"   - {e}")
+  1879	        except Exception as e:
+  1880	            print(f"❌ 加载失败: {e}")
+  1881	        return 0
+  1882	
+  1883	    # --status
+  1884	    if args.status:
+  1885	        try:
+  1886	            orch = load_project(project_file, work_dir)
+  1887	            status = orch.get_status()
+  1888	            print(json.dumps(status, ensure_ascii=False, indent=2))
+  1889	        except Exception as e:
+  1890	            print(f"❌ 加载失败: {e}")
+  1891	        return 0
+  1892	
+  1893	    # --add-module
+  1894	    if args.add_module:
+  1895	        mid, lang, path = args.add_module
+  1896	        try:
+  1897	            orch = load_project(project_file, work_dir)
+  1898	            mod = ModuleConfig(id=mid, language=lang, path=path)
+  1899	            orch.add_module(mod)
+  1900	            orch.save_project(project_file)
+  1901	            print(f"✅ 模块添加: {mid} ({lang})")
+  1902	        except Exception as e:
+  1903	            print(f"❌ 添加失败: {e}")
+  1904	        return 0
+  1905	
+  1906	    # --remove-module
+  1907	    if args.remove_module:
+  1908	        try:
+  1909	            orch = load_project(project_file, work_dir)
+  1910	            orch.remove_module(args.remove_module)
+  1911	            orch.save_project(project_file)
+  1912	            print(f"✅ 模块移除: {args.remove_module}")
+  1913	        except Exception as e:
+  1914	            print(f"❌ 移除失败: {e}")
+  1915	        return 0
+  1916	
+  1917	    # --test
+  1918	    if args.test:
+  1919	        try:
+  1920	            orch = load_project(project_file, work_dir)
+  1921	            print("🧪 执行测试...")
+  1922	            result = orch.run_pipeline(phase='test')
+  1923	            print(json.dumps(result, ensure_ascii=False, indent=2))
+  1924	            return 0 if result.get('status') == 'ok' else 1
+  1925	        except Exception as e:
+  1926	            print(f"❌ 测试失败: {e}")
+  1927	            return 1
+  1928	
+  1929	    # --build (默认)
+  1930	    try:
+  1931	        orch = load_project(project_file, work_dir)
+  1932	        phase = args.phase or 'build'
+  1933	        print(f"🔨 开始 {phase} ...")
+  1934	        result = orch.run_pipeline(phase=phase)
+  1935	        print(json.dumps(result, ensure_ascii=False, indent=2))
+  1936	        return 0 if result.get('status') == 'ok' else 1
+  1937	    except Exception as e:
+  1938	        print(f"❌ 加载失败: {e}")
+  1939	        return 1
+  1940	
+  1941	
+  1942	if __name__ == '__main__':
+  1943	    sys.exit(main())
+  1944	
+  1945	
+  1946	# ── Omega 命令 ──
+  1947	
+  1948	def _cmd_omega(args) -> int:
+  1949	    """omega 子命令：Ω-gate 验证引擎。"""
+  1950	    from vools.actus.omega import (
+  1951	        verify_output, load_spec, generate_spec_template,
+  1952	        learn_spec_from_history, batch_verify, format_report,
+  1953	        generate_diff_report, run_gate, compute_output_fingerprint,
+  1954	        _find_omega_spec, clear_spec_cache
+  1955	    )
+  1956	    from vools.actus.records import load_records
+  1957	
+  1958	    # verify 子命令
+  1959	    if args.omega_command == 'verify':
+  1960	        # 解析输出
+  1961	        output_str = args.output
+  1962	        if os.path.isfile(output_str):
+  1963	            with open(output_str, 'r', encoding='utf-8') as f:
+  1964	                output = json.load(f)
+  1965	        else:
+  1966	            output = json.loads(output_str)
+  1967	
+  1968	        # 查找 spec
+  1969	        spec_path = args.spec
+  1970	        if not spec_path:
+  1971	            idx = {}
+  1972	            try:
+  1973	                from vools.actus.indexer import scan_actions
+  1974	                idx = scan_actions()
+  1975	            except Exception:
+  1976	                pass
+  1977	            actions_dir = idx.get('_actions_dir', 'actions')
+  1978	            spec_path = _find_omega_spec(args.action_id, actions_dir)
+  1979	
+  1980	        if not spec_path or not os.path.isfile(spec_path):
+  1981	            print(f"❌ 未找到 spec 文件: {args.action_id}")
+  1982	            return 1
+  1983	
+  1984	        report = verify_output(spec_path, output, enable_loop=args.loop)
+  1985	        print(format_report(report))
+  1986	
+  1987	        if args.diff:
+  1988	            spec = load_spec(spec_path)
+  1989	            diff = generate_diff_report(spec, output)
+  1990	            print(f"\n差异报告: {diff['status']}")
+  1991	            if diff['missing_fields']:
+  1992	                print(f"  缺失: {diff['missing_fields']}")
+  1993	            if diff['extra_fields']:
+  1994	                print(f"  多余: {diff['extra_fields']}")
+  1995	            if diff['type_mismatches']:
+  1996	                for mm in diff['type_mismatches']:
+  1997	                    print(f"  类型不匹配: {mm['field']} (期望 {mm['expected']}, 实际 {mm['actual']})")
+  1998	
+  1999	        return 0 if report.get('status') == 'pass' else 1
+  2000	
+  2001	    # template 子命令
+  2002	    elif args.omega_command == 'template':
+  2003	        example = json.loads(args.example)
+  2004	        spec = generate_spec_template(args.action_id, example)
+  2005	        print(json.dumps(spec, ensure_ascii=False, indent=2))
+  2006	        return 0
+  2007	
+  2008	    # learn 子命令
+  2009	    elif args.omega_command == 'learn':
+  2010	        records = load_records(limit=args.limit)
+  2011	        if args.action_id:
+  2012	            records = [r for r in records if r.get('action_id') == args.action_id]
+  2013	        spec = learn_spec_from_history(records)
+  2014	        print(json.dumps(spec, ensure_ascii=False, indent=2))
+  2015	        return 0
+  2016	
+  2017	    # batch 子命令
+  2018	    elif args.omega_command == 'batch':
+  2019	        spec = load_spec(args.spec)
+  2020	        with open(args.inputs, 'r', encoding='utf-8') as f:
+  2021	            inputs = json.load(f)
+  2022	        result = batch_verify(args.spec, inputs)
+  2023	        print(json.dumps(result, ensure_ascii=False, indent=2))
+  2024	        return 0 if result.get('failed', 0) == 0 else 1
+  2025	
+  2026	    # format 子命令
+  2027	    elif args.omega_command == 'format':
+  2028	        report = json.loads(args.report)
+  2029	        print(format_report(report))
+  2030	        return 0
+  2031	
+  2032	    else:
+  2033	        print("请指定子命令: verify / template / learn / batch / format")
+  2034	        return 2
+  2035	
+  2036	
+  2037	# ── Concurrency 命令 ──
+  2038	
+  2039	def _cmd_concurrency(args) -> int:
+  2040	    """concurrency 子命令：动作并发执行控制。"""
+  2041	    from vools.actus.concurrency import get_manager, ConcurrencyManager
+  2042	
+  2043	    mgr = get_manager()
+  2044	
+  2045	    if args.concurrency_command == 'status':
+  2046	        action_id = args.action if hasattr(args, 'action') else None
+  2047	        status = mgr.get_status(action_id)
+  2048	        print(json.dumps(status, ensure_ascii=False, indent=2))
+  2049	        return 0
+  2050	
+  2051	    elif args.concurrency_command == 'set':
+  2052	        action_id = args.action
+  2053	        max_inst = args.max
+  2054	        mgr.register_action(action_id, max_inst)
+  2055	        print(f"✅ 设置 {action_id} 并发上限: {max_inst}")
+  2056	        return 0
+  2057	
+  2058	    elif args.concurrency_command == 'reset':
+  2059	        action_id = args.action if hasattr(args, 'action') else None
+  2060	        if action_id:
+  2061	            mgr.unregister_action(action_id)
+  2062	            print(f"✅ 清除 {action_id} 并发状态")
+  2063	        else:
+  2064	            ConcurrencyManager.reset()
+  2065	            print("✅ 清除所有并发状态")
+  2066	        return 0
+  2067	
+  2068	    elif args.concurrency_command == 'list':
+  2069	        action_id = args.action if hasattr(args, 'action') else None
+  2070	        if action_id:
+  2071	            instances = mgr.get_running_instances(action_id)
+  2072	            print(json.dumps({
+  2073	                "action_id": action_id,
+  2074	                "running": mgr.get_running_count(action_id),
+  2075	                "waiting": mgr.get_waiting_count(action_id),
+  2076	                "instances": instances,
+  2077	            }, ensure_ascii=False, indent=2))
+  2078	        else:
+  2079	            status = mgr.get_status()
+  2080	            print(json.dumps(status, ensure_ascii=False, indent=2))
+  2081	        return 0
+  2082	
+  2083	    else:
+  2084	        print("请指定子命令: status / set / reset / list")
+  2085	        return 2
+  2086	
+  2087	
+  2088	def _cmd_deps(args) -> int:
+  2089	    """deps 子命令：检查动作依赖。"""
+  2090	    from vools.actus.dependency import check_action_deps
+  2091	    result = check_action_deps(args.action_id, auto_install=getattr(args, 'auto_install', False))
+  2092	    print(json.dumps(result, ensure_ascii=False, indent=2))
+  2093	    return 0 if result.get('ok') else 1
+  2094	
+  2095	
+  2096	def _cmd_dep_tree(args) -> int:
+  2097	    """dep-tree 子命令：递归展示动作依赖树。"""
+  2098	    from vools.actus.dependency import get_resolver
+  2099	    resolver = get_resolver()
+  2100	    tree = resolver.get_dep_tree(args.action_id)
+  2101	    print(json.dumps(tree, ensure_ascii=False, indent=2))
+  2102	    return 0
+  2103	
+  2104	
+  2105	def _cmd_desktop(args) -> int:
+  2106	    """desktop 子命令：启动 Actus Desktop Web UI。"""
+  2107	    # 本模块迁移进 vools.actus 后（f060d16「独立成包」+ e03f24a「引擎根按包位置推导」），
+  2108	    # start 位于 vools.actus.desktop 顶层；旧写法 `from desktop.app import start`
+  2109	    # 既没有 top-level desktop 包、app 也只是 FastAPI 实例（非子模块）——
+  2110	    # 实测 ImportError 恒为「No module named 'desktop'」，会走到下面的 except 打印
+  2111	    # "pip install fastapi" 误导提示并 return 1，即使 fastapi/uvicorn 已装也起不来。
+  2112	    # 改为正确的模块路径：ImportError 只在桌面依赖真缺席时触发，提示才名副其实。
+  2113	    try:
+  2114	        from vools.actus.desktop import start
+  2115	    except ImportError as e:
+  2116	        print(f'❌ 需要安装桌面依赖: pip install fastapi uvicorn jinja2（{e}）')
+  2117	        return 1
+  2118	    
+  2119	    host = args.host
+  2120	    port = args.port
+  2121	    open_browser = not args.no_browser
+  2122	    
+  2123	    print(f'🚀 Actus Desktop 启动中...')
+  2124	    print(f'   URL: http://{host}:{port}')
+  2125	    print(f'   按 Ctrl+C 停止')
+  2126	    
+  2127	    start(host=host, port=port, open_browser=open_browser)
+  2128	    return 0
+  2129	
+  2130	
+  2131	def _cmd_events(args) -> int:
+  2132	    """events 子命令：查看事件总线历史事件。"""
+  2133	    from vools.actus.eventbus import get_event_bus
+  2134	
+  2135	    bus = get_event_bus()
+  2136	    events = bus.get_history(event_type=args.type, limit=args.limit)
+  2137	
+  2138	    if not events:
+  2139	        print('📭 暂无事件')
+  2140	        return 0
+  2141	
+  2142	    print(f'📋 事件历史 (共 {len(events)} 条):')
+  2143	    for e in events:
+  2144	        ts = e.get('timestamp', 0)
+  2145	        type_ = e.get('type', '?')
+  2146	        source = e.get('source', '')
+  2147	        data = e.get('data', {})
+  2148	        print(f'   [{ts:.3f}] {type_} (来源: {source})')
+  2149	        if data:
+  2150	            for k, v in data.items():
+  2151	                print(f'      {k}: {v}')
+  2152	    return 0
+  2153	
+  2154	
+  2155	def _cmd_viz(args) -> int:
+  2156	    """viz 子命令：工作流可视化。"""
+  2157	    from vools.actus.viz import visualize_workflow, visualize_action_workflow
+  2158	    from vools.actus.indexer import _repo_root
+  2159	    from vools.actus.model import Action
+  2160	    import os
+  2161	
+  2162	    root = _repo_root()
+  2163	
+  2164	    if args.action:
+  2165	        # 可视化指定动作的工作流
+  2166	        action_path = os.path.join(root, "actions", args.action + ".actus.md")
+  2167	        if not os.path.exists(action_path):
+  2168	            # 搜索子目录
+  2169	            for dirpath, _, files in os.walk(os.path.join(root, "actions")):
+  2170	                for f in files:
+  2171	                    if f == args.action + ".actus.md":
+  2172	                        action_path = os.path.join(dirpath, f)
+  2173	                        break
+  2174	        if not os.path.exists(action_path):
+  2175	            print(f'❌ 动作不存在: {args.action}')
+  2176	            return 1
+  2177	        action = Action.from_file(action_path)
+  2178	        result = visualize_action_workflow(action.meta, args.format)
+  2179	    else:
+  2180	        # 可视化项目级工作流（如果有）
+  2181	        wf_path = os.path.join(root, ".actus.workflow.json")
+  2182	        if os.path.exists(wf_path):
+  2183	            import json
+  2184	            with open(wf_path, encoding="utf-8") as f:
+  2185	                wf = json.load(f)
+  2186	            result = visualize_workflow(wf, args.format)
+  2187	        else:
+  2188	            # 默认展示示例
+  2189	            sample = {
+  2190	                "nodes": [
+  2191	                    {"id": "trigger", "label": "触发器", "type": "trigger"},
+  2192	                    {"id": "action1", "label": "动作 A"},
+  2193	                    {"id": "action2", "label": "动作 B"},
+  2194	                    {"id": "end", "label": "完成"},
+  2195	                ],
+  2196	                "edges": [
+  2197	                    ("trigger", "action1"),
+  2198	                    ("trigger", "action2"),
+  2199	                    ("action1", "end"),
+  2200	                    ("action2", "end"),
+  2201	                ],
+  2202	            }
+  2203	            result = visualize_workflow(sample, args.format)
+  2204	
+  2205	    if args.output:
+  2206	        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+  2207	        Path(args.output).write_text(result, encoding="utf-8")
+  2208	        print(f'✅ 已保存到: {args.output}')
+  2209	    else:
+  2210	        print(result)
+  2211	    return 0
+  2212	
+  2213	
+  2214	def _cmd_replay(args) -> int:
+  2215	    """replay 子命令：重放历史执行。"""
+  2216	    from vools.actus.export import load_run_history
+  2217	    from vools.actus.indexer import _repo_root
+  2218	    import os
+  2219	
+  2220	    root = _repo_root()
+  2221	    meta_dir = os.environ.get('ACTUS_META_DIR') or os.path.join(root, '_meta')
+  2222	    records = load_run_history(meta_dir)
+  2223	
+  2224	    if not records:
+  2225	        print('📭 暂无执行历史')
+  2226	        return 0
+  2227	
+  2228	    if args.run_id:
+  2229	        records = [r for r in records if r.get('run_id') == r.get('id') == args.run_id]
+  2230	        if not records:
+  2231	            print(f'❌ 未找到执行记录: {args.run_id}')
+  2232	            return 1
+  2233	
+  2234	    print(f'🔁 重放 {len(records)} 条执行记录:')
+  2235	    for r in records:
+  2236	        ts = r.get('timestamp', '')
+  2237	        action = r.get('action_id', r.get('id', ''))
+  2238	        status = r.get('status', '')
+  2239	        params = r.get('params', {})
+  2240	        print(f'   [{ts}] {action} ({status})')
+  2241	        if params:
+  2242	            print(f'      参数: {params}')
+  2243	        if args.dry_run:
+  2244	            print(f'      (dry-run，跳过)')
+  2245	        else:
+  2246	            # TODO: 实际重放执行
+  2247	            print(f'      (重放执行待实现)')
+  2248	    return 0
+  2249	
+  2250	
+  2251	def _cmd_notify(args) -> int:
+  2252	    """notify 子命令：通知系统管理。"""
+  2253	    from vools.actus.notify import get_notification_manager, NotifyLevel
+  2254	    manager = get_notification_manager()
+  2255	
+  2256	    if args.action == 'test':
+  2257	        manager.notify(
+  2258	            title="Actus 测试通知",
+  2259	            body="这是一条测试通知",
+  2260	            level=NotifyLevel.INFO,
+  2261	        )
+  2262	        print('✅ 已发送测试通知')
+  2263	        return 0
+  2264	
+  2265	    elif args.action == 'history':
+  2266	        history = manager.get_history()
+  2267	        if not history:
+  2268	            print('📭 暂无通知历史')
+  2269	            return 0
+  2270	        print(f'📋 通知历史 (共 {len(history)} 条):')
+  2271	        for h in history:
+  2272	            level = h.get('level', 'info')
+  2273	            title = h.get('title', '')
+  2274	            body = h.get('body', '')
+  2275	            ts = h.get('timestamp', '')
+  2276	            print(f'   [{ts}] ({level}) {title}: {body}')
+  2277	        return 0
+  2278	
+  2279	    elif args.action == 'stats':
+  2280	        stats = manager.stats()
+  2281	        print('📊 通知系统统计:')
+  2282	        print(f'   总发送: {stats["total_sent"]}')
+  2283	        print(f'   规则数: {stats["rules_count"]}')
+  2284	        print(f'   渠道: {", ".join(stats["channels"])}')
+  2285	        return 0
+  2286	
+  2287	    return 0
+  2288	
+  2289	
+  2290	def _cmd_project_io(args) -> int:
+  2291	    """project 子命令：项目导入导出。"""
+  2292	    from vools.actus.project_io import export_project, import_project, validate_project
+  2293	    from vools.actus.indexer import _repo_root
+  2294	
+  2295	    root = _repo_root()
+  2296	
+  2297	    if args.action == 'export':
+  2298	        output = args.output or f"{root.name}.actus"
+  2299	        result = export_project(root, output, include_meta=args.meta)
+  2300	        if result:
+  2301	            print(f'✅ 项目已导出: {result}')
+  2302	            return 0
+  2303	        print('❌ 导出失败')
+  2304	        return 1
+  2305	
+  2306	    elif args.action == 'import':
+  2307	        if not args.file:
+  2308	            print('❌ 缺少 --file 参数')
+  2309	            return 1
+  2310	        stats = import_project(root, args.file)
+  2311	        if stats:
+  2312	            print(f'✅ 导入完成: {stats["imported"]} 个文件')
+  2313	            return 0
+  2314	        print('❌ 导入失败')
+  2315	        return 1
+  2316	
+  2317	    elif args.action == 'validate':
+  2318	        if not args.file:
+  2319	            print('❌ 缺少 --file 参数')
+  2320	            return 1
+  2321	        result = validate_project(args.file)
+  2322	        if result['valid']:
+  2323	            print(f'✅ 项目有效 ({result["manifest"].get("actions_count", 0)} 个动作)')
+  2324	        else:
+  2325	            print('❌ 项目无效:')
+  2326	            for e in result['errors']:
+  2327	                print(f'   - {e}')
+  2328	        return 0 if result['valid'] else 1
+  2329	
+  2330	    return 0
+  2331	
+  2332	
+  2333	def _cmd_export(args) -> int:
+  2334	    """export 子命令：导出动作执行历史。"""
+  2335	    from vools.actus.export import export_history
+  2336	    from vools.actus.indexer import _repo_root
+  2337	    import os
+  2338	
+  2339	    meta_dir = os.environ.get('ACTUS_META_DIR') or os.path.join(_repo_root(), '_meta')
+  2340	    result = export_history(meta_dir, args.output, args.format, args.limit)
+  2341	
+  2342	    if result is None and args.output:
+  2343	        print(f'✅ 已导出到: {args.output}')
+  2344	        return 0
+  2345	    elif result:
+  2346	        print(result)
+  2347	        return 0
+  2348	    else:
+  2349	        print('📭 暂无执行历史')
+  2350	        return 0
+  2351	
+  2352	
+  2353	def _cmd_probe(args) -> int:
+  2354	    """probe 子命令：一键探测本机环境，输出 ProbeReport（PROBE_PLAN.md §9 Phase 3）。
+  2355	
+  2356	    人类可读模式走 format_summary；--json 输出完整结构化报告（机器消费）。
+  2357	    缓存控制：--force-refresh 强制全量重探测；--max-age 自定义缓存有效期。
+  2358	    """
+  2359	    from vools.actus.probe import probe, format_summary
+  2360	
+  2361	    report = probe(force_refresh=args.force_refresh,
+  2362	                   max_age=args.max_age, verbose=args.verbose)
+  2363	    if args.as_json:
+  2364	        _out(report.to_dict())
+  2365	    else:
+  2366	        print(format_summary(report))
+  2367	    return 0
+  2368	
+  2369	
+  2370	def _cmd_health(args) -> int:
+  2371	    """health 子命令：系统健康检查。"""
+  2372	    from vools.actus.health import run_health_check, HealthChecker
+  2373	    import json as _json
+  2374	
+  2375	    if args.check:
+  2376	        # 只运行指定检查项
+  2377	        checker = HealthChecker()
+  2378	        for name, func in checker._checks:
+  2379	            if args.check.lower() in name.lower():
+  2380	                result = func()
+  2381	                result.name = name
+  2382	                if args.json:
+  2383	                    _json.dump({"name": result.name, "status": result.status,
+  2384	                                "message": result.message, "suggestion": result.suggestion},
+  2385	                               sys.stdout, ensure_ascii=False, indent=2)
+  2386	                else:
+  2387	                    icon = {"ok": "✅", "warn": "⚠️", "error": "❌"}.get(result.status, "❓")
+  2388	                    print(f"{icon} [{result.status.upper()}] {result.name}: {result.message}")
+  2389	                    if result.suggestion:
+  2390	                        print(f"   建议: {result.suggestion}")
+  2391	                return 0
+  2392	        print(f"未找到检查项: {args.check}")
+  2393	        return 1
+  2394	
+  2395	    report = run_health_check()
+  2396	
+  2397	    if args.json:
+  2398	        _json.dump({
+  2399	            "overall": report.overall,
+  2400	            "total_duration": report.total_duration,
+  2401	            "summary": report.status_counts,
+  2402	            "results": [{"name": r.name, "status": r.status, "message": r.message,
+  2403	                         "suggestion": r.suggestion, "duration": r.duration}
+  2404	                        for r in report.results],
+  2405	        }, sys.stdout, ensure_ascii=False, indent=2)
+  2406	    else:
+  2407	        print(report.report_text())
+  2408	
+  2409	    return 0 if report.overall == "ok" else 1
+  2410	
+  2411	
+  2412	def _cmd_selfheal(args) -> int:
+  2413	    """selfheal 子命令：查看/重置自愈引擎状态。"""
+  2414	    from vools.actus.selfheal import get_self_healing_engine
+  2415	    engine = get_self_healing_engine()
+  2416	
+  2417	    if args.action == 'status':
+  2418	        stats = engine.stats()
+  2419	        print('⚡ 自愈引擎状态:')
+  2420	        print(f'   总执行: {stats["total"]}')
+  2421	        print(f'   成功: {stats["success"]}')
+  2422	        print(f'   失败: {stats["failed"]}')
+  2423	        print(f'   重试: {stats["retried"]}')
+  2424	        print(f'   熔断拒绝: {stats["rejected"]}')
+  2425	        print(f'   断路器数: {stats["active_breakers"]}')
+  2426	        print(f'   错误模式: {stats["learner"]["total_patterns"]}')
+  2427	        return 0
+  2428	
+  2429	    elif args.action == 'reset':
+  2430	        engine.reset()
+  2431	        print('🔄 自愈引擎已重置')
+  2432	        return 0
+  2433	
+  2434	    elif args.action == 'patterns':
+  2435	        patterns = engine.learner.get_top_patterns(20)
+  2436	        if not patterns:
+  2437	            print('📭 暂无错误模式')
+  2438	            return 0
+  2439	        print('📊 错误模式:')
+  2440	        for p in patterns:
+  2441	            print(f'   [{p["count"]}次] {p["code"]}: {p["message"]}')
+  2442	            if p.get('resolution'):
+  2443	                print(f'      修复建议: {p["resolution"]}')
+  2444	        return 0
+  2445	
+  2446	    return 0
+  2447	
+  2448	
+  2449	def _cmd_template(args) -> int:
+  2450	    """template 子命令：管理动作模板。"""
+  2451	    from vools.actus.template import list_templates, apply_template, create_action_from_template
+  2452	
+  2453	    if args.action == 'list':
+  2454	        templates = list_templates()
+  2455	        print(f'📋 可用模板 ({len(templates)} 个):')
+  2456	        for t in templates:
+  2457	            print(f'   {t["id"]}: {t["name"]}')
+  2458	            print(f'      {t["description"]}')
+  2459	            print(f'      标签: {", ".join(t["tags"])}')
+  2460	        return 0
+  2461	
+  2462	    elif args.action == 'apply':
+  2463	        if not args.id:
+  2464	            print('❌ 缺少 --id 参数（模板 ID）')
+  2465	            return 1
+  2466	        if not args.action_id:
+  2467	            print('❌ 缺少 --action-id 参数（目标动作 ID）')
+  2468	            return 1
+  2469	
+  2470	        name = args.name or args.action_id.split('.')[-1]
+  2471	        output_dir = args.output or 'actions/custom'
+  2472	
+  2473	        path = create_action_from_template(args.id, args.action_id, name, output_dir)
+  2474	        if path:
+  2475	            print(f'✅ 动作已创建: {path}')
+  2476	            return 0
+  2477	        else:
+  2478	            print(f'❌ 模板应用失败')
+  2479	            return 1
+  2480	
+  2481	    return 0

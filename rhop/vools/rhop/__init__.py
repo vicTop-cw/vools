@@ -1,6 +1,6 @@
 """vools.rhop - 双方对等镜像任务中继协议（MVP + 配置驱动地基 + v2 镜像 DB / 状态机 / 业务 API + 通用任务队列）。"""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from . import actions, config, crypto, core, interact, session  # noqa: F401
 
@@ -25,4 +25,22 @@ from .task import (  # noqa: F401
     TaskStore,
     create_store,
     register_store,
+)
+from .task.local_runner import (  # noqa: F401
+    mark_local_result,
+    run_local_task,
+    should_run_local,
+)
+
+# 节点侧能力：目录同步守护 + 剪贴板共享（对标 p2 SyncFolder / p0-p1 monitorclip）
+from .sync_folder import (  # noqa: F401
+    LocalDirSource,
+    SyncFolder,
+    sync_folder_once,
+)
+from .clipboard import (  # noqa: F401
+    ClipboardFileSync,
+    get_clipboard_backend,
+    read_clipboard,
+    write_clipboard,
 )

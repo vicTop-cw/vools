@@ -263,4 +263,4 @@ def _row_to_envelope(row) -> Envelope:
 def _now_iso() -> str:
     """当前 UTC ISO 时间戳（Py3.6 兼容）。"""
     import datetime
-    return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

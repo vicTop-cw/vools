@@ -1,0 +1,1009 @@
+     1	"""动作执行（docs/02 §4 数据流、docs/03 §7 出参契约、docs/08 §4 生命周期）。
+     2	
+     3	执行链路：
+     4	  exec_id 分配 → pending → validating（契约/依赖/入参）
+     5	  → awaiting_confirmation（audit 未确认时）→ running（vools 逐块执行）
+     6	  → succeeded / failed / cancelled
+     7	
+     8	出参统一为 {status, data, error}（docs/03 §7.2）：
+     9	  status ∈ ok / failed / cancelled / awaiting_confirmation
+    10	stdout/stderr/exit_code 为旁路信息，仅入执行记录。
+    11	"""
+    12	
+    13	__all__ = ['execute', 'preview', 'new_exec_id']
+    14	
+    15	import json
+    16	import os
+    17	import secrets
+    18	import threading
+    19	import time
+    20	from datetime import datetime, timezone, timedelta
+    21	
+    22	from .errors import ActionError
+    23	from .model import Action
+    24	from .process_state import PROCESS_STATE_LOCK
+    25	from .validate import load_and_validate, validate_graph
+    26	from .indexer import scan_actions
+    27	from .trust import decide
+    28	from . import records
+    29	from .omega import verify_output, compute_output_fingerprint, _find_omega_spec
+    30	from .concurrency import get_manager
+    31	from .dependency import get_resolver, DependencyResolver
+    32	
+    33	_TZ = timezone(timedelta(hours=8))
+    34	
+    35	# 并发保护：ACTUS_PARAMS / ACTUS_EXEC_ID 等运行时上下文经进程级 os.environ
+    36	# 传给 vools 子进程；工作流可并行提交同层节点（ThreadPoolExecutor）。不加锁时
+    37	# 并发注入会互相覆盖（实测：data_pipeline 的 encode_a/encode_b 双双拿到同一份
+    38	# params）。_run_blocks 在「注入 → run_md 启动子进程」期间持有本锁。
+    39	# 锁本体在 process_state 里，与 runtimes.PythonRuntime 共用同一把（BUG-0023）——
+    40	# 两条路径改的是同一份 os.environ，各持一把本地锁等于没锁。
+    41	
+    42	# 记录/回传里每块 stdout 的保留长度。**只**用于截断留痕，不参与出参解析
+    43	# （解析用原文，见 _run_blocks）—— 两者共用一个字面量正是 BUG-0016 的形状。
+    44	_STDOUT_KEEP = 4000
+    45	
+    46	# 入参嵌套深度上限（BUG-0017）。实测口径：仓库 23 份 Ω spec 的 74 组入参里，
+    47	# 最深只有 2 层（tests/ 里的 params 字面量同样最深 2 层）—— 64 层是 32 倍余量，
+    48	# 既挡得住「5000 层嵌套把 RecursionError 抛出入口」，又不会拒掉任何真实动作入参。
+    49	# 只限深度不限节点数：爆栈只取决于嵌套深度，加节点上限等于凭白拒掉合法的大 payload。
+    50	_MAX_PARAM_DEPTH = 64
+    51	
+    52	_STATUS_MAP = {
+    53	    'succeeded': 'ok',
+    54	    'failed': 'failed',
+    55	    'cancelled': 'cancelled',
+    56	    'awaiting_confirmation': 'awaiting_confirmation',
+    57	}
+    58	
+    59	
+    60	def new_exec_id() -> str:
+    61	    """docs/08 §4：YYYYMMDD-<6位随机hex>。"""
+    62	    today = datetime.now(_TZ).strftime('%Y%m%d')
+    63	    return f'{today}-{secrets.token_hex(3)}'
+    64	
+    65	
+    66	def _meta_dirs(meta_dir=None, artifacts_dir=None):
+    67	    """解析 _meta 与 artifacts 目录。
+    68	
+    69	    传入 meta_dir 而未传 artifacts_dir 时，artifacts 取 meta_dir 的同级
+    70	    artifacts（临时仓库隔离的关键：测试写 tmp_path 不落真实仓库）。
+    71	    """
+    72	    from .indexer import _repo_root
+    73	    root = _repo_root()
+    74	    meta = meta_dir or os.path.join(root, '_meta')
+    75	    if artifacts_dir is None:
+    76	        if meta_dir is not None:
+    77	            artifacts = os.path.join(os.path.dirname(os.path.abspath(meta_dir)), 'artifacts')
+    78	        else:
+    79	            artifacts = os.path.join(root, 'artifacts')
+    80	    else:
+    81	        artifacts = artifacts_dir
+    82	    return meta, artifacts
+    83	
+    84	
+    85	def _validate_params(action: Action, params: dict) -> None:
+    86	    """按 args JSON Schema 校验入参（docs/03 §7.1），非法抛 param_invalid。"""
+    87	    schema = action.args_schema
+    88	    if schema is None:
+    89	        return
+    90	    try:
+    91	        import jsonschema
+    92	        jsonschema.validate(instance=params, schema=schema)
+    93	    except Exception as e:
+    94	        msg = getattr(e, 'message', str(e))
+    95	        raise ActionError('param_invalid', f'入参校验失败: {msg}',
+    96	                          {'schema': schema}) from e
+    97	
+    98	
+    99	def _inject_params_into_body(action: Action, params: dict) -> str:
+   100	    """把入参以 __actus_params 注入执行环境。
+   101	
+   102	    vools 的 python 块经 exec 执行，这里在正文最前追加一段引导代码：
+   103	    定义 __actus_params 变量与 __actus_result 输出通道，供动作代码读写。
+   104	    """
+   105	    bootstrap = (
+   106	        '\n\n```python #!run tag=__actus_bootstrap skip\n'
+   107	        '# Actus 注入：参数与结果通道（本块不单独执行）\n'
+   108	        '```\n'
+   109	    )
+   110	    # 注入通过环境变量传递更稳妥：ACTUS_PARAMS (JSON) —— vools _execute_python
+   111	    # 的 exec_env 来自 config['env']，这里直接在 md 顶部加一个 python 配置块不可行，
+   112	    # 故采用 wrapper：入口块执行前由 executor 将参数写入全局 config env。
+   113	    return action.body + bootstrap
+   114	
+   115	
+   116	def _payload_depth(obj) -> int:
+   117	    """求嵌套深度。**刻意用迭代而不是递归**：量深参的尺子如果自己也递归，
+   118	    它就是第一个被同一份入参炸掉的东西（BUG-0017 的现场正是 json.dumps 递归爆栈）。
+   119	    """
+   120	    maxd = 0
+   121	    stack = [(obj, 1)]
+   122	    while stack:
+   123	        cur, d = stack.pop()
+   124	        if d > maxd:
+   125	            maxd = d
+   126	        if isinstance(cur, dict):
+   127	            stack.extend((v, d + 1) for v in cur.values())
+   128	        elif isinstance(cur, (list, tuple)):
+   129	            stack.extend((v, d + 1) for v in cur)
+   130	    return maxd
+   131	
+   132	
+   133	def execute(action_id: str, params: dict = None,
+   134	            confirmed: bool = False, meta_dir: str = None,
+   135	            actions_dir: str = None, force: bool = False,
+   136	            artifacts_dir: str = None, preparsed_action: 'Action' = None) -> dict:
+   137	    """执行一个动作，返回 docs/03 §7.2 结构化出参。
+   138	
+   139	    confirmed=True 表示人类已通过确认通道放行（audit 级需要）。
+   140	    meta_dir/artifacts_dir 可覆盖留痕与产物落点（临时仓库隔离）。
+   141	    preparsed_action：已解析好的 Action（零散动作专用，docs/41 §5 主题 C）。
+   142	      零散动作在**任意路径**，且缺省字段（trust=audit / visibility=private，
+   143	      docs/41 §C1）是在解析后补上的；execute 若再从磁盘 re-parse，补上的缺省值
+   144	      当场丢失 → 校验报 trust 缺失。传进来即用同一份对象，缺省值不再被抹掉。
+   145	      仍然走完整的 validating/trust/sandbox/Ω 门禁 —— 只是"对象从哪来"变了。
+   146	      **名字不能叫 action_obj**：下面依赖预检那段有同名本地变量 `action_obj = None`，
+   147	      参数会被当场覆盖（实测踩到过）。
+   148	    全程留痕：_meta/runs/<exec_id>.json + status.json + 追加式日志。
+   149	    """
+   150	    params = params if params is not None else {}
+   151	
+   152	    # 入参深度闸门（BUG-0017）：位置必须在建 record 之前 —— record['params']、
+   153	    # _validate_params 与 _run_blocks 里的 json.dumps(params) 都会把这份入参整个递归
+   154	    # 走一遍，5000 层嵌套能让 RecursionError 从 PROCESS_STATE_LOCK 临界区里穿出出入口，
+   155	    # 而引擎对外承诺的是 docs/03 §7.2 的结构化回执（CLI/MCP 拿到 traceback 就没法分流）。
+   156	    depth = _payload_depth(params)
+   157	    if depth > _MAX_PARAM_DEPTH:
+   158	        return {
+   159	            'status': 'failed',
+   160	            'data': None,
+   161	            'error': {
+   162	                'code': 'param_invalid',
+   163	                'message': f'入参嵌套过深（深度 {depth} > 上限 {_MAX_PARAM_DEPTH}），已按契约拒绝',
+   164	                'details': {'depth': depth, 'max_depth': _MAX_PARAM_DEPTH},
+   165	            },
+   166	        }
+   167	
+   168	    meta_dir, artifacts_dir = _meta_dirs(meta_dir, artifacts_dir)
+   169	    exec_id = new_exec_id()
+   170	    _t_start = time.time()  # 使用量指标计时起点（docs/03 §4.1）
+   171	
+   172	    # ── 依赖检查（执行前）──
+   173	    action_obj = None
+   174	    dep_check = None
+   175	    try:
+   176	        from .indexer import get_action
+   177	        action_obj = load_and_validate(get_action(action_id, actions_dir).path)
+   178	        if action_obj.dependencies:
+   179	            resolver = DependencyResolver(actions_root=actions_dir)
+   180	            dep_states = []
+   181	            lazy_hints = []
+   182	            hard_missing = []
+   183	            for dep in action_obj.dependencies:
+   184	                chk = resolver.check_dep(dep)
+   185	                dep_type = getattr(getattr(dep, 'type', ''), 'value', getattr(dep, 'type', ''))
+   186	                strategy = getattr(getattr(dep, 'strategy', None), 'value', None)
+   187	                ephemeral_cmd = getattr(chk, 'ephemeral_cmd', '')
+   188	                dep_states.append({
+   189	                    'name': dep.name,
+   190	                    'type': dep_type,
+   191	                    'strategy': strategy,
+   192	                    'required': dep.required,
+   193	                    'satisfied': chk.satisfied,
+   194	                    'message': chk.message,
+   195	                    'fix_command': chk.fix_command,
+   196	                    'ephemeral_cmd': ephemeral_cmd,
+   197	                })
+   198	                if chk.satisfied:
+   199	                    continue
+   200	                # D3 懒加载：hint/ephemeral/download 策略不硬失败，仅附提示
+   201	                actionable = bool(
+   202	                    chk.fix_command or ephemeral_cmd
+   203	                    or getattr(chk, 'download_url', '')
+   204	                )
+   205	                if strategy is not None:
+   206	                    lazy = strategy != 'fail'
+   207	                else:
+   208	                    lazy = actionable or dep_type in (
+   209	                        'system', 'python', 'npm', 'lang', 'mcp')
+   210	                if lazy:
+   211	                    lazy_hints.append({
+   212	                        'name': chk.name,
+   213	                        'type': dep_type,
+   214	                        'strategy': strategy,
+   215	                        'message': chk.message,
+   216	                        'fix_command': chk.fix_command,
+   217	                        'ephemeral_cmd': ephemeral_cmd,
+   218	                    })
+   219	                elif dep.required:
+   220	                    hard_missing.append({'name': chk.name, 'message': chk.message})
+   221	            dep_check = {
+   222	                'satisfied': not hard_missing,
+   223	                'deps': dep_states,
+   224	                'lazy': lazy_hints,
+   225	                'missing': hard_missing,
+   226	            }
+   227	            if hard_missing and not force:
+   228	                result = {
+   229	                    "status": "failed",
+   230	                    "error": {
+   231	                        "code": "deps_missing",
+   232	                        "message": "必需依赖缺失，可使用 force=True 强制执行",
+   233	                        "details": {"missing": hard_missing},
+   234	                    },
+   235	                    "deps": dep_check
+   236	                }
+   237	                return result
+   238	    except Exception:
+   239	        # 依赖预检为尽力而为：解析失败不在此处定论，交由主流程 validating 阶段给结构化错误
+   240	        action_obj = None
+   241	        dep_check = None
+   242	        pass
+   243	
+   244	    record = {
+   245	        'exec_id': exec_id,
+   246	        'action': action_id,
+   247	        'params': params,
+   248	        'confirmed': bool(confirmed),
+   249	        'state_transitions': [],
+   250	        'blocks': [],
+   251	        'artifacts': [],
+   252	        'sandboxed': False,
+   253	    }
+   254	
+   255	    def transit(state: str):
+   256	        record['state_transitions'].append(
+   257	            {'state': state, 'at': datetime.now(_TZ).isoformat(timespec='seconds')})
+   258	
+   259	    def finish(result: dict) -> dict:
+   260	        # 先补全 exec_id 再落盘，保证记录里的 result 自含标识
+   261	        result['exec_id'] = exec_id
+   262	        # docs/46 #5/#6/#7：回执带 mode / env_prefix / resources 摘要
+   263	        # （action 在异常路径可能未解析成功，用局部判断兜住）
+   264	        try:
+   265	            result['mode'] = action.exec_mode
+   266	            result['env_prefix'] = action.env_prefix
+   267	            if record.get('resources'):
+   268	                result['resources'] = record['resources']
+   269	        except (NameError, AttributeError):
+   270	            result['mode'] = 'sync'
+   271	            result['env_prefix'] = 'ACTUS_'
+   272	        # D3：懒加载策略缺失的依赖不阻断执行，以提示形式随结果返回
+   273	        if dep_check and dep_check.get('lazy'):
+   274	            result['deps_hints'] = dep_check['lazy']
+   275	        record['result'] = result
+   276	        # ── 释放并发槽位 ──
+   277	        if record.get('concurrency', {}).get('max', 0) > 0:
+   278	            mgr_release = get_manager()
+   279	            mgr_release.release_slot(action_id, exec_id)
+   280	            result['concurrency'] = {
+   281	                'max': record['concurrency']['max'],
+   282	                'released': True,
+   283	                'remaining': mgr_release.get_running_count(action_id)
+   284	            }
+   285	        # ── Ω-gate 验证（金条八：任何产出必须过 Ω-gate）──
+   286	        spec_path = _find_omega_spec(action_id, actions_dir)
+   287	        if spec_path and result.get('status') in ('ok', 'partial'):
+   288	            try:
+   289	                omega_report = verify_output(spec_path, result)
+   290	                result['omega'] = omega_report
+   291	                if omega_report.get('status') == 'spec_error':
+   292	                    # 「无法评估」不是「过了门禁」（BUG-0015）。spec 不合格时 verify_output
+   293	                    # 回的是 {'status':'spec_error','errors':[...]}，**没有 gate 键**，
+   294	                    # 原先 `get('gate', {}).get('passed', True)` 的缺省 True 正好把它读成通过
+   295	                    # —— 契约坏掉时金条八静默放行，比判错更糟因为它不留痕。
+   296	                    errs = omega_report.get('errors') or []
+   297	                    result['status'] = 'failed'
+   298	                    result['error'] = {
+   299	                        'code': 'omega_spec_invalid',
+   300	                        'message': f"Ω 契约不可评估（spec 不合格）：{'; '.join(str(e) for e in errs[:3])}",
+   301	                        'details': omega_report,
+   302	                    }
+   303	                elif not omega_report.get('gate', {}).get('passed', False):
+   304	                    # 缺省值取 False：走到这里 gate 必然存在（pass/fail 两条都带），
+   305	                    # 但万一将来新增第三种回包形状，宁可判不过也不放行。
+   306	                    result['status'] = 'failed'
+   307	                    result['error'] = {
+   308	                        'code': 'omega_gate_failed',
+   309	                        'message': f"Ω-gate 验证失败，准确率 {omega_report['gate'].get('accuracy', 0)}% < 100%",
+   310	                        'details': omega_report
+   311	                    }
+   312	            except Exception as e:
+   313	                # 原本 `except Exception: pass` 把坏 spec 抹平成「这个动作没配 spec」——
+   314	                # 两种情况的回执完全同形，调用方无从分辨。现在既留痕也判不过。
+   315	                result['omega'] = {
+   316	                    'status': 'spec_error',
+   317	                    'errors': [f'{type(e).__name__}: {e}'],
+   318	                    'spec_path': spec_path.replace(os.sep, '/'),
+   319	                }
+   320	                result['status'] = 'failed'
+   321	                result['error'] = {
+   322	                    'code': 'omega_spec_invalid',
+   323	                    'message': f'Ω spec 加载失败：{type(e).__name__}: {e}',
+   324	                    'details': result['omega'],
+   325	                }
+   326	        record_path = records.write_run_record(meta_dir, record)
+   327	        result['record'] = record_path.replace(os.sep, '/')
+   328	        records.update_status(meta_dir, exec_id, action_id,
+   329	                              result['status'],
+   330	                              (result.get('error') or {}).get('message'))
+   331	        records.append_log(meta_dir, f"{exec_id} {action_id} -> {result['status']}")
+   332	
+   333	        # ── 使用量指标埋点（docs/03 §4.1：执行计数区分「安装了」vs「真正在用」）──
+   334	        # best-effort：写指标失败绝不影响执行结果（与 calllog 设计一致）。
+   335	        # 落点与 call_log 同库（_meta/call_log.db 的 action_metrics 表），
+   336	        # popular_actions / trending_actions / quality_scale 全部消费此数据。
+   337	        # caller 记调用来源：confirmed=True 的人工放行 vs False 的 MCP/CLI 自动调用，
+   338	        # 让 unique_callers 聚合能区分"哪个通道在用"（docs/03 §4.1）。
+   339	        try:
+   340	            from .calllog import write_action_metric
+   341	            write_action_metric(
+   342	                action_id,
+   343	                ok=(result['status'] in ('ok', 'partial')),
+   344	                runtime_ms=int((time.time() - _t_start) * 1000),
+   345	                caller='confirmed' if confirmed else 'executor',
+   346	                meta_dir=meta_dir,
+   347	            )
+   348	        except Exception:
+   349	            pass  # best-effort：指标缺失不改变回执
+   350	
+   351	        # ── 事件总线通知 (Phase G5) ──
+   352	        try:
+   353	            from .eventbus import EventType, get_event_bus
+   354	            bus = get_event_bus()
+   355	            if result['status'] == 'ok':
+   356	                bus.publish(EventType.ACTION_COMPLETED, {
+   357	                    'action_id': action_id,
+   358	                    'exec_id': exec_id,
+   359	                    'params': params,
+   360	                    'result': result.get('data'),
+   361	                }, source='executor')
+   362	            elif result['status'] == 'failed':
+   363	                bus.publish(EventType.ACTION_FAILED, {
+   364	                    'action_id': action_id,
+   365	                    'exec_id': exec_id,
+   366	                    'params': params,
+   367	                    'error': result.get('error'),
+   368	                }, source='executor')
+   369	        except Exception:
+   370	            pass  # 事件总线异常不阻塞执行
+   371	
+   372	        return result
+   373	
+   374	    try:
+   375	        # ── pending ──
+   376	        transit('pending')
+   377	
+   378	        # ── validating ──
+   379	        transit('validating')
+   380	        if preparsed_action is not None:
+   381	            action = preparsed_action
+   382	        else:
+   383	            action = load_and_validate(
+   384	                _resolve_path(action_id, actions_dir)) if actions_dir else None
+   385	            if action is None:
+   386	                action = _get_validated(action_id)
+   387	
+   388	        # docs/46 #5/#6/#7：mode / context / resources 契约消费
+   389	        record['mode'] = action.exec_mode
+   390	        record['env_prefix'] = action.env_prefix
+   391	        record['resources'] = {
+   392	            'timeout_ms': action.timeout_ms,
+   393	            'max_memory_mb': action.max_memory_mb,
+   394	            'max_processes': action.max_processes,
+   395	            'net_connect': action.net_connect,
+   396	            'net_listen': action.net_listen,
+   397	        } if (action.timeout_ms or action.max_memory_mb or action.max_processes
+   398	              or action.net_connect or action.net_listen) else {}
+   399	
+   400	        _validate_params(action, params)
+   401	
+   402	        # 依赖图校验（含本动作的 deps）
+   403	        all_actions = scan_actions(actions_dir, validate=False)
+   404	        sub = {aid: a for aid, a in all_actions.items()
+   405	               if aid == action_id or aid in (action.meta.get('deps') or [])}
+   406	        validate_graph(sub)
+   407	
+   408	        # ── 可见性门禁（docs/41 §B1）：只判新增的 internal / gated 两级 ──
+   409	        _visibility_gate(action, action_id, exec_id)
+   410	
+   411	        # ── trust 判定 ──
+   412	        # ACTUS_DEBUG 开发模式（true/1/yes/on）：audit 级动作自动放行，
+   413	        # 免去每次人工确认（git.ops 等 audit 动作在开发仓联调时不再卡 awaiting）。
+   414	        # 使用模式（false/缺省）：audit 仍须人工确认，行为不变。
+   415	        _dev = os.environ.get('ACTUS_DEBUG', '').strip().lower() in ('1', 'true', 'yes', 'on')
+   416	        if _dev and action.trust == 'audit':
+   417	            confirmed = True
+   418	            record['dev_auto_confirm'] = True
+   419	        strategy = decide(action.trust, confirmed=confirmed)
+   420	        record['trust'] = action.trust
+   421	        record['strategy'] = strategy
+   422	
+   423	        if strategy == 'need_confirm':
+   424	            # docs/07 §2：改动型动作等人类确认，展示完整待执行明细
+   425	            transit('awaiting_confirmation')
+   426	            record['pending_ops'] = _pending_ops(action, params)
+   427	            return finish({
+   428	                'status': 'awaiting_confirmation',
+   429	                'data': {
+   430	                    'exec_id': exec_id,
+   431	                    'action': action_id,
+   432	                    'trust': action.trust,
+   433	                    'pending_ops': record['pending_ops'],
+   434	                    'hint': '该动作为 audit 级，需人类确认后执行：actus run --confirm 或 MCP 确认通道',
+   435	                },
+   436	                'error': None,
+   437	            })
+   438	
+   439	        # ── 并发控制：获取执行槽位 ──
+   440	        mgr = get_manager()
+   441	        # docs/46 #7：resources.max_processes 作为并发上限的补充声明（
+   442	        # max_instances 优先；两者都设时取较小值）
+   443	        max_inst = action.max_instances
+   444	        max_proc = action.max_processes
+   445	        if max_inst > 0 and max_proc > 0:
+   446	            max_inst = min(max_inst, max_proc)
+   447	        if max_inst > 0:
+   448	            # 注册动作并发配置
+   449	            mgr.register_action(action_id, max_inst)
+   450	            # 尝试获取槽位（等待 30 秒）
+   451	            acquired, reason = mgr.acquire_slot(action_id, exec_id, params, timeout=30.0)
+   452	            if not acquired:
+   453	                transit('failed')
+   454	                return finish({
+   455	                    'status': 'failed',
+   456	                    'data': None,
+   457	                    'error': {
+   458	                        'code': 'concurrency_limit',
+   459	                        'message': f'动作 {action_id} 并发限制: {reason}',
+   460	                        'details': {
+   461	                            'max_instances': max_inst,
+   462	                            'running': mgr.get_running_count(action_id),
+   463	                            'waiting': mgr.get_waiting_count(action_id),
+   464	                        }
+   465	                    }
+   466	                })
+   467	            record['concurrency'] = {'max': max_inst, 'acquired': True}
+   468	        else:
+   469	            record['concurrency'] = {'max': 0, 'acquired': True, 'note': '无上限'}
+   470	
+   471	        # ── 幂等检查（docs/08 §4）：idempotency_key_from 指向入参字段 ──
+   472	        replay = _idempotent_replay(meta_dir, action, params)
+   473	        if replay is not None:
+   474	            transit('running')
+   475	            transit('succeeded')
+   476	            record['idempotent_replay_of'] = replay.get('exec_id')
+   477	            data = dict(replay.get('data') or {})
+   478	            data['idempotent_replay'] = True
+   479	            data['replay_of'] = replay.get('exec_id')
+   480	            return finish({
+   481	                'status': 'ok',
+   482	                'data': data,
+   483	                'error': None,
+   484	            })
+   485	
+   486	        # ── running ──
+   487	        transit('running')
+   488	        result = _run_blocks(action, params, exec_id,
+   489	                             artifacts_dir, force=force,
+   490	                             sandboxed=(strategy == 'sandbox'),
+   491	                             meta_dir=meta_dir)
+   492	        record['sandboxed'] = strategy == 'sandbox'
+   493	        # 产物登记（docs/04 §3）与幂等缓存（docs/08 §4）
+   494	        if result.get('status') == 'ok':
+   495	            _register_artifacts(meta_dir, action, exec_id,
+   496	                                result.get('artifacts') or [])
+   497	            _idempotent_store(meta_dir, action, params, exec_id, result)
+   498	        return finish(result)
+   499	
+   500	    except ActionError as e:
+   501	        transit('failed')
+   502	        return finish({'status': 'failed', 'data': None, 'error': e.to_payload()})
+   503	    except Exception as e:  # noqa: BLE001 —— 收敛为 internal，不静默
+   504	        transit('failed')
+   505	        return finish({'status': 'failed', 'data': None,
+   506	                       'error': {'code': 'internal', 'message': str(e),
+   507	                                 'details': {'type': type(e).__name__}}})
+   508	
+   509	
+   510	def _resolve_path(action_id: str, actions_dir: str = None) -> str:
+   511	    """actions_dir 模式下按 id 匹配文件；否则交由索引解析。"""
+   512	    from .indexer import get_action
+   513	    return get_action(action_id, actions_dir).path
+   514	
+   515	
+   516	# ── 幂等键（docs/08 §4）─────────────────────────────────
+   517	
+   518	_IDEMPOTENT_TTL_SECONDS = 300  # 默认 5 分钟内同键直接复用上次结果
+   519	
+   520	
+   521	def _idempotency_file(meta_dir: str) -> str:
+   522	    return os.path.join(meta_dir, 'idempotency.json')
+   523	
+   524	
+   525	def _idempotency_load(meta_dir: str) -> dict:
+   526	    path = _idempotency_file(meta_dir)
+   527	    if not os.path.exists(path):
+   528	        return {}
+   529	    try:
+   530	        with open(path, 'r', encoding='utf-8') as f:
+   531	            return json.load(f)
+   532	    except (json.JSONDecodeError, OSError):
+   533	        return {}
+   534	
+   535	
+   536	def _idempotent_key(action: Action, params: dict):
+   537	    """返回 (action_id, key_value) 或 None（动作未声明幂等键/入参缺字段）。"""
+   538	    field = action.meta.get('idempotency_key_from')
+   539	    if not field or not isinstance(params, dict):
+   540	        return None
+   541	    value = params.get(field)
+   542	    if value is None:
+   543	        return None
+   544	    return (action.id, str(value))
+   545	
+   546	
+   547	def _idempotent_replay(meta_dir: str, action: Action, params: dict):
+   548	    """同幂等键且未过 TTL → 返回上次成功结果；否则 None。"""
+   549	    from datetime import datetime as _dt
+   550	    kv = _idempotent_key(action, params)
+   551	    if kv is None:
+   552	        return None
+   553	    store = _idempotency_load(meta_dir)
+   554	    entry = store.get(f'{kv[0]}::{kv[1]}')
+   555	    if not entry:
+   556	        return None
+   557	    try:
+   558	        created = _dt.fromisoformat(entry['at'])
+   559	        age = (datetime.now(_TZ) - created).total_seconds()
+   560	    except (KeyError, ValueError):
+   561	        return None
+   562	    if age > _IDEMPOTENT_TTL_SECONDS:
+   563	        return None
+   564	    record = records.load_run_record(meta_dir, entry['exec_id'])
+   565	    if record is None or record.get('result', {}).get('status') != 'ok':
+   566	        return None
+   567	    return record['result']
+   568	
+   569	
+   570	def _idempotent_store(meta_dir: str, action: Action, params: dict,
+   571	                      exec_id: str, result: dict) -> None:
+   572	    kv = _idempotent_key(action, params)
+   573	    if kv is None:
+   574	        return
+   575	    store = _idempotency_load(meta_dir)
+   576	    store[f'{kv[0]}::{kv[1]}'] = {
+   577	        'exec_id': exec_id, 'at': datetime.now(_TZ).isoformat(timespec='seconds')}
+   578	    path = _idempotency_file(meta_dir)
+   579	    os.makedirs(meta_dir, exist_ok=True)
+   580	    with open(path, 'w', encoding='utf-8') as f:
+   581	        json.dump(store, f, ensure_ascii=False, indent=2)
+   582	
+   583	
+   584	def _get_validated(action_id: str) -> Action:
+   585	    from .validate import load_and_validate
+   586	    from .indexer import get_action
+   587	    return load_and_validate(get_action(action_id).path)
+   588	
+   589	
+   590	def _visibility_gate(action: Action, action_id: str, exec_id: str,
+   591	                     gated_key: str = None, gated_store=None) -> None:
+   592	    """执行前的可见性门禁（docs/41 §B1）。
+   593	
+   594	    **只判新增的 internal / gated 两级，既有四级（public/unlisted/private/team）
+   595	    一律原样放行。** 这不是偷懒，是兼容性判据：实测这四级在现行执行链上从来没有
+   596	    被门禁过（executor 早前根本不 import visibility），若在这里给它们补上判据，
+   597	    `visibility: private` 的既有动机会当场开始报 `Private action not found`
+   598	    （私有索引里根本没有它们的记录），属于凭空造回归。新级别的收紧与旧级别的行为
+   599	    不变是两件事，分开做才看得见。
+   600	
+   601	    internal 的放行判据是**物理落位**（`actions/system/_internal/`，docs/41 §B1）：
+   602	    落在该目录下才算引擎内部路由；把任意动作标成 `visibility: internal` 想借此
+   603	    绕过市场/签名链路的，这里当场拒掉 —— 落位是权威，声明只是意图。
+   604	
+   605	    gated 的放行判据是密钥：显式参数 → `ACTUS_GATED_KEY` 环境变量 → vault，
+   606	    三者都取不到或校验不过 → `auth_required`（docs/41 §B2.3）。密钥明文只在这里
+   607	    过一遍，不进 record、不进日志。
+   608	    """
+   609	    visibility = (action.meta.get('visibility') or '').strip().lower()
+   610	
+   611	    if visibility == 'internal':
+   612	        from .visibility import is_internal_path
+   613	        if not is_internal_path(action.path):
+   614	            record_gate(action_id, visibility, exec_id, granted=False)
+   615	            raise ActionError(
+   616	                'visibility_denied',
+   617	                f"internal 动作 '{action_id}' 未落在 _internal/ 目录，"
+   618	                f"拒绝按内部路由执行（当前路径：{action.path}）",
+   619	                {'visibility': visibility, 'path': action.path})
+   620	        record_gate(action_id, visibility, exec_id, granted=True)
+   621	        return
+   622	
+   623	    if visibility == 'gated':
+   624	        from .visibility import AUTH_REQUIRED, GatedKeyStore
+   625	        key = gated_key or os.environ.get('ACTUS_GATED_KEY', '')
+   626	        if not key:
+   627	            try:
+   628	                from .vault import get_key
+   629	                key = get_key('gated_key',
+   630	                              meta_dir=os.environ.get('ACTUS_META_DIR', '')) or ''
+   631	            except Exception:       # noqa: BLE001 —— vault 不可用等同"没有密钥"
+   632	                key = ''
+   633	        if not key:
+   634	            record_gate(action_id, visibility, exec_id, granted=False)
+   635	            raise ActionError(
+   636	                'auth_required',
+   637	                f"动作 '{action_id}' 为 gated 可见性，执行需授权密钥"
+   638	                f"（--key / ACTUS_GATED_KEY / vault gated_key 三者之一）",
+   639	                {'visibility': visibility})
+   640	        repo = action.meta.get('repo') or ''
+   641	        # 仓储可注入：默认落 ~/.actus/gated_keys.json（与 VisibilityEngine 同根）。
+   642	        # 取不到仓储（文件损坏等）一律按"未授权"拒 —— fail-closed，不静默放行。
+   643	        try:
+   644	            store = gated_store if gated_store is not None else GatedKeyStore()
+   645	        except RuntimeError as exc:
+   646	            record_gate(action_id, visibility, exec_id, granted=False)
+   647	            raise ActionError('auth_required', str(exc), {'visibility': visibility})
+   648	        if not store.verify(key, action_id=action_id, repo=repo):
+   649	            record_gate(action_id, visibility, exec_id, granted=False)
+   650	            raise ActionError(
+   651	                'auth_required',
+   652	                f"动作 '{action_id}' 的授权密钥无效或已被轮换撤销",
+   653	                {'visibility': visibility, 'reason': AUTH_REQUIRED})
+   654	        record_gate(action_id, visibility, exec_id, granted=True)
+   655	        return
+   656	
+   657	    # 既有四级（public/unlisted/private/team）在现行执行链上没有任何门禁，这里也
+   658	    # **不做判定也不写审计** —— 若在此写一条 granted=True，审计记录会谎称"做过
+   659	    # 可见性校验并通过"，而事实是一个字节都没查。只记录真实发生的判定。
+   660	
+   661	
+   662	def record_gate(action_id: str, visibility: str, exec_id: str,
+   663	                granted: bool) -> None:
+   664	    """可见性判定留痕（不含任何密钥值）。写失败不影响判定结果。"""
+   665	    try:
+   666	        from .visibility import SecretAuditor
+   667	        SecretAuditor().record_visibility(
+   668	            action_id=action_id, visibility=visibility,
+   669	            exec_id=exec_id, granted=granted)
+   670	    except Exception:               # noqa: BLE001 —— 审计是旁路，不反向决定授权
+   671	        pass
+   672	
+   673	
+   674	def _pending_ops(action: Action, params: dict) -> list:
+   675	    """从动作声明推断待执行操作明细（docs/07 §2 确认通道展示用）。"""
+   676	    ops = []
+   677	    perms = action.meta.get('permissions') or []
+   678	    perm_desc = {
+   679	        'files:write': {'op': 'write', 'impact': '写入文件'},
+   680	        'files:delete': {'op': 'delete', 'impact': '删除文件'},
+   681	        'files:read': {'op': 'read', 'impact': '读取文件'},
+   682	        'net:connect': {'op': 'net', 'impact': '对外网络连接'},
+   683	        'net:listen': {'op': 'listen', 'impact': '监听端口'},
+   684	        'process:spawn': {'op': 'process', 'impact': '启动子进程'},
+   685	        'ui:notify': {'op': 'notify', 'impact': '弹出通知'},
+   686	        'ui:control': {'op': 'ui_control', 'impact': '控制键鼠/剪贴板（UI 自动化）'},
+   687	        'sys:settings': {'op': 'settings', 'impact': '修改系统设置'},
+   688	    }
+   689	    for p in perms:
+   690	        d = dict(perm_desc.get(p, {'op': p, 'impact': '未知影响'}))
+   691	        d['permission'] = p
+   692	        ops.append(d)
+   693	    if not ops:
+   694	        ops = [{'op': 'run', 'impact': '执行动作代码块（无声明权限）'}]
+   695	    return ops
+   696	
+   697	
+   698	def _sanitize_path_env() -> None:
+   699	    """PATH 去重瘦身 + System32 前置（执行环境保障）。
+   700	
+   701	    背景：vools import 链会向 PATH 大量 prepend 编译器路径，把 PATH 撑过
+   702	    cmd.exe 约 8191 字符的搜索缓冲，System32 被挤出搜索范围，动作里的
+   703	    os.popen/subprocess 按相对名调用系统命令（如 wsl.exe）会报
+   704	    "not recognized"。此处只做保序去重与前移，不删除任何已有目录。
+   705	    """
+   706	    path = os.environ.get('PATH', '')
+   707	    if not path or len(path) <= 8000:
+   708	        return
+   709	    sys32 = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32')
+   710	    seen, cleaned = set(), []
+   711	    for it in path.split(';'):
+   712	        k = it.strip().lower().rstrip('\\')
+   713	        if k and k not in seen:
+   714	            seen.add(k)
+   715	            cleaned.append(it)
+   716	    cleaned = [p for p in cleaned if p.strip().lower().rstrip('\\') != sys32.lower()]
+   717	    cleaned.insert(0, sys32)
+   718	    os.environ['PATH'] = ';'.join(cleaned)
+   719	
+   720	
+   721	def _env_snapshot() -> dict:
+   722	    return dict(os.environ)
+   723	
+   724	
+   725	def _env_restore(snap: dict) -> None:
+   726	    """把进程环境逐字回写到快照那一刻（先删新增，再复原改动/缺失）。"""
+   727	    for key in [k for k in os.environ if k not in snap]:
+   728	        del os.environ[key]
+   729	    for key, value in snap.items():
+   730	        if os.environ.get(key) != value:
+   731	            os.environ[key] = value
+   732	
+   733	
+   734	def _run_md_with_timeout(action: 'Action', build_dir: str, force: bool) -> dict:
+   735	    """run_md 包装：按 action.resources.timeout_ms 施加超时（docs/46 #7）。
+   736	
+   737	    未配置 timeout_ms（0）时直接调 run_md，零开销零行为变化。
+   738	    配置了则在独立线程执行，超时返回 `{'status': 'timeout', 'blocks': [...]}` 形状
+   739	    的伪 report，让调用方按现有 timeout 分支（_run_blocks L801/L815）统一收口。
+   740	    """
+   741	    from vools.bridge.md import run_md
+   742	
+   743	    timeout_ms = action.timeout_ms
+   744	    if not timeout_ms or timeout_ms <= 0:
+   745	        return run_md(
+   746	            action.path,
+   747	            only=[action.entry] if action.entry else None,
+   748	            force=force or True,
+   749	            build_dir=build_dir,
+   750	        )
+   751	
+   752	    # 超时执行：run_md 本身不接收 timeout 参数，用线程池强制收口。
+   753	    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+   754	    with ThreadPoolExecutor(max_workers=1) as pool:
+   755	        fut = pool.submit(run_md, action.path,
+   756	                          only=[action.entry] if action.entry else None,
+   757	                          force=force or True, build_dir=build_dir)
+   758	        try:
+   759	            return fut.result(timeout=timeout_ms / 1000.0)
+   760	        except FutureTimeout:
+   761	            # 无法强杀子进程（Windows 无 POSIX 信号），只标记 timeout 让上层收口
+   762	            return {
+   763	                'status': 'timeout',
+   764	                'blocks': [{
+   765	                    'index': 0, 'language': 'python', 'tag': [action.entry],
+   766	                    'status': 'timeout', 'duration_ms': timeout_ms,
+   767	                    'exit_code': None,
+   768	                    'stdout': '', 'stderr': f'execution exceeded {timeout_ms}ms (docs/46 #7 resources.timeout_ms)',
+   769	                }],
+   770	            }
+   771	
+   772	
+   773	def _run_blocks(action: Action, params: dict, exec_id: str,
+   774	                artifacts_dir: str, force: bool = False,
+   775	                sandboxed: bool = False, meta_dir: str = None) -> dict:
+   776	    """经 vools.bridge.md 逐块执行动作正文，汇总为结构化出参。"""
+   777	    from vools.bridge.md import run_md
+   778	    from . import sandbox as sbx
+   779	    from . import vault as vault_mod
+   780	    from .indexer import _repo_root
+   781	
+   782	    # 见模块顶部 PROCESS_STATE_LOCK：持锁完成「注入 → 子进程启动」，避免并行节点互相覆盖。
+   783	    PROCESS_STATE_LOCK.acquire()
+   784	    # 整份快照 + 逐字回写，而不是「记下我改过的那几个键」：执行期往进程环境写的东西
+   785	    # 不止本函数列得出的那几个 —— 实测一次沙箱执行后残留 ACTUS_PARAMS / ACTUS_EXEC_ID /
+   786	    # 动作 secrets / TMP 一组 / 被 _sanitize_path_env 改写的 PATH，逐键列举必然漏项。
+   787	    # 快照点选在上面那些懒加载 import **之后**：vools 的 manager 首次加载时自己配置
+   788	    # PATH 与自带工具链变量（FBC/FBC32/FBC_DIR），那是库级一次性初始化，每次执行都
+   789	    # 回滚它会让下一次执行拿到半初始化环境（实测第二次起就不再出现，正说明它是一次性的）。
+   790	    # owner 于 2026-09-26 授权改本文件（AGENTS.md §2 禁改区），回归锁见
+   791	    # tests/test_env_isolation.py 与 Find_BUG/actus_2026q3/repro_env_01.py。
+   792	    env_before = _env_snapshot()
+   793	    try:
+   794	        _sanitize_path_env()
+   795	        # docs/46 #5：context.env_prefix 允许动作自定义注入前缀（默认 ACTUS_）。
+   796	        # 前缀只影响引擎注入的 ACTUS_PARAMS / ACTUS_EXEC_ID 等保留变量名；
+   797	        # 动作自身若依赖默认前缀，不配置 context 字段即可，行为不变。
+   798	        prefix = action.env_prefix
+   799	        # 参数注入：写入临时环境文件，vools config env 携带 <prefix>PARAMS
+   800	        os.environ[f'{prefix}PARAMS'] = json.dumps(params, ensure_ascii=False)
+   801	        os.environ[f'{prefix}EXEC_ID'] = exec_id
+   802	        # 动作自身路径：docs/41 §A1 的内嵌 Sigma 规约块要读回**同一份文件**才能复跑
+   803	        # 规约门禁。没有它，动作只能把规约正文再抄一份进 python 块，抄的那份与
+   804	        # ```sigma 块会各自漂移，"校验过规约"就变成了"校验过副本"。
+   805	        os.environ[f'{prefix}ACTION_PATH'] = action.path
+   806	        # 引擎定位环境：动作代码（如 loop_prompt 的会话留痕）经此解析引擎状态目录，
+   807	        # 测试经 meta_dir 覆盖即可整体隔离，不污染真实仓库。
+   808	        os.environ[f'{prefix}REPO_ROOT'] = _repo_root()
+   809	        os.environ[f'{prefix}META_DIR'] = meta_dir or os.path.join(_repo_root(), '_meta')
+   810	
+   811	        # secrets 自动注入（docs/10 §D2）：解析动作的 secrets 字段，注入环境变量
+   812	        secrets_config = action.meta.get('secrets') or []
+   813	        if secrets_config:
+   814	            try:
+   815	                resolved_secrets = vault_mod.resolve_secrets(secrets_config, meta_dir=meta_dir or '')
+   816	                for env_name, env_value in resolved_secrets.items():
+   817	                    if env_value:  # 只注入非空值，避免覆盖已有环境变量
+   818	                        os.environ[env_name] = env_value
+   819	            except Exception:
+   820	                # secrets 注入失败不阻断执行，动作代码自行处理缺失密钥
+   821	                pass
+   822	
+   823	        # Phase 4：vault:// 前缀自动解析（docs/10 §D3）。密钥值形如
+   824	        # `vault://<key>` 时，经 vault2 认证后用 resolve_vault_refs 换回明文。
+   825	        # 与 secrets 注入同源：失败不阻断执行，动作代码自行处理缺失密钥。
+   826	        try:
+   827	            vault_refs = [
+   828	                s for s in secrets_config
+   829	                if str(s.get('key', s.get('env', ''))).startswith('vault://')
+   830	            ]
+   831	            if vault_refs:
+   832	                from . import vault2 as vault2_mod
+   833	                identity_id = os.environ.get('VAULT_IDENTITY_ID')
+   834	                machine_id = os.environ.get('VAULT_MACHINE_ID')
+   835	                pin = os.environ.get('VAULT_PIN')
+   836	                if identity_id and machine_id and pin:
+   837	                    auth_result = vault2_mod.auth(identity_id, machine_id, pin)
+   838	                    if auth_result.get('status') == 'ok':
+   839	                        token = auth_result['session_token']
+   840	                        resolve_result = vault2_mod.resolve_vault_refs(token, vault_refs)
+   841	                        if resolve_result.get('status') == 'ok':
+   842	                            for env_name, env_value in resolve_result.get('resolved', {}).items():
+   843	                                if env_value:
+   844	                                    os.environ[env_name] = env_value
+   845	        except Exception:
+   846	            # vault:// 解析失败不阻断执行
+   847	            pass
+   848	
+   849	        if sandboxed:
+   850	            # docs/07 §5：沙箱动作强制落入 jail 根，环境变量指示边界
+   851	            build_dir = sbx.prepare(artifacts_dir, exec_id)
+   852	            os.environ.update(sbx.sandbox_env(build_dir))
+   853	        else:
+   854	            # build_dir 落 artifacts/<action_id>/<version>/<exec_id>/（docs/08 §6）。
+   855	            # 每个 exec 独立目录：避免并发同动作时 vools manifest 原子 rename
+   856	            # 在 Windows 上互踩（PermissionError 竞态），同时满足 docs/08 §4 并发语义。
+   857	            build_dir = os.path.join(artifacts_dir, action.id,
+   858	                                     action.meta.get('version', '0.0.0'), exec_id)
+   859	
+   860	        report = _run_md_with_timeout(
+   861	            action, build_dir=build_dir, force=force,
+   862	        )
+   863	    finally:
+   864	        # 还原必须在放锁之前：并行节点各自的注入不能互相看见，也不能看见中间态。
+   865	        _env_restore(env_before)
+   866	        PROCESS_STATE_LOCK.release()
+   867	
+   868	    blocks = []
+   869	    all_ok = True
+   870	    # 出参解析必须用**未截断**的入口块原文：先截尾再 json.loads，等于让长度策略改写出参
+   871	    # 契约 —— 合法 JSON 被劈成尾巴后必然解不动，落进降级分支换成 {'output': 尾巴}，
+   872	    # 声明过的出参键整个消失且不留痕迹（BUG-0016）。截断只留给记录与回传的那份。
+   873	    entry_stdout_raw = ''
+   874	    for b in report.get('blocks', []):
+   875	        raw_stdout = b.get('stdout') or ''
+   876	        if action.entry in (b.get('tag') or []):
+   877	            entry_stdout_raw = raw_stdout
+   878	        blocks.append({
+   879	            'index': b['index'],
+   880	            'language': b['language'],
+   881	            'tag': b['tag'],
+   882	            'status': b['status'],
+   883	            'duration_ms': b['duration_ms'],
+   884	            'exit_code': b.get('exit_code'),
+   885	            'stdout': raw_stdout[-_STDOUT_KEEP:],
+   886	            'stderr': (b.get('stderr') or '')[-2000:],
+   887	        })
+   888	        if b['status'] in ('failed', 'error', 'timeout'):
+   889	            all_ok = False
+   890	
+   891	    # 出参 data：入口块 stdout 优先尝试解析为 JSON（docs/03 §7.3.7）
+   892	    data = None
+   893	    stdout_truncated = False
+   894	    if entry_stdout_raw:
+   895	        stdout_truncated = len(entry_stdout_raw) > _STDOUT_KEEP
+   896	        try:
+   897	            data = json.loads(entry_stdout_raw)
+   898	        except (json.JSONDecodeError, ValueError):
+   899	            data = {'output': entry_stdout_raw[-_STDOUT_KEEP:].strip()}
+   900	
+   901	    if not all_ok:
+   902	        err_blocks = [b for b in blocks if b['status'] in ('failed', 'error', 'timeout')]
+   903	        if sandboxed:
+   904	            # docs/07 §5 的「执行完即回收」原本只挂在成功分支，于是反复失败的动作按次
+   905	            # 累积 jail 目录（BUG-0012）。owner 裁决默认删：失败现场已经随下面的
+   906	            # error.details.blocks 带出 stderr 尾段，排障不依赖目录是否还在。
+   907	            sbx.cleanup(artifacts_dir, exec_id, keep=False)
+   908	        failed = {'status': 'failed', 'data': data, 'error': {
+   909	            'code': 'internal',
+   910	            'message': f"块执行失败: block[{err_blocks[0]['index']}] {err_blocks[0]['status']}",
+   911	            'details': {'blocks': err_blocks},
+   912	        }}
+   913	        if stdout_truncated:
+   914	            failed['stdout_truncated'] = True
+   915	        return failed
+   916	
+   917	    # entry_no_output 契约（docs/38 §1）：入口块没抛异常、也没打印 ⇒ 不能记 ok。
+   918	    # 否则"调用被关在 `if __name__ == \"__main__\":` 里"这族动作每次执行都报成功、
+   919	    # 不留痕迹 —— 引擎 exec 时 __name__='__md_block__'，守卫内的调用永不执行。
+   920	    # 判据认"空 stdout"，不认 data 为 null（main 合法返回 None 时 data=None 但 stdout 非空）。
+   921	    if not entry_stdout_raw.strip():
+   922	        return {'status': 'failed', 'data': None, 'error': {
+   923	            'code': 'entry_no_output',
+   924	            'message': (f"入口块 {action.entry} 无 stdout：{action.id} 的调用被关在守卫里，"
+   925	                        f"或 main() 未打印。引擎 exec 时 __name__ != '__main__'，"
+   926	                        f"`if __name__ == \"__main__\":` 内的调用永不执行。"),
+   927	            'details': {
+   928	                'entry_block': action.entry,
+   929	                'hint': ('ENTRY_DRIVER：把调用从守卫移到模块级 —— '
+   930	                         '读 ACTUS_PARAMS → main(params) → print(json.dumps(...))'),
+   931	            },
+   932	        }}
+   933	
+   934	    # 产物收集：vools 报告中的 export 产物 + 块级 output 文件（docs/04 §3）
+   935	    arts = []
+   936	    for b in report.get('blocks', []):
+   937	        for a in (b.get('artifacts') or []):
+   938	            arts.append({'name': a.get('name'), 'path': a.get('path'),
+   939	                         'hash': a.get('hash'), 'block': b['index']})
+   940	        if b.get('output_file'):
+   941	            arts.append({'name': os.path.basename(b['output_file']),
+   942	                         'path': b['output_file'], 'hash': None, 'block': b['index']})
+   943	
+   944	    result = {'status': 'ok', 'data': data, 'error': None, 'artifacts': arts}
+   945	    if stdout_truncated:
+   946	        # 出参形状保住了，但回传的记录侧 stdout 是截过的 —— 让调用方分得清
+   947	        # 「动作真吐了 output 键」与「被长度策略截过」（BUG-0016）。
+   948	        result['stdout_truncated'] = True
+   949	    if sandboxed:
+   950	        result['sandboxed'] = True
+   951	        result['sandbox_root'] = build_dir.replace(os.sep, '/')
+   952	        # docs/07 §5：沙箱结果与产物同样留痕但根目录临时，执行完即回收
+   953	        sbx.cleanup(artifacts_dir, exec_id, keep=False)
+   954	    return result
+   955	
+   956	
+   957	def _register_artifacts(meta_dir: str, action: Action, exec_id: str,
+   958	                        artifacts: list) -> None:
+   959	    """产物登记 _meta/artifacts.json（docs/04 §3：名称/路径/哈希/来源动作/版本）。"""
+   960	    if not artifacts:
+   961	        return
+   962	    path = os.path.join(meta_dir, 'artifacts.json')
+   963	    reg = {'actions': {}}
+   964	    if os.path.exists(path):
+   965	        try:
+   966	            with open(path, 'r', encoding='utf-8') as f:
+   967	                reg = json.load(f)
+   968	        except (json.JSONDecodeError, OSError):
+   969	            reg = {'actions': {}}
+   970	
+   971	    import hashlib
+   972	    actions_reg = reg.setdefault('actions', {})
+   973	    ver_reg = actions_reg.setdefault(action.id, {}).setdefault(
+   974	        action.meta.get('version', '0.0.0'), {'artifacts': {}})
+   975	    table = ver_reg.setdefault('artifacts', {})
+   976	    for a in artifacts:
+   977	        p = a.get('path')
+   978	        sha = a.get('hash')
+   979	        if p and os.path.exists(p) and not sha:
+   980	            with open(p, 'rb') as f:
+   981	                sha = hashlib.sha256(f.read()).hexdigest()
+   982	        table[a.get('name') or f'block_{a.get("block")}'] = {
+   983	            'path': (p or '').replace(os.sep, '/'),
+   984	            'sha256': sha,
+   985	            'source_exec': exec_id,
+   986	            'block': a.get('block'),
+   987	        }
+   988	    os.makedirs(meta_dir, exist_ok=True)
+   989	    with open(path, 'w', encoding='utf-8') as f:
+   990	        json.dump(reg, f, ensure_ascii=False, indent=2)
+   991	
+   992	
+   993	def preview(action_id: str, params: dict = None, actions_dir: str = None) -> dict:
+   994	    """干跑（docs/06 §3）：展示将执行的块/指令/依赖/trust，不执行任何代码。"""
+   995	    from .indexer import get_action
+   996	    params = params or {}
+   997	    action = (_get_validated(action_id) if not actions_dir
+   998	              else load_and_validate(get_action(action_id, actions_dir).path))
+   999	    _validate_params(action, params)
+  1000	    strategy = decide(action.trust, confirmed=False)
+  1001	    return {
+  1002	        'action': action.brief(),
+  1003	        'blocks': [{'index': b['index'], 'language': b['language'],
+  1004	                    'tag': b['tag'], 'directives': b['directives']}
+  1005	                   for b in action.blocks],
+  1006	        'deps': action.meta.get('deps') or [],
+  1007	        'strategy': strategy,
+  1008	        'pending_ops': _pending_ops(action, params),
+  1009	    }

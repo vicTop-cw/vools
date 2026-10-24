@@ -14,7 +14,7 @@ from .mirror import MirrorDB
 
 def _now_iso() -> str:
     import datetime
-    return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class Requester:
