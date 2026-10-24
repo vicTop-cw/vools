@@ -290,6 +290,19 @@ class SqlBuilder(abc.ABC):
         ...
 
 
+def _require_name(value: Any, what: str) -> str:
+    """校验 SQL 标识符/条件是非空字符串（BUG-459）。
+
+    原实现对表名、列名、JOIN 条件零校验，空串会静默产出**语法非法**的 SQL：
+    ``from_('')`` -> ``SELECT * FROM ``、``join('u', '')`` -> ``... ON ``、
+    ``select('')`` -> ``SELECT ``——执行时才由数据库报错，且报错信息指向生成的
+    SQL 而非调用点。
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"{what} 必须是非空字符串，收到 {type(value).__name__}: {value!r}")
+    return value
+
 class BaseSqlBuilder(SqlBuilder):
     """基础 SQL 构建器实现（占位符按 `_paramstyle` 生成）。"""
 
@@ -462,6 +475,8 @@ class BaseSqlBuilder(SqlBuilder):
         返回：
             self，支持链式调用
         """
+        for c in columns:
+            _require_name(c, "select() 的列名")
         self._columns.extend(columns)
         return self
 
@@ -475,6 +490,8 @@ class BaseSqlBuilder(SqlBuilder):
         返回：
             self，支持链式调用
         """
+        for t in tables:
+            _require_name(t, "from_() 的表名")
         self._tables.extend(tables)
         return self
 
@@ -619,6 +636,7 @@ class BaseSqlBuilder(SqlBuilder):
         返回：
             self，支持链式调用
         """
+        _require_name(table, "insert_into() 的表名")
         self._insert_table = table
         return self
 
@@ -645,6 +663,7 @@ class BaseSqlBuilder(SqlBuilder):
         返回：
             self，支持链式调用
         """
+        _require_name(table, "update() 的表名")
         self._update_table = table
         return self
 
@@ -671,6 +690,7 @@ class BaseSqlBuilder(SqlBuilder):
         返回：
             self，支持链式调用
         """
+        _require_name(table, "delete_from() 的表名")
         self._delete_table = table
         return self
 
@@ -693,6 +713,8 @@ class BaseSqlBuilder(SqlBuilder):
             raise ValueError(
                 f"join_type 只支持 {'/'.join(self._VALID_JOIN_TYPES)}，"
                 f"收到 {join_type!r}")
+        _require_name(table, "join() 的表名")
+        _require_name(on_condition, "join() 的 on_condition")
         self._joins.append((_jt, table, on_condition))
         return self
 
@@ -824,6 +846,10 @@ class BaseSqlBuilder(SqlBuilder):
         parts = []
 
         columns = ', '.join(self._columns) if self._columns else '*'
+        # BUG-459: ``SELECT *`` 没有 FROM 是语法非法的（此前静默生成）。
+        if not self._tables and (not self._columns or list(self._columns) == ['*']):
+            raise ValueError(
+                "SELECT 语句缺少 FROM 表：请先调用 from_(...) 指定表名")
         parts.append(f"SELECT {columns}")
 
         if self._tables:
