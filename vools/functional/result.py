@@ -105,7 +105,17 @@ class Result(Generic[T, E]):
         """
         if self.is_success:
             return self._value
-        raise self._value
+        error = self._value
+        if isinstance(error, BaseException):
+            raise error
+        # BUG-436: Result[T, E] 的 E 可以是任意类型。原实现无条件
+        # ``raise self._value``，当错误是字符串/整数/None 时 Python 会抛
+        # ``TypeError: exceptions must derive from BaseException``——完全看不出
+        # 是"错误值不是异常"，更像 Result 自身的 bug。这里给出可操作提示。
+        raise TypeError(
+            f"Result.unwrap() 失败：错误值不是异常（"
+            f"{type(error).__name__}: {error!r}）。若错误是普通值，请改用 "
+            f"unwrap_or()/unwrap_or_else() 或 get_or_raise(exception)。")
     
     def unwrap_or(self, default: T) -> T:
         """
