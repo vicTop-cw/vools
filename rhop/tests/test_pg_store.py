@@ -34,6 +34,25 @@ PG_SPEC = {
 _SESSION_TABLE = "rhop_test_pg_%d" % int(time.time())
 
 
+def _pg_available() -> bool:
+    """探测 PostgreSQL 是否可达（服务未启动 / 账号密码端口不符都算不可达）。"""
+    try:
+        import psycopg2
+        conn = psycopg2.connect(host=PG_SPEC["host"], port=PG_SPEC["port"],
+                                user=PG_SPEC["user"], password=PG_SPEC["password"],
+                                dbname=PG_SPEC["dbname"], connect_timeout=3)
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+# 外部服务不可达时应当 skip 而非 error —— 否则 25 个 ERROR 会在 CI 里掩盖真实失败。
+pytestmark = pytest.mark.skipif(
+    not _pg_available(),
+    reason="PostgreSQL 不可达（服务未启动，或账号/密码/端口不符）")
+
+
 def _pg_store(table=None, **overrides):
     """创建一个 PostgreSQL 测试 store（自动清理旧表 + 旧 type）。"""
     table = table or _SESSION_TABLE
@@ -386,3 +405,76 @@ class TestPgTaskQueueIntegration:
         print("Integration test task state:", tasks[0]["state"])
 
         queue.close()
+
+
+# ---------------------------------------------------------------------------
+# A/B 两端共享同一个 PostgreSQL 表（真实部署形态的端到端验证）
+# ---------------------------------------------------------------------------
+class TestABSharedDatabase:
+    """A 端投递、B 端领取执行，两个独立 store 实例连同一张表。
+
+    状态机：PENDING →(claim) LOCKED →(开始执行) RUNNING → COMPLETED
+    """
+
+    TABLE = "rhop_test_ab_shared"
+
+    def _pair(self):
+        spec = dict(PG_SPEC, table=self.TABLE)
+        a = create_store(spec, {"name": "A", "role": "A", "base_dir": "."})
+        a.init_schema()
+        b = create_store(spec, {"name": "B", "role": "B", "base_dir": "."})
+        return a, b
+
+    @pytest.fixture
+    def pair(self):
+        a, b = self._pair()
+        yield a, b
+        a.close()
+        b.close()
+
+    def test_cross_instance_lifecycle(self, pair):
+        a, b = pair
+        n = a.insert_tasks([TaskRecord(task_name="ab-1", value="echo one"),
+                            TaskRecord(task_name="ab-2", value="echo two")])
+        assert n == 2
+        # B 端（另一实例）能看到 A 投递的任务
+        assert b.count_by_state().get(TaskState.PENDING) == 2
+
+        claimed = b.claim_next("worker-B")
+        assert claimed is not None
+        assert str(claimed.state) == TaskState.LOCKED
+        # A 端能看到是 worker-B 持有
+        assert a.get_task(claimed.task_name).worker_id == "worker-B"
+
+        # A 抢不到 B 已锁的那个（防止双执行）
+        for _ in range(3):
+            other = a.claim_next("worker-A")
+            if other is None or other.task_name == claimed.task_name:
+                break
+            a.set_state(other.task_name, TaskState.RUNNING)
+            a.set_state(other.task_name, TaskState.COMPLETED)
+        assert other is None or other.task_name != claimed.task_name
+
+        # B 走完整流转，A 全程可见
+        b.set_state(claimed.task_name, TaskState.RUNNING)
+        assert str(a.require_task(claimed.task_name).state) == TaskState.RUNNING
+        b.set_state(claimed.task_name, TaskState.COMPLETED)
+        assert str(a.require_task(claimed.task_name).state) == TaskState.COMPLETED
+
+        # 收尾 + 两端一致
+        while True:
+            r = a.claim_next("worker-A")
+            if r is None:
+                break
+            a.set_state(r.task_name, TaskState.RUNNING)
+            a.set_state(r.task_name, TaskState.COMPLETED)
+        assert a.is_all_done()
+        assert a.count_by_state() == b.count_by_state()
+
+    def test_locked_task_not_reclaimable(self, pair):
+        """LOCKED 状态的绝不能再被领走（跨实例同样成立）。"""
+        a, b = pair
+        a.insert_tasks([TaskRecord(task_name="ab-lock", value="x")])
+        first = b.claim_next("worker-B")
+        assert first is not None
+        assert a.claim_next("worker-A") is None, "LOCKED 任务被另一个实例重复领取"
