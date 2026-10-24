@@ -6,6 +6,7 @@ import inspect
 from functools import wraps
 from typing import Callable, Any, Dict, List
 from ..cache.sigcache import get_signature
+from ..core.base import VoolsBase
 
 __all__ = ['curry_class']
 
@@ -266,7 +267,7 @@ def curry_class(cls: type):
 
 
 @curry_class
-class T:
+class T(VoolsBase):
     """示例类，使用 @curry_class 装饰器"""
     
     def __init__(self):
@@ -310,24 +311,6 @@ class T:
         return default
     
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def __lt__(self, a, b):
         """小于比较"""
         return a < b

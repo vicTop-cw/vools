@@ -6,6 +6,7 @@ from typing import Any
 
 from .base import BaseBackend
 from ...decorators.bridge_decorator import bridge
+from ...core.base import VoolsBase
 __all__ = ['JsonBackend']
 
 # 尝试导入 orjson，如果不可用则使用标准 json
@@ -69,7 +70,7 @@ def _json_decode(data: bytes) -> Any:
     return _json_decode_bridge(data)
 
 
-class JsonBackend(BaseBackend):
+class JsonBackend(BaseBackend, VoolsBase):
     """JSON 序列化后端，支持 orjson 高性能实现"""
 
     name = "json"
@@ -170,24 +171,6 @@ class JsonBackend(BaseBackend):
             return json.loads(data.decode('utf-8'), object_hook=vools_object_hook)
 
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def dumps_str(self, obj: Any) -> str:
         """
         序列化为 JSON 字符串（不转义 Unicode）

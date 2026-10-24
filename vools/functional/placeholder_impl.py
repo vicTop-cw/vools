@@ -110,6 +110,8 @@ Z 的基本用法::
 
 from typing import Any, Callable, Optional
 
+from ..core.base import VoolsBase
+
 __all__ = ['X', 'Y','Z']
 
 
@@ -706,7 +708,7 @@ class PipeY:
         """
         ops = self.ops
 
-        class SubscriptExecutor:
+        class SubscriptExecutor(VoolsBase):
             def __getitem__(self_, arg):
                 if isinstance(arg, tuple):
                     if not arg:
@@ -732,34 +734,6 @@ class PipeY:
                 if extra:
                     result = result[extra[0]] if len(extra) == 1 else result[tuple(extra)]
                 return result
-            def do(self, f=print, pre_f=None, sub_f=None):
-                """对自身应用副作用函数，返回 self 以支持链式调用。
-
-                用于调试或日志输出，不改变执行器本身。
-
-                参数
-                ----
-                f: callable
-                    副作用函数，默认为 ``print``。
-                pre_f: callable, optional
-                    预处理函数，在 ``f`` 之前作用于 self。
-                sub_f: callable, optional
-                    后处理函数，在 ``f`` 之后作用于返回值（不期望返回）。
-
-                返回
-                ----
-                SubscriptExecutor
-                    返回自身，支持链式调用。
-                """
-                rs = self
-                if pre_f:
-                    rs = pre_f(rs)
-                rs = f(rs)
-                if sub_f:
-                    sub_f(rs)
-                return self
-
-
         return SubscriptExecutor()
 
 

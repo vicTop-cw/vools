@@ -43,12 +43,13 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, Future
 
 from ...functional import Result
 from ...task import TaskQueue, TaskStatus
+from ...core.base import VoolsBase
 from ..core.models import Task
 
 logger = logging.getLogger(__name__)
 
 
-class DagScheduler:
+class DagScheduler(VoolsBase):
     """
     DAG 拓扑调度器
 
@@ -311,21 +312,3 @@ class DagScheduler:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.stop()
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self

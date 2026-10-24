@@ -13,6 +13,8 @@ from functools import wraps
 from inspect import signature, getfile
 from typing import Any, Callable, Optional, Dict
 
+from ..core.base import VoolsBase
+
 try:
     import fcntl
     HAS_FCNTL = True
@@ -58,7 +60,7 @@ def sanitize_file_key(file_key: str) -> str:
     return sanitized
 
 
-class FileLock:
+class FileLock(VoolsBase):
     """跨平台文件锁"""
 
     def __init__(self, file_path: str):
@@ -128,24 +130,6 @@ class FileLock:
                 f"(lock held by another process/thread); use acquire()'s bool "
                 f"result to implement wait/retry"
             )
-        return self
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
         return self
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.release()

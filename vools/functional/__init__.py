@@ -16,6 +16,8 @@ from typing import Callable, Iterable
 from functools import reduce, wraps
 import itertools
 
+from ..core.base import VoolsBase
+
 __all__ = ['Pipe', 'Ops', 'O', 'Seq', 'P', 'X', 'Y', 'NONE', 'arrow_func', 'g', 'iif', 'ConditionBuilder', 'LazyProperty'
     , '_', 'magic', 'f', 'to_holder', 'F', 'flip', 'apply', 'hd', 'box', 'Box', 'setattr_box'
     , 'waiter', 'for_', 'foreach', 'for_p', 'build', 'build_text',
@@ -56,7 +58,7 @@ def _pipe(*funcs):
     return _inn
 
 
-class Pipe:
+class Pipe(VoolsBase):
     """
     管道操作类，支持链式调用
     
@@ -90,25 +92,6 @@ class Pipe:
                 iterable, *args, *args2, **kwargs, **kwargs2
             )
         )
-
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function applied after f (no return expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
 
     @classmethod
     def pipe(cls, *funcs):

@@ -49,8 +49,10 @@ import secrets
 import binascii
 from typing import Any, Callable, Type, Dict, Optional, Union
 
+from ..core.base import VoolsBase
 
-class CryptoRegistry:
+
+class CryptoRegistry(VoolsBase):
     """
     加密算法注册中心
     
@@ -237,24 +239,6 @@ class CryptoRegistry:
         """
         return cls._encryptors.copy()
     
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def get_decryptors(cls) -> Dict[str, Callable]:
         """
         获取所有解密器
@@ -323,8 +307,7 @@ class CryptoMeta(type):
         return new_cls
 
 
-
-class Encryptor(metaclass=CryptoMeta):
+class Encryptor(VoolsBase, metaclass=CryptoMeta):
     """
     加密器类 - 提供链式调用的加密操作
     
@@ -597,29 +580,11 @@ class Encryptor(metaclass=CryptoMeta):
         return f"Encryptor(data={repr(self._data)}, history={self._history})"
     
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def __str__(self):
         return str(self._data)
 
 
-class Decryptor(metaclass=CryptoMeta):
+class Decryptor(VoolsBase, metaclass=CryptoMeta):
     """
     解密器类 - 提供链式调用的解密操作
     
@@ -706,26 +671,6 @@ class Decryptor(metaclass=CryptoMeta):
     
     def __str__(self):
         return str(self._data)
-
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function applied after f (no return expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
-
 
 # 便捷函数
 def md5(data: Any) -> str:

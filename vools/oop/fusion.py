@@ -15,6 +15,8 @@ import functools
 import types
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
+from ..core.base import VoolsBase
+
 # 不可变类型列表（这些类型的初始化在 __new__ 中完成）
 _IMMUTABLE_TYPES = (str, int, float, bool, tuple, bytes, frozenset)
 
@@ -291,7 +293,7 @@ def _apply_method_wrapper(cls: Type, method_name: str, wrapper_config: Dict[str,
     setattr(cls, method_name, wrapped_method)
 
 
-class ClassFusion:
+class ClassFusion(VoolsBase):
     """
     类融合器（面向对象接口）
     
@@ -375,24 +377,6 @@ class ClassFusion:
         return self._fused_class
     
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def __call__(self, *args, **kwargs) -> Any:
         """创建融合类的实例"""
         fused_class = self.fuse()

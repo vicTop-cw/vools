@@ -43,8 +43,10 @@ import pickle
 import urllib.parse
 from typing import Any, Callable, Type, Dict, Optional
 
+from ..core.base import VoolsBase
 
-class CodecRegistry:
+
+class CodecRegistry(VoolsBase):
     """
     编解码器注册中心
     
@@ -242,28 +244,6 @@ class CodecRegistry:
         """
         return cls._encoders.copy()
     
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        BUG-276: 原实现被错位的 @classmethod 装饰——self 绑定为类，
-        传给 f 的是类对象且返回类而非实例；恢复为实例方法。
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
-
     @classmethod
     def get_decoders(cls) -> Dict[str, Callable]:
         """
@@ -352,7 +332,7 @@ class EncoderMeta(type):
 
 
 
-class Encoder(metaclass=EncoderMeta):
+class Encoder(VoolsBase, metaclass=EncoderMeta):
     """
     编码器类 - 提供链式调用的编码操作
     
@@ -633,31 +613,11 @@ class Encoder(metaclass=EncoderMeta):
     
     def __repr__(self):
         return f"Encoder(data={repr(self._data)}, history={self._history})"
-    
-
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def __str__(self):
         return str(self._data)
 
 
-class Decoder(metaclass=EncoderMeta):
+class Decoder(VoolsBase, metaclass=EncoderMeta):
     """
     解码器类 - 提供链式调用的解码操作
     
@@ -932,24 +892,6 @@ class Decoder(metaclass=EncoderMeta):
     
     def __str__(self):
         return str(self._data)
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function (no return expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
 
 
 

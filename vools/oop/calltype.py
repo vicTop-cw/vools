@@ -3,6 +3,7 @@ import inspect
 import types
 import functools
 from ..cache.sigcache import get_signature
+from ..core.base import VoolsBase
 
 __all__ = ['CallableType','get_callable_type','create_fake']
 
@@ -229,7 +230,7 @@ def create_fake(func):
 def test_callable_type_detection():
     """测试get_callable_type函数的正确性"""
     # 测试类
-    class TestClass:
+    class TestClass(VoolsBase):
         class_attr = 10
         
         def instance_method(self):
@@ -242,46 +243,9 @@ def test_callable_type_detection():
         @staticmethod
         def static_method():
             pass
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self for chaining.
 
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function applied before f
-                sub_f: Post-processing function (no return expected)
+    class CallableInstance(VoolsBase):
 
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
-        
-    class CallableInstance:
-
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function
-                sub_f: Post-processing function (no return value expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
         def __call__(self):
             pass
     

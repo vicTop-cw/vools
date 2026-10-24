@@ -12,6 +12,8 @@ vools 配置模块
 
 __all__ = ['DATABASE_CONFIG', 'OTHER_CONFIG', 'PATHS', 'ConfigManager', 'config']
 
+from .core.base import VoolsBase
+
 # ============================================================================
 # 数据库配置
 # ============================================================================
@@ -68,7 +70,7 @@ PATHS = {
 # 提供统一的配置访问接口，支持属性式访问
 # ============================================================================
 
-class ConfigManager:
+class ConfigManager(VoolsBase):
     """
     配置管理器
     
@@ -86,25 +88,6 @@ class ConfigManager:
         config.other.cache_duration = 5
         config.paths.base_path = '/data'
     """
-
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
-        
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-        
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
 
     def __init__(self):
         self.database = DATABASE_CONFIG

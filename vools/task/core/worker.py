@@ -14,9 +14,10 @@ import os
 from .models import Task, TaskStatus
 from .storage import TaskStorage
 from .queue import TaskQueue
+from ...core.base import VoolsBase
 
 
-class Worker:
+class Worker(VoolsBase):
     """单个Worker进程"""
 
     def __init__(self, worker_id: str, db_path: str = "tasks.db",
@@ -61,24 +62,6 @@ class Worker:
         print(f"Worker {self.worker_id} stopping...")
 
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def _process_one_task(self):
         """处理一个任务"""
         # 原子领取任务
@@ -139,7 +122,7 @@ def _worker_process(worker_id: str, db_path: str, lease_seconds: int, poll_inter
         worker.stop()
 
 
-class WorkerPool:
+class WorkerPool(VoolsBase):
     """Worker进程池"""
 
     def __init__(self, num_workers: int = 4, db_path: str = "tasks.db",
@@ -192,29 +175,11 @@ class WorkerPool:
         return self
 
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
 
 
-class ThreadPool:
+class ThreadPool(VoolsBase):
     """Worker线程池（多线程版本）
 
     适用于IO密集型任务，共享同一进程的内存空间
@@ -282,22 +247,4 @@ class ThreadPool:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self for chaining.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function (no return expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
 

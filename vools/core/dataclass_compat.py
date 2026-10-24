@@ -16,6 +16,8 @@ __all__ = ['dataclass', 'field', 'asdict', 'is_dataclass', 'MISSING', 'FrozenIns
 from typing import Any, Dict, Callable, TypeVar, Optional
 import sys
 
+from .base import VoolsBase
+
 _T = TypeVar('_T')
 
 # ================================================================
@@ -91,32 +93,12 @@ else:
 
     _ATTR_CAPS = _detect_attr_capabilities()
 
-    class _MISSING_TYPE:
+    class _MISSING_TYPE(VoolsBase):
         """模拟 dataclasses.MISSING"""
         def __repr__(self):
             return 'MISSING'
         def __bool__(self):
             return False
-        def do(self, f=print, pre_f=None, sub_f=None):
-            """Apply a function for side effects, return self for chaining.
-
-            Args:
-                f: Function to apply (default print)
-                pre_f: Pre-processing function applied before f
-                sub_f: Post-processing function (no return expected)
-
-            Returns:
-                self, for chaining
-            """
-            rs = self
-            if pre_f:
-                rs = pre_f(rs)
-            rs = f(rs)
-            if sub_f:
-                sub_f(rs)
-            return self
-
-
     MISSING = _MISSING_TYPE()
 
     def dataclass(cls: Optional[_T] = None, **kwargs) -> _T:

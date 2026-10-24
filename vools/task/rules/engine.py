@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 from functools import wraps
 
 from ...functional import Result, safe
+from ...core.base import VoolsBase
 from .rule import Rule, RuleSet
 
 
@@ -112,7 +113,7 @@ def rule(
     return decorator
 
 
-class RuleEngine:
+class RuleEngine(VoolsBase):
     """
     规则引擎 - 执行上下文匹配的规则
 
@@ -277,26 +278,6 @@ class RuleEngine:
         return Result.success(ordered)
 
 
-
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
-    
     @classmethod
     def from_json(
         cls,

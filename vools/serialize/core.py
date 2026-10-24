@@ -6,10 +6,11 @@ from typing import Any, Optional
 
 from .backends import get_backend, BaseBackend
 from .config import get_default_backend
+from ..core.base import VoolsBase
 __all__ = ['Serializer', 'dumps', 'loads', 'dumps_hex', 'loads_hex']
 
 
-class Serializer:
+class Serializer(VoolsBase):
     """
     序列化器核心类
 
@@ -135,24 +136,6 @@ class Serializer:
             reset_context(token)
 
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def __repr__(self) -> str:
         return f"Serializer(backend='{self._backend_name}')"
 
