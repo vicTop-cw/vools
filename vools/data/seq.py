@@ -1,4 +1,4 @@
-from itertools import chain,zip_longest,groupby
+from itertools import chain,zip_longest,groupby,islice
 import itertools
 from sys import maxsize as maxint
 from typing import Iterable, Callable, Iterator, List, Tuple, Optional, Any, TypeVar, Generic, Generator, Type, Union
@@ -344,14 +344,28 @@ class SeqBase:
         Raises:
             ValueError: times 为负数时
         """
-        if isgeneratorfunction(func):
-            return cls(func())
-        if times is None:
-            times = float('inf')
-        else:
-            times = int(times)
+        # BUG-413: times 参数校验与边界。
+        #   * times=0 原实现进入 while True 后把 times 减到 -1，**永不等于 0**
+        #     → 无限产出（消费方直接挂死）；
+        #   * times=1.5 被 int() 静默截断成 1；times='3' 被静默当成 3。
+        if times is not None:
+            if isinstance(times, bool) or not isinstance(times, int):
+                raise TypeError(
+                    f"cycle 的 times 需要 int 或 None，收到 "
+                    f"{type(times).__name__}: {times!r}")
             if times < 0:
                 raise ValueError('times must be non-negative')
+            if times == 0:
+                return cls()
+        if isgeneratorfunction(func):
+            # BUG-413: 原实现忽略 times —— 生成器函数 + times 静默无效。
+            # 现按「最多产出 times 个元素」处理。
+            src = func()
+            if times is not None:
+                src = islice(src, times)
+            return cls(src)
+        if times is None:
+            times = float('inf')
         def gen():
             nonlocal times
             while True:
@@ -1139,14 +1153,21 @@ class Seq(SeqBase, VoolsBase):
         return self.__class__(gen())
 
     def tee(self, n: int = 2, fillvalue: Any = None) -> 'Seq':
-        """将序列 tee 成 n 路并行迭代器。
-        
+        """按 n 元组把序列**分块**（不是 itertools.tee 的多路迭代器）。
+
+        注意（BUG-413 文档纠偏）：实现按 BUG-175 的语义把元素按 n 个一组
+        切分（与 :meth:`grouper` 一致），末组不足时用 ``fillvalue`` 补齐：
+
+            list(Seq([1, 2, 3]).tee(2))   # -> [(1, 2), (3, None)]
+
+        原 docstring 写「tee 成 n 路并行迭代器」与实现不符，容易误用。
+
         Args:
-            n: 并行路数，默认为 2
-            fillvalue: 填充值
-            
+            n: 每组元素个数，默认为 2
+            fillvalue: 末组不足时的填充值
+
         Returns:
-            新的 Seq 实例
+            新的 Seq 实例（元素是 n 元组）
         """
         def gen():
             # BUG-175: 原 `deque(maxlen=n)` 是滑动窗口，每 append 一个元素就 yield，
