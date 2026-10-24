@@ -147,6 +147,7 @@ def deserialize_callable(handler_name: str, handler_state: Any, backend_deserial
 #   vicText/vicDate/vicList）直接通过 __getstate__ 序列化，无需 handler。
 from .decorator_handler import DecoratorHandler
 from .functional_handler import FunctionalHandler
+from .curry_handler import CurryHandler
 
 # 注册顺序：具体类型 → 通用兜底
 # BUG-450: get_handler 采用**首个匹配者胜**，因此必须先注册更专用的处理器。
@@ -156,4 +157,7 @@ from .functional_handler import FunctionalHandler
 #     serialize_callable(Box(1))   -> handler='DecoratorHandler'
 #     deserialize_callable(...)    -> 普通 function（Box 类型与行为静默丢失）
 register_handler(FunctionalHandler())
+# BUG-453: Curried（柯里化函数）此前无任何处理器，pickle 报 mappingproxy、
+# JSON 报 not serializable —— 放进任务载荷/缓存时静默不可用。
+register_handler(CurryHandler())
 register_handler(DecoratorHandler())
