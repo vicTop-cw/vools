@@ -113,8 +113,49 @@ class VoolsBase:
 
     @classmethod
     def from_dict(cls, data):
-        """从字典创建对象"""
-        return cls(**data)
+        """从字典创建对象（BUG-417）。
+
+        原实现 ``cls(**data)`` 对两类常见情况都不友好：
+
+        * ``Seq.from_dict({})`` → 静默得到**空 Seq**（数据被丢弃却毫无提示）；
+        * ``Seq.from_dict({'x': 1})`` → TypeError: unexpected keyword argument 'x'
+          （看不出是"类不接受该键"）；
+        * ``Encryptor.from_dict({})`` → missing 1 required positional argument
+          'data'（看不出与 from_dict 的关联）。
+
+        现：data 必须是 dict；优先 ``cls(**data)``；失败后退化为
+        "默认构造 + 逐键赋值"（仅限类已有/已有 slot 的属性）；两者都不可行时
+        抛带类名的 TypeError。
+        """
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"{cls.__name__}.from_dict 需要 dict，收到 "
+                f"{type(data).__name__}: {data!r}")
+        try:
+            return cls(**data)
+        except TypeError:
+            pass
+        try:
+            obj = cls()
+        except Exception:
+            raise TypeError(
+                f"{cls.__name__}.from_dict 无法从 {data!r} 重建："
+                f"既不能 cls(**data)，也无法用默认构造 + 属性赋值。")
+        for key, value in data.items():
+            has_slot = any(
+                key in (getattr(c, '__slots__', ()) if not isinstance(
+                    getattr(c, '__slots__', ()), str) else (getattr(c, '__slots__', ''),))
+                for c in cls.__mro__)
+            if hasattr(cls, key) or has_slot:
+                try:
+                    setattr(obj, key, value)
+                except AttributeError:
+                    raise TypeError(
+                        f"{cls.__name__} 的属性 {key!r} 不可写，无法 from_dict")
+            else:
+                raise TypeError(
+                    f"{cls.__name__} 没有属性 {key!r}，无法 from_dict 重建")
+        return obj
 
     def copy(self):
         """返回对象的浅拷贝（BUG-415）。
