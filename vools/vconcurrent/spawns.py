@@ -79,6 +79,57 @@ def _get_default_context() -> Any:
 # ============================================================================
 
 
+def _validate_spawn_args(target: Any, args: Any, kwargs: Any, name: Any) -> None:
+    """校验派生进程的参数（BUG-407）。
+
+    原实现零校验，非法参数要到**子进程里**才炸，父进程拿到一个 alive=True
+    的句柄却永远等不到结果：
+
+    * ``spawn('not-callable')`` → 子进程 `TypeError: 'str' object is not callable`；
+    * ``spawn(worker, 'abc')``  → str 被当序列展开成 3 个位置参数，子进程
+      `TypeError: worker() takes 1 positional argument but 3 were given`；
+    * ``spawn(worker, (1,), name=123)`` → 子进程
+      `AssertionError: name must be a string`。
+    """
+    if not callable(target):
+        raise TypeError(
+            f"spawn 的 func/target 必须可调用，收到 "
+            f"{type(target).__name__}: {target!r}")
+    if isinstance(args, (str, bytes, bytearray)):
+        raise TypeError(
+            f"spawn 的 args 必须是位置参数序列（tuple/list），不能是 "
+            f"{type(args).__name__}（否则会被逐字符展开成多个参数）")
+    if not isinstance(args, Sequence):
+        raise TypeError(
+            f"spawn 的 args 必须是序列，收到 {type(args).__name__}: {args!r}")
+    if kwargs is not None and not isinstance(kwargs, Mapping):
+        raise TypeError(
+            f"spawn 的 kwargs 必须是映射或 None，收到 "
+            f"{type(kwargs).__name__}: {kwargs!r}")
+    if name is not None and not isinstance(name, str):
+        raise TypeError(
+            f"spawn 的 name 必须是字符串或 None，收到 "
+            f"{type(name).__name__}: {name!r}")
+
+
+def _validate_positive_number(value: Any, what: str) -> None:
+    """校验正数型参数（timeout 等）——BUG-407。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"{what} 需要数字，收到 {type(value).__name__}: {value!r}")
+    if value <= 0:
+        raise ValueError(f"{what} 必须 > 0，收到 {value}")
+
+
+def _validate_non_negative_int(value: Any, what: str) -> None:
+    """校验非负整数型参数（max_restarts 等）——BUG-407。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"{what} 需要整数，收到 {type(value).__name__}: {value!r}")
+    if value < 0:
+        raise ValueError(f"{what} 不能为负，收到 {value}")
+
+
 class SpawnHandle:
     """派生进程句柄。
 
@@ -106,6 +157,7 @@ class SpawnHandle:
         daemon: bool = False,
         ctx: Optional[Any] = None,
     ) -> None:
+        _validate_spawn_args(target, args, kwargs, name)
         self._target: Callable[..., Any] = target
         self._args: Tuple[Any, ...] = tuple(args)
         self._kwargs: Dict[str, Any] = dict(kwargs or {})
@@ -360,6 +412,22 @@ class _RestartController:
         name: Optional[str] = None,
         daemon: bool = False,
     ) -> None:
+        # BUG-407: 参数校验（func=None 表示装饰器工厂用法）
+        if func is not None:
+            _validate_spawn_args(func, args, kwargs, name)
+        _validate_non_negative_int(max_restarts, 'restart_on_exit(max_restarts)')
+        if isinstance(delay, bool) or not isinstance(delay, (int, float)):
+            raise TypeError(
+                f"restart_on_exit(delay) 需要数字，收到 "
+                f"{type(delay).__name__}: {delay!r}")
+        if delay < 0:
+            raise ValueError(f"restart_on_exit(delay) 不能为负，收到 {delay}")
+        if isinstance(backoff, bool) or not isinstance(backoff, (int, float)):
+            raise TypeError(
+                f"restart_on_exit(backoff) 需要数字，收到 "
+                f"{type(backoff).__name__}: {backoff!r}")
+        if backoff <= 0:
+            raise ValueError(f"restart_on_exit(backoff) 必须 > 0，收到 {backoff}")
         self._func: Optional[Callable[..., Any]] = func
         self._args: Tuple[Any, ...] = tuple(args)
         self._kwargs: Dict[str, Any] = dict(kwargs or {})
@@ -564,6 +632,18 @@ class _Watchdog:
         restart: bool = False,
         max_restarts: int = 3,
     ) -> None:
+        # BUG-407: 校验 handle 的鸭子接口与 timeout/max_restarts，避免看门狗
+        # 线程在后台抛 AttributeError 而调用方毫不知情。
+        if not isinstance(handle, SpawnHandle):
+            raise TypeError(
+                f"watchdog 的 handle 需要 SpawnHandle，"
+                f"收到 {type(handle).__name__}: {handle!r}")
+        _validate_positive_number(timeout, 'watchdog(timeout)')
+        if on_dead is not None and not callable(on_dead):
+            raise TypeError(
+                f"watchdog 的 on_dead 必须可调用或 None，收到 "
+                f"{type(on_dead).__name__}: {on_dead!r}")
+        _validate_non_negative_int(max_restarts, 'watchdog(max_restarts)')
         self._handle: SpawnHandle = handle
         self._timeout: float = float(timeout)
         self._on_dead: Optional[Callable[[SpawnHandle], None]] = on_dead
