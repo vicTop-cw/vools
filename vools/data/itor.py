@@ -507,7 +507,9 @@ class Itor(VoolsBase):
             >>> list(gen)
             [3, 4, 5]
         """
-        if not isinstance(max_len, int):
+        # BUG-419: bool 是 int 的子类，原实现会把 True 当作 1 条历史接受；
+        # Nim 侧包装层拒绝 bool，两侧口径需一致。
+        if isinstance(max_len, bool) or not isinstance(max_len, int):
             raise TypeError("max_len must be an integer")
         if max_len < -1:
             raise ValueError("max_len must be >= -1")
