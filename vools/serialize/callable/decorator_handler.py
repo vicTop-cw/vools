@@ -17,11 +17,16 @@ class DecoratorHandler(CallableHandler, VoolsBase):
         """检查对象是否是被装饰器包装的函数"""
         if not callable(obj):
             return False
-        # 检查是否有 wraps 保留的属性
+        # BUG-447: 原实现第三个条件是 ``hasattr(__name__) and not
+        # hasattr(__code__)``——它把所有 **C 实现的 callable**（builtins：print/
+        # len 等）都误认领为"被装饰器包装的函数"：get_state 只能拿到 name/module，
+        # restore 必然抛 ``ValueError: Cannot restore decorated function: len``。
+        # 真正被装饰的函数一定有 ``__wrapped__``（functools.wraps）或本库的
+        # ``_vools_decorator`` 标记；其余（普通函数/builtins/lambda）应回退到
+        # 'raw' 序列化路径。
         return (
             hasattr(obj, '__wrapped__') or
-            hasattr(obj, '_vools_decorator') or
-            hasattr(obj, '__name__') and not hasattr(obj, '__code__')
+            hasattr(obj, '_vools_decorator')
         )
 
     def get_state(self, obj: Any) -> Dict[str, Any]:
