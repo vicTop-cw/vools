@@ -167,6 +167,17 @@ def _convert_result(result, return_type):
     args = _get_args(return_type)
 
     if return_type is list or origin is list:
+        # BUG-463: 原实现一律返回 ``result.to_list()``（即 list[dict]）——
+        # ``def ids() -> List[int]`` 却拿到 ``[{'id': 1}, {'id': 2}]``，
+        # 注解被**静默违背**（调用方按 List[int] 使用会在下游炸出类型错误）。
+        # 现在 List[标量] 取每行首列并按标量类型转换；List[dict]/List[Row]/
+        # List[Any]/无类型参数 保持原有语义。
+        elem = _unwrap_optional(args[0]) if (origin is list and args) else None
+        if elem in (int, float, str, bool, bytes):
+            return [SqlTypeMapper.convert_result(row[0], elem)
+                    for row in result.fetchall()]
+        if elem is Row:
+            return result.fetchall()
         return result.to_list()
 
     if return_type is dict or origin is dict:
