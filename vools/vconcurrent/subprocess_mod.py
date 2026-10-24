@@ -128,6 +128,34 @@ class VProcess:
         encoding: Optional[str] = None,
         hide_window: bool = True,
     ) -> None:
+        # BUG-405: 入口校验。原实现把参数原样交给 subprocess.Popen：
+        #   * cmd=[] / cmd=''  -> Windows 下抛 OSError [WinError 87] 参数错误；
+        #   * cmd=123          -> TypeError: 'int' object is not iterable；
+        #   * timeout=-1       -> 被接受（负超时语义未定义）。
+        # 均与"命令/超时参数错误"无关的晦涩错误，这里显式校验。
+        if isinstance(cmd, str):
+            if not cmd.strip():
+                raise ValueError("VProcess 的 cmd 不能为空字符串")
+        elif isinstance(cmd, (list, tuple)):
+            if len(cmd) == 0:
+                raise ValueError("VProcess 的 cmd 不能为空序列")
+            for _i, _part in enumerate(cmd):
+                if not isinstance(_part, str):
+                    raise TypeError(
+                        f"VProcess 的 cmd[{_i}] 必须是字符串，收到 "
+                        f"{type(_part).__name__}: {_part!r}")
+        else:
+            raise TypeError(
+                f"VProcess 的 cmd 必须是 str 或字符串序列，收到 "
+                f"{type(cmd).__name__}: {cmd!r}")
+        if timeout is not None:
+            if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+                raise TypeError(
+                    f"VProcess 的 timeout 需要数字（秒）或 None，收到 "
+                    f"{type(timeout).__name__}: {timeout!r}")
+            if timeout < 0:
+                raise ValueError(f"VProcess 的 timeout 不能为负，收到 {timeout}")
+
         self._cmd: Command = cmd
         self._shell: bool = shell
         self._timeout: Optional[float] = timeout
