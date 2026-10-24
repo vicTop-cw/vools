@@ -22,6 +22,29 @@ class Worker(VoolsBase):
 
     def __init__(self, worker_id: str, db_path: str = "tasks.db",
                  lease_seconds: int = 300, poll_interval: float = 0.5):
+        # BUG-432: 原实现零校验——worker_id=''/123/None、lease_seconds=-1/'x'、
+        # poll_interval=0/'x' 全部被接受（db_path='' 会在 TaskStorage 处被拒，
+        # 但错误信息来自下层，指不到 Worker 构造参数）。
+        if not isinstance(worker_id, str) or not worker_id.strip():
+            raise ValueError(
+                f"Worker 的 worker_id 需要非空字符串，收到 "
+                f"{type(worker_id).__name__}: {worker_id!r}")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int):
+            raise TypeError(
+                f"Worker 的 lease_seconds 需要整数，收到 "
+                f"{type(lease_seconds).__name__}: {lease_seconds!r}")
+        if lease_seconds <= 0:
+            raise ValueError(
+                f"Worker 的 lease_seconds 必须 > 0，收到 {lease_seconds}")
+        if isinstance(poll_interval, bool) or not isinstance(
+                poll_interval, (int, float)):
+            raise TypeError(
+                f"Worker 的 poll_interval 需要数字，收到 "
+                f"{type(poll_interval).__name__}: {poll_interval!r}")
+        if poll_interval <= 0:
+            raise ValueError(
+                f"Worker 的 poll_interval 必须 > 0，收到 {poll_interval}")
+
         self.worker_id = worker_id
         self.db_path = db_path
         self.lease_seconds = lease_seconds
