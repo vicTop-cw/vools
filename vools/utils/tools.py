@@ -617,6 +617,10 @@ def union_ordered_collection(original_list):
         return list(OrderedDict.fromkeys(original_list).keys())
     elif isinstance(original_list, tuple):
         return tuple(OrderedDict.fromkeys(original_list).keys())
+    # BUG-455: 其余类型（set/dict/str/None）原实现直接落到函数末尾返回 None。
+    raise TypeError(
+        f"union_ordered_collection() 需要 list 或 tuple，收到 "
+        f"{type(original_list).__name__}: {original_list!r}")
 
 
 # ============================================================================
@@ -890,7 +894,11 @@ def split(string, separator, rep='★'):
                 s.add(p)
         return _split(string=string, sep=list(s), rep=rep)
     else:
-        return None
+        # BUG-455: 原实现静默返回 None —— ``split('a,b', 123)`` 拿到 None，
+        # 调用方稍后 ``for x in result`` 才炸（或把 None 当"无结果"静默吞掉）。
+        raise TypeError(
+            f"split() 的 separator 需要字符串或字符串集合，收到 "
+            f"{type(separator).__name__}: {separator!r}")
 
 
 # ============================================================================
