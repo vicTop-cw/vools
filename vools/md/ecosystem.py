@@ -223,6 +223,13 @@ def render_template(template: str, context: Optional[Dict[str, Any]] = None) -> 
         >>> render_template('Hello {{ name }}!', {'name': 'World'})
         'Hello World!'
     """
+    # BUG-465: 原实现对模板零校验——非法/未闭合指令会被**原样留在输出里**
+    # （``render_template('{% if %}', {})`` 直接返回 '{% if %}'），使用者看到的
+    # 是夹杂原始指令的"渲染结果"，没有任何报错。模板引擎应在渲染后拒绝残留指令。
+    if not isinstance(template, str):
+        raise TypeError(
+            f"render_template() 的 template 需要字符串，收到 "
+            f"{type(template).__name__}: {template!r}")
     if context is None:
         context = {}
     ctx = TemplateContext(context)
@@ -282,7 +289,18 @@ def render_template(template: str, context: Optional[Dict[str, Any]] = None) -> 
     text = _replace_loops(text)
 
     # 变量替换
-    return _render_vars(text, ctx.variables)
+    rendered = _render_vars(text, ctx.variables)
+
+    # BUG-465: 渲染后仍残留的指令 = 非法/未闭合模板，必须响亮报错。
+    leftover = re.search(
+        r'\{%\s*(?:if|else|endif|for|endfor)\b.*?%\}|\{\{\s*\w+\s*\}\}',
+        rendered, flags=re.DOTALL)
+    if leftover:
+        raise ValueError(
+            f"模板包含无法解析或未闭合的指令: {leftover.group(0)!r}；"
+            f"支持 {{变量}}、{{% if x %}}...{{% endif %}}、"
+            f"{{% for x in list %}}...{{% endfor %}}")
+    return rendered
 
 
 def _render_vars(text: str, variables: Dict[str, Any]) -> str:
