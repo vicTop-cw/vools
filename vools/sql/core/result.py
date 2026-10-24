@@ -240,6 +240,19 @@ class ResultSet:
             rowcount: 受影响行数，默认为 0
             type_mapper: 类型映射器，默认为 None
         """
+        # BUG-464: 原实现直接 ``list(columns)``——传字符串会被**逐字符拆分**成
+        # 列名（``ResultSet('abc')`` -> columns=['a','b','c']，静默错值），
+        # 传 None/int 则在 list() 处抛 'NoneType'/'int' object is not iterable
+        # （看不出是哪个参数）。
+        if not isinstance(columns, (list, tuple)):
+            raise TypeError(
+                f"ResultSet 的 columns 需要 list/tuple，收到 "
+                f"{type(columns).__name__}: {columns!r}")
+        for _c in columns:
+            if not isinstance(_c, str) or not _c.strip():
+                raise ValueError(
+                    f"ResultSet 的列名必须是非空字符串，收到 "
+                    f"{type(_c).__name__}: {_c!r}")
         self._columns = list(columns)
         self._rowcount = rowcount
         self._cursor = 0
@@ -350,6 +363,13 @@ class ResultSet:
         返回：
             行对象列表
         """
+        # BUG-464: 非整数 size 会在 ``size <= 0`` 处抛
+        # "'<=' not supported between instances of 'str' and 'int'"。
+        if size is not None:
+            if isinstance(size, bool) or not isinstance(size, int):
+                raise TypeError(
+                    f"fetchmany() 的 size 必须是 int 或 None，收到 "
+                    f"{type(size).__name__}: {size!r}")
         if size is None:
             size = 1
         if size <= 0:
