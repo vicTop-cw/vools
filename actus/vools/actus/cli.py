@@ -30,17 +30,40 @@
 """
 import json
 import sys
+import io
 from pathlib import Path
 
 __all__ = ['main']
 
 
 def _out(obj):
+    _ensure_utf8_stdout()
     print(json.dumps(obj, ensure_ascii=False, indent=2))
+
+
+def _ensure_utf8_stdout():
+    """CLI 输出统一 UTF-8（Windows 管道捕获时为 GBK → 下游按 UTF-8 读会解码失败）。
+
+    Windows 上 Python 的管道 stdout 默认用 locale 编码（中文系统是 GBK），
+    而测试/宿主按 UTF-8 读取（subprocess.run(encoding='utf-8')）→
+    UnicodeDecodeError、拿到空输出（实测 test_link_chain 全挂）。
+    这里 reconfigure 为 UTF-8；py3.6 无 reconfigure 时退化为 errors='replace' 缓冲。
+    """
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except (AttributeError, ValueError):
+        # py3.6 或 stdout 已被替换：包一层 UTF-8 缓冲（尽力而为）
+        try:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8',
+                                          errors='replace')
+        except Exception:
+            pass
 
 
 def main(argv=None) -> int:
     """CLI 入口。"""
+    _ensure_utf8_stdout()
     parser = _build_parser()
     args = parser.parse_args(argv)
 
