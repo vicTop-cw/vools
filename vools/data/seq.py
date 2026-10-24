@@ -277,6 +277,26 @@ class SeqBase:
     
     def __iter__(self):
         return self._SeqIterator(self)
+
+    def __eq__(self, other):
+        """按**内容**比较（BUG-415）。
+
+        VoolsBase 的实现比较实例状态（__dict__ + __slots__），而 Seq 的数据是
+        惰性的：`Seq([1, 2])` 构造时 `_collection` 为空、`_origin` 是生成器
+        （被判定为 opaque 跳过），于是 `Seq([1, 2]) == Seq([1, 3])` 返回 True。
+        序列类型的自然语义是按元素比较（与 list 互比也成立）。
+        """
+        if self is other:
+            return True
+        if isinstance(other, SeqBase):
+            return list(self) == list(other)
+        if isinstance(other, (list, tuple)):
+            return list(self) == list(other)
+        return NotImplemented
+
+    # 内容可变 → 不可哈希（与 list 一致），避免继承 VoolsBase.__hash__ 的
+    # "unhashable type: 'list'" 之类内部错误。
+    __hash__ = None
     
     def __next__(self):
         self._current += 1
