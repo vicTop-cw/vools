@@ -22,6 +22,7 @@ import operator
 from typing import Any, Dict, Optional, Tuple
 
 from ..core.ast_compat import is_literal, literal_value
+from ..core.base import VoolsBase
 
 
 class _Placeholder:
@@ -125,8 +126,7 @@ class SafeEvalError(Exception):
         return self
 
 
-
-class SafeExpressionEvaluator:
+class SafeExpressionEvaluator(VoolsBase):
     """安全表达式求值器"""
 
     def __init__(self, allowed_vars: Optional[Dict[str, Any]] = None):
@@ -200,25 +200,6 @@ class SafeExpressionEvaluator:
             raise SafeEvalError(f"不支持的表达式类型: {type(node).__name__}")
 
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
-    
     def evaluate(self, expr: str) -> Any:
         try:
             tree = ast.parse(expr, mode='eval')

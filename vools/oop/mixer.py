@@ -9,6 +9,8 @@ from enum import IntFlag
 from functools import partial
 from typing import Any, List, Optional, Tuple, Union, Callable, Type
 
+from ..core.base import VoolsBase
+
 __all__ = ['Mixer', 'Mixer_', 'attr_Enum']
 
 
@@ -47,7 +49,7 @@ class attr_Enum(IntFlag):
 
 
 
-class Mixer_:
+class Mixer_(VoolsBase):
     """基础混合器类，支持将多个对象的属性和方法合并。
     
     Mixer_ 将多个对象的属性和方法组合在一起，支持按优先级
@@ -213,27 +215,6 @@ class Mixer_:
             ]
             for key in keys_to_delete:
                 del self._attr_cache[key]
-
-    def do(self, f: Callable[..., Any] = print, 
-           pre_f: Optional[Callable[..., Any]] = None, 
-           sub_f: Optional[Callable[..., Any]] = None) -> "Mixer_":
-        """应用函数进行副作用处理，返回 self 以支持链式调用。
-        
-        Args:
-            f: 要应用的函数（默认 print）
-            pre_f: 在 f 之前应用的预处理函数
-            sub_f: 在 f 之后应用的后处理函数
-            
-        Returns:
-            self，用于链式调用
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
 
     # ===== 缓存优化 =====
     def _get_cached_attr(self, name: str) -> Any:

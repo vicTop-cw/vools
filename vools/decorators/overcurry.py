@@ -10,11 +10,12 @@ from typing import get_type_hints, Any, Callable, Optional, List, Tuple, Union, 
 
 from .curry_core import curry, Curried, CurryDescriptor, is_curried
 from .selector import Overloads
+from ..core.base import VoolsBase
 
 __all__ = ['overcurry', 'OvercurryManager']
 
 
-class OvercurryManager:
+class OvercurryManager(VoolsBase):
     """overcurry 管理器类，基于 Overloads 实现"""
     def __init__(self, *funcs, delaied=False, is_strict=False):
         """
@@ -106,24 +107,6 @@ class OvercurryManager:
             raise
     
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def register(self, func: Optional[Callable] = None, 
                 returnOverload: bool = False) -> Union[Callable, 'OvercurryManager']:
         """

@@ -16,6 +16,7 @@ from ..decorators import rself
 from ..functional.pipe_ops import P
 from ..security import create_filter_func, create_map_func, safe_compile_expression, ExpressionSecurityError
 from ..serialize.context import get_protocol
+from ..core.base import VoolsBase
 
 T = TypeVar('T')
 R = TypeVar('R')
@@ -59,7 +60,7 @@ class ListLikeMeta(type):
 
 
 @rself
-class VList(Seq, metaclass=ListLikeMeta):
+class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
     """链式列表类，继承自 Seq，提供丰富的列表处理方法"""
 
     # BUG-221: pop/shift 的 docstring 明写「列表为空则返回 None」，但 @rself
@@ -88,25 +89,6 @@ class VList(Seq, metaclass=ListLikeMeta):
             else:
                 self._data = list(origins)
         super().__init__(self._data)
-
-    def do(self, f: Callable[..., Any] = print, pre_f: Optional[Callable[[Any], Any]] = None, sub_f: Optional[Callable[[Any], None]] = None) -> 'VList':
-        """执行副作用操作，返回自身以支持链式调用。
-
-        Args:
-            f: 要执行的函数（默认 print）
-            pre_f: 在 f 执行前执行的预处理函数
-            sub_f: 在 f 执行后执行的后处理函数（无返回值要求）
-
-        Returns:
-            self，自身引用以支持链式调用
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
 
     def __getitem__(self, index: Union[int, slice]) -> Union[Any, 'VList']:
         """支持整数索引和切片访问。

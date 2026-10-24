@@ -1,6 +1,7 @@
 from typing import Any, Callable, List, Optional, Tuple, Union, Iterator, TypeVar
 
 from .curry_core import curry, is_curried
+from ..core.base import VoolsBase
 
 __all__ = ['select', 'Overloads', 'Selector']
 
@@ -15,7 +16,7 @@ _BIND_FAILURE_PATTERNS = (
     "keyword argument", "argument", "required",
 )
 
-class Selector:
+class Selector(VoolsBase):
     """函数选择器，支持多个函数的链式调用和结果聚合。
     
     Selector 接受多个函数并返回一个可调用对象，该对象在调用时
@@ -268,24 +269,6 @@ class Selector:
 
 
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def toOverloads(self, delaied: bool = False) -> "Overloads":
         """转换为 Overloads 对象。
         
@@ -412,25 +395,6 @@ class Overloads(Selector):
             新的 Selector 对象
         """
         return Selector(*self.funcs)
-    def do(self, f: Callable[..., Any] = print, pre_f: Optional[Callable[..., Any]] = None, 
-            sub_f: Optional[Callable[..., Any]] = None) -> "Overloads":
-        """应用函数进行副作用处理，返回 self 以支持链式调用。
-        
-        Args:
-            f: 要应用的函数（默认 print）
-            pre_f: 在 f 之前应用的预处理函数
-            sub_f: 在 f 之后应用的后处理函数
-            
-        Returns:
-            self，用于链式调用
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
 
     
     

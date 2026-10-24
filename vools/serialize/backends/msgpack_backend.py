@@ -5,6 +5,7 @@ Msgpack 序列化后端
 from typing import Any
 
 from .base import BaseBackend
+from ...core.base import VoolsBase
 __all__ = ['MsgpackBackend', 'is_available']
 
 # 尝试导入 msgpack，如果不可用则后端不可用
@@ -15,7 +16,7 @@ except ImportError:
     _HAS_MSGPACK = False
 
 
-class MsgpackBackend(BaseBackend):
+class MsgpackBackend(BaseBackend, VoolsBase):
     """Msgpack 高效二进制序列化后端"""
 
     name = "msgpack"
@@ -71,24 +72,6 @@ class MsgpackBackend(BaseBackend):
             return msgpack.packb(obj, default=vools_default)
 
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def loads(self, data: bytes) -> Any:
         """
         使用 msgpack 反序列化对象

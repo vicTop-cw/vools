@@ -6,10 +6,11 @@ from typing import Any, Dict, Callable
 import functools
 
 from . import CallableHandler
+from ...core.base import VoolsBase
 __all__ = ['DecoratorHandler']
 
 
-class DecoratorHandler(CallableHandler):
+class DecoratorHandler(CallableHandler, VoolsBase):
     """处理被装饰器包装的函数的序列化"""
 
     def can_handle(self, obj: Any) -> bool:
@@ -50,25 +51,6 @@ class DecoratorHandler(CallableHandler):
 
         return state
 
-
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
 
     def restore(self, state: Dict[str, Any]) -> Any:
         """

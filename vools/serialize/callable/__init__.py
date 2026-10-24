@@ -7,6 +7,8 @@ Callable 对象序列化处理器
 from typing import Any, Callable, Dict, Type, Optional, Tuple
 from abc import ABC, abstractmethod
 
+from ...core.base import VoolsBase
+
 __all__ = [
     'CallableHandler',
     'register_handler',
@@ -19,7 +21,7 @@ __all__ = [
 _HANDLERS: list = []
 
 
-class CallableHandler(ABC):
+class CallableHandler(ABC, VoolsBase):
     """Callable 处理器抽象基类"""
 
     @property
@@ -40,24 +42,6 @@ class CallableHandler(ABC):
     # BUG-186: 此处原先误留一个悬空的 @abstractmethod（后接空行），
     # 装饰器实际应用到下方具体方法 do，导致未 override do 的子类
     # 实例化抛 TypeError。do 是带实现的普通方法，删除多余装饰器。
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def restore(self, state: Dict[str, Any]) -> Any:
         """从序列化状态恢复对象"""
         raise NotImplementedError

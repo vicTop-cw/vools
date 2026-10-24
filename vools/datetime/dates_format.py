@@ -6,13 +6,14 @@ from functools import lru_cache
 
 # BUG-101: 使用安全求值替代裸 eval
 from ..security.expression_handler import safe_eval_expression
+from ..core.base import VoolsBase
 
 # BUG-101: 使用安全求值替代裸 eval
 from ..security.expression_handler import safe_eval_expression
 
 __all__ = ['DateProcessor','EnhancedDateFormatter']
 
-class DateProcessor:
+class DateProcessor(VoolsBase):
     """
     日期处理器类
     
@@ -491,24 +492,6 @@ class DateProcessor:
                 return None
     
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def get_all_date_variables(self) -> Dict[str, str]:
         """
         获取所有基础日期变量

@@ -11,11 +11,12 @@ __all__ = ['Rule', 'RuleSet']
 
 from typing import Callable, Any, Dict, Optional, List
 from ...core.dataclass_compat import dataclass, field
+from ...core.base import VoolsBase
 from ...functional import Result
 
 
 @dataclass(frozen=True)
-class Rule:
+class Rule(VoolsBase):
     """
     不可变规则数据类
 
@@ -36,24 +37,6 @@ class Rule:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def evaluate(self, context: Dict[str, Any]) -> Result:
         """
         执行规则：先检查 condition，通过后执行 action
@@ -73,7 +56,7 @@ class Rule:
         return self.action(context)
 
 
-class RuleSet:
+class RuleSet(VoolsBase):
     """
     规则集合 - 支持函数式组合
 
@@ -177,23 +160,5 @@ class RuleSet:
         return len(self._rules)
 
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def __repr__(self) -> str:
         return f"RuleSet({len(self._rules)} rules)"

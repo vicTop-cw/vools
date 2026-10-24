@@ -10,6 +10,8 @@ from typing import Callable, Any, Optional, Dict
 from collections import OrderedDict
 import threading
 
+from ..core.base import VoolsBase
+
 __all__ = ['memorize', 'TimedCache', '_CACHE']
 
 
@@ -18,7 +20,7 @@ __all__ = ['memorize', 'TimedCache', '_CACHE']
 _MISS = object()
 
 
-class TimedCache:
+class TimedCache(VoolsBase):
     """带过期时间和大小限制的缓存（线程安全）"""
     
     def __init__(self, max_size: int = 1000):
@@ -99,24 +101,6 @@ class TimedCache:
             self._cache.clear()
     
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def __len__(self):
         """返回缓存条目数"""
         with self._lock:

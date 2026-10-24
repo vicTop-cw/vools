@@ -1,6 +1,7 @@
 from functools import partial, reduce, wraps as _wraps
 from collections.abc import Iterable
 from .arrow_func import g
+from ..core.base import VoolsBase
 from datetime import datetime
 from typing import Any, Callable, Optional, Union, TypeVar, List
 
@@ -259,7 +260,7 @@ def __box_wrapped_call__(self, *args, **kwargs):
     return self.__wrapped__(*args, **kwargs)
 
 
-class CallableDescriptor:
+class CallableDescriptor(VoolsBase):
     """描述符，控制 __call__ 属性的访问。
     
     用于 Box 类，使其可以像函数一样被调用。
@@ -289,26 +290,6 @@ class CallableDescriptor:
     def disable(self) -> None:
         """禁用 __call__ 功能，使 Box 实例不可被调用。"""
         self.enabled = False
-
-    def do(self, f: Callable[..., Any] = print, pre_f: Optional[Callable[..., Any]] = None, sub_f: Optional[Callable[..., Any]] = None) -> 'CallableDescriptor':
-        """Apply a function for side effects, return self for chaining.
-        
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function applied before f
-            sub_f: Post-processing function (no return expected)
-        
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
-
 
 class Box(AOP):
 
