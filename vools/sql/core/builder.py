@@ -558,6 +558,11 @@ class BaseSqlBuilder(SqlBuilder):
         返回：
             self，支持链式调用
         """
+        # BUG-460: 与 BUG-459 同族——``order_by('')`` 此前生成
+        # ``SELECT * FROM t ORDER BY ``（语法非法，静默）；非字符串还会在
+        # join 时抛 ``sequence item 0: expected str instance, int found``。
+        for c in columns:
+            _require_name(c, "order_by() 的列名")
         self._order_by.extend(columns)
         return self
 
@@ -571,6 +576,8 @@ class BaseSqlBuilder(SqlBuilder):
         返回：
             self，支持链式调用
         """
+        for c in columns:
+            _require_name(c, "group_by() 的列名")
         self._group_by.extend(columns)
         return self
 
