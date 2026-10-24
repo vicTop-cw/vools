@@ -319,7 +319,11 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
             safe_func = create_map_func(func)
             return [safe_func(s) for s in self._data]
         else:
-            return []
+            # BUG-444: 原实现静默返回 []——``VList([1, 2, 3]).map(123)`` 得到
+            # 空列表（静默丢数据）。非法回调必须在入口拒绝。
+            raise TypeError(
+                f"VList.map() 的 func 需要可调用对象或表达式字符串，收到 "
+                f"{type(func).__name__}: {func!r}")
 
     def _run_filter(self, func: Union[Callable[[Any], bool], str] = bool) -> List[Any]:
         """内部方法：运行过滤函数。
@@ -338,7 +342,10 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
             safe_func = create_filter_func(func)
             return [s for s in self._data if safe_func(s)]
         else:
-            return []
+            # BUG-444: 同 _run——``VList([1, 2, 3]).filter(123)`` 原静默返回 []。
+            raise TypeError(
+                f"VList.filter() 的 func 需要可调用对象或表达式字符串，收到 "
+                f"{type(func).__name__}: {func!r}")
 
     def foreach(self, func: Callable[[Any], Any] = print, filter_func: Optional[Union[Callable[[Any], bool], str]] = None, filter_first: bool = True) -> Optional['VList']:
         """遍历并应用函数，可选先过滤。

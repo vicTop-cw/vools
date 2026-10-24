@@ -978,6 +978,12 @@ class Seq(SeqBase, VoolsBase):
             self
         """
         for m in funcs:
+            # BUG-444: 非可调用对象会一路走到调用点才抛
+            # ``'int' object is not callable``（看不出是哪个方法、哪个位置）。
+            if not callable(m):
+                raise TypeError(
+                    f"Seq.map() 的 func 必须可调用，收到 "
+                    f"{type(m).__name__}: {m!r}")
             f = lambda x: NONE if x is NONE else m(x)
             self._add_op(f)
         return self
@@ -996,6 +1002,10 @@ class Seq(SeqBase, VoolsBase):
             # 避免 ``Seq([1,2,3]).filter('x>1')`` 抛 'str' object is not callable。
             if isinstance(m, str):
                 m = create_filter_func(m)
+            elif not callable(m):
+                raise TypeError(
+                    f"Seq.filter() 的 func 需要可调用对象或表达式字符串，收到 "
+                    f"{type(m).__name__}: {m!r}")
             f = lambda x: NONE if (x is NONE if not _NONE_is_None else x is None or x is NONE) or not m(x) else x
             self._add_op(f, True)
         return self
