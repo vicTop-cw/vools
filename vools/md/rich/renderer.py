@@ -28,6 +28,13 @@ __all__ = [
 _IMAGE_URL_RE = re.compile(r'^(data:|https?://|file://|/)')
 
 
+def _require_str(value, what: str) -> str:
+    """校验入参是字符串（BUG-466）。"""
+    if not isinstance(value, str):
+        raise TypeError(
+            f"{what} 需要字符串，收到 {type(value).__name__}: {value!r}")
+    return value
+
 def render_image(source: str, alt: str = '',
                  directive: Optional[Dict[str, Any]] = None) -> str:
     """渲染图片引用为 <img> HTML。
@@ -40,6 +47,8 @@ def render_image(source: str, alt: str = '',
     Returns:
         <img> HTML 字符串；不允许时返回空串
     """
+    _require_str(source, "render_image() 的 source")
+    _require_str(alt, "render_image() 的 alt")
     dir = directive or {}
     allow_local = dir.get('allow-local', True)
     allow_remote = dir.get('allow-remote', False)
@@ -82,6 +91,7 @@ def render_svg(svg_content: str,
     Returns:
         SVG HTML 字符串；净化失败时返回空串
     """
+    _require_str(svg_content, "render_svg() 的 svg_content")
     dir = directive or {}
     sanitize = dir.get('svg-sanitize', True)
 
@@ -106,6 +116,7 @@ def render_html(html_content: str, language: str = '',
     Returns:
         HTML 字符串
     """
+    _require_str(html_content, "render_html() 的 html_content")
     return html_content
 
 
