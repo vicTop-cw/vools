@@ -12,6 +12,7 @@ from inspect import isgeneratorfunction,signature
 from collections import deque
 from operator import itemgetter
 from ..config import config
+from ..core.base import VoolsBase
 
 __all__ = ['Seq','NONE','collect']
 
@@ -177,6 +178,12 @@ class SeqBase:
             self._seq = it
             self._position = -1
         
+        def __iter__(self):
+            # BUG-412: 迭代器自身必须是可迭代的（缺 __iter__ 时会报
+            # TypeError: '_SeqIterator' object is not iterable，_evaluate 里的
+            # `for i in super().__iter__()` 直接崩）。
+            return self
+
         def __next__(self) -> T:
             """返回序列中的下一个元素。
             
@@ -432,7 +439,7 @@ def _pipe(*funcs):
 def _compose(*funcs):
     return _pipe(*funcs[::-1])
 
-class Seq(SeqBase):
+class Seq(SeqBase, VoolsBase):
     def __init__(self, *origins: Any) -> None:
         """初始化 Seq 实例。
         
@@ -730,8 +737,11 @@ class Seq(SeqBase):
         """
         if initial is None:
             return self.__class__(itertools.accumulate(self._evaluate(), func))
-        else:
-            return self.__class__(itertools.accumulate(self._evaluate(), func, initial))
+        # BUG-412: itertools.accumulate 的 initial 是**关键字专用**参数，
+        # 原实现按位置传参 -> TypeError: accumulate() takes at most 2
+        # positional arguments (3 given)。
+        return self.__class__(
+            itertools.accumulate(self._evaluate(), func, initial=initial))
     
     def __iadd__(self, other: Any) -> 'Seq':
         """+= 运算符。
@@ -848,16 +858,41 @@ class Seq(SeqBase):
         return f"Seq({s})"
     
     def _evaluate(self) -> Generator[T, None, None]:
-        """惰性求值核心。
-        
+        """惰性求值核心（应用当前操作管道）。
+
         Yields:
             应用当前操作管道后的元素
+
+        Note:
+            BUG-412: 必须迭代**原始数据**（``super().__iter__()``）。原实现写
+            ``for i in self`` —— 一旦 ``__iter__`` 也走 ``_evaluate``（本修复），
+            就会无限递归。
         """
         op = self._active_op
-        for i in self:
+        for i in self._raw_iter():
             x = op(i)
             if x is not NONE:
                 yield x
+
+    def _raw_iter(self):
+        """原始元素迭代（不经操作管道）。
+
+        子类可覆盖以提供自身元素视图（Table 的元素是 dict 行、VList 的
+        `__iter__` 直接迭代 `_data`）。BUG-412：不能写死
+        `super().__iter__()`——那会绕过 Table.__iter__（dict 行）而拿到 list 行，
+        使 `sort_by`/`count_by` 等以列名取值的回调全部 TypeError。
+        """
+        return SeqBase.__iter__(self)
+
+    def __iter__(self):
+        """迭代**应用链式操作后**的元素（BUG-412）。
+
+        原实现继承 ``SeqBase.__iter__``（直接产出原始 ``_collection``），于是
+        ``list(Seq([1, 2]).map(lambda x: x * 2))`` **静默返回 [1, 2]**——链式操作
+        被完全忽略；而 ``sorted()``/``take()`` 等走 ``_evaluate()`` 又会应用，
+        同一对象两种口径。现统一走 ``_evaluate()``。
+        """
+        return self._evaluate()
 
     def map(self, *funcs: Callable[[T], Any]) -> 'Seq':
         """映射操作。
@@ -1380,24 +1415,6 @@ class Seq(SeqBase):
         return {'_data': data}
 
 
-    def do(self, f=print, pre_f=None, sub_f=None):
-        """Apply a function for side effects, return self.
-
-        Args:
-            f: Function to apply (default print)
-            pre_f: Pre-processing function
-            sub_f: Post-processing function (no return value expected)
-
-        Returns:
-            self, for chaining
-        """
-        rs = self
-        if pre_f:
-            rs = pre_f(rs)
-        rs = f(rs)
-        if sub_f:
-            sub_f(rs)
-        return self
     def __setstate__(self, state):
         """从序列化状态恢复：从物化数据重建 Seq"""
         data = state.get('_data', [])
