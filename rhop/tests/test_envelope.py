@@ -66,3 +66,41 @@ class TestEnvelopeSerialization:
         restored = Envelope.from_dict(d)
         assert restored.task_id == env.task_id
         assert restored.result == env.result
+
+
+class TestBugRegressions:
+    """BUG-297 回归：from_rhop_bytes 缺必填字段时抛 ValueError（而非 KeyError）。"""
+
+    def test_missing_task_id_raises_value_error(self):
+        """缺 task_id 时必须抛 ValueError，让 IntegrityChecker 能捕获。"""
+        data = {
+            "v": 1, "status": "pending", "payload": {},
+            "side": "requester", "version": 1,
+        }
+        # 手动构造合法 checksum（缺 task_id 的 data）
+        import hashlib
+        raw = json.dumps(data, ensure_ascii=False, sort_keys=True)
+        checksum = "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        data["checksum"] = checksum
+        raw_bytes = json.dumps(data, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        with pytest.raises(ValueError, match="缺少必填字段"):
+            Envelope.from_rhop_bytes(raw_bytes)
+
+    def test_missing_status_raises_value_error(self):
+        """缺 status 时也必须抛 ValueError。"""
+        data = {
+            "v": 1, "task_id": "job-001", "payload": {},
+            "side": "requester", "version": 1,
+        }
+        import hashlib
+        raw = json.dumps(data, ensure_ascii=False, sort_keys=True)
+        checksum = "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        data["checksum"] = checksum
+        raw_bytes = json.dumps(data, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        with pytest.raises(ValueError, match="字段值非法|缺少必填字段"):
+            Envelope.from_rhop_bytes(raw_bytes)
+
+    def test_invalid_json_raises_value_error(self):
+        """JSON 解析失败时抛 ValueError（而非 json.JSONDecodeError）。"""
+        with pytest.raises(ValueError, match="解析失败"):
+            Envelope.from_rhop_bytes(b"not valid json")

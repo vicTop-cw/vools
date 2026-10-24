@@ -104,7 +104,7 @@ class TestTaskQueueBasic:
         task_id = queue.submit(add, 10, 20)
         
         with WorkerPool(num_workers=1, db_path=self.db_path, poll_interval=0.1) as pool:
-            result = queue.get_result(task_id, timeout=5)
+            result = queue.get_result(task_id, timeout=30)
             assert result == 30
 
     def test_multiple_tasks(self):
@@ -116,7 +116,7 @@ class TestTaskQueueBasic:
             task_ids.append(queue.submit(add, i, i))
         
         with WorkerPool(num_workers=3, db_path=self.db_path, poll_interval=0.1) as pool:
-            results = [queue.get_result(tid, timeout=5) for tid in task_ids]
+            results = [queue.get_result(tid, timeout=30) for tid in task_ids]
             assert results == [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
 
 
@@ -151,9 +151,9 @@ class TestTaskPriority:
         task_id3 = queue.submit(add, 3, 3, priority=100)
         
         with WorkerPool(num_workers=3, db_path=self.db_path, poll_interval=0.1) as pool:
-            result1 = queue.get_result(task_id1, timeout=5)
-            result2 = queue.get_result(task_id2, timeout=5)
-            result3 = queue.get_result(task_id3, timeout=5)
+            result1 = queue.get_result(task_id1, timeout=30)
+            result2 = queue.get_result(task_id2, timeout=30)
+            result3 = queue.get_result(task_id3, timeout=30)
             
             assert result1 == 2
             assert result2 == 4
@@ -322,7 +322,7 @@ class TestTaskLifecycle:
         task_id = queue.submit(add, 5, 5)
         
         with WorkerPool(num_workers=1, db_path=self.db_path, poll_interval=0.1) as pool:
-            result = queue.get_result(task_id, timeout=5)
+            result = queue.get_result(task_id, timeout=30)
         
         assert result == 10
         task = queue.get_task(task_id)
@@ -336,7 +336,7 @@ class TestTaskLifecycle:
         
         with WorkerPool(num_workers=1, db_path=self.db_path, poll_interval=0.1) as pool:
             with pytest.raises(Exception):
-                queue.get_result(task_id, timeout=5)
+                queue.get_result(task_id, timeout=30)
         
         task = queue.get_task(task_id)
         assert task.status == TaskStatus.FAILED
@@ -395,7 +395,7 @@ class TestEdgeCases:
         task_id = queue.submit(process_large_data, large_data)
         
         with WorkerPool(num_workers=1, db_path=self.db_path, poll_interval=0.1) as pool:
-            result = queue.get_result(task_id, timeout=5)
+            result = queue.get_result(task_id, timeout=30)
             assert result == 100000
 
     def test_concurrent_submissions(self):

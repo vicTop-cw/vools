@@ -1,39 +1,28 @@
-"""vools.rhop.crypto - MVP-1 抽象密钥函数
-
-本地固定密钥（配置侧管理，信封不含密钥）对 JSON 文本加密 / 解密验证的一体抽象。
-
-核心公共 API:
-    load_key(source, env_name, path)  密钥加载（显式 source > 配置文件 path > 环境变量）
-    RhopCrypto(key)                   密钥加密/解密验证一体对象
-        encrypt_json(payload)         对 JSON（dict）加密，输出加密 JSON 文本（str）
-        decrypt_verify(token)         用本地固定密钥解密后比对内容，明确区分通过/失败
-        encrypt_secret(plaintext)     把配置敏感信息（密码/token/密钥）加密为 RHOP-ENC 密文
-        decrypt_secret(cipher)        解密 RHOP-ENC 密文（密钥不符/被篡改给出明确原因）
-    is_secret(value)                  判断字符串是否是 RHOP-ENC 密文
-
-输出格式（加密 JSON 文本）:
-    {"v":1, "alg":"fernet", "ct": "<Fernet token base64>"}
-    - v: 信封版本
-    - alg: 算法标识（当前 fernet）
-    - ct: 加密载荷（Fernet token，urlsafe base64 文本）
-
-输出格式（配置密文）:
-    "RHOP-ENC:<Fernet token>"     # 由 python -m vools.rhop.secret enc 生成
-
-失败原因（VerifyResult.reason）明确区分:
-    "OK"            解密成功且内容有效（json 可解析）
-    "MALFORMED"     信封结构不合法（非 dict / 缺字段 / 类型错）
-    "BAD_TOKEN"     Fernet token 无法解密（密钥错误或密文被篡改）
-    "NOT_JSON"      解密成功但内容不是合法 JSON
 """
+vools.rhop.crypto - rhop 加密抽象
+
+复用 vools.data.vtext.VText 的 Fernet 加密/解密，保留 rhop 专属接口：
+
+    RhopCrypto(key)               — 密钥加密/解密验证一体对象
+        encrypt_json(payload)      — 对 JSON（dict）加密，输出加密 JSON 文本（str）
+        decrypt_verify(token_text) — 用本地固定密钥解密后比对内容，明确区分通过/失败
+        encrypt_secret(plaintext)  — 把配置敏感信息加密为 RHOP-ENC 密文
+        decrypt_secret(cipher)     — 解密 RHOP-ENC 密文
+    is_secret(value)              — 判断字符串是否是 RHOP-ENC 密文
+
+底层加密委托给 VText.encrypt(way="fernet") / VText.decrypt()，
+密钥派生参数（PBKDF2 salt/iterations）由 VText 统一管理。
+"""
+
+from __future__ import absolute_import
 
 import base64
 import hashlib
 import json
 import os
-from typing import Any, Dict, NamedTuple, Optional, Tuple, Union
+from typing import Any, Dict, NamedTuple, Optional, Union
 
-from cryptography.fernet import Fernet, InvalidToken
+from vools.data.vtext import VText
 
 # 信封常量
 _ENV_VERSION = 1
@@ -45,10 +34,6 @@ ENV_RHOP_KEY = "RHOP_KEY"
 
 # 配置密文前缀（明文 ↔ 密文 双支持用；见 RhopCrypto.encrypt_secret / decrypt_secret）
 SECRET_PREFIX = "RHOP-ENC:"
-
-# 密钥派生参数（固定本地密钥 → Fernet key）
-_DERIVE_ALG = "sha256"
-_DERIVE_INFO = b"vools.rhop.mvp.crypto.v1"
 
 
 class VerifyResult(NamedTuple):
@@ -64,20 +49,6 @@ class VerifyResult(NamedTuple):
     reason: str
 
 
-def _derive_fernet_key(key_material: Union[str, bytes]) -> bytes:
-    """把任意长度的本地固定密钥派生为 Fernet 所需的 32 字节 urlsafe key。"""
-    if isinstance(key_material, str):
-        key_material = key_material.encode("utf-8")
-    digest = hashlib.pbkdf2_hmac(
-        _DERIVE_ALG,
-        key_material,
-        _DERIVE_INFO,
-        100_000,
-        dklen=32,
-    )
-    return base64.urlsafe_b64encode(digest)
-
-
 def load_key(
     source: Optional[Union[str, bytes]] = None,
     path: Optional[str] = None,
@@ -90,7 +61,7 @@ def load_key(
         2. path（配置文件路径，读其内容）
         3. env_name（环境变量）
 
-    返回值: 密钥文本（str）。密钥以派生形式使用，本函数不做派生。
+    返回值: 密钥文本（str）。
     """
     if source is not None:
         return source if isinstance(source, str) else source.decode("utf-8")
@@ -111,11 +82,14 @@ def is_secret(value: Any) -> bool:
 
 
 class RhopCrypto(object):
-    """本地固定密钥 + 加密/解密验证一体抽象。"""
+    """本地固定密钥 + 加密/解密验证一体抽象。
+
+    底层加密委托给 vools.data.vtext.VText，保留 rhop 专属接口与前缀格式。
+    """
 
     def __init__(self, key: Union[str, bytes]):
         self._key_material = key
-        self._fernet = Fernet(_derive_fernet_key(key))
+        self._key_str = key if isinstance(key, str) else key.decode("utf-8")
 
     # ------------------------------------------------------------------
     # 密钥加载辅助（类方法）
@@ -137,6 +111,10 @@ class RhopCrypto(object):
     # 加密 / 解密验证
     # ------------------------------------------------------------------
 
+    def _vtext(self, text: str = "") -> VText:
+        """构造一个 VText 用于加密/解密（key 传给 encrypt/decrypt 方法）。"""
+        return VText(text)
+
     def encrypt_json(self, payload: Union[Dict[str, Any], str]) -> str:
         """对 JSON 文本（dict 或 str）加密，输出加密 JSON 文本。
 
@@ -151,7 +129,13 @@ class RhopCrypto(object):
                 body = json.dumps({"__text__": payload}, ensure_ascii=False)
         else:
             body = json.dumps(payload, ensure_ascii=False)
-        token = self._fernet.encrypt(body.encode("utf-8")).decode("ascii")
+        # 委托 VText Fernet 加密，取 "F:" 前缀后的 token
+        enc = self._vtext(body).encrypt(way="fernet", key=self._key_material)
+        token_text = str(enc)
+        if token_text.startswith("F:"):
+            token = token_text[2:]
+        else:
+            token = token_text
         envelope = {
             "v": _ENV_VERSION,
             "alg": _ENV_ALG,
@@ -181,11 +165,16 @@ class RhopCrypto(object):
         if not isinstance(ct, str) or not ct:
             return VerifyResult(False, None, "MALFORMED")
 
+        # 委托 VText Fernet 解密
         try:
-            plain = self._fernet.decrypt(ct.encode("ascii")).decode("utf-8")
-        except InvalidToken:
-            return VerifyResult(False, None, "BAD_TOKEN")
+            token_text_full = "F:" + ct
+            plain_vtext = self._vtext(token_text_full).decrypt(way="fernet", key=self._key_material)
+            plain = str(plain_vtext)
         except Exception:
+            return VerifyResult(False, None, "BAD_TOKEN")
+
+        # VText.decrypt 失败时可能返回原文（非 JSON），区分 BAD_TOKEN vs NOT_JSON
+        if not plain or plain == token_text_full or plain.startswith("F:") or plain.startswith("E:"):
             return VerifyResult(False, None, "BAD_TOKEN")
 
         try:
@@ -202,27 +191,22 @@ class RhopCrypto(object):
     def encrypt_secret(self, plaintext: Union[str, bytes, None]) -> str:
         """把一段明文（密码 / token / 密钥）加密成 ``RHOP-ENC:<token>`` 密文。
 
-        与 ``encrypt_json`` 共用同一把 Fernet 密钥与派生参数，因此配置文件里的
-        密文可以用 ``python -m vools.rhop.secret enc`` 离线生成后回填。
-
-        Args:
-            plaintext: 明文文本；None / 空串返回空串（不产出空密文）。
-
-        Returns:
-            str: ``RHOP-ENC:...`` 密文文本。
+        与 ``encrypt_json`` 共用同一把 Fernet 密钥，底层委托 VText。
         """
         if plaintext is None or plaintext == "":
             return ""
         if isinstance(plaintext, bytes):
             plaintext = plaintext.decode("utf-8")
-        token = self._fernet.encrypt(str(plaintext).encode("utf-8")).decode("ascii")
+        enc = self._vtext(str(plaintext)).encrypt(way="fernet", key=self._key_material)
+        token_text = str(enc)
+        if token_text.startswith("F:"):
+            token = token_text[2:]
+        else:
+            token = token_text
         return SECRET_PREFIX + token
 
     def decrypt_secret(self, value: Union[str, None]) -> str:
         """解密 ``RHOP-ENC:`` 密文，返回明文。
-
-        Args:
-            value: 密文文本；None / 空串返回空串。
 
         Raises:
             ValueError: 前缀不符（不是 rhop 密文）或解密失败（密钥不符/密文被篡改），
@@ -240,11 +224,14 @@ class RhopCrypto(object):
         if not token:
             return ""
         try:
-            return self._fernet.decrypt(token.encode("ascii")).decode("utf-8")
-        except InvalidToken:
-            raise ValueError(
-                "密文解密失败：密钥不符或密文被篡改"
-                "（请确认 RHOP_KEY / 密钥文件与生成密文时一致）"
-            )
+            token_text_full = "F:" + token
+            plain_vtext = self._vtext(token_text_full).decrypt(way="fernet", key=self._key_material)
+            plain = str(plain_vtext)
         except Exception as exc:
-            raise ValueError("密文解密失败：%s" % exc)
+            raise ValueError("密文解密失败：密钥不符或密文被篡改"
+                             "（请确认 RHOP_KEY / 密钥文件与生成密文时一致）: %s" % exc)
+        # VText.decrypt 失败时静默回退原文（设计如此），这里显式检测恢复「错误密钥必须报错」语义
+        if not plain or plain.startswith(("F:", "E:", "A:")) or plain == token_text_full:
+            raise ValueError("密文解密失败：密钥不符或密文被篡改"
+                             "（请确认 RHOP_KEY / 密钥文件与生成密文时一致）")
+        return plain

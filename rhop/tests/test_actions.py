@@ -332,6 +332,40 @@ class TestJumpSync:
         assert result["dry_run"] is True
         assert result["upload"] == 1
 
+    def test_sync_bytes_counted_for_download(self, sftp_server, tmp_path):
+        """BUG-301 回归：双向同步时 downloaded 文件的 bytes 必须被累加。
+
+        修复前：下载循环只累加 counter["files"]，不累加 counter["bytes"]，
+        导致 bytes 字段只反映上传量，丢失下载量。
+        """
+        port, root = sftp_server
+        # 远端放一个只有远端有的文件（下载方向）
+        os.makedirs(os.path.join(root, "rhop-bug301"), exist_ok=True)
+        with open(os.path.join(root, "rhop-bug301", "remote-only.txt"), "w", encoding="utf-8") as fh:
+            fh.write("remote-content-here")
+
+        # 本地放一个只有本地有的文件（上传方向）
+        local = tmp_path / "bug301"
+        local.mkdir()
+        (local / "local-only.txt").write_text("local-content-here", encoding="utf-8")
+
+        result = jump_sync(_cfg(port), {
+            "local_path": str(local),
+            "remote_path": "/rhop-bug301",
+            "direction": "both",
+        })
+        assert result["status"] == "ok"
+        assert result["uploaded"] == 1
+        assert result["downloaded"] == 1
+        # bytes 必须同时包含上传和下载的字节数
+        expected_bytes = (
+            os.path.getsize(str(local / "local-only.txt"))
+            + os.path.getsize(os.path.join(root, "rhop-bug301", "remote-only.txt"))
+        )
+        assert result["bytes"] == expected_bytes, (
+            "BUG-301: bytes=%d 应为 %d（上传+下载）" % (result["bytes"], expected_bytes)
+        )
+
 
 class TestActionRegistry:
     def test_registry_contains_all_jump_actions(self):

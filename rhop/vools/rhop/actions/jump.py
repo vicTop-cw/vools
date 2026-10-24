@@ -531,6 +531,7 @@ def _sync_paramiko(local_path, remote_path, remote_host, remote_user,
                     os.makedirs(parent, exist_ok=True)
                 sftp.get(rpath, lpath)
                 counter["files"] += 1
+                counter["bytes"] += os.path.getsize(lpath)
                 downloaded += 1
             except Exception as e:
                 errors.append("下载失败 %s: %s" % (relpath, e))
@@ -580,8 +581,14 @@ def _sync_paramiko(local_path, remote_path, remote_host, remote_user,
 
 def _sftp_cfg_of(cfg):
     """从动作 cfg 提取 sftp 配置（兼容 FTP_connect 形态）。"""
-    sftp = cfg.get("sftp") or cfg.get("media", {}).get("sftp") if isinstance(cfg, dict) else None
-    if sftp is None and isinstance(cfg, dict):
+    if not isinstance(cfg, dict):
+        return {}
+    sftp = cfg.get("sftp")
+    if sftp is None:
+        media = cfg.get("media")
+        if isinstance(media, dict):
+            sftp = media.get("sftp")
+    if sftp is None:
         sftp = cfg
     return sftp or {}
 

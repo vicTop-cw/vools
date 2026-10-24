@@ -63,7 +63,10 @@ class LocalEndpoint(EndpointView):
 
     def available(self) -> bool:
         try:
-            return os.path.isdir(self.path) or os.makedirs(self.path, exist_ok=True) or True
+            if os.path.isdir(self.path):
+                return True
+            os.makedirs(self.path, exist_ok=True)
+            return True
         except OSError:
             return False
 

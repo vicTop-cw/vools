@@ -189,3 +189,21 @@ class TestHttpEndpoint:
         assert shared.read_view.kind == "http-url"
         shared.write_text("pkg.rhop", "payload")
         assert shared.read_text("pkg.rhop") == "payload"
+
+
+class TestBugRegressions:
+    """BUG-294 回归：LocalEndpoint.available() 不能永远返回 True。"""
+
+    def test_available_false_when_path_cannot_be_created(self, tmp_path):
+        """路径指向一个已存在的文件（非目录），makedirs 会失败，available 应返回 False。"""
+        # 先创建一个文件
+        blocker = tmp_path / "blocker.txt"
+        blocker.write_text("x")
+        ep = LocalEndpoint(str(blocker / "subdir"))
+        assert not ep.available()
+
+    def test_available_true_when_path_can_be_created(self, tmp_path):
+        """路径不存在但可以创建，available 应返回 True。"""
+        ep = LocalEndpoint(str(tmp_path / "new_dir"))
+        assert ep.available()
+        assert ep.available()  # 幂等：第二次调用也返回 True

@@ -46,6 +46,10 @@ class Selector:
                 elif callable(f):
                     yield curry(f,delaied=True,is_strict=True)
                 # 如果 f 不是可调用的对象，直接 yield 它
+                # BUG-409 调查结论：这不是"缺校验"——overcurry / Overloads 的
+                # 内部实现会把**已求值的值**放进 funcs 再构造 Selector
+                # （tests/curried/test_overcurry_vic.py 依赖该路径），因此这里必须
+                # 保留宽松语义（不能抛 TypeError，也不宜每次告警污染正常调用）。
                 else:
                     yield f
                     
