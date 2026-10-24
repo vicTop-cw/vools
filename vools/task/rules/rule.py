@@ -36,6 +36,32 @@ class Rule(VoolsBase):
     priority: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """BUG-434: 构造校验（frozen dataclass 无法在字段上校验）。
+
+        原实现接受任意值：``Rule(name='', ...)``、``condition=123``、
+        ``action=123``、``priority='x'/-1``、``metadata='x'`` 全部被接受，
+        直到 ``evaluate`` 调用 ``self.condition(context)`` 时才抛 TypeError。
+        """
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError(
+                f"Rule 的 name 需要非空字符串，收到 "
+                f"{type(self.name).__name__}: {self.name!r}")
+        for label, fn in (("condition", self.condition), ("action", self.action)):
+            if not callable(fn):
+                raise TypeError(
+                    f"Rule 的 {label} 必须可调用，收到 "
+                    f"{type(fn).__name__}: {fn!r}")
+        if isinstance(self.priority, bool) or not isinstance(self.priority, int):
+            raise TypeError(
+                f"Rule 的 priority 需要整数，收到 "
+                f"{type(self.priority).__name__}: {self.priority!r}")
+        if self.priority < 0:
+            raise ValueError(f"Rule 的 priority 不能为负，收到 {self.priority}")
+        if not isinstance(self.metadata, dict):
+            raise TypeError(
+                f"Rule 的 metadata 需要 dict，收到 "
+                f"{type(self.metadata).__name__}: {self.metadata!r}")
 
     def evaluate(self, context: Dict[str, Any]) -> Result:
         """
@@ -67,7 +93,21 @@ class RuleSet(VoolsBase):
     """
 
     def __init__(self, rules: Optional[List[Rule]] = None):
-        self._rules = list(rules) if rules else []
+        # BUG-434: 原实现 ``list(rules) if rules else []`` 把**任意可迭代**
+        # 都当成规则列表：``RuleSet(rules='x')`` 得到 1 条规则（字符串被逐字符
+        # 展开），``RuleSet([123])`` 得到 1 条非 Rule 对象，均静默错值。
+        if rules is None:
+            self._rules = []
+            return
+        if isinstance(rules, (str, bytes)) or not isinstance(rules, (list, tuple)):
+            raise TypeError(
+                f"RuleSet 的 rules 需要 Rule 列表或 None，收到 "
+                f"{type(rules).__name__}: {rules!r}")
+        for r in rules:
+            if not isinstance(r, Rule):
+                raise TypeError(
+                    f"RuleSet 的元素需要 Rule，收到 {type(r).__name__}: {r!r}")
+        self._rules = list(rules)
 
     @property
     def rules(self) -> List[Rule]:
