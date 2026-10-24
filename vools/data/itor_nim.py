@@ -4,6 +4,8 @@ from collections import deque
 from enum import Enum
 from typing import Any, Callable, Optional, Iterable, Type
 
+from ..core.base import VoolsBase
+
 
 class ItorState(Enum):
     PENDING = 0
@@ -12,7 +14,11 @@ class ItorState(Enum):
     STOPPED = 3
 
 
-class NimItor:
+class NimItor(VoolsBase):
+    # BUG-418: get_itor() 在 Nim 可用时返回 NimItor，但它未继承 VoolsBase，
+    # 与 Python 版 Itor 的统一 API 不一致（do/copy/to_dict/from_dict/update
+    # 对 NimItor 全部 AttributeError）。a676de6 的 do 统一重构只覆盖 Python 侧。
+
     _dll = None
     _use_nim = False
 
