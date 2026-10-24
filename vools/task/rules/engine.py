@@ -163,11 +163,20 @@ class RuleEngine(VoolsBase):
         return list(self._rules)
 
     def add_rule(self, r: Rule) -> None:
-        """添加单个规则"""
+        """添加单个规则（BUG-435：入口校验，避免把非 Rule 塞进列表）。"""
+        if not isinstance(r, Rule):
+            raise TypeError(
+                f"RuleEngine.add_rule() 需要 Rule，收到 "
+                f"{type(r).__name__}: {r!r}")
         self._rules.append(r)
 
     def add_rules(self, *rules: Rule) -> None:
-        """批量添加规则"""
+        """批量添加规则（BUG-435：逐项校验）。"""
+        for r in rules:
+            if not isinstance(r, Rule):
+                raise TypeError(
+                    f"RuleEngine.add_rules() 的元素需要 Rule，收到 "
+                    f"{type(r).__name__}: {r!r}")
         self._rules.extend(rules)
 
     def remove_rule(self, name: str) -> bool:
