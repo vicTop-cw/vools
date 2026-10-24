@@ -127,3 +127,40 @@ class TestRegressionWithBug395Guards:
     def test_update_without_set(self):
         with pytest.raises(ValueError):
             BaseSqlBuilder().update("t").set_().where("id=1").build()
+
+
+class TestOrderByGroupByValidation:
+    """BUG-460：order_by/group_by 空值与非字符串同样会产出非法 SQL。"""
+
+    @pytest.mark.parametrize("bad", ["", "  "])
+    def test_order_by_empty(self, bad):
+        with pytest.raises(ValueError) as ei:
+            BaseSqlBuilder().select("*").from_("t").order_by(bad)
+        assert "order_by" in str(ei.value)
+
+    @pytest.mark.parametrize("bad", ["", "  "])
+    def test_group_by_empty(self, bad):
+        with pytest.raises(ValueError) as ei:
+            BaseSqlBuilder().select("a").from_("t").group_by(bad)
+        assert "group_by" in str(ei.value)
+
+    @pytest.mark.parametrize("bad", [123, None, ["a"]])
+    def test_non_str_rejected(self, bad):
+        with pytest.raises(ValueError):
+            BaseSqlBuilder().select("*").from_("t").order_by(bad)
+        with pytest.raises(ValueError):
+            BaseSqlBuilder().select("a").from_("t").group_by(bad)
+
+    def test_empty_in_list_rejected(self):
+        """多列时第二列为空同样拒绝（原来生成 'ORDER BY a, '）。"""
+        with pytest.raises(ValueError):
+            BaseSqlBuilder().select("*").from_("t").order_by("a", "")
+
+    def test_valid_order_group(self):
+        assert BaseSqlBuilder().select("*").from_("t").order_by("a", "b").build() == (
+            "SELECT * FROM t ORDER BY a, b", ())
+        assert BaseSqlBuilder().select("*").from_("t").order_by("a DESC").build() == (
+            "SELECT * FROM t ORDER BY a DESC", ())
+        assert BaseSqlBuilder().select("a").from_("t").group_by("a").build() == (
+            "SELECT a FROM t GROUP BY a", ())
+
