@@ -438,12 +438,28 @@ class ClassFusion(VoolsBase):
         return self
     
     def set_name(self, name: str) -> 'ClassFusion':
-        """设置融合类的名称"""
+        """设置融合类的名称（BUG-424：入口校验，不再等到 type() 才报错）。"""
+        # 原实现把任意值塞进 _class_name，fuse() 时抛
+        # ``TypeError: type.__new__() argument 1 must be str, not int``——
+        # 错误发生在融合阶段，且完全看不出是 set_name 传错。
+        if not isinstance(name, str):
+            raise TypeError(
+                f"set_name() 需要 str，收到 {type(name).__name__}: {name!r}")
+        if not name.strip():
+            raise ValueError("set_name() 需要非空字符串作为类名")
         self._class_name = name
         return self
     
     def set_auto_wrap_return(self, enabled: bool) -> 'ClassFusion':
-        """设置是否自动包装返回类型"""
+        """设置是否自动包装返回类型（BUG-424：入口校验）。
+
+        原实现接受任意值：``set_auto_wrap_return('x')`` 会被**静默当成 True**
+        （非空字符串为真），调用方无法察觉参数类型错误。
+        """
+        if isinstance(enabled, bool) is False:
+            raise TypeError(
+                f"set_auto_wrap_return() 需要 bool，收到 "
+                f"{type(enabled).__name__}: {enabled!r}")
         self._auto_wrap_return = enabled
         return self
     
