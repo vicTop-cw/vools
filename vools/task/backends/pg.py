@@ -78,6 +78,35 @@ class PgTaskBackend:
     def __init__(self, dsn: str, table: str = "vic_tasks_task",
                  max_retries: int = 3, retry_delay_min: int = 5,
                  autocommit: bool = True):
+        # BUG-428: 原实现零校验——dsn=123 / table=123 / max_retries=-1 /
+        # retry_delay_min='x' 全部被接受，错误直到真正连库/发 SQL 才暴露
+        # （天书），且 max_retries 为负会让 fail() 的重试判断出现反向语义。
+        if not isinstance(dsn, str) or not dsn.strip():
+            raise ValueError(
+                f"PgTaskBackend 的 dsn 需要非空字符串，收到 "
+                f"{type(dsn).__name__}: {dsn!r}")
+        if not isinstance(table, str) or not table.strip():
+            raise ValueError(
+                f"PgTaskBackend 的 table 需要非空字符串，收到 "
+                f"{type(table).__name__}: {table!r}")
+        if isinstance(max_retries, bool) or not isinstance(max_retries, int):
+            raise TypeError(
+                f"PgTaskBackend 的 max_retries 需要整数，收到 "
+                f"{type(max_retries).__name__}: {max_retries!r}")
+        if max_retries < 0:
+            raise ValueError(f"PgTaskBackend 的 max_retries 不能为负，收到 {max_retries}")
+        if isinstance(retry_delay_min, bool) or not isinstance(retry_delay_min, int):
+            raise TypeError(
+                f"PgTaskBackend 的 retry_delay_min 需要整数，收到 "
+                f"{type(retry_delay_min).__name__}: {retry_delay_min!r}")
+        if retry_delay_min < 0:
+            raise ValueError(
+                f"PgTaskBackend 的 retry_delay_min 不能为负，收到 {retry_delay_min}")
+        if not isinstance(autocommit, bool):
+            raise TypeError(
+                f"PgTaskBackend 的 autocommit 需要 bool，收到 "
+                f"{type(autocommit).__name__}: {autocommit!r}")
+
         self.dsn = dsn
         self.table = table
         self.max_retries = max_retries
