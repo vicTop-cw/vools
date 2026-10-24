@@ -48,12 +48,27 @@ class CallableHandler(ABC, VoolsBase):
 
 
 def register_handler(handler: CallableHandler) -> None:
-    """
-    注册 callable 处理器
+    """注册 callable 处理器（BUG-446：入口校验，避免污染全局注册表）。
+
+    原实现零校验：``register_handler(123)`` 会把 int 追加进模块级 ``_HANDLERS``，
+    此后**任何** ``get_handler()`` 调用都会抛
+    ``AttributeError: 'int' object has no attribute 'can_handle'``——一处误用
+    直接破坏进程内所有 callable 序列化。
 
     Args:
-        handler: 处理器实例
+        handler: 处理器实例（必须继承 CallableHandler）
     """
+    if not isinstance(handler, CallableHandler):
+        raise TypeError(
+            f"register_handler() 需要 CallableHandler 实例，收到 "
+            f"{type(handler).__name__}: {handler!r}")
+    name = getattr(handler, "handler_name", None)
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(
+            f"register_handler() 的 handler_name 需要非空字符串，收到 {name!r}")
+    for existing in _HANDLERS:
+        if existing is handler:
+            return   # 同一实例重复注册：幂等
     _HANDLERS.append(handler)
 
 
