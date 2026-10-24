@@ -141,6 +141,18 @@ class RuleEngine(VoolsBase):
         mode: str = "thread",
         max_workers: int = 4,
     ):
+        # BUG-434: 同 DagScheduler——mode/max_workers 入口校验
+        if mode not in ("thread", "process"):
+            raise ValueError(
+                f"RuleEngine 的 mode 只能是 'thread' 或 'process'，收到 {mode!r}")
+        if isinstance(max_workers, bool) or not isinstance(max_workers, int):
+            raise TypeError(
+                f"RuleEngine 的 max_workers 需要整数，收到 "
+                f"{type(max_workers).__name__}: {max_workers!r}")
+        if max_workers <= 0:
+            raise ValueError(
+                f"RuleEngine 的 max_workers 必须 > 0，收到 {max_workers}")
+
         self._rules: List[Rule] = []
         self._mode = mode
         self._max_workers = max_workers

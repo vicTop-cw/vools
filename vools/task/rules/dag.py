@@ -71,6 +71,39 @@ class DagScheduler(VoolsBase):
         poll_interval: float = 0.5,
         propagate_failure: bool = True,
     ):
+        # BUG-434: 原实现零校验——queue=None/123 会一路到 start() 抛
+        # AttributeError: 'NoneType' object has no attribute 'storage'（天书）；
+        # mode='bogus'、max_workers=0/-1/'x'、poll_interval=0/-1/'x'、
+        # propagate_failure='x' 全部被静默接受（零间隔轮询会忙等）。
+        # 注意：这里用**鸭子类型**而不是 isinstance(TaskQueue)——既有测试与
+        # 外部使用会传入 MagicMock 等替身，它们同样带 .storage。
+        if not hasattr(queue, "storage"):
+            raise TypeError(
+                f"DagScheduler 的 queue 需要 TaskQueue（含 .storage），收到 "
+                f"{type(queue).__name__}: {queue!r}")
+        if mode not in ("thread", "process"):
+            raise ValueError(
+                f"DagScheduler 的 mode 只能是 'thread' 或 'process'，收到 {mode!r}")
+        if isinstance(max_workers, bool) or not isinstance(max_workers, int):
+            raise TypeError(
+                f"DagScheduler 的 max_workers 需要整数，收到 "
+                f"{type(max_workers).__name__}: {max_workers!r}")
+        if max_workers <= 0:
+            raise ValueError(
+                f"DagScheduler 的 max_workers 必须 > 0，收到 {max_workers}")
+        if isinstance(poll_interval, bool) or not isinstance(
+                poll_interval, (int, float)):
+            raise TypeError(
+                f"DagScheduler 的 poll_interval 需要数字，收到 "
+                f"{type(poll_interval).__name__}: {poll_interval!r}")
+        if poll_interval <= 0:
+            raise ValueError(
+                f"DagScheduler 的 poll_interval 必须 > 0，收到 {poll_interval}")
+        if not isinstance(propagate_failure, bool):
+            raise TypeError(
+                f"DagScheduler 的 propagate_failure 需要 bool，收到 "
+                f"{type(propagate_failure).__name__}: {propagate_failure!r}")
+
         self._queue = queue
         self._storage = queue.storage
         self._mode = mode
