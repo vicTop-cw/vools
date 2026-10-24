@@ -62,6 +62,12 @@ class NimItor(VoolsBase):
         self._source_exhausted = False
         self._started = False
 
+        # BUG-419: 历史记录与策略（与 Python 版 Itor 对齐）。
+        # 原实现 set_history_max/history_strategy 是**忽略参数的 no-op**，
+        # 调用方以为限制生效实则完全没有记录历史。
+        self._history: list = []
+        self._history_strategy = None
+
         self._handle = self._dll.newItor()
 
     @property
@@ -109,12 +115,57 @@ class NimItor(VoolsBase):
         self._source_exhausted = False
         return self
 
+    def _record(self, item: Any) -> Any:
+        """把产出值记入历史并应用历史策略（BUG-419）。"""
+        self._history.append(item)
+        strategy = self._history_strategy
+        if strategy is not None:
+            try:
+                strategy(self)
+            except Exception:
+                pass
+        return item
+
     def history_strategy(self, strategy=None) -> 'NimItor':
+        """设置历史保留策略（BUG-419）。
+
+        与 Python 版 :meth:`Itor.history_strategy` 语义一致：``strategy`` 为
+        ``None`` 表示完全保留；策略函数接收 ``NimItor`` 实例并在每次产出后
+        被调用（可在回调里修剪 ``itor._history``）。
+        """
+        self._history_strategy = strategy
         return self
+
 
     @classmethod
     def set_history_max(cls, itor: 'NimItor', max_len: int) -> Type['NimItor']:
+        """
+        与 Python 版 :meth:`Itor.set_history_max` 保持同一套校验与语义：
+
+        - ``max_len == -1``：完全保留（清除已有策略）；
+        - ``max_len >= 0``：最多保留最近 ``max_len`` 条；
+        - 非整数 -> ``TypeError``；``< -1`` -> ``ValueError``。
+
+        注意：Nim 侧的 ``restart`` 由 C DLL 提供，其重放行为不由本包装层
+        控制（见 README 限制说明）。
+        """
+        if isinstance(max_len, bool) or not isinstance(max_len, int):
+            raise TypeError("max_len must be an integer")
+        if max_len < -1:
+            raise ValueError("max_len must be >= -1")
+
+        if max_len == -1:
+            itor.history_strategy(None)
+            return cls
+
+        def keep_last(itor_: 'NimItor') -> None:
+            history = itor_._history
+            if len(history) > max_len:
+                del history[: len(history) - max_len]
+
+        itor.history_strategy(keep_last)
         return cls
+
 
     def __call__(self) -> 'NimItor':
         return NimItor(self._iterable)
@@ -129,10 +180,10 @@ class NimItor(VoolsBase):
                 raise StopIteration
 
             if self._jump_queue:
-                return self._jump_queue.popleft()
+                return self._record(self._jump_queue.popleft())
 
             if self._queue:
-                return self._queue.popleft()
+                return self._record(self._queue.popleft())
 
             if self._source_exhausted:
                 raise StopIteration
@@ -143,7 +194,7 @@ class NimItor(VoolsBase):
 
             try:
                 item = next(self._iterator)
-                return item
+                return self._record(item)
             except StopIteration:
                 self._source_exhausted = True
 
