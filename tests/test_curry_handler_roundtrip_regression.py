@@ -101,3 +101,38 @@ class TestLoudFailure:
         """lambda 无法生成引用 → 必须是响亮失败而非静默错值。"""
         with pytest.raises(Exception):
             serialize_callable(curry(lambda a, b: a + b), PickleBackend())
+
+
+class Calc:
+    """类级别 @curry 生成 CurryDescriptor；实例访问得到绑定形式的 Curried。"""
+
+    @curry
+    def add(self, a, b):
+        return a + b
+
+
+class TestBoundMethodCurried:
+    """BUG-454：绑定方法的 Curried 不得把 self 当成 curry 参数（静默错值）。"""
+
+    def test_handler_claimed(self):
+        assert isinstance(get_handler(Calc().add), CurryHandler)
+
+    def test_original_behaviour(self):
+        assert Calc().add(1)(2) == 3
+
+    def test_pickle_roundtrip_keeps_binding(self):
+        """修复前：反序列化后 r(1)(2) 返回 Curried（self 被当成 1）——静默错值。"""
+        _, restored = _roundtrip(Calc().add, PickleBackend())
+        assert restored(1)(2) == 3
+
+    def test_json_fails_loudly(self):
+        """JSON 无法序列化绑定方法 → 必须响亮失败，而不是产出错误对象。"""
+        with pytest.raises(Exception):
+            serialize_callable(Calc().add, JsonBackend())
+
+    def test_make_ref_rejects_bound_method(self):
+        from vools.serialize.callable.decorator_handler import _make_ref
+
+        assert _make_ref(Calc().add.func) is None
+        assert _make_ref(module_fn) is not None
+
