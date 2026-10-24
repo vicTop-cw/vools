@@ -428,16 +428,19 @@ class TestBugFixes:
 
 
 class TestHandlerRegistration:
-    """测试处理器注册完整性（保留 2 个回退处理器）"""
+    """测试处理器注册完整性（3 个专用/回退处理器）"""
 
     def test_all_handlers_registered(self):
-        """验证 2 个回退处理器已注册"""
+        """验证处理器已注册：FunctionalHandler / CurryHandler / DecoratorHandler。
+
+        BUG-453：新增 CurryHandler —— Curried（柯里化函数）此前无处理器，pickle
+        报 mappingproxy、JSON 报 not serializable，放进任务载荷即静默不可用。
+        """
         from vools.serialize.callable import _HANDLERS
 
-        # 只保留 2 个通用回退处理器（DecoratorHandler, FunctionalHandler）
-        assert len(_HANDLERS) == 2, f"Expected 2 handlers, got {len(_HANDLERS)}"
+        assert len(_HANDLERS) == 3, f"Expected 3 handlers, got {len(_HANDLERS)}"
 
-        expected_names = {'DecoratorHandler', 'FunctionalHandler'}
+        expected_names = {'DecoratorHandler', 'FunctionalHandler', 'CurryHandler'}
         actual_names = {h.handler_name for h in _HANDLERS}
         assert actual_names == expected_names
 
