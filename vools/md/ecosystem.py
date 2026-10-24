@@ -566,6 +566,18 @@ def check_compliance(markdown_text: str, spec: str = 'gfm') -> List[ComplianceIs
     - 行尾空白
     - 连续空行过多
     """
+    # BUG-466: ``spec`` 参数此前**完全未使用**——传 'commonmark'/'nope' 都不报错、
+    # 也不改变任何行为（使用者误以为换了规则集）。现在拒绝未知规范，并明确
+    # 说明当前两个规范共用同一套规则；markdown_text 也要求是字符串。
+    if not isinstance(spec, str) or spec.strip().lower() not in ('gfm', 'commonmark'):
+        raise ValueError(
+            f"check_compliance() 的 spec 只支持 ('gfm', 'commonmark')，收到 "
+            f"{type(spec).__name__}: {spec!r}")
+    if not isinstance(markdown_text, str):
+        raise TypeError(
+            f"check_compliance() 的 markdown_text 需要字符串，收到 "
+            f"{type(markdown_text).__name__}: {markdown_text!r}")
+
     issues = []
     lines = markdown_text.split('\n')
 
