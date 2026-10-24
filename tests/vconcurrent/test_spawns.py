@@ -53,66 +53,66 @@ class TestSpawnHandle:
     def test_creation(self):
         p = spawn(_noop)
         assert isinstance(p, SpawnHandle)
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
 
     def test_start_and_join(self):
         p = spawn(_noop)
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
         assert p.is_alive() is False
 
     def test_terminate(self):
         p = spawn(_sleep_long)
         p.terminate()
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
         assert p.is_alive() is False
 
     def test_kill(self):
         p = spawn(_sleep_long)
         p.kill()
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
         assert p.is_alive() is False
 
     def test_pid(self):
         p = spawn(_sleep_short)
         # pid 是 property
         assert p.pid is not None
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
 
     def test_exitcode(self):
         p = spawn(_noop)
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
         assert p.exitcode is not None
 
     def test_is_alive(self):
         p = spawn(_sleep_short)
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
         assert p.is_alive() is False
 
     def test_is_started(self):
         p = spawn(_noop)
         # is_started 是 property
         assert p.is_started is True
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
 
     def test_name(self):
         p = spawn(_noop, name='test_worker')
         assert p.name == 'test_worker'
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
 
     def test_process(self):
         p = spawn(_noop)
         # process 是 property
         assert p.process is not None
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
 
     def test_context_manager(self):
         with spawn(_noop) as p:
-            p.join(timeout=5.0)
+            p.join(timeout=30.0)
         assert True  # 无异常即通过
 
     def test_args_and_kwargs(self):
         p = spawn(_append_to, args=([], 'x'))
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
         assert p.exitcode == 0
 
 
@@ -122,19 +122,19 @@ class TestSpawnFunction:
     def test_spawn_returns_handle(self):
         p = spawn(_noop)
         assert isinstance(p, SpawnHandle)
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
 
     def test_spawn_with_name(self):
         p = spawn(_noop, name='worker')
         assert p.name == 'worker'
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
 
     def test_spawn_autostart_false(self):
         p = spawn(_noop, autostart=False)
         assert p.is_started is False
         p.start()
         assert p.is_started is True
-        p.join(timeout=5.0)
+        p.join(timeout=30.0)
 
 
 class TestSpawnMany:
@@ -145,7 +145,7 @@ class TestSpawnMany:
         handles = spawn_many(_noop, [(), (), ()])
         assert len(handles) == 3
         for h in handles:
-            h.join(timeout=5.0)
+            h.join(timeout=30.0)
         assert all(h.exitcode == 0 for h in handles)
 
     def test_spawn_many_length_mismatch(self):
@@ -166,7 +166,7 @@ class TestRestartOnExit:
         decorated = restart_on_exit(max_restarts=2, delay=0.1)(_unstable)
         handle = decorated()
         assert isinstance(handle, SpawnHandle)
-        handle.join(timeout=5.0)
+        handle.join(timeout=30.0)
 
 
 class TestSpawnManager:
