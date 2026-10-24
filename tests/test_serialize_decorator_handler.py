@@ -61,9 +61,13 @@ class TestGetState:
         h = DecoratorHandler()
         st = h.get_state(decorated_func)
         assert st["name"] == "decorated_func"
-        assert "__wrapped__" in st
+        # BUG-449：原始函数改存为可 pickle 的 module+qualname 引用。
+        # 旧断言（__wrapped__ / original_func 直接存函数对象）在 functools.wraps
+        # 之后无法按引用 pickle（模块级同名属性已被 wrapper 占用），导致最典型的
+        # 被装饰函数根本无法往返——契约已升级为引用格式。
+        assert "original_ref" in st
+        assert st["original_ref"]["qualname"]
         assert "_vools_decorator" in st
-        assert "original_func" in st
 
     def test_no_wrapped(self):
         h = DecoratorHandler()
