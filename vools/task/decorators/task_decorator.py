@@ -21,10 +21,28 @@ class TaskDecorator(VoolsBase):
     """任务装饰器类"""
 
     def __init__(self, db_path: str = "tasks.db"):
+        # BUG-426: 原实现零校验——``TaskDecorator(db_path=123)`` /
+        # ``db_path=None`` 都被接受，直到真正提交任务时才抛 sqlite 相关错误
+        # （天书）。此处入口即校验：字符串（或 os.PathLike）且非空。
+        import os as _os
+        if db_path is None or not isinstance(db_path, (str, _os.PathLike)):
+            raise TypeError(
+                f"TaskDecorator 的 db_path 需要 str 或 os.PathLike，收到 "
+                f"{type(db_path).__name__}: {db_path!r}")
+        db_path = _os.fspath(db_path)
+        if not db_path.strip():
+            raise ValueError("TaskDecorator 的 db_path 不能为空")
         self.db_path = db_path
 
 
     def __call__(self, func: Callable) -> Callable:
+        # BUG-426: 原实现 ``functools.wraps(func)`` 对非可调用对象也照常包装，
+        # 得到一个"看起来是任务函数"的 wrapper，调用时才抛 TypeError。
+        if not callable(func):
+            raise TypeError(
+                f"TaskDecorator 只能装饰可调用对象，收到 "
+                f"{type(func).__name__}: {func!r}")
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> int:
             """
