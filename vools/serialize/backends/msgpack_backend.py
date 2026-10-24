@@ -50,6 +50,21 @@ class MsgpackBackend(BaseBackend):
         from ...serialize.codec import vools_preprocess, vools_default
         obj = vools_preprocess(obj)
         try:
+            # BUG-408: tuple/frozenset 键会被编码成 array key，读取端无法还原，
+            # 表现为"写得进去、读不回来"。这里在 dumps 时告警（不改结果）。
+            try:
+                from ._keycheck import find_non_scalar_msgpack_keys
+                _bad, _truncated = find_non_scalar_msgpack_keys(obj)
+                if _bad:
+                    import warnings as _w
+                    _w.warn(
+                        f"MsgpackBackend: 载荷含非标量映射键 {_bad!r}"
+                        f"{' 等' if _truncated else ''}——msgpack 读取端无法还原"
+                        f"数组键（会抛 list is not allowed for map key）。"
+                        f"如需保真请改用 pickle 或把键转成字符串。",
+                        RuntimeWarning, stacklevel=2)
+            except Exception:
+                pass
             return msgpack.packb(obj, default=vools_default, raw=self.raw)
         except TypeError:
             # msgpack >= 1.0 移除了 raw 参数

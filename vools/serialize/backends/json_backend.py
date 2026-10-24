@@ -100,6 +100,23 @@ class JsonBackend(BaseBackend):
         """
         from ...serialize.codec import vools_preprocess, vools_default
         
+        # BUG-408: JSON 只允许字符串键——非字符串键会被**静默转成字符串**，
+        # 往返后键类型改变（{1: 'a'} -> {'1': 'a'}）。这里发可见告警，
+        # 不改变序列化结果（与 json 标准库行为保持一致）。
+        try:
+            from ._keycheck import find_non_str_keys
+            _bad, _truncated = find_non_str_keys(obj)
+            if _bad:
+                import warnings as _w
+                _w.warn(
+                    f"JsonBackend: 载荷含非字符串映射键 {_bad!r}"
+                    f"{' 等' if _truncated else ''}——JSON 只能表示字符串键，"
+                    f"这些键在反序列化后会变成字符串（键类型改变）。"
+                    f"如需保真请改用 pickle/msgpack 或显式转换键。",
+                    RuntimeWarning, stacklevel=2)
+        except Exception:
+            pass
+
         # 尝试 Nim 桥接
         try:
             result = _json_encode(obj)
@@ -108,6 +125,7 @@ class JsonBackend(BaseBackend):
         except Exception:
             pass
         
+
         # Nim 不可用，使用 orjson 或 json
         obj = vools_preprocess(obj)
         if self.use_orjson:

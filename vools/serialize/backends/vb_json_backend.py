@@ -51,6 +51,19 @@ class VBJsonBackend(BaseBackend):
         Returns:
             JSON 格式的字节串
         """
+        # BUG-408: 同 JsonBackend——非字符串键会被静默转成字符串，这里告警。
+        try:
+            from ._keycheck import find_non_str_keys
+            _bad, _truncated = find_non_str_keys(obj)
+            if _bad:
+                import warnings as _w
+                _w.warn(
+                    f"VBJsonBackend: 载荷含非字符串映射键 {_bad!r}"
+                    f"{' 等' if _truncated else ''}——JSON 只能表示字符串键，"
+                    f"这些键在反序列化后会变成字符串（键类型改变）。",
+                    RuntimeWarning, stacklevel=2)
+        except Exception:
+            pass
         return self.dumps_str(obj).encode('utf-8')
 
     def loads(self, data: bytes) -> Any:
