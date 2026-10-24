@@ -72,6 +72,14 @@ class _SafeUnpickler(pickle.Unpickler):
             'PurePath', 'PurePosixPath', 'PureWindowsPath',
             'PosixPath', 'WindowsPath', 'Path',
         },
+        # BUG-334 补：Windows 上 pathlib 的类型实体实际定义在 pathlib._local
+        # （Path/PosixPath/WindowsPath/PurePosixPath 的 __module__ 都是它），
+        # pickle 引用的是 _local 模块 → 只放行 pathlib 会让 Windows 上的
+        # Path 往返被拒并静默降级成标记字符串（实测 6 个 pathlib 用例全挂）。
+        'pathlib._local': {
+            'PurePath', 'PurePosixPath', 'PureWindowsPath',
+            'PosixPath', 'WindowsPath', 'Path',
+        },
     }
     # 内建类型补充（bytearray 走 builtins 白名单）
     _ALLOWED['builtins'].add('bytearray')
