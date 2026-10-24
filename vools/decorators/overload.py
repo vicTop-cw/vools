@@ -546,8 +546,19 @@ def overload(func: Optional[Callable] = None,
     返回:
         OverloadManager 实例
     """
+    # BUG-409: 参数校验。原实现把非法值直接转交 OverloadManager：
+    #   * overload(123) -> AttributeError: 'int' object has no attribute '__name__'
+    #     （完全看不出是"不是函数"）；
+    #   * priority='x' 被接受，直到重载比较排序时才炸。
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        raise TypeError(
+            f"overload 的 priority 需要 int，收到 {type(priority).__name__}: {priority!r}")
+
     if func is None:
         def decorator(f: Callable) -> OverloadManager:
+            if not callable(f):
+                raise TypeError(
+                    f"overload 装饰的函数必须可调用，收到 {type(f).__name__}: {f!r}")
             _validate_mode(mode)
             return OverloadManager(
                 func=f,
@@ -557,6 +568,9 @@ def overload(func: Optional[Callable] = None,
             )
         return decorator
 
+    if not callable(func):
+        raise TypeError(
+            f"overload 装饰的函数必须可调用，收到 {type(func).__name__}: {func!r}")
     _validate_mode(mode)
     return OverloadManager(
         func=func,
