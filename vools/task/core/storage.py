@@ -19,6 +19,17 @@ class TaskStorage(VoolsBase):
     """任务存储管理器（线程安全）"""
 
     def __init__(self, db_path: str = "tasks.db"):
+        # BUG-430: 原实现零校验——``db_path=''`` 会被 sqlite3 接受并连到
+        # **无名临时库**（用户以为数据落到了指定文件）；``db_path=123`` 则在
+        # _init_db 阶段抛 sqlite 的 TypeError（信息指不到构造参数）。
+        import os as _os
+        if db_path is None or not isinstance(db_path, (str, _os.PathLike)):
+            raise TypeError(
+                f"TaskStorage 的 db_path 需要 str 或 os.PathLike，收到 "
+                f"{type(db_path).__name__}: {db_path!r}")
+        db_path = _os.fspath(db_path)
+        if not db_path.strip():
+            raise ValueError("TaskStorage 的 db_path 不能为空")
         self.db_path = db_path
         self._init_db()
 

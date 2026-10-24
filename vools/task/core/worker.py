@@ -127,6 +127,32 @@ class WorkerPool(VoolsBase):
 
     def __init__(self, num_workers: int = 4, db_path: str = "tasks.db",
                  lease_seconds: int = 300, poll_interval: float = 0.5):
+        # BUG-430: 原实现零校验——num_workers=0/-1/'x'、lease_seconds=-1/'x'、
+        # poll_interval=0/-0.1/'x' 全部被接受，直到 start() 才暴露（甚至
+        # num_workers=0 会静默地"不启动任何 worker"）。
+        if isinstance(num_workers, bool) or not isinstance(num_workers, int):
+            raise TypeError(
+                f"WorkerPool 的 num_workers 需要整数，收到 "
+                f"{type(num_workers).__name__}: {num_workers!r}")
+        if num_workers <= 0:
+            raise ValueError(
+                f"WorkerPool 的 num_workers 必须 > 0，收到 {num_workers}")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int):
+            raise TypeError(
+                f"WorkerPool 的 lease_seconds 需要整数，收到 "
+                f"{type(lease_seconds).__name__}: {lease_seconds!r}")
+        if lease_seconds <= 0:
+            raise ValueError(
+                f"WorkerPool 的 lease_seconds 必须 > 0，收到 {lease_seconds}")
+        if isinstance(poll_interval, bool) or not isinstance(
+                poll_interval, (int, float)):
+            raise TypeError(
+                f"WorkerPool 的 poll_interval 需要数字，收到 "
+                f"{type(poll_interval).__name__}: {poll_interval!r}")
+        if poll_interval <= 0:
+            raise ValueError(
+                f"WorkerPool 的 poll_interval 必须 > 0，收到 {poll_interval}")
+
         self.num_workers = num_workers
         self.db_path = db_path
         self.lease_seconds = lease_seconds
