@@ -61,6 +61,35 @@ class Mixer_(VoolsBase):
         _attr_cache: 属性缓存
         _attr_code: 额外代码字典
     """
+    def __getattr__(self, name: str) -> Any:
+        """按优先级从组合对象中查找属性（BUG-420）。
+
+        原实现**缺失本方法**：Mixer_ 的文档承诺“支持按优先级访问”，但任何
+        属性访问都会落到 ``object`` 的默认实现，抛
+        ``AttributeError: 'Mixer_' object has no attribute ...``——核心功能
+        完全失效。``Mixer`` 子类自带（装饰器增强版）``__getattr__``，因此该
+        缺陷只在直接使用 ``Mixer_`` 时暴露。
+
+        查找规则：按 ``_priority_map`` 中记录的优先级（值小者优先）逐个组件
+        查找，命中即返回；全部未命中时抛含组件上下文的 ``AttributeError``。
+        """
+        # 内部属性（下划线开头）走 object 默认语义，避免递归
+        if name.startswith("_"):
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute {name!r}")
+        state = self.__dict__
+        if "_objs" not in state or "_priority_map" not in state:
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute {name!r}")
+        objs = state["_objs"]
+        priority = state["_priority_map"]
+        for obj in sorted(objs, key=lambda o: priority.get(id(o), 0)):
+            try:
+                return getattr(obj, name)
+            except AttributeError:
+                continue
+        raise AttributeError(f"{name!r} not found in Mixer components")
+
     def __init__(self, *objs: Any) -> None:
         """初始化 Mixer_ 混合器。
         
