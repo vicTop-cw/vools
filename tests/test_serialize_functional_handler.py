@@ -53,8 +53,12 @@ class TestGetState:
         obj = Pipe(_ident)
         st = h.get_state(obj)
         assert st["type_name"] == "Pipe"
-        assert "raw_func" in st
-        assert "func" in st
+        # BUG-451：raw_func 现在以可 pickle 的 {'module','qualname'} 引用保存
+        # （旧格式把闭包 lambda 存在 'func' 里，lambda 不可 pickle → Pipe 永远
+        # 无法序列化）；_ident 是模块级函数，因此应生成引用。
+        assert "raw_func_ref" in st
+        assert st["raw_func_ref"]["qualname"].endswith("_ident")
+        assert st["args"] == ()
 
     def test_ops(self):
         h = FunctionalHandler()
@@ -66,10 +70,11 @@ class TestGetState:
         obj = P(_ident, 1, 2, a=3)
         st = h.get_state(obj)
         assert st["type_name"] == "P"
-        assert st["func"] is _ident
+        # BUG-451：func 改存引用（JSON 后端可序列化），模块级函数应生成 ref
+        assert st["func_ref"]["qualname"].endswith("_ident")
         assert st["args"] == (1, 2)
         assert st["kwargs"] == {"a": 3}
-        assert "ix" in st
+        assert st["ix"] == 1
 
     def test_box(self):
         h = FunctionalHandler()
@@ -88,9 +93,16 @@ class TestRestore:
         assert isinstance(r, Pipe)
 
     def test_pipe_with_raw_func(self):
+        # BUG-451：raw_func 为可调用对象时恢复为 Pipe（旧实现原样返回对象，
+        # 类型丢失）。非可调用值请见 test_pipe_with_bad_raw_func。
         h = FunctionalHandler()
-        r = h.restore({"type_name": "Pipe", "raw_func": "raw"})
-        assert r == "raw"
+        r = h.restore({"type_name": "Pipe", "raw_func": _ident})
+        assert isinstance(r, Pipe)
+
+    def test_pipe_with_bad_raw_func(self):
+        h = FunctionalHandler()
+        with pytest.raises(TypeError):
+            h.restore({"type_name": "Pipe", "raw_func": "raw"})
 
     def test_ops(self):
         h = FunctionalHandler()

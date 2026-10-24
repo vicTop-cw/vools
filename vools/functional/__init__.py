@@ -70,7 +70,17 @@ class Pipe(VoolsBase):
     """
     
     def __init__(self, func: Callable, *args, **kwargs):
+        # BUG-452: 原实现零校验——``Pipe("raw")`` 会被接受（functools.wraps 对
+        # 缺失属性宽容），直到调用时才抛 ``'str' object is not callable``。
+        if not callable(func):
+            raise TypeError(
+                f"Pipe 的 func 必须可调用，收到 {type(func).__name__}: {func!r}")
         self.raw_func = func
+        # BUG-451: 保存部分应用参数。原实现只把它们闭包进 lambda，状态里无从
+        # 获取——FunctionalHandler 既无法重建 Pipe，序列化也必然失败
+        # （lambda 是 Pipe.__init__.<locals>.<lambda>，不可 pickle）。
+        self.args = args
+        self.kwargs = kwargs
         self.func = lambda iterable, *args2, **kwargs2: func(
             iterable, *args, *args2, **kwargs, **kwargs2
         )

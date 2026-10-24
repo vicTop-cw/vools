@@ -7,6 +7,7 @@
 from typing import Any, Dict
 
 from . import CallableHandler
+from .decorator_handler import _make_ref, _resolve_ref
 from ...core.base import VoolsBase
 __all__ = ['FunctionalHandler']
 
@@ -38,13 +39,20 @@ class FunctionalHandler(CallableHandler, VoolsBase):
         obj_type = type(obj).__name__
 
         if obj_type == 'Pipe':
-            state['raw_func'] = getattr(obj, 'raw_func', None)
-            state['func'] = getattr(obj, 'func', None)
+            raw = getattr(obj, 'raw_func', None)
+            state['raw_func_ref'] = _make_ref(raw)
+            if state['raw_func_ref'] is None and raw is not None:
+                state['raw_func'] = raw
+            state['args'] = tuple(getattr(obj, 'args', ()))
+            state['kwargs'] = dict(getattr(obj, 'kwargs', {}))
         elif obj_type == 'Ops':
             # Ops 是静态方法集合，不需要特殊状态
             pass
         elif obj_type == 'P':
-            state['func'] = getattr(obj, 'func', None)
+            fn = getattr(obj, 'func', None)
+            state['func_ref'] = _make_ref(fn)
+            if state['func_ref'] is None and fn is not None:
+                state['func'] = fn
             state['args'] = getattr(obj, 'args', tuple())
             state['kwargs'] = getattr(obj, 'kwargs', {})
             state['ix'] = getattr(obj, 'ix', 1)
@@ -70,10 +78,18 @@ class FunctionalHandler(CallableHandler, VoolsBase):
 
         if obj_type == 'Pipe':
             from ...functional import Pipe
-            func = state.get('func')
-            if func:
-                return Pipe(func)
-            return state.get('raw_func')
+            raw = state.get('raw_func')
+            ref = state.get('raw_func_ref')
+            if raw is None and ref is not None:
+                raw = _resolve_ref(ref)
+            if raw is None:
+                # 向后兼容：旧格式把闭包函数存在 'func' 里
+                raw = state.get('func')
+            if raw is None:
+                raise ValueError(
+                    "无法恢复 Pipe：raw_func 及引用均不可用")
+            return Pipe(raw, *state.get('args', tuple()),
+                        **state.get('kwargs', {}))
 
         elif obj_type == 'Ops':
             from ...functional import Ops
@@ -81,9 +97,18 @@ class FunctionalHandler(CallableHandler, VoolsBase):
 
         elif obj_type == 'P':
             from ...functional import P
+            fn = state.get('func')
+            ref = state.get('func_ref')
+            if fn is None and ref is not None:
+                fn = _resolve_ref(ref)
+            if fn is None:
+                raise ValueError("无法恢复 P：func 及引用均不可用")
+            # BUG-451: 原实现忽略 state['ix'] —— P(..., ix=2) 恢复后变回 ix=1，
+            # 管道插入位置改变（静默错位）。
             return P(
-                state.get('func'),
+                fn,
                 *state.get('args', tuple()),
+                ix=state.get('ix', 1),
                 **state.get('kwargs', {})
             )
 
