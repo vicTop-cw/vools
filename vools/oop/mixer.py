@@ -305,6 +305,17 @@ class Mixer(Mixer_):
             ValueError: func_name 为魔法函数名或所有参数都为空/False
             TypeError: 参数类型不正确
         """
+        # BUG-427: func_name 必须是字符串（原实现在这里直接 startswith，
+        # 传 int 会抛 AttributeError: 'int' object has no attribute 'startswith'）
+        # 且不能为空；魔法方法名按文档约定拒绝（注意：原早检写的是三个下划线
+        # "___"，__init__ 等 dunder 名本就漏检，这里一并覆盖）。
+        if not isinstance(func_name, str):
+            raise TypeError(
+                f"add_extra_code() 的 func_name 需要字符串，收到 "
+                f"{type(func_name).__name__}: {func_name!r}")
+        if not func_name.strip():
+            raise ValueError("add_extra_code() 的 func_name 不能为空")
+
         if func_name.startswith("___") and func_name.endswith("__"):
             raise ValueError(f"func_name must not be a magical name :{func_name}")
         if all(bool(i) == False for i in (func_shell, result_shell, code_first, code_last, partial_args, partial_kwargs)):
@@ -326,6 +337,28 @@ class Mixer(Mixer_):
             raise TypeError("partial_args must be a list or tuple !!!")
         if partial_kwargs and not isinstance(partial_kwargs, dict):
             raise TypeError("partial_kwargs must be a dict !!!")
+        # BUG-427（续）：code_first / code_last 校验 + 属性名冲突检测。
+        # 原实现 code_first=123 被静默接受，调用时才抛 AttributeError；
+        # func_name 与组件已有**属性/property** 同名时注入被属性查找短路
+        # （静默失效，返回原值），文档也明确"不能是属性名"。
+        if func_name.startswith("__") and func_name.endswith("__"):
+            raise ValueError(f"add_extra_code() 不能修饰魔法方法 {func_name!r}")
+        for label, code in (("code_first", code_first), ("code_last", code_last)):
+            if code is not None and not isinstance(code, str):
+                raise TypeError(
+                    f"add_extra_code() 的 {label} 需要字符串代码，收到 "
+                    f"{type(code).__name__}: {code!r}")
+        for obj in self._objs:
+            cls = obj if isinstance(obj, type) else type(obj)
+            existing = vars(cls).get(func_name)
+            if existing is None:
+                continue
+            if callable(existing) and not isinstance(existing, property):
+                continue   # 组件方法名可以注入（__getattr__ 路径生效）
+            raise ValueError(
+                f"add_extra_code({func_name!r}) 与组件 {cls.__name__} 的已有属性"
+                f"同名，注入会被短路（静默失效）")
+
         self._attr_code[func_name] = {
             'func_shell': func_shell,
             'result_shell': result_shell,
