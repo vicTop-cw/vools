@@ -187,3 +187,47 @@ class TestEqualityCycleSafety:
         b.other = a
         # 关键：循环引用比较不能抛 RecursionError，必须给出明确布尔结果
         assert (a == b) is True
+
+
+class TestFromDictRobustness:
+    """BUG-417: from_dict 对 slot 子类 / 必填构造参数给出明确失败。
+
+    原实现 ``cls(**data)``：
+    * ``Seq.from_dict({'x': 1})`` -> TypeError: unexpected keyword argument 'x'
+      （看不出是"类没有该属性"）；
+    * ``Encryptor.from_dict({})`` -> missing 1 required positional argument 'data'
+      （看不出与 from_dict 的关联）。
+    """
+
+    def test_non_dict_rejected(self):
+        with pytest.raises(TypeError) as ei:
+            Seq.from_dict([1, 2])
+        assert 'Seq' in str(ei.value)
+
+    def test_unknown_attribute_clear_error(self):
+        with pytest.raises(TypeError) as ei:
+            Seq.from_dict({'x': 1})
+        msg = str(ei.value)
+        assert 'Seq' in msg and 'x' in msg
+
+    def test_required_ctor_arg_clear_error(self):
+        with pytest.raises(TypeError) as ei:
+            Encryptor.from_dict({})
+        msg = str(ei.value)
+        assert 'Encryptor' in msg and 'from_dict' in msg
+
+    def test_dict_based_class_roundtrip(self):
+        class Demo(VoolsBase):
+            def __init__(self, name='x'):
+                self.name = name
+
+        assert Demo.from_dict({'name': 'y'}).name == 'y'
+        assert Demo.from_dict({}).name == 'x'
+
+    def test_slot_class_from_dict_empty(self):
+        # 空 dict 走默认构造（不抛错）
+        assert list(Seq.from_dict({})) == []
+        assert Table.from_dict({}) is not None
+
+    def test_to_dict_still_dict(self):
+        assert isinstance(Seq([1]).to_dict(), dict)
