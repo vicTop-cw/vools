@@ -221,6 +221,28 @@ def _get_connection(args, kwargs, default_connection=None):
     return connection, args, kwargs
 
 
+def _validate_dialect_name(dialect):
+    """校验 ``dialect`` 参数是已注册的方言名（BUG-462）。
+
+    原实现把 ``dialect`` 原样塞进 ``_sql_info`` 元数据后**从未解析**：
+    ``@sql_function(dialect="nope")`` 静默生效（不报错、不改变任何行为），
+    使用者会误以为占位符/类型映射已按该方言处理。现在未知方言在装饰期就报错。
+    """
+    if dialect is None:
+        return
+    if not isinstance(dialect, str) or not dialect.strip():
+        raise ValueError(
+            f"dialect 必须是非空字符串或 None，收到 "
+            f"{type(dialect).__name__}: {dialect!r}")
+    # 顶层 get_dialect 会触发方言懒加载（core 的注册表在首次访问前是空的）
+    from .. import get_dialect, list_dialects
+    try:
+        get_dialect(dialect)
+    except Exception:
+        raise ValueError(
+            f"未知方言 {dialect!r}；可用方言: {list_dialects()}")
+
+
 def _make_sql_wrapper(func, dialect=None, connection=None, sql=None,
                       auto_convert=True, skip_first_arg=False):
     """
@@ -377,6 +399,8 @@ def sql_function(dialect=None, connection=None, sql=None, auto_convert=True):
         result = get_user(1, connection=conn)
     """
 
+    # BUG-462: 未知方言在装饰期就报错（此前静默无效）
+    _validate_dialect_name(dialect)
     def decorator(func):
         return _make_sql_wrapper(
             func, dialect=dialect, connection=connection, sql=sql,
@@ -442,6 +466,8 @@ def sql_module(dialect=None, connection=None, auto_convert=True):
                 return "INSERT INTO users (name, age) VALUES (%s, %s)", (name, age)
     """
 
+    # BUG-462: 与 sql_function 同口径
+    _validate_dialect_name(dialect)
     def decorator(cls):
         for name in dir(cls):
             if name.startswith('_'):

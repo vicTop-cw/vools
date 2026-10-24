@@ -102,17 +102,17 @@ class TestSqlFunction:
     def test_dialect_attr(self):
         from vools.sql.core.decorators import sql_function
 
-        @sql_function(dialect="mysql")
+        @sql_function(dialect="sqlite")
         def my_sql():
             return "SELECT 1"
 
         info = my_sql._sql_info
-        assert info["dialect"] == "mysql"
+        assert info["dialect"] == "sqlite"
 
     def test_sql_info_attrs(self):
         from vools.sql.core.decorators import sql_function
 
-        @sql_function(dialect="mysql")
+        @sql_function(dialect="sqlite")
         def my_sql(x: int = 1):
             return "SELECT 1"
 
@@ -145,7 +145,7 @@ class TestSqlModule:
     def test_module_skips_private(self):
         from vools.sql.core.decorators import sql_module, sql_function
 
-        @sql_module(dialect="mysql")
+        @sql_module(dialect="sqlite")
         class Repo:
             def public_method(self):
                 return "SELECT 1"
@@ -172,14 +172,14 @@ class TestSqlModule:
     def test_module_skip_first_arg(self):
         from vools.sql.core.decorators import sql_module
 
-        @sql_module(dialect="mysql")
+        @sql_module(dialect="sqlite")
         class Repo:
             def get(self, user_id: int) -> str:
                 return "SELECT 1"
 
         info = Repo.get._sql_info
         assert info["skip_first_arg"] is True
-        assert info["dialect"] == "mysql"
+        assert info["dialect"] == "sqlite"
 
     def test_module_method_call_no_conn(self):
         from vools.sql.core.decorators import sql_module
