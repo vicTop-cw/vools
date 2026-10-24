@@ -109,6 +109,18 @@ class SqlTypeMapper:
             py_type: Python 类型
             sql_type: 对应的 SQL 类型字符串
         """
+        # BUG-457: 原实现零校验——``register_type(123, 456)`` 抛
+        # ``AttributeError: 'int' object has no attribute 'upper'``（看不出哪个参数
+        # 错），而 ``register_type(int, '')`` 会**静默注册空类型**：此后
+        # ``get_sql_type(int)`` 返回 ''，映射被污染且无任何提示。
+        if not isinstance(py_type, type):
+            raise TypeError(
+                f"register_type() 的 py_type 必须是类型，收到 "
+                f"{type(py_type).__name__}: {py_type!r}")
+        if not isinstance(sql_type, str) or not sql_type.strip():
+            raise ValueError(
+                f"register_type() 的 sql_type 必须是非空字符串，收到 "
+                f"{type(sql_type).__name__}: {sql_type!r}")
         _py_map, _sql_map = _mapper_maps(self)
         _py_map[py_type] = sql_type
         _sql_map[sql_type.upper()] = py_type
@@ -138,6 +150,11 @@ class SqlTypeMapper:
         返回：
             Python 类型，如果未注册则返回 None
         """
+        # BUG-457: 非字符串会抛 cryptic 的 'int' object has no attribute 'upper'。
+        if not isinstance(sql_type, str):
+            raise TypeError(
+                f"get_py_type() 的 sql_type 必须是字符串，收到 "
+                f"{type(sql_type).__name__}: {sql_type!r}")
         _, _sql_map = _mapper_maps(self)
         return _sql_map.get(sql_type.upper())
 
