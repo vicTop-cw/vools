@@ -698,7 +698,11 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
             safe_func = safe_compile_expression(func, tuple(symbols))
             return list(itertools.starmap(safe_func, self._data))
         else:
-            return []
+            # BUG-445: 与 BUG-444 同族——原实现静默返回 []，
+            # ``VList([(1, 2)]).starmap(123)`` 得到空列表（静默丢数据）。
+            raise TypeError(
+                f"VList.starmap() 的 func 需要可调用对象或表达式字符串，收到 "
+                f"{type(func).__name__}: {func!r}")
 
     @property
     def inner_iterable(self) -> bool:
@@ -797,7 +801,11 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
             safe_func = create_map_func(func)
             return safe_func(self)
         else:
-            return []
+            # BUG-445: 原实现静默返回 []，``VList([1, 2]).run(123)`` 得到空列表
+            # （run 本应返回单个值，[] 既是静默失败又是错误形状）。
+            raise TypeError(
+                f"VList.run() 的 func 需要可调用对象或表达式字符串，收到 "
+                f"{type(func).__name__}: {func!r}")
 
     def run(self, func: Union[Callable[[Any], Any], str] = print) -> Any:
         """运行函数（整个列表作为参数）。
