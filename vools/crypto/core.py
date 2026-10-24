@@ -718,6 +718,18 @@ def hmac_sha256(data: Any, key: Union[str, bytes]) -> str:
     return Encryptor._hmac_sha256(data, key)
 
 
+def _require_positive_length(length: Any, func_name: str) -> None:
+    """校验密钥/令牌长度为正整数（BUG-458）。"""
+    if isinstance(length, bool) or not isinstance(length, int):
+        raise TypeError(
+            f"{func_name}() 的 length 必须是正整数，收到 "
+            f"{type(length).__name__}: {length!r}")
+    if length < 1:
+        raise ValueError(
+            f"{func_name}() 的 length 必须 >= 1（0 会产生空密钥/令牌，等同于"
+            f"无保护），收到 {length!r}")
+
+
 def generate_key(length: int = 32) -> str:
     """
     生成安全随机密钥
@@ -731,6 +743,10 @@ def generate_key(length: int = 32) -> str:
     Example:
         key = generate_key(32)  # 64 字符的十六进制字符串
     """
+    # BUG-458: 原实现把长度直接透传给 secrets.token_bytes——``generate_key(0)``
+    # 静默返回**空字符串**（负值才由底层报错）。空密钥在语义上等于"无保护"，
+    # 却在调用方看来是一次成功的密钥生成，属安全相关的静默错值。
+    _require_positive_length(length, 'generate_key')
     return binascii.hexlify(secrets.token_bytes(length)).decode('utf-8')
 
 
@@ -747,6 +763,8 @@ def generate_token(length: int = 32) -> str:
     Example:
         token = generate_token()  # URL 安全的令牌
     """
+    # BUG-458: 同 generate_key——``generate_token(0)`` 静默返回空字符串。
+    _require_positive_length(length, 'generate_token')
     return secrets.token_urlsafe(length)
 
 
