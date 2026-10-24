@@ -17,6 +17,29 @@ from typing import Any, Dict, List, Optional
 from . import _dag
 
 
+
+def _validate_backend_options(max_retries: Any, retry_delay_min: Any, what: str) -> None:
+    """校验后端共有选项（BUG-429）。
+
+    原实现零校验：``max_retries='x'`` 会让 ``fail()`` 里的
+    ``retry_count >= max_retries`` 在运行期抛 TypeError；``max_retries=-1``
+    被静默接受，使首次失败即终态（与 ``max_retries=0`` 语义重复且含义不明）；
+    ``retry_delay_min=1.5`` 被接受但调度里按整数使用。
+    """
+    if isinstance(max_retries, bool) or not isinstance(max_retries, int):
+        raise TypeError(
+            f"{what} 的 max_retries 需要整数，收到 "
+            f"{type(max_retries).__name__}: {max_retries!r}")
+    if max_retries < 0:
+        raise ValueError(f"{what} 的 max_retries 不能为负，收到 {max_retries}")
+    if isinstance(retry_delay_min, bool) or not isinstance(retry_delay_min, int):
+        raise TypeError(
+            f"{what} 的 retry_delay_min 需要整数，收到 "
+            f"{type(retry_delay_min).__name__}: {retry_delay_min!r}")
+    if retry_delay_min < 0:
+        raise ValueError(f"{what} 的 retry_delay_min 不能为负，收到 {retry_delay_min}")
+
+
 class SqliteTaskBackend:
     """SQLite 任务队列后端。
 
@@ -30,6 +53,21 @@ class SqliteTaskBackend:
 
     def __init__(self, db_path: str = "tasks_queue.db", table: str = "vic_tasks_task",
                  max_retries: int = 3, retry_delay_min: int = 5):
+        # BUG-429: 入口校验（必须在 sqlite3.connect 之前）
+        import os as _os
+        if db_path is None or not isinstance(db_path, (str, _os.PathLike)):
+            raise TypeError(
+                f"SqliteTaskBackend 的 db_path 需要 str 或 os.PathLike，收到 "
+                f"{type(db_path).__name__}: {db_path!r}")
+        db_path = _os.fspath(db_path)
+        if not db_path.strip():
+            raise ValueError("SqliteTaskBackend 的 db_path 不能为空")
+        if not isinstance(table, str) or not table.strip():
+            raise ValueError(
+                f"SqliteTaskBackend 的 table 需要非空字符串，收到 "
+                f"{type(table).__name__}: {table!r}")
+        _validate_backend_options(max_retries, retry_delay_min, "SqliteTaskBackend")
+
         self.db_path = db_path
         self.table = table
         self.edges = table + "_edges"
