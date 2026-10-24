@@ -15,6 +15,41 @@ from .storage import TaskStorage
 from ...core.base import VoolsBase
 
 
+def _normalize_depends_on(value: Any) -> Set[int]:
+    """校验并归一化 depends_on（BUG-431）。
+
+    原实现 ``set(kwargs.pop('depends_on', None) or ())`` 对非法输入极不友好：
+
+    * ``depends_on=999``  -> ``TypeError: 'int' object is not iterable``；
+    * ``depends_on='abc'`` -> 被**逐字符**展开成 'a','b','c' 三个"任务ID"，
+      报 ``DagValidationError: Dependency task b not found``，完全看不出原因；
+    * ``depends_on=['x']`` -> 报 Dependency task x not found（误把字符串当 ID）。
+
+    现要求：``None`` -> 空集；可迭代且元素为整数任务ID（bool 除外）。
+    任务ID是否存在仍由既有 :meth:`TaskQueue._validate_dag` 负责。
+    """
+    if value is None:
+        return set()
+    if isinstance(value, (str, bytes)) or isinstance(value, int):
+        raise TypeError(
+            f"depends_on 需要可迭代的整数任务ID列表，收到 "
+            f"{type(value).__name__}: {value!r}")
+    try:
+        deps = list(value)
+    except TypeError:
+        raise TypeError(
+            f"depends_on 需要可迭代的整数任务ID列表，收到 "
+            f"{type(value).__name__}: {value!r}")
+    out: Set[int] = set()
+    for dep in deps:
+        if isinstance(dep, bool) or not isinstance(dep, int):
+            raise TypeError(
+                f"depends_on 的元素需要整数任务ID，收到 "
+                f"{type(dep).__name__}: {dep!r}")
+        out.add(dep)
+    return out
+
+
 class TaskQueue(VoolsBase):
     """任务队列管理器"""
 
@@ -68,11 +103,19 @@ class TaskQueue(VoolsBase):
         Returns:
             任务ID
         """
+        # BUG-431: task_options 类型校验必须在提取之前（原实现先 task_options.get，
+        # 传 'x'/123 会抛 AttributeError: 'str' object has no attribute 'get'）。
+        if task_options is not None and not isinstance(task_options, dict):
+            raise TypeError(
+                f"submit() 的 task_options 需要 dict 或 None，收到 "
+                f"{type(task_options).__name__}: {task_options!r}")
+
         if task_options is not None:
             # 显式通道：kwargs 全部转发给函数
             priority = task_options.get('priority', 0)
             max_retries = task_options.get('max_retries', 3)
-            depends_on: Set[int] = set(task_options.get('depends_on') or ())
+            depends_on: Set[int] = _normalize_depends_on(
+                task_options.get('depends_on'))
         else:
             # BUG-385: 同名冲突检测——原实现直接 pop，函数永远收不到这些参数
             _collided = [k for k in self._TASK_OPTION_KEYS if k in kwargs]
@@ -87,7 +130,24 @@ class TaskQueue(VoolsBase):
                         f"或重命名函数形参。")
             priority = kwargs.pop('priority', 0)
             max_retries = kwargs.pop('max_retries', 3)
-            depends_on = set(kwargs.pop('depends_on', None) or ())
+            depends_on = _normalize_depends_on(
+                kwargs.pop('depends_on', None))
+
+        # BUG-431: 任务选项类型校验（原实现只做了 BUG-385 的同名冲突检测）
+        if not callable(func):
+            raise TypeError(
+                f"submit() 的 func 必须可调用，收到 "
+                f"{type(func).__name__}: {func!r}")
+        if isinstance(priority, bool) or not isinstance(priority, int):
+            raise TypeError(
+                f"submit() 的 priority 需要整数，收到 "
+                f"{type(priority).__name__}: {priority!r}")
+        if isinstance(max_retries, bool) or not isinstance(max_retries, int):
+            raise TypeError(
+                f"submit() 的 max_retries 需要整数，收到 "
+                f"{type(max_retries).__name__}: {max_retries!r}")
+        if max_retries < 0:
+            raise ValueError(f"submit() 的 max_retries 不能为负，收到 {max_retries}")
 
         # 序列化函数
         func_data = self._serialize_func(func)
