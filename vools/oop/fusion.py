@@ -21,6 +21,43 @@ from ..core.base import VoolsBase
 _IMMUTABLE_TYPES = (str, int, float, bool, tuple, bytes, frozenset)
 
 
+def _copy_class_attributes_from_parents(fused_cls: Type, classes: tuple) -> None:
+    """把父类的**类属性**复制到融合类（BUG-421）。
+
+    原实现只调用 :func:`_copy_methods_from_parents`——类属性（``x = 1``）在
+    融合后**静默消失**：``fuse_classes(A, B)`` 得到的类没有 ``A.x``，也
+    不抛任何错误。
+
+    复制规则（与原方法优先级一致：先出现的类优先）：
+
+    * 只处理**直接定义**在父类 ``__dict__`` 中的属性（不递归继承）；
+    * 跳过 dunder（``__init__``/``__doc__``/``__slots__`` 等）；
+    * 跳过可调用对象（方法由方法复制逻辑处理，且其优先级更高）；
+    * 同名属性先出现者优先。
+
+    注意：本函数**必须在方法复制之后调用**——方法优先于类属性，否则同名
+    属性会占用名字导致方法无法复制。
+    """
+    skip = {"__doc__", "__module__", "__qualname__", "__dict__", "__weakref__",
+            "__slots__", "__annotations__"}
+    for cls in classes:
+        try:
+            cls_dict = vars(cls)
+        except TypeError:
+            continue
+        for name, value in cls_dict.items():
+            if name.startswith("__") or name in skip:
+                continue
+            if callable(value):
+                continue          # 方法稍后由方法复制逻辑处理
+            if name in fused_cls.__dict__:
+                continue          # 先出现的类优先
+            try:
+                setattr(fused_cls, name, value)
+            except Exception:
+                continue
+
+
 def fuse_classes(
     *classes: Type,
     name: str = None,
@@ -120,8 +157,11 @@ def fuse_classes(
     # 4. 使用 type() 动态创建类
     FusedClass = type(name, (base_class,), class_dict)
     
-    # 5. 复制所有父类的方法到融合类
+    # 5. 复制所有父类的方法到融合类（先复制，方法优先）
     _copy_methods_from_parents(FusedClass, classes)
+
+    # 5.1 复制父类的类属性（BUG-421）：同名属性跳过，已复制的方法优先
+    _copy_class_attributes_from_parents(FusedClass, classes)
     
     # 6. 应用方法重写
     if method_overrides:
