@@ -80,6 +80,20 @@ class DialectManager:
 
     _instance: Optional['DialectManager'] = None
 
+    @staticmethod
+    def _norm_name(name: Any) -> str:
+        """规范化方言名（BUG-411）。
+
+        原实现各处直接 `name.lower()`：传 None / int 时抛
+        ``AttributeError: 'NoneType' object has no attribute 'lower'``，
+        完全看不出是"参数类型错误"；而 core.register_dialect（BUG-348）早已
+        做了同样的名称校验，两个入口口径不一致。
+        """
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"方言名称必须是非空字符串，收到 {type(name).__name__}: {name!r}")
+        return name.strip().lower()
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -114,7 +128,11 @@ class DialectManager:
             dialect_class: 方言类（Dialect 的子类）
             config: 方言配置，为 None 则使用默认配置
         """
-        name_lower = name.lower()
+        name_lower = self._norm_name(name)
+        if not isinstance(dialect_class, type):
+            raise TypeError(
+                f"dialect_class 必须是一个类（推荐 Dialect 子类），收到 "
+                f"{type(dialect_class).__name__}: {dialect_class!r}")
 
         if config is None:
             config = DialectConfig(
@@ -141,7 +159,7 @@ class DialectManager:
         返回：
             是否成功取消
         """
-        name_lower = name.lower()
+        name_lower = self._norm_name(name)
         existed = name_lower in self._dialects
 
         self._dialects.pop(name_lower, None)
@@ -167,7 +185,7 @@ class DialectManager:
         异常：
             KeyError: 方言未注册
         """
-        name_lower = name.lower()
+        name_lower = self._norm_name(name)
         if name_lower not in self._dialects:
             raise KeyError(f"Dialect '{name}' not registered")
         return self._dialects[name_lower]
@@ -190,7 +208,7 @@ class DialectManager:
         异常：
             KeyError: 方言未注册
         """
-        name_lower = name.lower()
+        name_lower = self._norm_name(name)
         dialect_class = self.get_dialect(name_lower)
 
         cache_key = name_lower + ':' + _make_cache_key(kwargs)
@@ -215,7 +233,7 @@ class DialectManager:
         返回：
             是否可用
         """
-        name_lower = name.lower()
+        name_lower = self._norm_name(name)
         config = self._configs.get(name_lower)
         if not config:
             return False
@@ -262,7 +280,7 @@ class DialectManager:
         返回：
             DialectConfig 实例，不存在返回 None
         """
-        return self._configs.get(name.lower())
+        return self._configs.get(self._norm_name(name))
 
     def set_config(self, name: str, config: Any) -> bool:
         """
@@ -275,7 +293,7 @@ class DialectManager:
         返回：
             是否成功
         """
-        name_lower = name.lower()
+        name_lower = self._norm_name(name)
         if name_lower not in self._dialects:
             return False
 
@@ -396,7 +414,7 @@ class DialectManager:
             name: 方言名称，为 None 则清除所有缓存
         """
         if name:
-            name_lower = name.lower()
+            name_lower = self._norm_name(name)
             keys_to_remove = [
                 k for k in self._instances
                 if k.startswith(name_lower + ':') or k == name_lower
