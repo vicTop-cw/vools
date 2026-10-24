@@ -149,5 +149,11 @@ from .decorator_handler import DecoratorHandler
 from .functional_handler import FunctionalHandler
 
 # 注册顺序：具体类型 → 通用兜底
-register_handler(DecoratorHandler())
+# BUG-450: get_handler 采用**首个匹配者胜**，因此必须先注册更专用的处理器。
+# FunctionalHandler 只认固定的一组函数式对象类型（Pipe/Ops/P/Box），而
+# DecoratorHandler 认领「带 __wrapped__」的对象——Box 与 Pipe **恰好都暴露
+# __wrapped__**，旧顺序会让它们被 DecoratorHandler 抢先认领：
+#     serialize_callable(Box(1))   -> handler='DecoratorHandler'
+#     deserialize_callable(...)    -> 普通 function（Box 类型与行为静默丢失）
 register_handler(FunctionalHandler())
+register_handler(DecoratorHandler())

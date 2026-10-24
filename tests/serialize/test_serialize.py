@@ -442,11 +442,17 @@ class TestHandlerRegistration:
         assert actual_names == expected_names
 
     def test_handlers_order(self):
-        """验证处理器注册顺序正确：FunctionalHandler 最后（宽泛匹配）"""
+        """验证处理器注册顺序：get_handler 取首个匹配，专用者在前。
+
+        BUG-450：原顺序为 [DecoratorHandler, FunctionalHandler]，而 Box/Pipe
+        恰好都暴露 __wrapped__（functools.wraps 写入），会被 DecoratorHandler
+        抢先认领 → 反序列化得到普通 function（类型与行为静默丢失）。
+        现 FunctionalHandler（只认固定类型集）在前。
+        """
         from vools.serialize.callable import _HANDLERS
 
-        last_name = _HANDLERS[-1].handler_name
-        assert last_name == 'FunctionalHandler'
+        assert _HANDLERS[0].handler_name == 'FunctionalHandler'
+        assert _HANDLERS[-1].handler_name == 'DecoratorHandler'
 
     def test_handler_names_unique(self):
         """验证所有处理器名称唯一"""
