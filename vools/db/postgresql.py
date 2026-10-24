@@ -66,6 +66,12 @@ class PostgreSQLConnection:
             database: 数据库名称
             **kwargs: 传递给 psycopg2.connect 的额外参数
         """
+        # BUG-461: 显式传入的参数原为零校验——`host=''`/`database=''` 因 `or`
+        # 短路被**静默替换**成 env/config/默认值（可能连到非预期的库），
+        # `port='x'`/`port=-1`/`port=70000` 也被原样存下，直到 psycopg2.connect
+        # 才以晦涩错误暴露。显式给出的值必须在构造时就校验。
+        self._validate_explicit(host, port, user, password, database)
+
         # 从 config 读取默认值（避免循环导入，延迟加载）
         try:
             from ..config import DATABASE_CONFIG
@@ -77,8 +83,41 @@ class PostgreSQLConnection:
         self._user = user or os.environ.get('PG_USER', DATABASE_CONFIG.get('user', 'postgres'))
         self._password = password or os.environ.get('PG_PASSWORD', DATABASE_CONFIG.get('password', ''))
         self._database = database or os.environ.get('PG_DATABASE', DATABASE_CONFIG.get('database', 'postgres'))
+        # 解析后的端口同样要求合法（env/config 可能写错）
+        try:
+            _port = int(self._port)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"PostgreSQL 端口必须是整数，解析得到 {self._port!r}")
+        if not 1 <= _port <= 65535:
+            raise ValueError(f"PostgreSQL 端口必须在 1..65535，收到 {_port}")
+        self._port = _port
+
         self._connect_kwargs = kwargs
         self._connection = None
+
+    @staticmethod
+    def _validate_explicit(host, port, user, password, database) -> None:
+        """校验**显式传入**的连接参数（BUG-461）。"""
+        for name, value in (("host", host), ("user", user), ("database", database)):
+            if value is None:
+                continue
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"PostgreSQL 的 {name} 必须是非空字符串，收到 "
+                    f"{type(value).__name__}: {value!r}")
+        if password is not None and not isinstance(password, str):
+            raise TypeError(
+                f"PostgreSQL 的 password 必须是字符串，收到 "
+                f"{type(password).__name__}: {password!r}")
+        if port is not None:
+            if isinstance(port, bool) or not isinstance(port, int):
+                raise TypeError(
+                    f"PostgreSQL 的 port 必须是整数，收到 "
+                    f"{type(port).__name__}: {port!r}")
+            if not 1 <= port <= 65535:
+                raise ValueError(
+                    f"PostgreSQL 的 port 必须在 1..65535，收到 {port}")
 
     def _get_connection(self):
         """获取或创建数据库连接（惰性连接）。"""
