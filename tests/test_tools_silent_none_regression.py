@@ -13,9 +13,12 @@ trim/shift/get_index_cols 的正确契约。
 import pytest
 
 from vools.utils.tools import (
+    aggregate_json_keys,
+    build_text,
     excel_column_to_number,
     excel_number_to_column,
     get_char,
+    get_json_keys,
     get_index_cols,
     regexp_count,
     regexp_findall,
@@ -116,3 +119,55 @@ class TestMiscContracts:
     def test_get_char(self):
         assert get_char("abc", "★") == "★"
         assert get_char("ab★c", "★") not in "ab★c"
+
+
+class TestAggregateJsonKeysValidation:
+    """BUG-456：字符串元素会被逐字符拆分，产出貌似合理的错值。"""
+
+    @pytest.mark.parametrize("bad", [["ab", "ac"], ["a.b", "a.c"], "x", b"x"])
+    def test_string_elements_rejected(self, bad):
+        with pytest.raises(TypeError) as ei:
+            aggregate_json_keys(bad)
+        assert "aggregate_json_keys" in str(ei.value)
+
+    def test_char_split_bug_is_gone(self):
+        """修复前 ['ab','ac'] -> ['a','b','c']（字符级"合并"）。"""
+        with pytest.raises(TypeError):
+            aggregate_json_keys(["ab", "ac"])
+
+    def test_valid_list_of_lists(self):
+        assert aggregate_json_keys([["a", "b"], ["a", "c"]]) == ["a", "b", "c"]
+        assert aggregate_json_keys([["b"], ["a"]]) == ["b", "a"]
+        assert aggregate_json_keys([]) == []
+
+
+class TestBuildTextValidation:
+    @pytest.mark.parametrize("bad", [None, 123, b"x"])
+    def test_template_must_be_str(self, bad):
+        with pytest.raises(TypeError) as ei:
+            build_text(bad)
+        assert "raw_text_mode" in str(ei.value)
+
+    def test_none_with_lst_no_longer_cryptic(self):
+        """修复前抛 AttributeError: 'NoneType' object has no attribute 'replace'。"""
+        with pytest.raises(TypeError) as ei:
+            build_text(None, lst=[1])
+        assert "raw_text_mode" in str(ei.value)
+
+    def test_valid_paths(self):
+        assert build_text("hello") == "hello"
+        assert build_text("{item}", lst=[1, 2]) == "1\n ,2"
+        assert build_text("{a}", dct={"a": 1}) == "1"
+
+
+class TestGetJsonKeys:
+    def test_json_string(self):
+        assert get_json_keys('{"a": 1, "b": 2}') == ["a", "b"]
+
+    def test_dict(self):
+        assert get_json_keys({"a": 1, "b": 2}) == ["a", "b"]
+
+    def test_non_dict_input(self):
+        assert get_json_keys("[1, 2]") == []
+        assert get_json_keys(123) == []
+

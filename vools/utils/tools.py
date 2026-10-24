@@ -471,6 +471,13 @@ def build_text(raw_text_mode="", dct=None, lst=None, sep="\n ,", check_key: str 
     Returns:
         构建后的文本
     """
+    # BUG-456: 非 str 模板原实现静默穿透（build_text(123) 返回 123），而带 lst/dct
+    # 时更会抛 ``AttributeError: 'NoneType' object has no attribute 'replace'``
+    # （看不出是哪个参数）。模板必须是字符串。
+    if not isinstance(raw_text_mode, str):
+        raise TypeError(
+            f"build_text() 的 raw_text_mode 需要字符串，收到 "
+            f"{type(raw_text_mode).__name__}: {raw_text_mode!r}")
     txt = copy.deepcopy(raw_text_mode)
 
     if dct:
@@ -542,6 +549,21 @@ def aggregate_json_keys(keys_list):
     **每次进程运行都可能不同**（PYTHONHASHSEED 随机化）——下游据此生成的
     列序/字段序不可复现。改为与本文件 `union_ordered_collection` 一致的保序去重。
     """
+    # BUG-456: 原实现 ``[key for keys in keys_list for key in keys]`` 对**字符串**
+    # 元素会逐字符拆分：aggregate_json_keys(['ab', 'ac']) 静默返回
+    # ['a', 'b', 'c']（看起来像"合并后的键"，实为字符），['a.b', 'a.c'] 更会得到
+    # ['a', '.', 'b', 'c'] —— 输出貌似合理因而没人发现。契约是"键列表的列表"，
+    # 字符串元素必须被显式拒绝。
+    if isinstance(keys_list, (str, bytes)):
+        raise TypeError(
+            "aggregate_json_keys() 需要键列表的列表（如 [['a','b'],['a','c']]），"
+            f"收到 {type(keys_list).__name__}: {keys_list!r}")
+    keys_list = list(keys_list)
+    for keys in keys_list:
+        if isinstance(keys, (str, bytes)):
+            raise TypeError(
+                "aggregate_json_keys() 的每个元素必须是键列表（不能是字符串，"
+                f"否则会被逐字符拆分）；收到 {type(keys).__name__}: {keys!r}")
     flat = [key for keys in keys_list for key in keys]
     return list(OrderedDict.fromkeys(flat))
 
