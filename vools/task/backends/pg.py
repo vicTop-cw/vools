@@ -328,13 +328,28 @@ class PgTaskBackend:
 
     # ---------- 心跳 / 清理 ----------
     def clean_stale_locks(self, timeout_min: int = 10) -> int:
-        """清理过期锁（worker 挂掉后把 RUNNING 状态回收）。"""
+        """清理过期锁（worker 挂掉后把 RUNNING 状态回收）。
+
+        BUG-406: 与原 memory/sqlite 实现一致——真正使用 timeout_min：
+        除「lease 已过期」外，也回收「lease 为空且 updated_at 早于
+        timeout_min 分钟」的僵尸 RUNNING 任务。
+        """
+        if isinstance(timeout_min, bool) or not isinstance(timeout_min, (int, float)):
+            raise TypeError(
+                f"clean_stale_locks 的 timeout_min 需要数字（分钟），收到 "
+                f"{type(timeout_min).__name__}: {timeout_min!r}")
+        if timeout_min < 0:
+            raise ValueError(
+                f"clean_stale_locks 的 timeout_min 不能为负，收到 {timeout_min}")
         cur = self._cursor()
         cur.execute(
             'UPDATE "{t}" SET status=%s, worker_id=NULL, locked_by=NULL,'
             ' lease_timeout=NULL, error_message=COALESCE(error_message, %s)'
-            ' WHERE status=%s AND lease_timeout < CURRENT_TIMESTAMP'.format(t=self.table),
-            ("RETRY_PENDING", "锁过期回收", "RUNNING"),
+            ' WHERE status=%s AND (lease_timeout < CURRENT_TIMESTAMP'
+            '   OR (lease_timeout IS NULL'
+            "       AND updated_at < CURRENT_TIMESTAMP - (%s * INTERVAL '1 minute')))"
+            .format(t=self.table),
+            ("RETRY_PENDING", "锁过期回收", "RUNNING", timeout_min),
         )
         affected = cur.rowcount
         self._connect().commit()

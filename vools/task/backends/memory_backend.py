@@ -167,10 +167,29 @@ class MemoryTaskBackend:
 
     # ---------- 心跳 / 清理 ----------
     def clean_stale_locks(self, timeout_min: int = 10) -> int:
+        """回收过期锁（worker 挂掉后把 RUNNING 任务重置为 RETRY_PENDING）。
+
+        BUG-406: 原实现完全**忽略 timeout_min** 参数——只比较 lease_timeout
+        是否过期。现按文档语义使用它：除「lease 已过期」外，还回收
+        「RUNNING 但 lease_timeout 为空、且 updated_at 早于 timeout_min 分钟」
+        的僵尸任务（worker 在 acquire 后、写 lease 前崩溃的情况，否则会永久
+        卡在 RUNNING）。
+        """
+        if isinstance(timeout_min, bool) or not isinstance(timeout_min, (int, float)):
+            raise TypeError(
+                f"clean_stale_locks 的 timeout_min 需要数字（分钟），收到 "
+                f"{type(timeout_min).__name__}: {timeout_min!r}")
+        if timeout_min < 0:
+            raise ValueError(f"clean_stale_locks 的 timeout_min 不能为负，收到 {timeout_min}")
         now = datetime.utcnow()
+        cutoff = now - timedelta(minutes=timeout_min)
         n = 0
         for t in self._tasks.values():
-            if t["status"] == "RUNNING" and t["lease_timeout"] and t["lease_timeout"] < now:
+            if t["status"] != "RUNNING":
+                continue
+            lease = t.get("lease_timeout")
+            if (lease is not None and lease < now) or (
+                    lease is None and t.get("updated_at") and t["updated_at"] < cutoff):
                 t.update(status="RETRY_PENDING", worker_id=None, locked_by=None,
                          lease_timeout=None, updated_at=now)
                 n += 1

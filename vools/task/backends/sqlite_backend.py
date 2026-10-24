@@ -275,14 +275,30 @@ class SqliteTaskBackend:
 
     # ---------- 清理 ----------
     def clean_stale_locks(self, timeout_min: int = 10) -> int:
+        """回收过期锁（BUG-406：现在真正使用 timeout_min 参数）。
+
+        除「lease 过期」外，同时回收「lease 为空且 updated_at 早于
+        timeout_min 分钟」的僵尸 RUNNING 任务。
+        """
+        if isinstance(timeout_min, bool) or not isinstance(timeout_min, (int, float)):
+            raise TypeError(
+                f"clean_stale_locks 的 timeout_min 需要数字（分钟），收到 "
+                f"{type(timeout_min).__name__}: {timeout_min!r}")
+        if timeout_min < 0:
+            raise ValueError(f"clean_stale_locks 的 timeout_min 不能为负，收到 {timeout_min}")
         now = self._now()
+        cutoff = (datetime.utcnow() - timedelta(minutes=timeout_min)
+                  ).isoformat(sep=" ", timespec="seconds")
         with self._lock, self._conn:
             cur = self._conn.execute(
                 """
                 UPDATE "{t}" SET status='RETRY_PENDING', worker_id=NULL, locked_by=NULL,
                     lease_timeout=NULL, updated_at=?
-                WHERE status='RUNNING' AND lease_timeout IS NOT NULL AND lease_timeout < ?
-                """.format(t=self.table), (now, now))
+                WHERE status='RUNNING' AND (
+                    (lease_timeout IS NOT NULL AND lease_timeout < ?)
+                    OR (lease_timeout IS NULL AND updated_at < ?)
+                )
+                """.format(t=self.table), (now, now, cutoff))
             return cur.rowcount
 
     # ---------- 查询 ----------
