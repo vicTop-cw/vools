@@ -52,27 +52,46 @@ class VoolsBase:
         # 数据容器因此"不同内容判相等"；且状态里的 lambda/生成器按身份比较
         # 又会让"相同内容判不等"。现：类型必须一致 + 合并 slots/__dict__ 状态，
         # 逐项比较，跳过无相等语义的 opaque 值。
+        # BUG-416: 递归比较需带循环检测（见 _vools_eq）。
         if self is other:
             return True
         if type(self) is not type(other):
             return False
-        try:
-            mine, theirs = _state_of(self), _state_of(other)
-        except Exception:
-            return NotImplemented
+        return self._vools_eq(other, {})
+    def _vools_eq(self, other: Any, seen: dict) -> bool:
+        """带循环检测的相等比较（BUG-416）。
+
+        状态中的对象互相引用时，递归比较会无限展开；原实现靠
+        RecursionError 被 except 吞掉返回 NotImplemented，导致结构相同的
+        循环对象被判为 **False**。这里对 (self, other) 配对记账：
+        重复出现同一对即视为已比较（相等），既保证终止又不至于误判。
+        """
+        key = (id(self), id(other))
+        if key in seen:
+            return seen[key]
+        seen[key] = True
+        mine, theirs = _state_of(self), _state_of(other)
         if mine.keys() != theirs.keys():
+            seen[key] = False
             return False
-        for key in mine:
-            va, vb = mine[key], theirs[key]
+        for key_name in mine:
+            va, vb = mine[key_name], theirs[key_name]
             if va is vb:
                 continue
             if _is_opaque(va) or _is_opaque(vb):
                 continue
+            if isinstance(va, VoolsBase) and isinstance(vb, VoolsBase):
+                if not va._vools_eq(vb, seen):
+                    seen[key] = False
+                    return False
+                continue
             try:
                 if va != vb:
+                    seen[key] = False
                     return False
             except Exception:
-                return NotImplemented
+                seen[key] = False
+                return False
         return True
 
     def __hash__(self):

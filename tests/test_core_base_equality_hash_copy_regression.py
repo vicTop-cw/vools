@@ -28,6 +28,7 @@
 
 import pytest
 
+from vools.core.base import VoolsBase
 from vools.crypto.core import Encryptor
 from vools.data.seq import Seq
 from vools.data.table import Table
@@ -135,3 +136,54 @@ class TestOtherMixinsUnchanged:
         d = Demo()
         d.update(nope=3)          # 未知属性静默忽略（既有契约）
         assert not hasattr(d, 'nope')
+
+
+class TestEqualityCycleSafety:
+    """BUG-416: 循环引用对象的相等比较必须终止且结果正确。
+
+    修复前：递归比较触发 RecursionError，被 `except Exception` 吞掉后返回
+    NotImplemented，循环引用且**结构相同**的对象被判为 False。
+    """
+
+    class _Node(VoolsBase):
+        def __init__(self, value=None):
+            self.value = value
+
+    def test_mutual_cycle_equal(self):
+        a, b = self._Node(1), self._Node(1)
+        a.other = b
+        b.other = a
+        assert (a == b) is True
+
+    def test_mutual_cycle_different_value(self):
+        a, b = self._Node(1), self._Node(2)
+        a.other = b
+        b.other = a
+        assert (a == b) is False
+
+    def test_nested_multi_cycle(self):
+        a, b = self._Node(1), self._Node(1)
+        a.partner = b
+        b.partner = a
+        b.sibling = a
+        assert (a == b) is False   # 状态键不同（b 多 sibling）
+
+    def test_asymmetric_ref_not_equal(self):
+        a, b = self._Node(1), self._Node(1)
+        a.partner = b
+        assert (a == b) is False   # b 没有 partner
+
+    def test_deep_nested_without_cycle(self):
+        x, y = self._Node(1), self._Node(1)
+        x.data = {'k': [1, 2]}
+        y.data = {'k': [1, 2]}
+        assert (x == y) is True
+        y.data = {'k': [1, 3]}
+        assert (x == y) is False
+
+    def test_no_recursion_error(self):
+        a, b = self._Node(1), self._Node(1)
+        a.other = b
+        b.other = a
+        # 关键：循环引用比较不能抛 RecursionError，必须给出明确布尔结果
+        assert (a == b) is True
