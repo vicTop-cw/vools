@@ -130,6 +130,13 @@ class SafeExpressionEvaluator(VoolsBase):
     """安全表达式求值器"""
 
     def __init__(self, allowed_vars: Optional[Dict[str, Any]] = None):
+        # BUG-425: 原实现 ``allowed_vars or {}`` 接受任意值——传入 list/str
+        # 时白名单看似生效，实际按名字取值会抛 TypeError/KeyError（天书），
+        # 或（非空字符串）被当作白名单导致变量永远找不到。入口即校验类型。
+        if allowed_vars is not None and not isinstance(allowed_vars, dict):
+            raise TypeError(
+                f"SafeExpressionEvaluator 的 allowed_vars 需要 dict 或 None，"
+                f"收到 {type(allowed_vars).__name__}: {allowed_vars!r}")
         self.allowed_vars = allowed_vars or {}
 
     def _eval_node(self, node: ast.AST) -> Any:
