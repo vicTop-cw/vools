@@ -155,7 +155,7 @@ class TaskStorage(VoolsBase):
                     worker_id = NULL,
                     lease_timeout = NULL,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE status IN ('RUNNING', 'RETRYING')
+                WHERE status IN ('RUNNING', 'RETRYING', 'LOCKED')
                 AND lease_timeout < ?
             """, (now,))
 
@@ -167,7 +167,7 @@ class TaskStorage(VoolsBase):
             # 语义不一致）。这里要求所有上游依赖都处于 SUCCESS 才可领取。
             row_cursor = conn.execute("""
                 SELECT t.id FROM tasks t
-                WHERE t.status = 'PENDING'
+                WHERE t.status IN ('PENDING', 'READY')
                   AND NOT EXISTS (
                       SELECT 1
                       FROM task_dependencies d
@@ -346,7 +346,7 @@ class TaskStorage(VoolsBase):
                     lease_timeout = NULL,
                     error_message = NULL,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status IN ('FAILED', 'SKIPPED')
+                WHERE id = ? AND status IN ('FAILED', 'SKIPPED', 'RETRY_PENDING')
             """, (task_id,))
             return cursor.rowcount > 0
 
