@@ -96,9 +96,15 @@ class TestVProcess:
         proc.wait()
 
     def test_terminate(self):
-        proc = VProcess(["python", "-c", "import time; time.sleep(10)"])
+        # BUG-422: 原实现 terminate() 后固定 sleep(0.1) 再断言进程已终止——
+        # 负载较高时 OS 尚未回收进程，is_running 仍为 True 且 returncode 为
+        # None，测试**偶发失败**（单跑 3/3 全绿）。改为带截止时间的轮询，
+        # 并把硬编码 "python" 换成 sys.executable（后者依赖 PATH）。
+        proc = VProcess([sys.executable, "-c", "import time; time.sleep(10)"])
         proc.terminate()
-        time.sleep(0.1)
+        deadline = time.time() + 10
+        while proc.is_running and time.time() < deadline:
+            time.sleep(0.05)
         assert not proc.is_running or proc.returncode is not None
 
     def test_kill(self):
