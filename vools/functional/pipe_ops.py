@@ -265,7 +265,13 @@ class Ops:
     reduce = static_pipe2(reduce)
     accumulate = static_pipe1(itertools.accumulate)
     chain = static_pipe1(itertools.chain)
-    compress = static_pipe2(itertools.compress)
+    # BUG-440: itertools.compress(data, selectors) 的自然管道用法是
+    # ``data | Ops.compress(selectors)``；原实现用 static_pipe2（管道值落在第 2 位）
+    # 会把参数接成 compress(selectors, data)——实测 ``[1,2,3] | Ops.compress([T,F,T])``
+    # 返回 [True, False, True]（selector 列表本身），而不是 [1, 3]。
+    # 同族的 filter/map/starmap/dropwhile/nlargest 都是"显式参数在前、管道值在后"，
+    # compress 是唯一反例，故改回 static_pipe1 并显式固定 (data, selectors) 顺序。
+    compress = static_pipe1(lambda data, selectors: itertools.compress(data, selectors))
     cycle = static_pipe1(itertools.cycle)
     dropwhile = static_pipe2(itertools.dropwhile)
     filterfalse = static_pipe2(itertools.filterfalse)
