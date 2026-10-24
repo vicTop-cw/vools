@@ -98,6 +98,17 @@ class TestNoDriverAvailable:
     """无驱动时 ImportError 且 driver_name 保持 None。"""
 
     def test_import_error(self, monkeypatch):
+        # 本机若已安装 psycopg2/psycopg，delitem 后 `import` 会重新从磁盘
+        # 加载真实驱动，导致 connect() 走真连接（OperationalError）而非
+        # ImportError。必须拦截 import 机制本身，让两个驱动名恒定抛 ImportError。
+        real_import = __builtins__['__import__'] if isinstance(__builtins__, dict) else __import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name in ('psycopg2', 'psycopg'):
+                raise ImportError(f'blocked for test: {name}')
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr('builtins.__import__', _fake_import)
         monkeypatch.delitem(sys.modules, 'psycopg2', raising=False)
         monkeypatch.delitem(sys.modules, 'psycopg', raising=False)
         c = PostgresConnection()
