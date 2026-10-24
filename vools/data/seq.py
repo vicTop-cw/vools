@@ -507,6 +507,10 @@ def _require_expression_callable(expr: Any, func_type: str) -> None:
             f"收到 {expr!r}；也可直接传可调用对象")
 
 
+
+# BUG-443: 表达式字符串 -> 安全过滤函数（与 VList 同口径）
+from ..security import create_filter_func  # noqa: E402
+
 class Seq(SeqBase, VoolsBase):
     def __init__(self, *origins: Any) -> None:
         """初始化 Seq 实例。
@@ -978,16 +982,20 @@ class Seq(SeqBase, VoolsBase):
             self._add_op(f)
         return self
     
-    def filter(self, *funcs: Callable[[T], bool]) -> 'Seq':
-        """过滤操作。
-        
+    def filter(self, *funcs: Any) -> 'Seq':
+        """过滤操作（回调可为函数或表达式字符串，与 :class:`VList.filter` 一致）。
+
         Args:
-            *funcs: 一个或多个过滤函数
-            
+            *funcs: 一个或多个过滤函数或表达式字符串
+
         Returns:
             self
         """
         for m in funcs:
+            # BUG-443: 字符串形式经 create_filter_func 安全编译（与 VList 同口径），
+            # 避免 ``Seq([1,2,3]).filter('x>1')`` 抛 'str' object is not callable。
+            if isinstance(m, str):
+                m = create_filter_func(m)
             f = lambda x: NONE if (x is NONE if not _NONE_is_None else x is None or x is NONE) or not m(x) else x
             self._add_op(f, True)
         return self
