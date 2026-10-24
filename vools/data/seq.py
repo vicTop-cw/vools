@@ -453,6 +453,40 @@ def _pipe(*funcs):
 def _compose(*funcs):
     return _pipe(*funcs[::-1])
 
+def _require_non_negative_int(value: Any, what: str) -> int:
+    """校验「元素个数」类参数（BUG-414）。
+
+    原实现对这些 n 完全不校验：`take(-1)`/`tee(0)`/`grouper(-1)` 一律静默
+    返回空序列，看起来像"没有匹配项"，实为参数错误。
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{what} 需要 int，收到 {type(value).__name__}: {value!r}")
+    if value < 0:
+        raise ValueError(f"{what} 不能为负，收到 {value}")
+    return value
+
+
+def _require_positive_int(value: Any, what: str) -> int:
+    """校验「组大小」类参数（> 0）——BUG-414。"""
+    _require_non_negative_int(value, what)
+    if value == 0:
+        raise ValueError(f"{what} 必须 > 0，收到 0")
+    return value
+
+
+def _require_expression_callable(expr: Any, func_type: str) -> None:
+    """校验 LINQ 表达式参数形式（BUG-414）。
+
+    `where('x > 1')` 原实现把字符串交给占位符求值器，最终得到 0 参 lambda，
+    调用时抛 ``TypeError: <lambda>() takes 0 positional arguments but 1 was
+    given``——完全看不出正确写法。此处提前给出可操作提示。
+    """
+    if isinstance(expr, str) and func_type == 'lambda' and 'lambda' not in expr:
+        raise ValueError(
+            f"表达式字符串必须是 lambda 形式（如 'lambda x: x > 1'），"
+            f"收到 {expr!r}；也可直接传可调用对象")
+
+
 class Seq(SeqBase, VoolsBase):
     def __init__(self, *origins: Any) -> None:
         """初始化 Seq 实例。
@@ -562,6 +596,8 @@ class Seq(SeqBase, VoolsBase):
         Returns:
             分组后的 Seq 实例
         """
+        _require_positive_int(n, 'grouper(n)')
+
         def gen():
             args = [iter(self._evaluate())] * n
             for i in zip_longest(*args, fillvalue=fillvalue):
@@ -1020,6 +1056,9 @@ class Seq(SeqBase, VoolsBase):
         Returns:
             self
         """
+        for ff in funcs:
+            if isinstance(ff, str):
+                _require_expression_callable(ff, func_type)
         f = lambda ff: _expr(ff, mode, func_type)
         return self.filter(*map(f, funcs))
     
@@ -1034,6 +1073,9 @@ class Seq(SeqBase, VoolsBase):
         Returns:
             self
         """
+        for ff in funcs:
+            if isinstance(ff, str):
+                _require_expression_callable(ff, func_type)
         f = lambda ff: _expr(ff, mode, func_type)
         return self.filterfalse(*map(f, funcs))
 
@@ -1134,6 +1176,7 @@ class Seq(SeqBase, VoolsBase):
         Returns:
             列表或 Seq 实例
         """
+        _require_non_negative_int(n, 'take(n)')
         if action:
             rs: List[T] = []
             d = rs.append
@@ -1169,6 +1212,8 @@ class Seq(SeqBase, VoolsBase):
         Returns:
             新的 Seq 实例（元素是 n 元组）
         """
+        _require_positive_int(n, 'tee(n)')
+
         def gen():
             # BUG-175: 原 `deque(maxlen=n)` 是滑动窗口，每 append 一个元素就 yield，
             # 且 maxlen 丢弃队头，结果出现重叠窗口。tee 语义是按 n 元组分块，
@@ -1187,6 +1232,8 @@ class Seq(SeqBase, VoolsBase):
         Returns:
             新的 Seq 实例
         """
+        _require_non_negative_int(n, 'skip(n)')
+
         def gen():
             for i, v in enumerate(self._evaluate()):
                 if i >= n:
