@@ -85,8 +85,14 @@ def foreach(
     return vicList(lst).foreach(func, filter_func, filter_first)
 
 
-for_p: Callable[..., Any] = for_(print)
-"""for_p 是 for_(print) 的别名，用于直接打印结果。"""
+for_p = print
+"""for_p 是 print 的别名，用于直接打印结果。
+
+BUG-442: 原实现 ``for_p = for_(print)`` 得到的是 vic_execute 的 **map 包装器**
+（只接受单个 iterable、返回结果列表），与"直接打印结果"的文档承诺不符：
+``for_p(1, 2)`` 会抛 ``print() takes 1 positional argument but 2 were given``
+（因为包装器经 @wraps 被改名成了 print）。现在直接别名到 builtins.print。
+"""
 
 
 def build(x: Any) -> Any:

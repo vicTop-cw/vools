@@ -9,6 +9,7 @@
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from collections.abc import Iterable
 from functools import wraps
+import types
 from typing import Callable, Any, Optional
 
 __all__ = ['trd', 'proc', 'vic_execute']
@@ -50,6 +51,13 @@ def vic_execute(func: Optional[Callable] = None, max_workers: int = 3, use_proce
             with pool(max_workers=max_workers) as executor:
                 results = [future for future in executor.map(func, its)]
             return results
+        # BUG-441: @wraps(func) 会把 builtins 的名字（如 print）复制到包装器上，
+        # 于是调用参数个数错误时报 "print() takes 1 positional argument but 2
+        # were given"，完全看不出是 vic_execute 包装器只接受单个 iterable。
+        # 对 builtins 函数改用中性名称；Python 函数/方法仍保留原名。
+        if isinstance(func, types.BuiltinFunctionType):
+            wrapper.__name__ = "vic_execute_wrapper"
+            wrapper.__qualname__ = "vic_execute_wrapper"
         return wrapper
     return decorator if func is None else decorator(func)
 
