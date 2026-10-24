@@ -468,11 +468,21 @@ class Box(AOP):
         Raises:
             TypeError: 当 __wrapped__ 不是可迭代对象时
         """
+        # BUG-437: func 必须可调用（原实现直接 func(item)，传 'x' 会抛
+        # TypeError: 'str' object is not callable，看不出是参数错误）；
+        # 另外 str/bytes 被**有意排除**（避免逐字符映射），原报错却说
+        # "只适用于可迭代对象"（str 本就可迭代），信息与行为矛盾。
+        if not callable(func):
+            raise TypeError(
+                f"Box.map() 的 func 必须可调用，收到 "
+                f"{type(func).__name__}: {func!r}")
         base = self.__wrapped__
         if isinstance(base, Iterable) and not isinstance(base, (str, bytes)):
             result = [func(item) for item in base]
             return Box(result)
-        raise TypeError("map 操作只适用于可迭代对象")
+        raise TypeError(
+            "Box.map() 只适用于非 str/bytes 的可迭代对象（str/bytes 被排除以"
+            "避免逐字符映射）；str 请直接调用其方法或改用 Box(str(...))。")
 
     def filter(self, func: Callable[[Any], bool]) -> 'Box':
         """对 Box 内的可迭代对象执行过滤操作。
@@ -486,11 +496,17 @@ class Box(AOP):
         Raises:
             TypeError: 当 __wrapped__ 不是可迭代对象时
         """
+        if not callable(func):
+            raise TypeError(
+                f"Box.filter() 的 func 必须可调用，收到 "
+                f"{type(func).__name__}: {func!r}")
         base = self.__wrapped__
         if isinstance(base, Iterable) and not isinstance(base, (str, bytes)):
             result = [item for item in base if func(item)]
             return Box(result)
-        raise TypeError("filter 操作只适用于可迭代对象")
+        raise TypeError(
+            "Box.filter() 只适用于非 str/bytes 的可迭代对象（str/bytes 被排除以"
+            "避免逐字符过滤）；str 请直接调用其方法或改用 Box(str(...))。")
 
     def reduce(self, func: Callable[[Any, Any], Any], initial: Optional[Any] = None) -> 'Box':
         """对 Box 内的可迭代对象执行归约操作。
