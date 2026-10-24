@@ -91,6 +91,15 @@ def extract_metadata(markdown_text: str) -> Dict[str, Any]:
         return meta
 
 
+def _require_markdown_text(value: Any, func_name: str) -> str:
+    """校验 markdown 输入是非空字符串（BUG-465）。"""
+    if not isinstance(value, str):
+        raise TypeError(
+            f"{func_name}() 的 markdown_text 需要字符串，收到 "
+            f"{type(value).__name__}: {value!r}")
+    return value
+
+
 def extract_frontmatter(markdown_text: str) -> Dict[str, Any]:
     """
     提取并解析 YAML front matter（增强版）。
@@ -101,6 +110,9 @@ def extract_frontmatter(markdown_text: str) -> Dict[str, Any]:
     Returns:
         解析后的 front matter 字典
     """
+
+    # BUG-465: 非字符串输入原实现抛 'NoneType' object has no attribute 'split'（看不出参数）。
+    _require_markdown_text(markdown_text, 'extract_frontmatter')
     return extract_metadata(markdown_text)
 
 
@@ -328,6 +340,9 @@ def extract_code_blocks(markdown_text: str, language: Optional[str] = None) -> L
 
 def count_words(markdown_text: str) -> int:
     """统计 Markdown 文本的词数（排除代码块和标记符号）。"""
+
+    # BUG-465: 同 extract_frontmatter。
+    _require_markdown_text(markdown_text, 'count_words')
     doc = parse(markdown_text)
     word_count = 0
 
