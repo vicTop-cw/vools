@@ -71,6 +71,19 @@ class CurryHandler(CallableHandler, VoolsBase):
         if is_curried(fn):
             return fn
 
+        # BUG-454: 引用若解析到 CurryDescriptor（类级别 @curry 的描述符），
+        # 直接包进 Curried 会让 self 变成第一个 curry 参数（静默错值）。
+        # 描述符本身不是可调用的 curry 目标，必须响亮失败。
+        try:
+            from ...decorators.curry_core import CurryDescriptor
+        except Exception:                     # pragma: no cover
+            CurryDescriptor = ()              # type: ignore[assignment]
+        if CurryDescriptor and isinstance(fn, CurryDescriptor):
+            raise ValueError(
+                "无法恢复 Curried：引用解析到 CurryDescriptor（类级别 @curry "
+                "描述符），实例绑定信息不可恢复；请直接序列化实例方法的结果或"
+                "改用可 picklable 的绑定对象。")
+
         return Curried(
             fn,
             state.get('bound_args') or {},

@@ -5,6 +5,7 @@
 from typing import Any, Dict, Callable, Optional
 import functools
 import importlib
+import inspect
 
 from . import CallableHandler
 from ...core.base import VoolsBase
@@ -17,6 +18,12 @@ def _make_ref(func: Any) -> Optional[Dict[str, str]]:
     仅当对象是 Python 函数/方法且限定名不包含 ``<locals>`` 时返回引用；
     否则返回 None（调用方退回直接存对象）。
     """
+    # BUG-454: 绑定方法（types.MethodType / 含 __self__）不能只用 module+qualname
+    # 表示——解析回来只是函数/描述符，实例绑定信息丢失。Curried 包着绑定方法时
+    # 会静默错位：c.add 的 self 被当成第一个 curry 参数（实测 r(1)(2) 得到
+    # add{'self': 1, 'a': 2}）。这类对象必须退回"存对象"路径（pickle 可，JSON 响亮失败）。
+    if inspect.ismethod(func) or getattr(func, "__self__", None) is not None:
+        return None
     module = getattr(func, "__module__", None)
     qualname = getattr(func, "__qualname__", None)
     if not isinstance(module, str) or not isinstance(qualname, str):
