@@ -2638,6 +2638,12 @@ class Table(Seq):
         for i in range(len(self._data)):
             yield self.row(i)
 
+    def _raw_iter(self):
+        # BUG-412: Table 的元素视图是 dict 行（见 __iter__），_evaluate 必须
+        # 用它而不是 SeqBase 的原始 list 行，否则 sort_by/count_by 的列名回调
+        # 会收到 list 并抛 TypeError。
+        return self.__iter__()
+
     def __getitem__(self, key):
         if isinstance(key, int):
             return self.row(key)
