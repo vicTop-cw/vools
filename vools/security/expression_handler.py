@@ -308,8 +308,21 @@ def safe_compile_expression(expr: str, param_names: Tuple[str, ...] = ('x',)) ->
             raise ExpressionSecurityError(f"无效的参数名称: {name}")
     
     try:
-        args = ', '.join(param_names)
-        full_expr = f"lambda {args}: {expr}"
+        # BUG-443: 原实现无条件拼成 ``lambda {args}: {expr}``。当 expr 本身已是
+        # lambda 形式（如 ``'lambda x: x > 1'``）时会变成
+        # ``lambda x: lambda x: x > 1``——编译出的函数被调用后返回**内层 lambda
+        # 对象**（恒真），过滤静默失效：
+        #     VList([1, 2, 3]).filter('lambda x: x > 1')  -> [1, 2, 3]   # 应为 [2, 3]
+        # 因此先判断 expr 是否已是完整 lambda，若是则直接编译（不再外层包裹）。
+        try:
+            parsed = ast.parse(expr, mode='eval')
+        except SyntaxError as e:
+            raise ExpressionSecurityError(f"语法错误: {e}")
+        if isinstance(parsed.body, ast.Lambda):
+            full_expr = expr
+        else:
+            args = ', '.join(param_names)
+            full_expr = f"lambda {args}: {expr}"
         
         tree = ast.parse(full_expr, mode='eval')
         _validate_ast_node(tree.body, set(param_names))
