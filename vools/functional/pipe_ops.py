@@ -71,7 +71,21 @@ def _not(pred):
     return lambda *a, **k: not pred(*a, **k)
 
 
-filter_not = _pipe(filter, _not)
+@curry
+def filter_not(pred, source):
+    """BUG-439: 过滤掉满足条件的元素（柯里化：``filter_not(pred)(source)``）。
+
+    原实现 ``filter_not = _pipe(filter, _not)`` 组合顺序/语义都是错的：
+    ``_inn(source) = reduce(lambda x, f: f(x), funcs, source)`` 会变成
+    ``filter(_not(source))``——``filter`` 需要 (pred, source) 两个参数，因此
+    **任何调用都抛** ``TypeError: filter expected 2 arguments, got 1``；即使
+    参数凑齐，``_not(filter_obj)`` 也只是把 filter 对象取反得到 bool，完全不是
+    "filter_not" 语义。
+
+    正确实现：返回 ``filter(lambda x: not pred(x), source)``，并保留柯里化
+    （与 ``static_pipe2(filter_not)`` 的用法兼容：管道值落在第 2 个位置）。
+    """
+    return filter(lambda x: not pred(x), source)
 
 
 def static_pipe1(f):
