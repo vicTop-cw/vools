@@ -341,6 +341,12 @@ class ClassFusion(VoolsBase):
     """
     
     def __init__(self, *classes: Type):
+        # BUG-423: 非类会一路走到 fuse() 才抛 ValueError（“At least one class
+        # must be provided”），错误信息完全指不到构造参数。
+        for cls in classes:
+            if not isinstance(cls, type):
+                raise TypeError(
+                    f"ClassFusion() 只接受类，收到 {type(cls).__name__}: {cls!r}")
         self._classes = list(classes)
         self._method_overrides = {}
         self._method_wrappers = {}
@@ -370,12 +376,21 @@ class ClassFusion(VoolsBase):
 
     def add_class(self, cls: Type) -> 'ClassFusion':
         """添加要融合的类"""
+        # BUG-423: 非类会一路走到 fuse() 才抛 ValueError（“At least one class
+        # must be provided”），错误信息完全指不到 add_class。
+        if not isinstance(cls, type):
+            raise TypeError(
+                f"add_class() 需要类，收到 {type(cls).__name__}: {cls!r}")
         self._classes.append(cls)
         self._fused_class = None
         return self
     
     def override_method(self, name: str, impl: Callable) -> 'ClassFusion':
-        """重写方法"""
+        """重写方法（BUG-423：入口即时校验，不再等到 fuse() 才报错）。"""
+        if not callable(impl):
+            raise TypeError(
+                f"override_method({name!r}) 的 impl 必须可调用，收到 "
+                f"{type(impl).__name__}: {impl!r}")
         self._method_overrides[name] = impl
         return self
     
@@ -386,7 +401,35 @@ class ClassFusion(VoolsBase):
         after: Callable = None,
         replace: Callable = None
     ) -> 'ClassFusion':
-        """包装方法"""
+        """包装方法（BUG-423：入口校验，避免 silent no-op 与晚到的天书错误）。
+
+        校验内容：
+
+        * ``before``/``after``/``replace`` 一旦提供必须**可调用**
+          （原实现会等到 ``fuse()`` 阶段抛 ``'str' object is not callable``）；
+        * 三个回调**至少提供一个**（原实现 `wrap_method('m')` 会静默 no-op，
+          调用方以为包装生效）；
+        * 若已注册类中存在 ``name`` 方法则要求存在（原实现会在融合后抛
+          ``Method 'nope' not found``，且错误发生在较晚阶段）；
+          尚未 ``add_class`` 时无法校验，仅做回调校验。
+        """
+        for label, fn in (("before", before), ("after", after), ("replace", replace)):
+            if fn is not None and not callable(fn):
+                raise TypeError(
+                    f"wrap_method({name!r}) 的 {label} 必须可调用，收到 "
+                    f"{type(fn).__name__}: {fn!r}")
+        if before is None and after is None and replace is None:
+            raise ValueError(
+                f"wrap_method({name!r}) 至少需要提供 before/after/replace 之一，"
+                f"否则是无效的 no-op")
+        if self._classes:
+            defined = any(name in vars(cls) for cls in self._classes)
+            if not defined:
+                known = sorted({k for cls in self._classes for k in vars(cls)
+                                if not k.startswith('__')})
+                raise ValueError(
+                    f"wrap_method({name!r}) 未在已注册的类中找到该方法；可用方法："
+                    f"{known}")
         self._method_wrappers[name] = {
             'before': before,
             'after': after,
