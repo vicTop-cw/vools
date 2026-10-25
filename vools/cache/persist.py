@@ -6,6 +6,7 @@
 
 import time
 import json
+import hashlib
 import re
 import os
 import threading
@@ -146,6 +147,32 @@ def _default_force_when_by_day(result: Any, start: float, end: float) -> bool:
     return not p
 
 
+def _call_fingerprint(args: tuple, kwargs: dict) -> str:
+    """计算调用参数指纹（BUG-470）。
+
+    ``@persist`` 的缓存键此前**只有函数名/file_key**，调用参数完全不参与：
+
+        @persist(...)
+        def compute(x): return x * 2
+
+        compute(3)   # -> 6   （计算并写缓存）
+        compute(99)  # -> 6   （直接命中同一缓存文件，静默错值！）
+
+    这里对 (args, kwargs) 做稳定序列化取短哈希；**无参数调用返回空串**，
+    从而零参函数（最常见的 ``fetch_data()`` 形态）继续沿用原缓存文件名，
+    已存在的缓存不受影响。
+    """
+    if not args and not kwargs:
+        return ""
+    try:
+        payload = json.dumps(
+            {'args': list(args), 'kwargs': kwargs},
+            sort_keys=True, ensure_ascii=False, default=repr)
+    except Exception:
+        payload = repr((args, sorted(kwargs.items(), key=lambda kv: str(kv[0]))))
+    return hashlib.md5(payload.encode('utf-8')).hexdigest()[:12]
+
+
 def persist(func: Optional[Callable] = None, 
            *, 
            file_key: Optional[str] = None,
@@ -241,6 +268,12 @@ def persist(func: Optional[Callable] = None,
             else:
                 func_file = getfile(f)
                 cache_dir = os.path.join(os.path.dirname(func_file), "__persist__")
+            # BUG-470: 缓存键必须包含调用参数，否则带参函数的第 2..N 次调用
+            # 都会拿到第一次的结果（静默错值）。零参调用保持原文件名。
+            _fp = _call_fingerprint(args, kwargs)
+            if _fp:
+                call_file_key = f"{call_file_key}_{_fp}"
+
             os.makedirs(cache_dir, exist_ok=True)
             cache_path = os.path.join(cache_dir, f"{call_file_key}.json")
 
