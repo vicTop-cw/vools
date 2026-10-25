@@ -302,6 +302,17 @@ def repeat(
             "repeat() first positional arg must be callable; "
             "use @repeat(cnt=N) for repetition count"
         )
+    # BUG-478: cnt/delay 零校验——``cnt='x'`` 既不命中 callable 也不命中 int
+    # 分支，生成器静默产出异常结果；``delay`` 传字符串则在 sleep 处才炸。
+    # 文档语义：cnt 为 int（>0 次数 / <0 无限 / =0 不执行）或可调用停止条件。
+    if isinstance(cnt, bool) or not (isinstance(cnt, int) or callable(cnt)):
+        raise TypeError(
+            f"repeat() 的 cnt 必须是 int 或可调用停止条件，收到 "
+            f"{type(cnt).__name__}: {cnt!r}")
+    if isinstance(delay, bool) or not isinstance(delay, (int, float)):
+        raise TypeError(
+            f"repeat() 的 delay 必须是数值，收到 {type(delay).__name__}: {delay!r}")
+
     if func is None:
         return _repeat(cnt, delay)
     else:
@@ -515,9 +526,26 @@ def rerun(*args, **kwargs):
         return _rerun_decorator()(args[0])
     
     # @rerun(...) 带参数调用
+    # BUG-478: 未知关键字此前被静默忽略（``rerun(unknwon_kw=1)`` 看起来配置成功，
+    # 实际全用默认值）；until/interval/time_out 也无类型校验，直到调用期才炸。
+    _unknown = set(kwargs) - {'until', 'interval', 'time_out'}
+    if _unknown:
+        raise TypeError(
+            f"rerun() 收到未知参数 {sorted(_unknown)}；"
+            f"可用参数: until / interval / time_out")
     until = kwargs.get('until', lambda x: x is not None)
     interval = kwargs.get('interval', 5)
     time_out = kwargs.get('time_out', 300)
+    if not callable(until):
+        raise TypeError(
+            f"rerun() 的 until 必须可调用，收到 {type(until).__name__}: {until!r}")
+    for _name, _value in (("interval", interval), ("time_out", time_out)):
+        if isinstance(_value, bool) or not isinstance(_value, (int, float)):
+            raise TypeError(
+                f"rerun() 的 {_name} 必须是数值，收到 "
+                f"{type(_value).__name__}: {_value!r}")
+        if _value <= 0:
+            raise ValueError(f"rerun() 的 {_name} 必须为正数，收到 {_value!r}")
     
     return _rerun_decorator(until=until, interval=interval, time_out=time_out)
 
