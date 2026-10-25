@@ -129,6 +129,12 @@ def render_rich_doc(doc) -> str:
     Returns:
         HTML 片段字符串
     """
+    # BUG-467: 传 None 抛 "AttributeError: 'NoneType' object has no attribute
+    # 'contents'"（看不出参数）。
+    if doc is None or not hasattr(doc, 'contents'):
+        raise TypeError(
+            "render_rich_doc() 的 doc 需要 RichDoc（含 contents 属性），收到 "
+            f"{type(doc).__name__}: {doc!r}")
     parts = []
     for c in doc.contents:
         if c.kind == 'image':

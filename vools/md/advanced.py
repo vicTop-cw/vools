@@ -602,6 +602,11 @@ def generate_reference_table(refs: List[CrossReference]) -> str:
     Returns:
         Markdown 格式的引用表
     """
+    # BUG-467: None 会抛 "'NoneType' object is not iterable"。
+    if not isinstance(refs, (list, tuple)):
+        raise TypeError(
+            f"generate_reference_table() 的 refs 需要 list/tuple，收到 "
+            f"{type(refs).__name__}: {refs!r}")
     lines = ['## References', '', '| Text | Reference | Resolved | Target |',
              '|------|-----------|----------|--------|']
 

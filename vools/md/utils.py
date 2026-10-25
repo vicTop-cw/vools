@@ -201,6 +201,8 @@ def extract_lang_blocks(markdown_text: str, language: Optional[str] = None) -> L
     Returns:
         配置块列表，每项包含 language/content/parsed
     """
+    # BUG-467: None 会一路到 parse() 才抛 'NoneType' object has no attribute 'split'。
+    _require_markdown_text(markdown_text, 'extract_lang_blocks')
     doc = parse(markdown_text)
     results = []
 
