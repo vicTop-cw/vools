@@ -604,6 +604,23 @@ def bridge_queues(
         raise ValueError(
             f"direction 只支持 'forward' / 'backward' / 'both'，收到 {direction!r}")
 
+    # BUG-491: 非队列对象会被静默接受——实测 bridge_queues(123, q) 返回
+    # is_running=True / error_count=0 / last_error=None 的**完全空转桥**
+    # （线程活着、零错误、但永远不转发），调用方无从发现。按鸭子类型校验。
+    for _label, _q in (("q1", q1), ("q2", q2)):
+        if not (callable(getattr(_q, "get", None))
+                and callable(getattr(_q, "put", None))):
+            raise TypeError(
+                f"{_label} 必须提供 get()/put()（如 queue.Queue），收到 "
+                f"{type(_q).__name__}: {_q!r}")
+    for _label, _fn in (("filter_fn", filter_fn), ("transform_fn", transform_fn)):
+        if _fn is not None and not callable(_fn):
+            raise TypeError(
+                f"{_label} 必须可调用或 None，收到 {type(_fn).__name__}: {_fn!r}")
+    if not isinstance(daemon, bool):
+        raise TypeError(
+            f"daemon 必须是 bool，收到 {type(daemon).__name__}: {daemon!r}")
+
     forward: Optional[QueueBridge] = None
     backward: Optional[QueueBridge] = None
 
