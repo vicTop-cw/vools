@@ -818,6 +818,19 @@ class BoundedChannel:
         Raises:
             queue.Empty: 超时时。
         """
+        # BUG-493: 原实现 ``self._queue.get(timeout=None)`` 在**通道已关闭且空**
+        # 时会永久阻塞（queue.Empty 永远不抛），与 docstring 承诺的"关闭且已空时
+        # 返回 None"相反——消费者线程会静默挂死。``__iter__`` 早已用 0.1s 分片
+        # 处理，这里对齐：默认无超时时按片等待并检查关闭状态。
+        if timeout is None:
+            if self._closed and self._queue.empty():
+                return None
+            while True:
+                try:
+                    return self._queue.get(timeout=0.1)
+                except queue.Empty:
+                    if self._closed and self._queue.empty():
+                        return None
         try:
             return self._queue.get(timeout=timeout)
         except queue.Empty:
