@@ -118,6 +118,75 @@ class ExpressionSecurityError(Exception):
 
 
 
+_MAX_POW_EXPONENT = 10_000
+_MAX_POW_RESULT_BITS = 1 << 20   # ~100 万位，足够报表场景且不会耗尽内存/CPU
+
+
+def _static_number(node: ast.AST):
+    """尝试对纯数字子树做**静态**求值（BUG-484）。
+
+    仅用于在验证期估算 ``**`` 的规模，避免 ``9**9**9`` 这类表达式在求值阶段
+    把进程挂死（实测 9**(9**9) = 9^387420489，进程 CPU 跑满、永不返回）。
+    无法静态求值时返回 None；规模明显溢出时返回 ``float('inf')`` 作为哨兵。
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
+            and not isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        inner = _static_number(node.operand)
+        if inner is None:
+            return None
+        return -inner if isinstance(node.op, ast.USub) else +inner
+    if isinstance(node, ast.BinOp):
+        left = _static_number(node.left)
+        right = _static_number(node.right)
+        if left is None or right is None:
+            return None
+        op = type(node.op)
+        try:
+            if op is ast.Pow:
+                # 指数本身很大时不再递归计算，直接给"过大"哨兵
+                if abs(right) > 64:
+                    return float("inf")
+                return left ** right
+            if op is ast.Add:
+                return left + right
+            if op is ast.Sub:
+                return left - right
+            if op is ast.Mult:
+                if abs(left) > 10 ** 6 or abs(right) > 10 ** 6:
+                    return float("inf")
+                return left * right
+            if op is ast.FloorDiv and right:
+                return left // right
+            if op is ast.Mod and right:
+                return left % right
+            if op is ast.Div and right:
+                return left / right
+        except (ZeroDivisionError, OverflowError, ValueError):
+            return None
+        return None
+    return None
+
+
+def _guard_pow(node: ast.BinOp) -> None:
+    """在验证期拦截规模失控的幂运算（BUG-484）。"""
+    exp_val = _static_number(node.right)
+    if exp_val is not None and abs(exp_val) > _MAX_POW_EXPONENT:
+        raise ExpressionSecurityError(
+            f"幂运算指数过大（|指数| > {_MAX_POW_EXPONENT}），已拒绝执行")
+    base_val = _static_number(node.left)
+    if base_val is not None and exp_val is not None \
+            and isinstance(exp_val, int) and 0 <= exp_val <= _MAX_POW_EXPONENT:
+        try:
+            bits = abs(int(base_val)).bit_length() * exp_val
+        except (OverflowError, ValueError):
+            bits = None
+        if bits is not None and bits > _MAX_POW_RESULT_BITS:
+            raise ExpressionSecurityError(
+                f"幂运算结果过大（预计 {bits} 位 > {_MAX_POW_RESULT_BITS}），已拒绝执行")
+
+
 def _contains_dangerous_patterns(expr: str) -> bool:
     """检查表达式是否包含危险模式"""
     expr_lower = expr.lower()
@@ -182,6 +251,9 @@ def _validate_ast_node(node: ast.AST, allowed_names: Optional[set] = None) -> No
     elif isinstance(node, ast.BinOp):
         if type(node.op) not in ALLOWED_OPERATORS:
             raise ExpressionSecurityError(f"不允许的运算符: {type(node.op).__name__}")
+        # BUG-484: 拦截 9**9**9 这类规模失控的幂运算（求值期会挂死进程）
+        if isinstance(node.op, ast.Pow):
+            _guard_pow(node)
         _validate_ast_node(node.left, allowed_names)
         _validate_ast_node(node.right, allowed_names)
         return
