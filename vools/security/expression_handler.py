@@ -169,6 +169,88 @@ def _static_number(node: ast.AST):
     return None
 
 
+_MAX_SEQ_ITEMS = 1_000_000
+_MAX_AMPLIFIED_BYTES = 1_000_000
+
+
+def _guard_call_alloc(node: ast.Call) -> None:
+    """拦截 range(...) 生成超大序列（BUG-485）。
+
+    ``range``/``list``/``sorted`` 等都在 ALLOWED_BUILTINS 里，而
+    ``list(range(10**8))`` 会真的分配 ~800MB（内存耗尽型 DoS，与 BUG-484 同族）。
+    这里对 range 的参数做静态求值并限制元素个数；外层 list/tuple/set/... 因会
+    递归校验参数，自然被同一守卫拦住。
+    """
+    func = node.func
+    if not (isinstance(func, ast.Name) and func.id == "range"):
+        return
+    if node.keywords:
+        raise ExpressionSecurityError("range() 不接受关键字参数")
+    values = [_static_number(a) for a in node.args]
+    if not values or any(v is None for v in values):
+        return          # 含非静态参数：无法估算，交给运行时（宿主数据）
+    try:
+        values = [float(v) for v in values]     # type: ignore[arg-type]
+        if len(values) == 1:
+            start, stop, step = 0.0, values[0], 1.0
+        elif len(values) == 2:
+            start, stop, step = values[0], values[1], 1.0
+        elif len(values) == 3:
+            start, stop, step = values[0], values[1], values[2]
+        else:
+            raise ExpressionSecurityError(
+                f"range() 最多接受 3 个参数，收到 {len(values)} 个")
+        if step == 0:
+            return      # 由运行时抛 ValueError
+        count = (stop - start) / step
+        count = count if count > 0 else 0
+    except (TypeError, ValueError, OverflowError):
+        return
+    if count > _MAX_SEQ_ITEMS:
+        raise ExpressionSecurityError(
+            f"range() 生成的序列过大（约 {int(count)} 项 > {_MAX_SEQ_ITEMS}），已拒绝执行")
+
+
+def _guard_mult_amplification(node: ast.BinOp) -> None:
+    """拦截 ``'x' * 10**8`` 这类序列放大（BUG-485）。"""
+    for seq_side, num_side in ((node.left, node.right), (node.right, node.left)):
+        seq_len = None
+        if isinstance(seq_side, ast.Constant):
+            if isinstance(seq_side.value, (str, bytes)):
+                seq_len = len(seq_side.value)
+            elif isinstance(seq_side.value, (list, tuple)):
+                seq_len = len(seq_side.value)
+        elif isinstance(seq_side, (ast.List, ast.Tuple)):
+            seq_len = len(seq_side.elts)
+        elif isinstance(seq_side, ast.Call):
+            # BUG-485: tuple([1]) * 10**7 这类"调用结果 × 大数"，长度未知，
+            # 标记 -1 后只按倍数上限判断（避免 80MB×N 的内存耗尽）
+            seq_len = -1
+        if seq_len is None:
+            continue
+        factor = _static_number(num_side)
+        if factor is None or isinstance(factor, float) and not float(factor).is_integer():
+            continue
+        if seq_len == -1:
+            # 调用结果（如 tuple([1]) * 10**7）：长度无法静态得知，只按放大倍数判
+            try:
+                too_big = abs(int(factor)) > _MAX_SEQ_ITEMS
+            except (OverflowError, ValueError):
+                continue
+            if too_big:
+                raise ExpressionSecurityError(
+                    f"序列放大倍数过大（{int(factor)} > {_MAX_SEQ_ITEMS}），"
+                    f"已拒绝执行")
+            continue
+        try:
+            total = seq_len * int(factor)
+        except (OverflowError, ValueError):
+            total = None
+        if total is not None and total > _MAX_AMPLIFIED_BYTES:
+            raise ExpressionSecurityError(
+                f"序列放大过大（约 {total} 项/字节 > {_MAX_AMPLIFIED_BYTES}），已拒绝执行")
+
+
 def _guard_pow(node: ast.BinOp) -> None:
     """在验证期拦截规模失控的幂运算（BUG-484）。"""
     exp_val = _static_number(node.right)
@@ -254,6 +336,9 @@ def _validate_ast_node(node: ast.AST, allowed_names: Optional[set] = None) -> No
         # BUG-484: 拦截 9**9**9 这类规模失控的幂运算（求值期会挂死进程）
         if isinstance(node.op, ast.Pow):
             _guard_pow(node)
+        # BUG-485: 拦截 'x' * 10**8 这类序列放大
+        if isinstance(node.op, ast.Mult):
+            _guard_mult_amplification(node)
         _validate_ast_node(node.left, allowed_names)
         _validate_ast_node(node.right, allowed_names)
         return
@@ -278,6 +363,8 @@ def _validate_ast_node(node: ast.AST, allowed_names: Optional[set] = None) -> No
         return
     
     elif isinstance(node, ast.Call):
+        # BUG-485: 拦截 list(range(10**8)) 这类内存耗尽
+        _guard_call_alloc(node)
         _validate_ast_node(node.func, allowed_names)
         for arg in node.args:
             _validate_ast_node(arg, allowed_names)
