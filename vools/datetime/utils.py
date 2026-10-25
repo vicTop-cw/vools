@@ -211,6 +211,26 @@ def get_month(dt: str, num: int = 0, is_lastday: bool = False) -> str:
         return None
 
 
+def _parse_gap_date(dt_str: str, arg_name: str) -> "_dt.datetime":
+    """解析间隔计算用的日期字符串（BUG-480）。
+
+    原实现用 ``except Exception: return None`` 包住解析与计算——非法日期字符串
+    （``days_gap("nope", "2024-01-01")``）会**静默返回 None**，而 docstring 承诺
+    返回 int；调用方随后 ``gap > 7`` 才炸，或 ``if gap and ...`` 直接静默跳过。
+    这里把「非法日期」变成带原始串的 ValueError；输入 None 的既有语义
+    （返回 None）由调用方在进入本函数前处理。
+    """
+    raw = str(dt_str)[:10].strip()
+    try:
+        if '-' in raw:
+            return datetime.strptime(raw, '%Y-%m-%d')
+        return datetime.strptime(raw, '%Y%m%d')
+    except (ValueError, TypeError) as exc:
+        raise ValueError(
+            f"{arg_name} 不是可解析的日期（支持 yyyy-MM-dd 或 yyyyMMdd），"
+            f"收到 {dt_str!r}") from exc
+
+
 def days_gap(dt1: str, dt2: str) -> int:
     """
     计算两个日期之间的天数差 (dt1 - dt2)
@@ -227,21 +247,9 @@ def days_gap(dt1: str, dt2: str) -> int:
     dt1 = str(dt1)[:10].strip()
     dt2 = str(dt2)[:10].strip()
 
-    try:
-        def parse_date(dt_str):
-            if '-' in dt_str:
-                return datetime.strptime(dt_str, '%Y-%m-%d')
-            else:
-                return datetime.strptime(dt_str, '%Y%m%d')
-
-        date1 = parse_date(dt1)
-        date2 = parse_date(dt2)
-
-        delta = date1 - date2
-        return delta.days
-
-    except Exception as e:
-        return None
+    date1 = _parse_gap_date(dt1, 'days_gap() 的 dt1')
+    date2 = _parse_gap_date(dt2, 'days_gap() 的 dt2')
+    return (date1 - date2).days
 
 
 def weeks_gap(dt1: str, dt2: str) -> int:
@@ -260,26 +268,11 @@ def weeks_gap(dt1: str, dt2: str) -> int:
     dt1 = str(dt1)[:10].strip()
     dt2 = str(dt2)[:10].strip()
 
-    try:
-        def parse_date(dt_str):
-            if '-' in dt_str:
-                return datetime.strptime(dt_str, '%Y-%m-%d')
-            else:
-                return datetime.strptime(dt_str, '%Y%m%d')
-
-        date1 = parse_date(dt1)
-        date2 = parse_date(dt2)
-
-        monday1 = date1 - timedelta(days=date1.weekday())
-        monday2 = date2 - timedelta(days=date2.weekday())
-
-        delta = monday1 - monday2
-        weeks_diff = delta.days // 7
-
-        return weeks_diff
-
-    except Exception as e:
-        return None
+    date1 = _parse_gap_date(dt1, 'weeks_gap() 的 dt1')
+    date2 = _parse_gap_date(dt2, 'weeks_gap() 的 dt2')
+    monday1 = date1 - timedelta(days=date1.weekday())
+    monday2 = date2 - timedelta(days=date2.weekday())
+    return (monday1 - monday2).days // 7
 
 
 def months_gap(dt1: str, dt2: str) -> int:
@@ -298,22 +291,10 @@ def months_gap(dt1: str, dt2: str) -> int:
     dt1 = str(dt1)[:10].strip()
     dt2 = str(dt2)[:10].strip()
 
-    try:
-        def parse_date(dt_str):
-            if '-' in dt_str:
-                return datetime.strptime(dt_str, '%Y-%m-%d')
-            else:
-                return datetime.strptime(dt_str, '%Y%m%d')
-
-        date1 = parse_date(dt1)
-        date2 = parse_date(dt2)
-
-        months_diff = (date1.year - date2.year) * 12 + (date1.month - date2.month)
-
-        return months_diff
-
-    except Exception as e:
-        return None
+    date1 = _parse_gap_date(dt1, 'months_gap() 的 dt1')
+    date2 = _parse_gap_date(dt2, 'months_gap() 的 dt2')
+    return ((date1.year - date2.year) * 12
+            + (date1.month - date2.month))
 
 
 def get_recently_months(dt: str, num: int = 11) -> list:
