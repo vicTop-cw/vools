@@ -85,6 +85,13 @@ class DelayCurried:
         Args:
             func: 要包装的原始函数
         """
+
+        # BUG-479: 非可调用对象会一路到 functools.wraps(func) 抛
+        # "AttributeError: 'int' object has no attribute '__module__'"。
+        if not callable(func):
+            raise TypeError(
+                f"DelayCurried 的 func 必须可调用，收到 "
+                f"{type(func).__name__}: {func!r}")
         self.func = func
         object.__setattr__(self, '_module', func.__module__)
         object.__setattr__(self, '_name', func.__name__)
@@ -463,6 +470,13 @@ def delay_curry(func: F) -> F:
         
         result = add(1)(2)(3)()  # 返回 6（参数满后需空调用 () 触发执行）
     """
+    # BUG-479: 原实现零校验——delay_curry(123)/delay_curry(None) 会静默返回
+    # 一个 wrapper，直到调用才炸。
+    if not callable(func):
+        raise TypeError(
+            f"delay_curry() 的 func 必须可调用，收到 "
+            f"{type(func).__name__}: {func!r}")
+
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Union["DelayCurried", Any]:
         return DelayCurried(func)(*args, **kwargs)
