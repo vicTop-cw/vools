@@ -38,6 +38,11 @@ def markdown_to_docx(markdown_text: str, filepath: str, title: Optional[str] = N
     Returns:
         写入的文件路径
     """
+    # BUG-468: 非字符串输入此前抛 cryptic AttributeError 或生成静默垃圾。
+    if not isinstance(markdown_text, str):
+        raise TypeError(
+            f"markdown_to_docx() 的 markdown_text 需要字符串，收到 "
+            f"{type(markdown_text).__name__}: {markdown_text!r}")
     doc = parse(markdown_text)
 
     try:

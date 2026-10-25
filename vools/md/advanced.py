@@ -114,6 +114,11 @@ def render_html_with_theme(markdown_text: str, theme: str = 'github') -> str:
         >>> '<h1>Hello</h1>' in html
         True
     """
+    # BUG-468: 非字符串输入会让 to_html 产出 '<!-- unknown node -->' 静默垃圾。
+    if not isinstance(markdown_text, str):
+        raise TypeError(
+            f"render_html_with_theme() 的 markdown_text 需要字符串，收到 "
+            f"{type(markdown_text).__name__}: {markdown_text!r}")
     t = get_theme(theme)
     body_html = to_html(markdown_text)
 
