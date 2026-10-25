@@ -997,10 +997,16 @@ def merge_queues(
                 return
 
 
+# BUG-494: 默认哨兵必须与"用户真的想用 None 当哨兵"区分开——原实现把
+# sentinel 默认成 None，于是队列里出现**合法负载 None** 时生成器直接 return，
+# 后续元素全部丢失（实测 put(None), put("after") → []，'after' 被丢弃）。
+_NO_SENTINEL: Any = object()
+
+
 def queue_to_generator(
     q: Any,
     timeout: Optional[float] = None,
-    sentinel: Any = None,
+    sentinel: Any = _NO_SENTINEL,
 ) -> Generator[Any, None, None]:
     """将队列转为生成器。
 
@@ -1009,7 +1015,9 @@ def queue_to_generator(
     Args:
         q: 队列对象，需支持 ``get(block, timeout)`` 方法。
         timeout: 每次读取的超时（秒），``None`` 表示阻塞等待。
-        sentinel: 哨兵值，遇到此值则停止迭代。
+        sentinel: 哨兵值，遇到此值（``is`` 比较）则停止迭代。**默认不设哨兵**——
+            队列中以 ``None`` 为负载时会被正常产出（BUG-494）；如确实想让
+            ``None`` 终止迭代，请显式传 ``sentinel=None``。
 
     Yields:
         从队列中读取到的元素。
@@ -1026,7 +1034,7 @@ def queue_to_generator(
                 item = q.get()
             else:
                 item = q.get(timeout=timeout)
-            if item is sentinel:
+            if sentinel is not _NO_SENTINEL and item is sentinel:
                 return
             yield item
         except (queue.Empty, IndexError):
