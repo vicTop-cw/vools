@@ -78,6 +78,30 @@ class VThread(threading.Thread):
         kwargs: Optional[Dict[str, Any]] = None,
         daemon: Optional[bool] = None,
     ) -> None:
+        # BUG-492: 构造期零校验——target=123 会起一个"活着但必然报错"的线程、
+        # args='abc' 会被**逐字符展开**成 ('a','b','c') 静默传给目标函数（与
+        # BUG-490 同族）、name/daemon 非字符串/非布尔也被静默接受。
+        if target is not None and not callable(target):
+            raise TypeError(
+                f"VThread 的 target 必须可调用或 None，收到 "
+                f"{type(target).__name__}: {target!r}")
+        if name is not None and not isinstance(name, str):
+            raise TypeError(
+                f"VThread 的 name 必须是字符串或 None，收到 "
+                f"{type(name).__name__}: {name!r}")
+        if daemon is not None and not isinstance(daemon, bool):
+            raise TypeError(
+                f"VThread 的 daemon 必须是 bool 或 None，收到 "
+                f"{type(daemon).__name__}: {daemon!r}")
+        if isinstance(args, (str, bytes)) or not isinstance(args, (tuple, list)):
+            raise TypeError(
+                f"VThread 的 args 必须是位置参数序列（tuple/list），收到 "
+                f"{type(args).__name__}: {args!r}"
+                + ("；字符串会被逐字符展开成多个参数" if isinstance(args, (str, bytes)) else ""))
+        if kwargs is not None and not isinstance(kwargs, dict):
+            raise TypeError(
+                f"VThread 的 kwargs 必须是 dict 或 None，收到 "
+                f"{type(kwargs).__name__}: {kwargs!r}")
         # 不把 target 传给父类，由本类 run() 接管以捕获返回值与异常
         super().__init__(group=group, name=name, daemon=daemon)
         self._target_fn: Optional[Callable[..., Any]] = target
@@ -625,6 +649,17 @@ def thread_pool(max_workers: Optional[int] = None) -> Callable[[Callable], Calla
         html = future.result()
     """
 
+    # BUG-492: max_workers 非正数原实现会在装饰时抛底层
+    # "max_workers must be greater than 0"（不带参数名）
+    if max_workers is not None:
+        if isinstance(max_workers, bool) or not isinstance(max_workers, int):
+            raise TypeError(
+                f"thread_pool 的 max_workers 必须是正整数或 None，收到 "
+                f"{type(max_workers).__name__}: {max_workers!r}")
+        if max_workers <= 0:
+            raise ValueError(
+                f"thread_pool 的 max_workers 必须 > 0，收到 {max_workers!r}")
+
     def decorator(func: Callable[..., Any]) -> Callable[..., Future]:
         executor = ThreadPoolExecutor(max_workers=max_workers)
 
@@ -667,6 +702,20 @@ def run_in_thread(
         t = slow_task(21)
         print(t.get_result())  # 42
     """
+
+    # BUG-492: 兼容**裸装饰** @run_in_thread（此时第一个位置参数是被装饰函数，
+    # 历史实现靠"函数真值当 daemon"意外跑通）——显式分流，并按文档默认
+    # daemon=False 处理，不再把函数对象当布尔用。
+    if callable(daemon) and name is None:
+        return run_in_thread()(daemon)
+
+    # BUG-492: 与 VThread 同口径校验装饰器参数
+    if not isinstance(daemon, bool):
+        raise TypeError(
+            f"run_in_thread 的 daemon 必须是 bool，收到 {type(daemon).__name__}: {daemon!r}")
+    if name is not None and not isinstance(name, str):
+        raise TypeError(
+            f"run_in_thread 的 name 必须是字符串或 None，收到 {type(name).__name__}: {name!r}")
 
     def decorator(func: Callable[..., Any]) -> Callable[..., VThread]:
         @wraps(func)
