@@ -36,6 +36,26 @@ def excepts(exc_type: Type[Exception], handler: Callable) -> Callable:
         >>> risky_operation()
         '错误: 测试错误'
     """
+    # BUG-477: 参数零校验——``excepts('x', h)`` 直到**异常发生时**才抛
+    # "catching classes that do not inherit from BaseException is not allowed"，
+    # ``excepts(ValueError, 123)`` 则抛 "'int' object is not callable"。
+    # 两者都应在装饰期就拒绝。
+    def _is_exc_class(t) -> bool:
+        return isinstance(t, type) and issubclass(t, BaseException)
+
+    if isinstance(exc_type, tuple):
+        if not exc_type or not all(_is_exc_class(t) for t in exc_type):
+            raise TypeError(
+                f"excepts() 的 exc_type 元组必须全部是异常类，收到 {exc_type!r}")
+    elif not _is_exc_class(exc_type):
+        raise TypeError(
+            f"excepts() 的 exc_type 必须是异常类（或异常类元组），收到 "
+            f"{type(exc_type).__name__}: {exc_type!r}")
+    if not callable(handler):
+        raise TypeError(
+            f"excepts() 的 handler 必须可调用，收到 "
+            f"{type(handler).__name__}: {handler!r}")
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -80,6 +100,12 @@ def silent(fn: Optional[Callable] = None, *, default: Any = None) -> Callable:
     
     if fn is None:
         return decorator
+    # BUG-477: silent(123) 会包一层 wrapper 把 123 当函数调（调用期才炸
+    # "'int' object is not callable"）。
+    if not callable(fn):
+        raise TypeError(
+            f"silent() 的 fn 必须是可调用对象或 None，收到 "
+            f"{type(fn).__name__}: {fn!r}")
     return decorator(fn)
 
 
