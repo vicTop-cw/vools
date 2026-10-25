@@ -121,6 +121,12 @@ def parse_rich_directive(text: str) -> Dict[str, Any]:
     Returns:
         指令字典（含默认值合并）；无指令时返回空 dict
     """
+    # BUG-467: 非字符串输入会在正则处抛 cryptic 的
+    # "expected string or bytes-like object, got 'NoneType'"。
+    if not isinstance(text, str):
+        raise TypeError(
+            f"parse_rich_directive() 的 text 需要字符串，收到 "
+            f"{type(text).__name__}: {text!r}")
     directive: Dict[str, Any] = {}
     m = RICH_DIRECTIVE_RE.search(text)
     if not m:
