@@ -60,6 +60,16 @@ class VScheduler:
         Returns:
             sched.Event 对象，可用于 cancel()
         """
+        # BUG-488: 原实现零校验——非可调用 action 会被排进队列，直到触发时
+        # 才抛 "'int' object is not callable"（排程成功、执行失败）。
+        if isinstance(delay, bool) or not isinstance(delay, (int, float)):
+            raise TypeError(
+                f"schedule() 的 delay 需要数字（秒），收到 {type(delay).__name__}: {delay!r}")
+        if delay < 0:
+            raise ValueError(f"schedule() 的 delay 不能为负，收到 {delay!r}")
+        if not callable(action):
+            raise TypeError(
+                f"schedule() 的 action 必须可调用，收到 {type(action).__name__}: {action!r}")
         with self._lock:
             return self._scheduler.enter(delay, 1, action, args, kwargs)
 
@@ -549,15 +559,34 @@ class cron_like:
     @staticmethod
     def _parse_time(time_str: str) -> Tuple[int, int, int]:
         """解析时间字符串为 (hour, minute, second)"""
+        # BUG-488: 原实现只校验**格式**不校验**取值范围**——at_time("25:99") 会被
+        # 静默接受，随后守护线程里 datetime.replace(hour=25) 抛 ValueError，
+        # 线程静默死掉、任务永不执行（且外层 try 只包了 callback）。
+        if not isinstance(time_str, str):
+            raise TypeError(
+                f"时间字符串必须是 str，收到 {type(time_str).__name__}: {time_str!r}")
         parts = time_str.strip().split(':')
         if len(parts) == 3:
-            return int(parts[0]), int(parts[1]), int(parts[2])
+            values = parts[0], parts[1], parts[2]
         elif len(parts) == 2:
-            return int(parts[0]), int(parts[1]), 0
+            values = parts[0], parts[1], 0
         else:
             raise ValueError(
                 f"Invalid time format: {time_str!r}. Expected 'hh:mm:ss' or 'hh:mm'"
             )
+        try:
+            h, m, sec = int(values[0]), int(values[1]), int(values[2])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid time format: {time_str!r}. Expected 'hh:mm:ss' or 'hh:mm'"
+            ) from exc
+        if not 0 <= h <= 23:
+            raise ValueError(f"小时必须在 0-23 之间，收到 {h}（来自 {time_str!r}）")
+        if not 0 <= m <= 59:
+            raise ValueError(f"分钟必须在 0-59 之间，收到 {m}（来自 {time_str!r}）")
+        if not 0 <= sec <= 59:
+            raise ValueError(f"秒必须在 0-59 之间，收到 {sec}（来自 {time_str!r}）")
+        return h, m, sec
 
     def __repr__(self) -> str:
         return f'cron_like(running={self._running}, tasks={self.task_count})'
