@@ -476,9 +476,12 @@ class DateProcessor(VoolsBase):
         
         Args:
             expr: 日期表达式，可以是单个日期或日期列表
-            
+
         Returns:
-            Any: 解析结果，可能是字符串或日期列表字符串
+            Any: 解析结果，可能是字符串或日期列表字符串；
+            **两种格式都无法解析时返回 None**（BUG-481：此语义原先未写入
+            docstring，调用方会误以为"返回 None = 日期就是空"；若需要"非法即
+            报错"，请直接用 get_single_date()/get_date_list()，它们会抛 ValueError）
         """
         try:
             # 先尝试解析为单个日期
@@ -550,6 +553,14 @@ class EnhancedDateFormatter:
             template: 包含占位符的模板字符串
             default_run_date: 默认运行日期，格式同DateProcessor
         """
+
+
+        # BUG-481: template 零校验——EnhancedDateFormatter(None)/(123) 会一路到
+        # 正则处才抛 "expected string or bytes-like object, got 'NoneType'"。
+        if not isinstance(template, str):
+            raise TypeError(
+                f"EnhancedDateFormatter 的 template 必须是字符串，收到 "
+                f"{type(template).__name__}: {template!r}")
         self.template = template
         self.date_processor = DateProcessor(default_run_date)
         
