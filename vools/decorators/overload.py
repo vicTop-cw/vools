@@ -354,6 +354,12 @@ class OverloadManager:
         eff_export_mode = export_mode if export_mode is not None else self.export_mode
 
         def _handle(f: Callable):
+            # BUG-475: 原实现直接拿 f.__name__，非可调用对象会抛
+            # "AttributeError: 'int' object has no attribute '__name__'"。
+            if not callable(f):
+                raise TypeError(
+                    f"register 注册的函数必须可调用，收到 "
+                    f"{type(f).__name__}: {f!r}")
             eff_priority = priority if priority is not None else 0
             self._register_function(f, priority=eff_priority)
 
@@ -553,6 +559,13 @@ def overload(func: Optional[Callable] = None,
     if isinstance(priority, bool) or not isinstance(priority, int):
         raise TypeError(
             f"overload 的 priority 需要 int，收到 {type(priority).__name__}: {priority!r}")
+
+    # BUG-475: mode 非 int/OverloadMode 时，错误会在内部 ``self.mode & OverloadMode.X``
+    # 处抛出 cryptic 的 "unsupported operand type(s) for &: 'str' and 'OverloadMode'"。
+    if isinstance(mode, bool) or not isinstance(mode, int):
+        raise TypeError(
+            f"overload 的 mode 需要 OverloadMode/int，收到 "
+            f"{type(mode).__name__}: {mode!r}（可用: Priority/AllowSyncName/Strict/Ambiguous 的位或）")
 
     if func is None:
         def decorator(f: Callable) -> OverloadManager:
