@@ -158,6 +158,12 @@ class SpawnHandle:
         ctx: Optional[Any] = None,
     ) -> None:
         _validate_spawn_args(target, args, kwargs, name)
+        # BUG-490: daemon 原样透传、零校验——spawn(worker, daemon='yes') 与
+        # daemon=1 都会被静默接受（'yes' 只是被当成真值），同时 autostart 的
+        # 布尔语义也依赖调用方自觉。
+        if not isinstance(daemon, bool):
+            raise TypeError(
+                f"daemon 必须是 bool，收到 {type(daemon).__name__}: {daemon!r}")
         self._target: Callable[..., Any] = target
         self._args: Tuple[Any, ...] = tuple(args)
         self._kwargs: Dict[str, Any] = dict(kwargs or {})
@@ -364,6 +370,12 @@ def spawn_many(
         for h in handles:
             h.join()
     """
+    # BUG-490: args_list 非序列时会在 enumerate 处抛裸
+    # "'int' object is not iterable"（看不出参数名）。
+    if isinstance(args_list, (str, bytes)) or not isinstance(args_list, (list, tuple)):
+        raise TypeError(
+            f"spawn_many 的 args_list 必须是 list/tuple（每项是位置参数序列），收到 "
+            f"{type(args_list).__name__}: {args_list!r}")
     if kwargs_list is not None and len(kwargs_list) != len(args_list):
         raise ValueError("kwargs_list length must match args_list length")
 
