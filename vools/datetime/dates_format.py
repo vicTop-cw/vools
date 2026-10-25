@@ -194,8 +194,15 @@ class DateProcessor(VoolsBase):
         Returns:
             datetime.date: 计算后的日期
         """
+        # BUG-482: 越界 weekday 原实现静默降级为周一
+        # （`if 1 <= target_weekday <= 7 else 0`）——``run_weeks>1&0`` 与 ``&8``
+        # 都会**静默产出一个周一日期**。与 get_week() 的口径一致，越界即报错。
+        if isinstance(target_weekday, bool) or not isinstance(target_weekday, int) \
+                or not 1 <= target_weekday <= 7:
+            raise ValueError(
+                f"目标星期几必须在 1-7 之间（周一=1），收到 {target_weekday!r}")
         # 转换target_weekday到Python的weekday (0=周一, 6=周日)
-        target_weekday_py = target_weekday - 1 if 1 <= target_weekday <= 7 else 0
+        target_weekday_py = target_weekday - 1
         
         # 获取基准日期所在周的周一
         current_weekday = base_date.weekday()  # 0=周一, 6=周日
@@ -239,6 +246,15 @@ class DateProcessor(VoolsBase):
             months_offset -= 1
 
         
+        # BUG-482: target_day 原实现只做 ``min(target_day, last_day)``——
+        # day=0 会一路到 datetime.date(..., 0) 抛底层的
+        # "day is out of range for month"，day=32 则静默截断到月末。
+        # 现要求 1..31；1..31 之内仍按当月天数截断（月末语义，保持既有行为）。
+        if isinstance(target_day, bool) or not isinstance(target_day, int) \
+                or not 1 <= target_day <= 31:
+            raise ValueError(
+                f"目标日期必须在 1-31 之间，收到 {target_day!r}")
+
         # 获取该月的天数
         _, last_day = calendar.monthrange(year, month)
         
@@ -429,7 +445,11 @@ class DateProcessor(VoolsBase):
                  - run_months>3&13: 往后3月，每月13号的列表
                  - run_months<3&1: 往前3月，每月1号的列表
                  - 带_std后缀表示标准格式
-                 
+
+            注意（BUG-482 补文档）：列表**总是包含基准日期 run_date 本身**，
+            再叠加 count 个目标日期（days 含基准日 + count 天；weeks/months
+            为基准日 + count 个对齐日）。
+
         Returns:
             str: 日期列表字符串，用中文逗号分隔，单引号包裹
             
