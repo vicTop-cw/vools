@@ -211,6 +211,35 @@ def _guard_call_alloc(node: ast.Call) -> None:
             f"range() 生成的序列过大（约 {int(count)} 项 > {_MAX_SEQ_ITEMS}），已拒绝执行")
 
 
+_PERCENT_FIELD_RE = None
+
+
+def _guard_percent_format(node: ast.BinOp) -> None:
+    """拦截 ``'%999999999d' % 5`` 这类百分号格式化放大（BUG-487）。
+
+    ``Mod`` 作用在 str/bytes 上就是 ``%`` 格式化：宽度/精度取自模板字面量，
+    实测 ``'%999999999d' % 5`` 会真的构造 **1GB** 字符串（2.87s），更大的宽度
+    直接内存耗尽。这里从**常规模板**里提取最大宽度/精度并限额，与 BUG-485 的
+    序列放大同一阈值。
+    """
+    import re as _re
+    left = node.left
+    if not (isinstance(left, ast.Constant) and isinstance(left.value, (str, bytes))):
+        return              # 非字面量模板：无法静态估算，交给运行时
+    try:
+        text = left.value.decode("latin-1") if isinstance(left.value, bytes) else left.value
+    except Exception:
+        return
+    for match in _re.finditer(r"%[-+ #0]*([0-9]+)?(?:\.([0-9]+))?", text):
+        width = int(match.group(1)) if match.group(1) else 0
+        precision = int(match.group(2)) if match.group(2) else 0
+        biggest = max(width, precision)
+        if biggest > _MAX_AMPLIFIED_BYTES:
+            raise ExpressionSecurityError(
+                f"格式化宽度/精度过大（{biggest} > {_MAX_AMPLIFIED_BYTES}），"
+                f"已拒绝执行")
+
+
 def _guard_mult_amplification(node: ast.BinOp) -> None:
     """拦截 ``'x' * 10**8`` 这类序列放大（BUG-485）。"""
     for seq_side, num_side in ((node.left, node.right), (node.right, node.left)):
@@ -393,6 +422,9 @@ def _validate_ast_node(node: ast.AST, allowed_names: Optional[set] = None) -> No
         # BUG-485: 拦截 'x' * 10**8 这类序列放大
         if isinstance(node.op, ast.Mult):
             _guard_mult_amplification(node)
+        # BUG-487: 拦截 '%999999999d' % 5 这类百分号格式化放大
+        if isinstance(node.op, ast.Mod):
+            _guard_percent_format(node)
         _validate_ast_node(node.left, allowed_names)
         _validate_ast_node(node.right, allowed_names)
         return
