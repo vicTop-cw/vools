@@ -136,6 +136,24 @@ def throttle(interval: float):
     return decorator
 
 
+def _require_duration(value, what: str, *, allow_zero: bool) -> None:
+    """校验时间参数是合法数值（BUG-473）。
+
+    原实现只拦住"裸用装饰器"（BUG-373），``debounce(wait=-1)`` /
+    ``cache_with_ttl(ttl='x')`` 仍静默通过：前者让 Timer 立即触发放大调用，
+    后者的 ``now - ts > ttl`` 直到**调用时**才抛
+    ``'>' not supported between instances of 'float' and 'str'``。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"{what} 必须是数值，收到 {type(value).__name__}: {value!r}")
+    if allow_zero:
+        if value < 0:
+            raise ValueError(f"{what} 不能为负，收到 {value!r}")
+    elif value <= 0:
+        raise ValueError(f"{what} 必须为正数，收到 {value!r}")
+
+
 def debounce(wait: float):
     """防抖装饰器
 
@@ -152,6 +170,8 @@ def debounce(wait: float):
         raise TypeError(
             f"裸用 @debounce 无效：wait 需要显式传参，请写 @debounce(wait=秒数)"
             f"（收到 {type(wait).__name__}: {getattr(wait, '__name__', wait)!r}）")
+    # BUG-473: 数值校验（wait 允许 0 = 立即触发，但负值/字符串必须拒绝）
+    _require_duration(wait, "debounce() 的 wait", allow_zero=True)
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         timer = {}
@@ -411,6 +431,8 @@ def cache_with_ttl(ttl: float):
         raise TypeError(
             f"裸用 @cache_with_ttl 无效：ttl 需要显式传参，请写 @cache_with_ttl(ttl=秒数)"
             f"（收到 {type(ttl).__name__}: {getattr(ttl, '__name__', ttl)!r}）")
+    # BUG-473: ttl 必须为正数（ttl<=0 等于永不缓存/立即全失效，属静默错配置）
+    _require_duration(ttl, "cache_with_ttl() 的 ttl", allow_zero=False)
 
     def decorator(func: Callable[..., R]) -> Callable[..., R]:
         cache = {}
