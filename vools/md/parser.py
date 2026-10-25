@@ -21,6 +21,17 @@ import re
 
 # ─── AST 节点定义 ───
 
+def _require_children(value, what: str) -> None:
+    """校验节点 children/items 是 list/tuple（BUG-469）。
+
+    原实现允许 None：构造不报错，直到渲染时才抛
+    ``'NoneType' object is not iterable``（离病因很远）。
+    """
+    if not isinstance(value, (list, tuple)):
+        raise TypeError(
+            f"{what} 需要 list/tuple，收到 {type(value).__name__}: {value!r}")
+
+
 @dataclass
 class InlineText:
     """行内文本节点，支持 bold/italic/code/link/strikethrough"""
@@ -50,11 +61,29 @@ class Heading:
     level: int  # 1-6
     children: List[InlineText] = field(default_factory=list)
 
+    def __post_init__(self):
+        # BUG-469: level 原为零校验——``Heading(0)`` 渲染出 ``<h0>``、
+        # ``Heading(99)`` 渲染出 ``<h99>`` 并在 generate() 时产出 99 个 '#'，
+        # 全是静默的非法输出。
+        if isinstance(self.level, bool) or not isinstance(self.level, int):
+            raise TypeError(
+                f"Heading 的 level 必须是 int，收到 "
+                f"{type(self.level).__name__}: {self.level!r}")
+        if not 1 <= self.level <= 6:
+            raise ValueError(
+                f"Heading 的 level 必须在 1..6，收到 {self.level!r}")
+        _require_children(self.children, "Heading 的 children")
+
 
 @dataclass
 class Paragraph:
     """段落节点"""
     children: List[InlineText] = field(default_factory=list)
+
+    def __post_init__(self):
+        # BUG-469: children/items 允许 None 时，渲染期才抛
+        # "'NoneType' object is not iterable"。
+        _require_children(self.children, "Paragraph 的 children")
 
 
 @dataclass
@@ -69,6 +98,11 @@ class BlockQuote:
     """引用块节点"""
     children: List[Any] = field(default_factory=list)  # 嵌套块节点
 
+    def __post_init__(self):
+        # BUG-469: children/items 允许 None 时，渲染期才抛
+        # "'NoneType' object is not iterable"。
+        _require_children(self.children, "BlockQuote 的 children")
+
 
 @dataclass
 class ListItem:
@@ -76,12 +110,22 @@ class ListItem:
     checked: Optional[bool] = None  # None=非任务项, True=已选, False=未选
     children: List[InlineText] = field(default_factory=list)
 
+    def __post_init__(self):
+        # BUG-469: children/items 允许 None 时，渲染期才抛
+        # "'NoneType' object is not iterable"。
+        _require_children(self.children, "ListItem 的 children")
+
 
 @dataclass
 class MdList:
     """列表节点"""
     ordered: bool = False
     items: List[ListItem] = field(default_factory=list)
+
+    def __post_init__(self):
+        # BUG-469: children/items 允许 None 时，渲染期才抛
+        # "'NoneType' object is not iterable"。
+        _require_children(self.items, "MdList 的 items")
 
 
 @dataclass
@@ -110,6 +154,11 @@ class LangBlock:
 class Document:
     """文档根节点"""
     children: List[Any] = field(default_factory=list)
+
+    def __post_init__(self):
+        # BUG-469: children=None 时构造通过，直到渲染才抛
+        # "'NoneType' object is not iterable"。
+        _require_children(self.children, "Document 的 children")
 
 
 # ─── 行内解析 ───
