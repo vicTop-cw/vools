@@ -223,6 +223,24 @@ def bridge(lang: str, symbol: str, fallback: Optional[Callable] = None):
         def pickle_encode(obj):
             pass
     """
+    # BUG-476: 参数零校验——``bridge("python", None)`` 会在装饰期抛
+    # ``TypeError: argument of type 'NoneType' is not iterable``（来自
+    # `_parse_symbol` 的 ':' in symbol），``bridge(123, ...)`` 则把非字符串语言
+    # 原样存进 _bridge_lang，``fallback=123`` 直到**调用期**才炸
+    # "'int' object is not callable"。统一在装饰期校验。
+    if not isinstance(lang, str) or not lang.strip():
+        raise ValueError(
+            f"bridge() 的 lang 必须是非空字符串，收到 "
+            f"{type(lang).__name__}: {lang!r}")
+    if not isinstance(symbol, str) or not symbol.strip():
+        raise ValueError(
+            f"bridge() 的 symbol 必须是非空字符串，收到 "
+            f"{type(symbol).__name__}: {symbol!r}")
+    if fallback is not None and not callable(fallback):
+        raise TypeError(
+            f"bridge() 的 fallback 必须是可调用对象或 None，收到 "
+            f"{type(fallback).__name__}: {fallback!r}")
+
     def decorator(func: Callable) -> Callable:
         # 解析符号，确定语言和路径
         actual_lang, symbol_path = _parse_symbol(lang, symbol)
