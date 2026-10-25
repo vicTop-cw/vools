@@ -18,6 +18,11 @@ ALLOWED_OPERATORS = {
     ast.FloorDiv: operator.floordiv,
     ast.Mod: operator.mod,
     ast.Pow: operator.pow,
+    # BUG-483: 一元正负号此前被当作"非法运算符"——`-1`、`2 * -3`、`abs(-1)`
+    # 全部抛 "不允许的运算符: USub"，模板里根本无法出现负数；负号本身无逃逸
+    # 风险（操作数仍逐个过 _validate_ast_node）。
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
     ast.Lt: operator.lt,
     ast.LtE: operator.le,
     ast.Gt: operator.gt,
