@@ -174,7 +174,7 @@ def add_custom_sig(
     sig: inspect.Signature,
     *,
     force: bool = False,
-) -> None:
+) -> bool:
     """手动注册自定义函数签名。
 
     用于以下场景:
@@ -186,6 +186,11 @@ def add_custom_sig(
         func: 目标可调用对象（函数、类、实现了 __call__ 的对象等）。
         sig: inspect.Signature 对象。
         force: 如果为 True，覆盖已有缓存条目（默认 False 不覆盖）。
+
+    返回:
+        bool: True 表示本次注册已写入缓存；False 表示该可调用对象已有缓存且
+        ``force=False``，本次**未生效**（BUG-472：原实现返回 None，调用方无法
+        区分"已注册"与"被既有缓存挡下"，只能靠 debug 日志发现）。
 
     异常:
         TypeError: 如果 func 不可调用。
@@ -225,10 +230,11 @@ def add_custom_sig(
             _SIG_REFS.pop(key, None)
         elif not force:
             log.debug("add_custom_sig: %r 已有缓存，跳过（force=False）", func)
-            return
+            return False
 
     _set_cache(key, sig, overwrite=force)
     _remember_ref(func, key)
+    return True
 
 
 def cached_getsignature(func: Callable[..., Any]) -> Callable[..., Any]:
