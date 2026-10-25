@@ -883,6 +883,10 @@ class CallbackChain:
 
     def add_pre(self, callback: Callable[..., Any]) -> "CallbackChain":
         """添加前置回调（在链执行前调用，不影响链的传递）。"""
+        # BUG-489: add() 有 _require_callable，add_pre/add_post 却漏了——
+        # 非可调用对象被静默收下，execute() 时被 except Exception: pass 吞掉，
+        # 钩子"注册成功但从不生效"且毫无提示。
+        _require_callable(callback, '前置回调')
         with self._lock:
             if callback not in self._pre_callbacks:
                 self._pre_callbacks.append(callback)
@@ -899,6 +903,8 @@ class CallbackChain:
 
     def add_post(self, callback: Callable[..., Any]) -> "CallbackChain":
         """添加后置回调（在链执行后调用，无论是否中途停止）。"""
+        # BUG-489: 同 add_pre——静默收下非可调用对象，执行期被吞掉。
+        _require_callable(callback, '后置回调')
         with self._lock:
             if callback not in self._post_callbacks:
                 self._post_callbacks.append(callback)
