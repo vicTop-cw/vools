@@ -158,7 +158,10 @@ class TestGaps:
         assert days_gap("2024-01-01", None) is None
 
     def test_days_gap_bad(self):
-        assert days_gap("bad", "2024-01-01") is None
+        # BUG-480: 非法日期不再静默返回 None（docstring 承诺 int），改为响亮 ValueError
+        import pytest
+        with pytest.raises(ValueError):
+            days_gap("bad", "2024-01-01")
 
     def test_weeks_gap(self):
         assert weeks_gap("2024-01-15", "2024-01-08") == 1
@@ -167,7 +170,10 @@ class TestGaps:
         assert weeks_gap(None, "2024-01-01") is None
 
     def test_weeks_gap_bad(self):
-        assert weeks_gap("bad", "2024-01-01") is None
+        # BUG-480: 同上——非法日期响亮报错
+        import pytest
+        with pytest.raises(ValueError):
+            weeks_gap("bad", "2024-01-01")
 
     def test_months_gap(self):
         assert months_gap("2024-03-01", "2024-01-01") == 2
@@ -176,7 +182,10 @@ class TestGaps:
         assert months_gap(None, "2024-01-01") is None
 
     def test_months_gap_bad(self):
-        assert months_gap("bad", "2024-01-01") is None
+        # BUG-480: 同上——非法日期响亮报错
+        import pytest
+        with pytest.raises(ValueError):
+            months_gap("bad", "2024-01-01")
 
 
 class TestGetRecentlyMonths:
