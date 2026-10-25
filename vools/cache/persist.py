@@ -65,6 +65,13 @@ class FileLock(VoolsBase):
     """跨平台文件锁"""
 
     def __init__(self, file_path: str):
+        # BUG-471: 原实现直接用 f"{file_path}.lock" 拼路径且零校验——
+        # FileLock(None)/FileLock(123)/FileLock('') 都能"成功"并在**当前工作目录**
+        # 创建 None.lock / 123.lock / .lock 这类杂散文件（静默错误路径）。
+        if not isinstance(file_path, str) or not file_path.strip():
+            raise ValueError(
+                f"FileLock 的 file_path 必须是非空字符串，收到 "
+                f"{type(file_path).__name__}: {file_path!r}")
         self.file_path = file_path
         self.lock_file_path = f"{file_path}.lock"
         self._lock_fd = None
@@ -77,6 +84,10 @@ class FileLock(VoolsBase):
             bool: 锁是否成功获取。若返回 False 表示锁已被占用或平台不支持，
                   调用方应自行决定是否继续（建议等待/重试）。
         """
+        # BUG-471: 已持锁时重复 acquire 会重新 open（覆盖 _lock_fd，旧句柄泄漏）
+        # 并重复加锁；幂等返回即可。
+        if self._locked and self._lock_fd is not None:
+            return True
         self._lock_fd = open(self.lock_file_path, 'w')
         if HAS_FCNTL:
             try:
