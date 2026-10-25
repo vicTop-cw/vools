@@ -290,6 +290,57 @@ def _validate_identifier(name: str) -> bool:
     return True
 
 
+def _static_iter_count(node: ast.AST):
+    """估算可迭代对象的静态元素数（BUG-486），无法估算返回 None。"""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+            and node.func.id == "range" and not node.keywords:
+        vals = [_static_number(a) for a in node.args]
+        if not vals or any(v is None for v in vals):
+            return None
+        try:
+            nums = [float(v) for v in vals]      # type: ignore[arg-type]
+            if len(nums) == 1:
+                start, stop, step = 0.0, nums[0], 1.0
+            elif len(nums) == 2:
+                start, stop, step = nums[0], nums[1], 1.0
+            elif len(nums) == 3:
+                start, stop, step = nums[0], nums[1], nums[2]
+            else:
+                return None
+            if step == 0:
+                return None
+            count = (stop - start) / step
+            return int(count) if count > 0 else 0
+        except (TypeError, ValueError, OverflowError):
+            return None
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return len(node.elts)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes, list, tuple)):
+        return len(node.value)
+    return None
+
+
+def _guard_comprehension_size(node: ast.AST) -> None:
+    """拦截嵌套推导式的**元素数乘积**爆炸（BUG-486）。
+
+    ``[x for x in range(1000) for y in range(1000) for z in range(1000)]``
+    每个 range 都 ≤ 限额，但真实元素数是 10^9——单 range 守卫拦不住，
+    求值期会直接把进程内存打满。
+    """
+    total = 1
+    known = False
+    for gen in getattr(node, "generators", ()):
+        count = _static_iter_count(gen.iter)
+        if count is None:
+            continue
+        known = True
+        total *= max(count, 1)
+        if total > _MAX_SEQ_ITEMS:
+            raise ExpressionSecurityError(
+                f"推导式元素数过大（约 {total} 项 > {_MAX_SEQ_ITEMS}），已拒绝执行")
+    # 单层推导式且元素数为 0 的情况无需处理
+
+
 def _validate_comprehension(
     node: ast.AST, allowed_names: Optional[set] = None
 ) -> None:
@@ -298,6 +349,9 @@ def _validate_comprehension(
     推导式中的 target 变量仅在其范围内有效（scope-local），
     不污染外层 allowed_names（避免 target 名在外层被误允许）。
     """
+
+    # BUG-486: 先按各 generator 的静态元素数估算乘积规模
+    _guard_comprehension_size(node)
     allowed_names = allowed_names or set()
     comp_allowed = set(allowed_names)
 
