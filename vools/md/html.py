@@ -125,6 +125,20 @@ def to_html(source) -> str:
         ast = parse(source)
     else:
         ast = source
+    # BUG-468: 非法输入（None/int/...）会一路落到 _node_to_html 的兜底分支，
+    # 产出 '<!-- unknown node: NoneType -->' —— 调用方以为渲染成功，实际拿到
+    # 一段静默垃圾 HTML。这里要求 str 或已知 AST 节点。
+    from .parser import (
+        BlockQuote, CodeBlock, ConfigBlock, Divider, Document, Heading,
+        InlineText, LangBlock, ListItem, MdList, Paragraph,
+    )
+    _NODE_TYPES = (Document, Heading, Paragraph, MdList, ListItem, CodeBlock,
+                   BlockQuote, Divider, InlineText, ConfigBlock, LangBlock)
+    if not isinstance(ast, _NODE_TYPES):
+        raise TypeError(
+            "to_html() 的 source 需要 str 或 Markdown AST 节点"
+            f"（{', '.join(t.__name__ for t in _NODE_TYPES)}），收到 "
+            f"{type(ast).__name__}: {ast!r}")
     return _node_to_html(ast)
 
 
