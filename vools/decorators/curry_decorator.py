@@ -182,7 +182,20 @@ def curry_class(cls: type):
     """
     if not inspect.isclass(cls):
         raise TypeError(f"@curry_class 装饰器仅允许应用于类，当前类型为: {type(cls).__name__}")
-    
+
+    # BUG-479: curry_class 通过 ``setattr(self, name, curried)`` 给**实例**注入
+    # 柯里化包装——__slots__ 且未声明 '__dict__' 的类没有实例字典，装饰时会一路
+    # 静默通过、直到 ``S()`` 实例化才抛
+    # "AttributeError: 'S' object attribute 'm' is read-only"（离病因很远）。
+    # 这类类无法承载实例级包装，装饰期显式拒绝。
+    _slots = getattr(cls, '__slots__', ())
+    _slot_names = (_slots,) if isinstance(_slots, str) else tuple(_slots or ())
+    if _slot_names and '__dict__' not in _slot_names:
+        raise TypeError(
+            "@curry_class 不支持无实例 __dict__ 的类（__slots__ 且未声明 "
+            f"'__dict__'）：{cls.__name__}；实例级柯里化包装需要写实例属性。"
+            "可改为在 __slots__ 中加入 '__dict__'，或不使用 @curry_class。")
+
     original_init = cls.__init__
     
     def new_init(self, *args, **kwargs):
