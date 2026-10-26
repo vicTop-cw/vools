@@ -689,6 +689,35 @@ class Table(Seq):
         Returns:
             Table 实例
         """
+        # BUG-501: 参数校验补齐——
+        #  * rows=-1 静默返回空表；rows='x' 抛裸 "'>=' not supported between
+        #    instances of 'int' and 'str'"（看不出是哪个参数）；
+        #  * cols=99（非可迭代）抛裸 "'int' object is not iterable"；
+        #  * types 文档写"暂未实现"，实际**静默忽略**——调用方以为做了类型转换。
+        if rows is not None:
+            if isinstance(rows, bool) or not isinstance(rows, int):
+                raise TypeError(
+                    f"from_file 的 rows 必须是 int 或 None，收到 "
+                    f"{type(rows).__name__}: {rows!r}")
+            if rows < 0:
+                raise ValueError(f"from_file 的 rows 不能为负，收到 {rows!r}")
+        if cols is not None:
+            if isinstance(cols, (str, bytes)) or not hasattr(cols, "__iter__"):
+                raise TypeError(
+                    f"from_file 的 cols 必须是列索引的可迭代对象（list/tuple）或 None，"
+                    f"收到 {type(cols).__name__}: {cols!r}")
+            _cols_list = list(cols)
+            for _c in _cols_list:
+                if isinstance(_c, bool) or not isinstance(_c, int):
+                    raise TypeError(
+                        f"from_file 的 cols 元素必须是 int 列索引，收到 "
+                        f"{type(_c).__name__}: {_c!r}")
+            cols = _cols_list
+        if types is not None:
+            raise NotImplementedError(
+                "from_file 的 types 参数尚未实现；请显式调用 to_num/to_date 等"
+                "转换方法，避免'传了 types 但没生效'的静默行为（BUG-501）")
+
         data = []
         columns = None
         
