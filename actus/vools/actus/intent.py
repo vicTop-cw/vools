@@ -11,6 +11,33 @@ from typing import Dict, List, Optional, Any
 logger = logging.getLogger(__name__)
 
 
+def _require_id(value, what: str) -> None:
+    """id 必须是非空字符串（此前 None 会被当成合法 id 注册进去）。"""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{what} 必须是非空字符串，得到 {value!r}")
+
+
+def _require_opt_str(value, what: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{what} 必须是字符串，得到 {type(value).__name__}")
+    return value
+
+
+def _require_tags(tags) -> List[str]:
+    """tags 必须是字符串列表或 None；**字符串会被逐字符展开**，故显式拒绝。"""
+    if tags is None:
+        return []
+    if isinstance(tags, (str, bytes)):
+        raise TypeError(
+            f"tags 必须是字符串列表，不能是字符串（会被逐字符展开），得到 {tags!r}")
+    if not isinstance(tags, (list, tuple)):
+        raise TypeError(f"tags 必须是 list/tuple，得到 {type(tags).__name__}")
+    for t in tags:
+        if not isinstance(t, str):
+            raise TypeError(f"tags 的元素必须是字符串，得到 {t!r}")
+    return list(tags)
+
+
 class IntentRouter:
     """自然语言意图路由器。"""
 
@@ -26,11 +53,26 @@ class IntentRouter:
 
         来自 probe 报告（actions 探测）：只有探测为可用的动作才进入推荐面。
         传 None 或空集合表示不启用 ready 过滤（向后兼容）。
+
+        入参校验：**字符串会被 set() 逐字符拆开**（`'abc'` → `{'a','b','c'}`），
+        与 BUG-490/492 的 `args='abc'` 同族，故显式拒绝 str/bytes 与非可迭代。
         """
         if ready_ids is None:
             self._ready_ids = None
         else:
-            self._ready_ids = set(ready_ids)
+            if isinstance(ready_ids, (str, bytes)):
+                raise TypeError(
+                    f"ready_ids 必须是 id 的可迭代集合，不能是字符串"
+                    f"（会被逐字符拆开），得到 {ready_ids!r}")
+            try:
+                ids = set(ready_ids)
+            except TypeError:
+                raise TypeError(
+                    f"ready_ids 必须是可迭代对象，得到 {type(ready_ids).__name__}") from None
+            for i in ids:
+                if not isinstance(i, str) or not i:
+                    raise ValueError(f"ready_ids 的元素必须是非空字符串，得到 {i!r}")
+            self._ready_ids = ids
         return self
 
     def set_probe_report(self, report):
@@ -58,25 +100,48 @@ class IntentRouter:
         return action_id in self._ready_ids
 
     def register_action(self, action_id: str, description: str, usage: str = "", tags: List[str] = None):
-        """注册动作的语义描述。"""
+        """注册动作的语义描述。
+
+        入参校验：此前 `action_id=None` 会注册出 id 为 None 的动作、
+        `tags='abc'` 会把字符串原样存进 tags（后续 `for tag in tags` 逐字符）。
+        """
+        _require_id(action_id, "action_id")
+        if not isinstance(description, str):
+            raise TypeError(
+                f"description 必须是字符串，得到 {type(description).__name__}")
         self._actions.append({
             "id": action_id,
             "description": description,
-            "usage": usage,
-            "tags": tags or []
+            "usage": _require_opt_str(usage, "usage"),
+            "tags": _require_tags(tags),
         })
 
     def register_workflow(self, workflow_id: str, description: str, tags: List[str] = None):
         """注册工作流的语义描述。"""
+        _require_id(workflow_id, "workflow_id")
+        if not isinstance(description, str):
+            raise TypeError(
+                f"description 必须是字符串，得到 {type(description).__name__}")
         self._workflows.append({
             "id": workflow_id,
             "description": description,
-            "tags": tags or []
+            "tags": _require_tags(tags),
         })
 
     def set_keyword_map(self, keyword_map: Dict[str, str]):
-        """设置关键词映射。"""
-        self._keyword_map = keyword_map
+        """设置关键词映射。
+
+        入参校验：此前传 None / list 会被收下，直到 `route()` 里访问 `.items()`
+        才抛裸 AttributeError（看不出是哪个参数设错了）。
+        """
+        if not isinstance(keyword_map, dict):
+            raise TypeError(
+                f"keyword_map 必须是 dict，得到 {type(keyword_map).__name__}")
+        for k, v in keyword_map.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                raise TypeError(
+                    f"keyword_map 的键和值都必须是字符串，得到 {k!r}: {v!r}")
+        self._keyword_map = dict(keyword_map)
 
     def route(self, query: str) -> dict:
         """根据自然语言查询路由到最佳匹配。
@@ -89,6 +154,10 @@ class IntentRouter:
                 "reason": str
             }
         """
+        if not isinstance(query, str):
+            raise TypeError(
+                f"query 必须是字符串，得到 {type(query).__name__}"
+                f"（此前会在 .lower() 处抛裸 AttributeError）")
         query_lower = query.lower().strip()
 
         if not query_lower:
