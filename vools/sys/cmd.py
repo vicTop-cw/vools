@@ -350,6 +350,12 @@ def cmd(
             def custom_cmd(arg1: str):
                 return (0, f"fallback result: {arg1}", "")
     """
+    # BUG-511: fallback 零校验——传 123 会一路通过装饰，直到**真正失败时**
+    # 才抛 "'int' object is not callable"（错误发生在离病因很远的地方）。
+    if fallback is not None and not callable(fallback):
+        raise TypeError(
+            f"cmd() 的 fallback 必须可调用或 None，收到 "
+            f"{type(fallback).__name__}: {fallback!r}")
     if callable(cmd_str):
         f = cmd_str
         cmd_str = None
@@ -420,11 +426,18 @@ def _run_sync(
     try:
         # BUG-243: 传入 shell 以便按目标 shell 规则给参数加引号
         full_cmd = _build_command(cmd_str, func, args, kwargs, shell=shell)
-        return _run_command(full_cmd, shell)
+        result = _run_command(full_cmd, shell)
     except Exception:
         if fallback:
             return fallback(*args, **kwargs)
         raise
+    # BUG-511: fallback 形同虚设——原实现只在**抛异常**时回退，而 shell 里
+    # "命令不存在/执行失败"通常表现为**非零退出码**（PowerShell 对未知命令
+    # 返回 1 + stderr，不抛异常）。于是 docstring 承诺的"执行失败时调用"从不
+    # 发生在最常见的失败场景上。现非零退出码同样触发 fallback。
+    if result[0] != 0 and fallback:
+        return fallback(*args, **kwargs)
+    return result
 
 
 async def _run_async(

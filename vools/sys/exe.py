@@ -231,6 +231,12 @@ def exe(
             def compute(x: int, y: int):
                 return (0, str(x + y), "")
     """
+    # BUG-511: fallback 零校验（见 cmd 同名修复）
+    if fallback is not None and not callable(fallback):
+        raise TypeError(
+            f"exe() 的 fallback 必须可调用或 None，收到 "
+            f"{type(fallback).__name__}: {fallback!r}")
+
     def decorator(f: Callable) -> Callable:
         actual_fallback = fallback
         if actual_fallback is None and not _function_body_is_pass(f):
@@ -295,7 +301,7 @@ def _run_sync(
 
     try:
         cmd = _build_command(exe_path, func, args, kwargs)
-        return _run_command(cmd)
+        result = _run_command(cmd)
     except FileNotFoundError:
         if fallback:
             return fallback(*args, **kwargs)
@@ -304,6 +310,10 @@ def _run_sync(
         if fallback:
             return fallback(*args, **kwargs)
         raise
+    # BUG-511: 非零退出码也视为"执行失败"→ 触发 fallback（与 docstring 一致）
+    if result[0] != 0 and fallback:
+        return fallback(*args, **kwargs)
+    return result
 
 
 async def _run_async(

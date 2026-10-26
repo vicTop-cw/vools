@@ -318,6 +318,12 @@ def dll(
 
             result = await compute(1000000)
     """
+    # BUG-511: fallback 零校验（与 cmd/exe 同口径）
+    if fallback is not None and not callable(fallback):
+        raise TypeError(
+            f"dll() 的 fallback 必须可调用或 None，收到 "
+            f"{type(fallback).__name__}: {fallback!r}")
+
     def decorator(f: Callable) -> Callable:
         dll_path, func_name = _parse_dll_spec(dll_spec)
         if func_name is None:
