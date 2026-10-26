@@ -112,6 +112,14 @@ def clone(cls=None, *args, **kwargs):
         # 作为位置参数处理
         args = (cls,) + args
         cls = None
+    # BUG-514: 走到这里 cls 只应是「类」或 None。
+    #  - clone(123)/clone(object()) 原实现抛裸
+    #    "AttributeError: 'int' object has no attribute '__name__'"（在构造子类名时才炸）；
+    #  - 无 ':'/'=>>' 标记的裸字符串（clone("x")）原实现同样落到 wrapper 里炸。
+    if cls is not None and not isinstance(cls, type):
+        raise TypeError(
+            f"clone 的 cls 必须是类或 None（属性规格字符串需含 ':' 或 '=>'），"
+            f"收到 {type(cls).__name__}: {cls!r}")
     
     def wrapper(target_cls):
         # 基础环境变量
