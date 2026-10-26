@@ -1933,6 +1933,36 @@ class Table(Seq):
                 f"收到 {join_type!r}")
         join_type = _jt
 
+        # BUG-503: select_fields 零校验——① 未知列（'t1.zzz'）会静默产出全 None 的
+        # **幽灵列**；② 无前缀项（'name'/'zzz'）被静默忽略、回退成全列，调用方以为
+        # 做了字段裁剪；③ 非可迭代参数抛裸 'int' object is not iterable。
+        if select_fields is not None:
+            if isinstance(select_fields, (str, bytes)) or not isinstance(select_fields, (list, tuple)):
+                raise TypeError(
+                    f"join 的 select_fields 必须是 list/tuple（'t1.col'/'t2.col' 形式）或 None，"
+                    f"收到 {type(select_fields).__name__}: {select_fields!r}")
+            _sf_self_prefixes = ('self.', 't1.')
+            _sf_other_prefixes = ('other.', 't2.')
+            for _f in select_fields:
+                if not isinstance(_f, str) or '.' not in _f:
+                    raise ValueError(
+                        f"join 的 select_fields 项必须是 't1.col'/'t2.col' 形式（带表前缀），"
+                        f"收到 {_f!r}")
+                _prefix, _colname = _f.split('.', 1)
+                _prefix_norm = _prefix.strip().lower() + '.'
+                if _prefix_norm in _sf_self_prefixes:
+                    _target_cols, _target_label = self._columns, '左表(t1/self)'
+                elif _prefix_norm in _sf_other_prefixes:
+                    _target_cols, _target_label = other._columns, '右表(t2/other)'
+                else:
+                    raise ValueError(
+                        f"join 的 select_fields 项 {_f!r} 前缀无法识别；"
+                        f"可用前缀: t1./self.（左表）、t2./other.（右表）")
+                if not _colname or _colname not in _target_cols:
+                    raise KeyError(
+                        f"join 的 select_fields 列不存在于{_target_label}: {_colname!r}"
+                        f"（可用列={list(_target_cols)}）")
+
         if on_str is None:
             # 自动查找同名列作为连接键
             common_cols = set(self._columns) & set(other._columns)
