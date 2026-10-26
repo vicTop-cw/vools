@@ -2412,6 +2412,26 @@ class Table(Seq):
         Returns:
             self (修改自身)
         """
+        # BUG-505: 参数零校验——① concat_array=[] 会把目标列**清成空串**
+        # （静默销毁原列数据）；② to_field=None 会创建**名为 None 的列**；
+        # ③ concat_array 传字符串会逐字符当列名（'tag'→'t'/'a'/'g' 的 KeyError）；
+        # ④ concat_array=None 抛裸 "'NoneType' object is not iterable"。
+        if not isinstance(to_field, str) or not to_field.strip():
+            raise ValueError(
+                f"concat 的 to_field 必须是非空字符串，收到 "
+                f"{type(to_field).__name__}: {to_field!r}")
+        if isinstance(concat_array, (str, bytes)) or not isinstance(concat_array, (list, tuple)):
+            raise TypeError(
+                f"concat 的 concat_array 必须是列名 list/tuple，收到 "
+                f"{type(concat_array).__name__}: {concat_array!r}")
+        if not concat_array:
+            raise ValueError(
+                "concat 的 concat_array 不能为空（否则目标列会被清成空串，静默丢数据）")
+        for _c in concat_array:
+            if not isinstance(_c, str) or not _c.strip():
+                raise TypeError(
+                    f"concat 的 concat_array 元素必须是列名字符串，收到 "
+                    f"{type(_c).__name__}: {_c!r}")
         table = self
         if filter_str:
             table = Table([r[:] for r in self._data], columns=list(self._columns), name=self._name)
