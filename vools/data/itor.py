@@ -290,6 +290,15 @@ class Itor(VoolsBase):
     """
 
     def __init__(self, iterable: Iterable) -> None:
+        # BUG-507: 构造期零校验——get_itor(123)/get_itor(None) 会**构造成功**，
+        # 直到真正迭代时才抛裸 "TypeError: 'int' object is not iterable"；
+        # 调用方在构造处看不出参数错了。用 iter() 做一次准入探测（不消费元素）。
+        try:
+            iter(iterable)
+        except TypeError as exc:
+            raise TypeError(
+                f"Itor/get_itor 的 iterable 必须是可迭代对象，收到 "
+                f"{type(iterable).__name__}: {iterable!r}") from exc
         self._iterable = iterable          # 原始可迭代对象
         self._iterator: Optional[Iterator] = None
         self._state = ItorState.PENDING
@@ -832,6 +841,16 @@ def get_itor(iterable: Iterable):
     Returns:
         Itor 实例。
     """
+    # BUG-507: 准入校验必须放在**统一入口**——原实现只在 Python 版
+    # Itor.__init__ 校验，启用 Nim 版（use_nim(True) 是**全局开关**）后
+    # get_itor(123) 会绕过校验、直到迭代时才炸；同一函数的行为随全局开关漂移。
+    try:
+        iter(iterable)
+    except TypeError as exc:
+        raise TypeError(
+            f"Itor/get_itor 的 iterable 必须是可迭代对象，收到 "
+            f"{type(iterable).__name__}: {iterable!r}") from exc
+
     if _USE_NIM:
         try:
             from . import itor_nim
