@@ -274,6 +274,13 @@ def encodable(format_name: str):
         encoder = CodecRegistry.get_encoder('yaml')
         result = encoder({'key': 'value'})
     """
+    # BUG-517: format_name 零校验——encodable(None)/encodable(123) 会静默把
+    # 编码器注册到 'encodable' 之外的无意义键上，随后 get_encoder(正常名) 永远拿不到。
+    if not isinstance(format_name, str) or not format_name.strip():
+        raise ValueError(
+            f"encodable() 的 format_name 必须是非空字符串，收到 "
+            f"{type(format_name).__name__}: {format_name!r}")
+
     def decorator(func: Callable) -> Callable:
         CodecRegistry.register_encoder(format_name, func)
         return func
@@ -299,6 +306,13 @@ def decodable(format_name: str):
         decoder = CodecRegistry.get_decoder('yaml')
         result = decoder('key: value')
     """
+    # BUG-517: format_name 零校验——encodable(None)/encodable(123) 会静默把
+    # 编码器注册到 'decodable' 之外的无意义键上，随后 get_encoder(正常名) 永远拿不到。
+    if not isinstance(format_name, str) or not format_name.strip():
+        raise ValueError(
+            f"decodable() 的 format_name 必须是非空字符串，收到 "
+            f"{type(format_name).__name__}: {format_name!r}")
+
     def decorator(func: Callable) -> Callable:
         CodecRegistry.register_decoder(format_name, func)
         return func
