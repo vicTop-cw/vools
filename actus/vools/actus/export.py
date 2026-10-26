@@ -24,6 +24,8 @@ def load_run_history(meta_dir: str = ".", limit: int = 0) -> List[dict]:
     返回:
         运行记录列表，按时间倒序。
     """
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+        raise ValueError(f"limit 必须是 ≥0 的整数（0=全部），得到 {limit!r}")
     history_file = Path(meta_dir) / "runs" / "history.json"
     if not history_file.exists():
         return []
@@ -45,13 +47,34 @@ def load_run_history(meta_dir: str = ".", limit: int = 0) -> List[dict]:
         return []
 
 
+EXPORT_FORMATS = ("json", "csv", "markdown", "md", "html")
+
+
+def _require_records(records) -> List[dict]:
+    """记录必须是 dict 列表。
+
+    此前 `export_to_json('abc')` 会把字符串当记录序列化出 `"abc"`、
+    `export_to_csv(None)` 抛裸 TypeError —— 调用方以为导出了空报告。
+    """
+    if not isinstance(records, (list, tuple)):
+        raise TypeError(
+            f"records 必须是 dict 列表，得到 {type(records).__name__}"
+            f"（字符串不是记录集）")
+    for i, r in enumerate(records):
+        if not isinstance(r, dict):
+            raise TypeError(
+                f"records[{i}] 必须是 dict，得到 {type(r).__name__}")
+    return list(records)
+
+
 def export_to_json(records: List[dict]) -> str:
     """导出为 JSON 字符串。"""
-    return json.dumps(records, ensure_ascii=False, indent=2)
+    return json.dumps(_require_records(records), ensure_ascii=False, indent=2)
 
 
 def export_to_csv(records: List[dict]) -> str:
     """导出为 CSV 字符串。"""
+    records = _require_records(records)
     output = io.StringIO()
 
     # 收集所有可能的字段
@@ -71,6 +94,9 @@ def export_to_csv(records: List[dict]) -> str:
 
 def export_to_markdown(records: List[dict], title: str = "动作执行历史") -> str:
     """导出为 Markdown 报告。"""
+    records = _require_records(records)
+    if not isinstance(title, str):
+        raise TypeError(f"title 必须是字符串，得到 {type(title).__name__}")
     lines = [f"# {title}", ""]
     lines.append(f"生成时间: {datetime.now().isoformat()}")
     lines.append(f"总记录数: {len(records)}")
@@ -99,6 +125,9 @@ def export_to_markdown(records: List[dict], title: str = "动作执行历史") -
 
 def export_to_html(records: List[dict], title: str = "Actus 执行报告") -> str:
     """导出为 HTML 报告。"""
+    records = _require_records(records)
+    if not isinstance(title, str):
+        raise TypeError(f"title 必须是字符串，得到 {type(title).__name__}")
     success = sum(1 for r in records if r.get("status") == "ok")
     failed = sum(1 for r in records if r.get("status") == "failed")
     total = len(records)
@@ -162,6 +191,10 @@ def export_history(meta_dir: str = ".", output_path: str = "",
     返回:
         导出的内容字符串（如果 output_path 为空）。
     """
+    # 未知 format_ 此前**静默回退成 json**：调用方要 csv 却拿到 JSON，无任何提示。
+    if format_ not in EXPORT_FORMATS:
+        raise ValueError(
+            f"未知导出格式 {format_!r}，可用: {', '.join(EXPORT_FORMATS)}")
     records = load_run_history(meta_dir, limit)
     if not records:
         return None
