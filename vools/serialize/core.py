@@ -178,8 +178,23 @@ def loads(data: bytes, backend: Optional[str] = None) -> Any:
 
     Returns:
         反序列化后的对象
+
+    Raises:
+        TypeError: ``data`` 不是 bytes / bytearray / memoryview 时（BUG-497：
+            原实现把类型错误留给底层——``loads("str")`` 抛
+            "a bytes-like object is required, not 'str'"、
+            ``loads(None)`` 抛 ``'NoneType' object is not...``，都看不出是哪个参数）。
+
+    安全提示（BUG-497 补文档）：
+        **pickle 后端（默认）反序列化会执行任意代码**，只允许对可信来源的
+        字节串调用；处理不可信输入请显式使用 ``backend="json"``。
     """
-    return _get_serializer(backend).loads(data)
+    # BUG-497: 入口校验 inputs 类型，避免把"参数传错"误读成"数据损坏"
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        raise TypeError(
+            f"loads 的 data 必须是 bytes/bytearray/memoryview，收到 "
+            f"{type(data).__name__}: {data!r}")
+    return _get_serializer(backend).loads(bytes(data))
 
 
 def dumps_hex(obj: Any, backend: Optional[str] = None) -> str:
@@ -206,5 +221,19 @@ def loads_hex(hex_str: str, backend: Optional[str] = None) -> Any:
 
     Returns:
         反序列化后的对象
+
+    Raises:
+        TypeError: ``hex_str`` 不是 str/bytes 时（BUG-497：原实现直接把
+            ``None`` 交给 ``bytes.fromhex``，报错看不出是哪个参数）。
+
+    安全提示（BUG-497 补文档）：同 ``loads`` —— pickle 后端反序列化会执行任意代码，
+    只用于可信数据。
     """
+    # BUG-497: 入口类型校验 + 允许 bytes 十六进制串（bytes.fromhex 本就支持）
+    if not isinstance(hex_str, (str, bytes, bytearray)):
+        raise TypeError(
+            f"loads_hex 的 hex_str 必须是 str 或 bytes，收到 "
+            f"{type(hex_str).__name__}: {hex_str!r}")
+    if isinstance(hex_str, (bytes, bytearray)):
+        hex_str = bytes(hex_str).decode("ascii", "strict")
     return _get_serializer(backend).loads_hex(hex_str)
