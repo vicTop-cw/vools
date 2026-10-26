@@ -103,6 +103,25 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
             return VList(self._data[index])
         return self._data[index]
 
+    def copy(self):        # noqa: D401 - 覆写 VoolsBase.copy
+        """返回**互不影响**的 VList 副本（BUG-505 覆写 VoolsBase.copy）。
+
+        ``VoolsBase.copy`` 的 ``copy.copy(self)`` 会让副本与原件共享同一个
+        ``_data`` 列表（实测 ``u = v.copy(); u.add(4)`` 后**原表**也变成
+        ``[1, 2, 3, 4]``）——"在副本上加工"会静默破坏原件（与 BUG-504 的
+        Table 同一家族）。这里复制 ``_data`` 与操作链 ``_ops``。
+        元素对象本身仍按引用共享（值语义足够）。
+        """
+        _clone = super().copy()
+        try:
+            _clone._data = list(self._data)
+            _ops = getattr(self, "_ops", None)
+            if isinstance(_ops, list):
+                _clone._ops = list(_ops)
+        except Exception:
+            pass
+        return _clone
+
     def __len__(self) -> int:
         """返回列表长度。
 
