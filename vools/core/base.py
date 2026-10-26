@@ -183,6 +183,17 @@ class VoolsBase:
         Returns:
             self, for chaining
         """
+        # BUG-509: do() 零校验——do(123) 抛裸 "'int' object is not callable"，
+        # 且 pre_f/sub_f 传不可调用对象时也是同类裸错。
+        for _name, _fn, _allow_none in (
+                ("f", f, False), ("pre_f", pre_f, True), ("sub_f", sub_f, True)):
+            if _fn is None and _allow_none:
+                continue
+            if not callable(_fn):
+                raise TypeError(
+                    f"{type(self).__name__}.do() 的 {_name} 必须可调用"
+                    + ("或 None" if _allow_none else "")
+                    + f"，收到 {type(_fn).__name__}: {_fn!r}")
         rs = self
         if pre_f:
             rs = pre_f(rs)
