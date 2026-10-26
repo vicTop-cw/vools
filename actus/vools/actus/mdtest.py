@@ -159,7 +159,17 @@ def _cleanup_fixture_env(env: Dict[str, Any]) -> None:
 
 
 def discover_test_files(paths: List[str]) -> List[str]:
-    """发现测试文件：目录递归找 *.test.md，文件直接收录。"""
+    """发现测试文件：目录递归找 *.test.md，文件直接收录。
+
+    入参校验：`paths=None` 此前抛裸 `'NoneType' object is not iterable`；
+    字符串会被**逐字符**当成路径。两者都给出带参数名的错误。
+    """
+    if isinstance(paths, (str, bytes)):
+        raise TypeError(
+            f"paths 必须是路径列表，不能是字符串（会被逐字符拆开），得到 {paths!r}")
+    if not isinstance(paths, (list, tuple)):
+        raise TypeError(
+            f"paths 必须是路径列表，得到 {type(paths).__name__}")
     files: List[str] = []
     for p in paths:
         if os.path.isdir(p):
@@ -183,6 +193,9 @@ def extract_cases(md_path: str) -> List[Dict[str, Any]]:
     其顶层变量对用例可见 —— 对应 pytest 模块级准备逻辑。
     命名优先级：#!test name=xxx > tag=xxx > <文件名>::块序号
     """
+    if not isinstance(md_path, (str, os.PathLike)):
+        raise TypeError(
+            f"md_path 必须是路径字符串，得到 {type(md_path).__name__}")
     parsed = parse_md(md_path)
     cases: List[Dict[str, Any]] = []
     base = os.path.splitext(os.path.basename(md_path))[0]
@@ -251,6 +264,13 @@ def run_case(case: Dict[str, Any], config: Dict[str, Any] = None) -> Dict[str, A
     exec 期间 sys.modules['pytest'] 指向 pytest_compat，
     使 `import pytest` 与 `from conftest import ...` 之外的 pytest 用法全部兼容。
     """
+    # 入参校验：`run_case(None)` 此前抛裸 AttributeError、
+    # `run_case({})` 抛 KeyError: 'file'（看不出缺哪个字段）。
+    if not isinstance(case, dict):
+        raise TypeError(f"case 必须是 dict，得到 {type(case).__name__}")
+    for required in ('name', 'file'):
+        if required not in case:
+            raise KeyError(f"case 缺少必需字段 {required!r}，得到键: {sorted(case)}")
     if case.get('skip'):
         return {'name': case['name'], 'status': 'skipped',
                 'stdout': '', 'error': ''}
