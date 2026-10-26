@@ -73,16 +73,19 @@ def register_type(
             raise ValueError("register_type 的 name 不能为空字符串")
     if name is None:
         name = f'{type_.__module__}.{type_.__qualname__}'
+    # BUG-498: 先校验**已提供**的回调是否可调用，再检查"必须成对提供"——
+    # 原实现顺序颠倒，``register_type(A, "A", serialize=123)`` 会报
+    # "deserialize function is required"（指错参数，真正的病根是 serialize=123）。
+    if serialize is not None and not callable(serialize):
+        raise TypeError(
+            f"serialize 必须可调用，收到 {type(serialize).__name__}: {serialize!r}")
+    if deserialize is not None and not callable(deserialize):
+        raise TypeError(
+            f"deserialize 必须可调用，收到 {type(deserialize).__name__}: {deserialize!r}")
     if serialize is None:
         raise ValueError(f'serialize function is required for type {name}')
     if deserialize is None:
         raise ValueError(f'deserialize function is required for type {name}')
-    if not callable(serialize):
-        raise TypeError(
-            f"serialize 必须可调用，收到 {type(serialize).__name__}: {serialize!r}")
-    if not callable(deserialize):
-        raise TypeError(
-            f"deserialize 必须可调用，收到 {type(deserialize).__name__}: {deserialize!r}")
     # BUG-325: 不同类型注册同名会导致 get_type_deserializer(name) 返回
     # 首个匹配的反序列化函数（dict 值顺序），后者往返被还原成前者的类型
     # （实测 B(9) -> A(9)）。注册前检测同名冲突。
