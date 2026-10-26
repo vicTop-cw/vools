@@ -15,6 +15,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+VIZ_FORMATS = ("ascii", "mermaid", "dot", "html")
+
+
 def parse_workflow_nodes(workflow_def: dict) -> Tuple[List[dict], List[tuple]]:
     """解析工作流定义为节点和边。
 
@@ -23,15 +26,36 @@ def parse_workflow_nodes(workflow_def: dict) -> Tuple[List[dict], List[tuple]]:
 
     返回:
         (nodes, edges) — nodes 为节点列表，edges 为 (from, to) 元组列表。
+
+    入参校验：`nodes` 传字符串会被逐字符迭代、`[None]` 会在 `.get` 处抛裸
+    AttributeError；无 id 的节点会生成 `[""]` 这种**坏图节点**。
     """
-    nodes = workflow_def.get("nodes", [])
+    if not isinstance(workflow_def, dict):
+        raise TypeError(
+            f"workflow_def 必须是 dict，得到 {type(workflow_def).__name__}")
+    raw_nodes = workflow_def.get("nodes", [])
+    if not isinstance(raw_nodes, (list, tuple)):
+        raise TypeError(
+            f"nodes 必须是列表，得到 {type(raw_nodes).__name__}"
+            f"（字符串会被逐字符迭代）")
+    nodes = []
+    for i, n in enumerate(raw_nodes):
+        if not isinstance(n, dict):
+            raise TypeError(f"nodes[{i}] 必须是 dict，得到 {type(n).__name__}")
+        node_id = n.get("id", n.get("name", ""))
+        if not isinstance(node_id, str) or not node_id.strip():
+            raise ValueError(
+                f"nodes[{i}] 缺少有效 id（会生成空节点名的坏图），得到 {node_id!r}")
+        nodes.append(n)
     edges = []
 
     # 从节点依赖构建边
     node_map = {n.get("id", n.get("name", "")): n for n in nodes}
     for node in nodes:
         node_id = node.get("id", node.get("name", ""))
-        deps = node.get("depends", node.get("dependencies", []))
+        # 依赖字段别名：DAGScheduler 认 depends/deps，viz 原先只认
+        # depends/dependencies —— 同一份工作流定义在两边会画出不同的边。
+        deps = node.get("depends", node.get("dependencies", node.get("deps", [])))
         if isinstance(deps, str):
             deps = [deps]
         for dep in deps:
@@ -290,9 +314,12 @@ def visualize_workflow(workflow_def: dict, format_: str = "ascii") -> str:
         "dot": to_dot,
         "html": to_html,
     }
-
-    renderer = renderers.get(format_, to_ascii)
-    return renderer(nodes, edges)
+    # 未知格式此前**静默回退成 ascii**：调用方要 mermaid 却拿到 ASCII 图，
+    # 毫无提示（与 export_history 的 format_ 是同一个坑）。
+    if format_ not in renderers:
+        raise ValueError(
+            f"未知可视化格式 {format_!r}，可用: {', '.join(VIZ_FORMATS)}")
+    return renderers[format_](nodes, edges)
 
 
 def visualize_action_workflow(action_meta: dict, format_: str = "ascii") -> str:
