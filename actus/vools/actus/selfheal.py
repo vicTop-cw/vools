@@ -37,6 +37,23 @@ class CircuitBreaker:
     half_open_max_calls: int = 1        # 半开时允许的最大试探次数
 
     def __post_init__(self):
+        # 参数校验：这里配错会**静默关闭熔断保护**——
+        # recovery_timeout<=0 时 `time.time() - last_failure_time >= timeout`
+        # 恒为真，断路器永远停在半开、再也不阻断请求；
+        # failure_threshold<=0 则任何一次成功/失败判定都失真。
+        if isinstance(self.failure_threshold, bool) or not isinstance(self.failure_threshold, int) \
+                or self.failure_threshold < 1:
+            raise ValueError(
+                f"failure_threshold 必须是 ≥1 的整数，得到 {self.failure_threshold!r}")
+        if isinstance(self.recovery_timeout, bool) or not isinstance(self.recovery_timeout, (int, float)) \
+                or self.recovery_timeout <= 0:
+            raise ValueError(
+                f"recovery_timeout 必须是 >0 的数值（负值会让断路器永不熔断），"
+                f"得到 {self.recovery_timeout!r}")
+        if isinstance(self.half_open_max_calls, bool) or not isinstance(self.half_open_max_calls, int) \
+                or self.half_open_max_calls < 1:
+            raise ValueError(
+                f"half_open_max_calls 必须是 ≥1 的整数，得到 {self.half_open_max_calls!r}")
         self.state = CircuitState.CLOSED
         self.failure_count = 0
         self.success_count = 0
@@ -99,16 +116,42 @@ class RetryPolicy:
     jitter: bool = True             # 是否加随机抖动
     retry_on: Tuple[str, ...] = ("timeout", "connection", "rate_limit")  # 重试的错误类型
 
+    def __post_init__(self):
+        """参数校验：`max_retries='x'` 此前被静默收下，重试判定永远失真。"""
+        if isinstance(self.max_retries, bool) or not isinstance(self.max_retries, int) \
+                or self.max_retries < 0:
+            raise ValueError(
+                f"max_retries 必须是 ≥0 的整数，得到 {self.max_retries!r}")
+        for name in ("base_delay", "max_delay", "backoff_factor"):
+            v = getattr(self, name)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+                raise ValueError(f"{name} 必须是 ≥0 的数值，得到 {v!r}")
+        if self.backoff_factor < 1:
+            raise ValueError(
+                f"backoff_factor 必须 ≥1（<1 会让延迟越来越短），得到 {self.backoff_factor!r}")
+
+    def _require_attempt(self, attempt) -> int:
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+            raise ValueError(
+                f"attempt 必须是 ≥1 的整数，得到 {attempt!r}")
+        return attempt
+
     def should_retry(self, error_code: str, attempt: int) -> bool:
         """判断是否重试。"""
-        if attempt >= self.max_retries:
+        self._require_attempt(attempt)
+        if attempt > self.max_retries:
             return False
         if not self.retry_on:
             return True
         return error_code in self.retry_on
 
     def get_delay(self, attempt: int) -> float:
-        """计算第 attempt 次的延迟。"""
+        """计算第 attempt 次的延迟（attempt 从 1 起）。
+
+        此前 `get_delay('x')` 在 `**` 处抛裸 TypeError、`get_delay(-1)` 静默
+        算出负指数延迟（0.19s，语义错误）。
+        """
+        self._require_attempt(attempt)
         delay = self.base_delay * (self.backoff_factor ** attempt)
         delay = min(delay, self.max_delay)
         if self.jitter:
