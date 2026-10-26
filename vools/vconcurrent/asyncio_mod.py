@@ -88,6 +88,12 @@ class AsyncQueue(Generic[_T]):
     """
 
     def __init__(self, maxsize: int = 0) -> None:
+        # BUG-496: maxsize 零校验——``AsyncQueue(maxsize='x')`` 会一路到 repr 里
+        # 才抛 cryptic 的 "%d format: a real number is required, not str"。
+        if isinstance(maxsize, bool) or not isinstance(maxsize, int):
+            raise TypeError(
+                f"AsyncQueue 的 maxsize 必须是 int（<=0 表示无界），收到 "
+                f"{type(maxsize).__name__}: {maxsize!r}")
         self._queue: "asyncio.Queue[_T]" = asyncio.Queue(maxsize=maxsize)
 
     async def put(self, item: _T, timeout: Optional[float] = None) -> None:
@@ -959,6 +965,31 @@ class AsyncPool:
 # ---------------------------------------------------------------------------
 
 
+def _reject_seconds(seconds: Any, func_name: str, *, allow_zero: bool) -> None:
+    """校验延迟/超时秒数；失败时**关闭传入协程**避免 "never awaited" 警告。
+
+    BUG-496: 校验在 ``await`` 之前抛出，若不关闭，调用方的协程对象会泄漏并
+    在 GC 时打印 RuntimeWarning（与 BUG-404 在 AsyncPool.submit 里的处理同源）。
+    """
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+        raise TypeError(
+            f"{func_name} 的 seconds 必须是数值，收到 "
+            f"{type(seconds).__name__}: {seconds!r}")
+    if allow_zero:
+        if seconds < 0:
+            raise ValueError(f"{func_name} 的 seconds 不能为负，收到 {seconds!r}")
+    elif seconds <= 0:
+        raise ValueError(f"{func_name} 的 seconds 必须 > 0，收到 {seconds!r}")
+
+
+def _close_coro(coro: Any) -> None:
+    """尽力关闭未执行的协程（避免 RuntimeWarning）。"""
+    try:
+        coro.close()
+    except Exception:
+        pass
+
+
 async def delay(
     seconds: float,
     coro: Coroutine[Any, Any, _T],
@@ -972,6 +1003,13 @@ async def delay(
     Returns:
         协程的返回值。
     """
+    # BUG-496: 负延迟原样交给 asyncio.sleep（负值直接返回、等于无延迟），
+    # 字符串则在 sleep 内部才炸；与 delayed_call/Timer 的口径对齐。
+    try:
+        _reject_seconds(seconds, "delay", allow_zero=True)
+    except (TypeError, ValueError):
+        _close_coro(coro)
+        raise
     await asyncio.sleep(seconds)
     return await coro
 
@@ -997,6 +1035,13 @@ async def timeout(
     Raises:
         asyncio.TimeoutError: 超时未完成。
     """
+    # BUG-496: seconds 非正数/非数值原样交给 wait_for（0/负值会立即超时，
+    # 字符串在内部才炸），入口显式校验。
+    try:
+        _reject_seconds(seconds, "timeout", allow_zero=False)
+    except (TypeError, ValueError):
+        _close_coro(coro)
+        raise
     try:
         return await asyncio.wait_for(coro, seconds)
     except asyncio.TimeoutError:
