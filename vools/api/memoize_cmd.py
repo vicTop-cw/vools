@@ -84,9 +84,16 @@ def call(
         result, elapsed = timing_decorator(memorized_func)(*parsed_args)
         results.append(result)
         total_time += elapsed
-        
-        cache_status = "缓存命中" if i > 0 else "首次计算"
-        typer.echo(f"第 {i+1} 次: 结果={result}, 耗时={elapsed:.6f}s, {cache_status}")
+
+        # BUG-522: show_cache 选项此前**声明了却从未使用**——不给 --show-cache 也
+        # 会打印"缓存命中/首次计算"，给了也看不出区别。现按该选项控制：
+        # 只有显式请求时才附缓存状态（状态按 memorize 语义推断：首次调用必然
+        # 未命中，之后同参数走缓存；vools.cache.memorize 本身不暴露 cache_info）。
+        if show_cache:
+            cache_status = "缓存命中（第 2 次起，同参数）" if i > 0 else "首次计算"
+            typer.echo(f"第 {i+1} 次: 结果={result}, 耗时={elapsed:.6f}s, {cache_status}")
+        else:
+            typer.echo(f"第 {i+1} 次: 结果={result}, 耗时={elapsed:.6f}s")
     
     typer.echo("-" * 40)
     typer.echo(f"平均耗时: {total_time/repeat:.6f}s")
