@@ -78,11 +78,17 @@ def test_diamond_dependency_promotes_once_all_succeed():
 
 
 def _force_fail(b, tid, worker="w1", err="boom"):
-    """把某任务一路 fail 到终态 FAILED。"""
+    """把某任务一路 fail 到终态 FAILED。
+
+    BUG-231 起 ``fail`` 会写 ``next_retry_at`` 退避，本用例考的是「DAG 级联
+    SKIPPED」而不是退避时序，故每次重试点用 ``b.retry()`` 人工放行（=立即）。
+    """
     while True:
         t = b.get(tid)
         if t["status"] == "FAILED":
             return
+        if t["status"] == "RETRY_PENDING":
+            b.retry(tid)          # 清退避，立即放行
         g = b.acquire(worker)
         assert g is not None and g["id"] == tid
         b.fail(tid, worker, err)
@@ -135,7 +141,10 @@ def test_worker_engine_e2e_memory():
 
 
 def test_retry_then_success():
-    b = MemoryTaskBackend(max_retries=2)
+    # BUG-231: 本用例测「重试流程」（失败→再领取→成功），不是退避时序；
+    # 显式 retry_delay_min=0 保持立即再领取的原意（退避由
+    # tests/task/test_retry_backoff.py 单独锁）。
+    b = MemoryTaskBackend(max_retries=2, retry_delay_min=0)
     b.init_table()
     tid = b.submit("flaky", {"value": "x"}, max_retries=2)
 

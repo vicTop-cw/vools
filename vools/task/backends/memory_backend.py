@@ -43,9 +43,11 @@ class MemoryTaskBackend:
 
     Args:
         max_retries: 单任务最大重试次数（``fail`` 路径按此上限转 FAILED）。
-        retry_delay_min: **当前仅为 API 兼容占位，不影响重试时序**——失败任务
-            转 RETRY_PENDING 后立即可被再次领取，无退避等待（BUG-231，真实
-            退避留作后续独立任务）。
+        retry_delay_min: 失败后重试的退避时长（**分钟**，BUG-231）。
+            ``fail()`` 在还有重试次数时写入 ``next_retry_at = now + N 分钟``，
+            ``acquire()`` 跳过未到期的 ``RETRY_PENDING``；``0`` 表示不退避
+            （失败后立即可再领取，等价旧行为）。人工 ``retry(task_id)`` 会
+            清空退避、立即放行。
     """
 
     def __init__(self, max_retries: int = 3, retry_delay_min: int = 5):
@@ -120,6 +122,7 @@ class MemoryTaskBackend:
             "worker_id": None,
             "locked_by": None,
             "lease_timeout": None,
+            "next_retry_at": None,
             "ts": None,
             "created_at": now,
             "updated_at": now,
@@ -143,7 +146,9 @@ class MemoryTaskBackend:
         cands = sorted(
             (t for t in self._tasks.values()
              if t["status"] in states
-             and (t["lease_timeout"] is None or t["lease_timeout"] < now)),
+             and (t["lease_timeout"] is None or t["lease_timeout"] < now)
+             # BUG-231: 退避未到期的 RETRY_PENDING 不可领取
+             and (t.get("next_retry_at") is None or t["next_retry_at"] <= now)),
             key=lambda t: (rank.get(t["status"], 9), -t["priority"], t["id"]),
         )
         if not cands:
@@ -181,14 +186,21 @@ class MemoryTaskBackend:
         if t["retry_count"] >= t["max_retries"]:
             t["status"] = "FAILED"
             t["completed_at"] = datetime.utcnow()
+            t["next_retry_at"] = None
             self._promote_and_skip(failed_id=task_id)
         else:
             t["status"] = "RETRY_PENDING"
+            # BUG-231: 真实退避——0 表示不退避（保持旧行为）
+            t["next_retry_at"] = (
+                datetime.utcnow() + timedelta(minutes=self.retry_delay_min)
+                if self.retry_delay_min > 0 else None)
 
     def retry(self, task_id: int):
         t = self._tasks.get(task_id)
         if t and t["status"] == "RETRY_PENDING":
             t["status"] = "READY"
+            # BUG-231: 人工 retry=立即放行，清掉退避时间
+            t["next_retry_at"] = None
             t["updated_at"] = datetime.utcnow()
 
     # ---------- 心跳 / 清理 ----------

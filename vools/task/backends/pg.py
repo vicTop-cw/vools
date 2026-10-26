@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS {table} (
     worker_id     VARCHAR(128),
     locked_by     VARCHAR(128),
     lease_timeout TIMESTAMP,
+    next_retry_at TIMESTAMP,
     ts            TIMESTAMP,
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS {table} (
 );
 CREATE INDEX IF NOT EXISTS idx_{table}_status ON {table}(status);
 CREATE INDEX IF NOT EXISTS idx_{table}_priority ON {table}(priority DESC);
+ALTER TABLE {table} ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMP;
 """
 
 
@@ -70,8 +72,10 @@ class PgTaskBackend:
         dsn: PostgreSQL 连接串。
         table: 主表名。
         max_retries: 单任务最大重试次数。
-        retry_delay_min: **当前仅为 API 兼容占位，不影响重试时序**——失败任务
-            立即进入可领取状态，无退避等待（BUG-231）。
+        retry_delay_min: 失败后重试的退避时长（**分钟**，BUG-231）。
+            ``fail()`` 在还有重试次数时写入 ``next_retry_at = now + N 分钟``，
+            ``acquire()`` 跳过未到期的 ``RETRY_PENDING``；``0`` 表示不退避。
+            人工 ``retry(task_id)`` 清空退避、立即放行。
         autocommit: 是否自动提交事务。
     """
 
@@ -226,9 +230,11 @@ class PgTaskBackend:
         try:
             cur.execute(
                 'SELECT id, task_name, task_type, task_value, payload, status, priority,'
-                ' retry_count, max_retries, error_message, back_info, dependencies, ts'
+                ' retry_count, max_retries, error_message, back_info, dependencies, ts,'
+                ' next_retry_at'
                 ' FROM "{t}" WHERE status = ANY(%s) AND (lease_timeout IS NULL'
                 ' OR lease_timeout < CURRENT_TIMESTAMP)'
+                ' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)'
                 ' ORDER BY {o} LIMIT 1 FOR UPDATE SKIP LOCKED'.format(t=self.table, o=order),
                 (states,),
             )
@@ -268,6 +274,7 @@ class PgTaskBackend:
             "dependencies": _loads(row[11], []),
             "ts": row[12],
             "lease_timeout": lease,
+            "next_retry_at": row[13],
         }
 
     def _heartbeat(self, task_id: int, worker_id: str, timeout_min: int):
@@ -337,18 +344,22 @@ class PgTaskBackend:
                     ("SKIPPED", child),
                 )
         else:
+            # BUG-231: 真实退避——retry_delay_min>0 时写 next_retry_at，
+            # acquire() 跳过未到期的 RETRY_PENDING；0 表示不退避。
             cur.execute(
-                'UPDATE "{t}" SET status=%s, lease_timeout=NULL WHERE id=%s'.format(t=self.table),
-                ("RETRY_PENDING", task_id),
+                'UPDATE "{t}" SET status=%s, lease_timeout=NULL, next_retry_at='
+                ' CASE WHEN %s > 0 THEN CURRENT_TIMESTAMP + make_interval(mins => %s)'
+                ' ELSE NULL END WHERE id=%s'.format(t=self.table),
+                ("RETRY_PENDING", self.retry_delay_min, self.retry_delay_min, task_id),
             )
         self._connect().commit()
         cur.close()
 
     def retry(self, task_id: int):
-        """手动重试（RETRY_PENDING → READY）。"""
+        """手动重试（RETRY_PENDING → READY）；BUG-231：清空退避时间立即放行。"""
         cur = self._cursor()
         cur.execute(
-            'UPDATE "{t}" SET status=%s, updated_at=CURRENT_TIMESTAMP'
+            'UPDATE "{t}" SET status=%s, next_retry_at=NULL, updated_at=CURRENT_TIMESTAMP'
             ' WHERE id=%s AND status=%s'.format(t=self.table),
             ("READY", task_id, "RETRY_PENDING"),
         )

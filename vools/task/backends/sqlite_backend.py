@@ -47,8 +47,11 @@ class SqliteTaskBackend:
         db_path: SQLite 数据库文件路径。
         table: 主表名（边表为 ``<table>_edges``）。
         max_retries: 单任务最大重试次数。
-        retry_delay_min: **当前仅为 API 兼容占位，不影响重试时序**——失败任务
-            立即进入可领取状态，无退避等待（BUG-231）。
+        retry_delay_min: 失败后重试的退避时长（**分钟**，BUG-231）。
+            ``fail()`` 在还有重试次数时写入 ``next_retry_at = now + N 分钟``，
+            ``acquire()`` 跳过未到期的 ``RETRY_PENDING``；``0`` 表示不退避
+            （失败后立即可再领取，等价旧行为）。人工 ``retry(task_id)`` 会
+            清空退避、立即放行。
     """
 
     def __init__(self, db_path: str = "tasks_queue.db", table: str = "vic_tasks_task",
@@ -101,6 +104,7 @@ class SqliteTaskBackend:
                     worker_id     TEXT,
                     locked_by     TEXT,
                     lease_timeout TEXT,
+                    next_retry_at TEXT,
                     ts            TEXT,
                     created_at    TEXT,
                     updated_at    TEXT,
@@ -111,6 +115,7 @@ class SqliteTaskBackend:
             self._conn.execute(
                 'CREATE INDEX IF NOT EXISTS "idx_{t}_status" ON "{t}"(status)'
                 .format(t=self.table))
+            self._migrate_next_retry_at()
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS "{e}" (
@@ -130,6 +135,25 @@ class SqliteTaskBackend:
                 self._conn.execute('DROP TABLE IF EXISTS "{t}"'.format(t=self.table))
         if drop_if_exists:
             self._init_table()
+
+    def _migrate_next_retry_at(self):
+        """旧库幂等补 ``next_retry_at`` 列（BUG-231 真实退避）。
+
+        ``CREATE TABLE IF NOT EXISTS`` 不会给已存在的旧表加列，必须显式
+        ``ALTER TABLE``；``PRAGMA table_info`` 探测保证幂等。
+        """
+        cols = {row[1] for row in self._conn.execute(
+            'PRAGMA table_info("{t}")'.format(t=self.table)).fetchall()}
+        if "next_retry_at" not in cols:
+            self._conn.execute(
+                'ALTER TABLE "{t}" ADD COLUMN next_retry_at TEXT'.format(t=self.table))
+
+    def _next_retry_at(self) -> Optional[str]:
+        """按 ``retry_delay_min`` 算出下次可领取时间；0 表示不退避（None）。"""
+        if self.retry_delay_min <= 0:
+            return None
+        return (datetime.utcnow() + timedelta(minutes=self.retry_delay_min)
+                ).isoformat(sep=" ", timespec="seconds")
 
     # ---------- 工具 ----------
     @staticmethod
@@ -216,9 +240,10 @@ class SqliteTaskBackend:
                     SELECT * FROM "{t}"
                     WHERE status IN ({s})
                       AND (lease_timeout IS NULL OR lease_timeout < ?)
+                      AND (next_retry_at IS NULL OR next_retry_at <= ?)
                     ORDER BY {o} LIMIT 1
                     """.format(t=self.table, s=qmarks, o=order),
-                    list(states) + [now]).fetchone()
+                    list(states) + [now, now]).fetchone()
                 if not row:
                     self._conn.commit()
                     return None
@@ -290,15 +315,20 @@ class SqliteTaskBackend:
                         WHERE id=?
                         """.format(t=self.table), (now, now, cid))
             else:
+                # BUG-231: 真实退避——retry_delay_min>0 时写入 next_retry_at，
+                # acquire() 会跳过未到期的 RETRY_PENDING，避免失败任务热循环打库。
                 self._conn.execute(
-                    "UPDATE \"{t}\" SET status='RETRY_PENDING', updated_at=? WHERE id=?"
-                    .format(t=self.table), (now, task_id))
+                    """
+                    UPDATE "{t}" SET status='RETRY_PENDING', next_retry_at=?, updated_at=?
+                    WHERE id=?
+                    """.format(t=self.table), (self._next_retry_at(), now, task_id))
 
     def retry(self, task_id: int):
         with self._lock, self._conn:
+            # BUG-231: 人工 retry=立即放行，清掉退避时间
             self._conn.execute(
                 """
-                UPDATE "{t}" SET status='READY', updated_at=?
+                UPDATE "{t}" SET status='READY', next_retry_at=NULL, updated_at=?
                 WHERE id=? AND status='RETRY_PENDING'
                 """.format(t=self.table), (self._now(), task_id))
 
