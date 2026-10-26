@@ -121,6 +121,12 @@ class Dialect(abc.ABC):
         )
 
 
+def _check_name(name) -> None:
+    """校验方言名称（BUG-520）：非空字符串，否则 ValueError。"""
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(f"方言名称必须是非空字符串，收到 {type(name).__name__}: {name!r}")
+
+
 def register_dialect(name: str, dialect_class: type) -> None:
     """
     注册方言类
@@ -154,7 +160,9 @@ def get_dialect(name: str) -> type:
 
     异常：
         KeyError: 方言未注册
+        ValueError: 名称不是非空字符串（BUG-520，同 has_dialect）
     """
+    _check_name(name)
     name_lower = name.lower()
     if name_lower not in _DIALECT_REGISTRY:
         raise KeyError(f"Dialect '{name}' not registered")
@@ -180,7 +188,12 @@ def has_dialect(name: str) -> bool:
 
     返回：
         是否已注册
+
+    异常：
+        ValueError: 名称不是非空字符串（BUG-520：原实现裸
+            "AttributeError: 'NoneType' object has no attribute 'lower'"）
     """
+    _check_name(name)
     return name.lower() in _DIALECT_REGISTRY
 
 
