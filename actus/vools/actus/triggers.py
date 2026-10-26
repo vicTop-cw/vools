@@ -59,27 +59,56 @@ class CronExpr:
 
     @staticmethod
     def _parse_field(field: str, value_range: tuple) -> set:
-        """解析单个 cron 字段。"""
+        """解析单个 cron 字段。
+
+        边界一律响亮报错——此前静默产出空集合，导致触发器永不触发且零提示：
+          - step 必须 ≥1（`*/0` 抛裸 `range() arg 3 must not be zero`；
+            `*/-1` **静默产出空集合**）
+          - 范围必须升序（`5-3` **静默产出空集合**）
+          - 空项（`1,,2`）与非整数（`*/abc`）给出带字段名的错误
+        """
         min_val, max_val = value_range
         values = set()
 
+        def _int(token: str, what: str) -> int:
+            try:
+                return int(token)
+            except ValueError:
+                raise ValueError(
+                    f'Cron 字段 {field!r} 的{what}不是整数: {token!r}') from None
+
         for part in field.split(','):
+            part = part.strip()
+            if not part:
+                raise ValueError(f'Cron 字段含空项（多余的逗号）: {field!r}')
+
             # 步进 /
             if '/' in part:
-                range_part, step = part.split('/', 1)
-                step = int(step)
+                range_part, step_token = part.split('/', 1)
+                step = _int(step_token, '步进')
+                if step < 1:
+                    raise ValueError(
+                        f'Cron 字段 {field!r} 的步进必须 ≥1，得到 {step}')
                 if range_part == '*':
                     start, end = min_val, max_val
                 elif '-' in range_part:
-                    start, end = map(int, range_part.split('-', 1))
+                    a, b = range_part.split('-', 1)
+                    start, end = _int(a, '范围起点'), _int(b, '范围终点')
                 else:
-                    start = int(range_part)
+                    start = _int(range_part, '起点')
                     end = max_val
+                if start > end:
+                    raise ValueError(
+                        f'Cron 字段 {field!r} 的范围倒序: {start} > {end}')
                 for v in range(start, end + 1, step):
                     values.add(v)
             # 范围 -
             elif '-' in part:
-                start, end = map(int, part.split('-', 1))
+                a, b = part.split('-', 1)
+                start, end = _int(a, '范围起点'), _int(b, '范围终点')
+                if start > end:
+                    raise ValueError(
+                        f'Cron 字段 {field!r} 的范围倒序: {start} > {end}')
                 for v in range(start, end + 1):
                     values.add(v)
             # 通配 *
@@ -88,7 +117,7 @@ class CronExpr:
                     values.add(v)
             # 具体值
             else:
-                values.add(int(part))
+                values.add(_int(part, '值'))
 
         # 校验范围
         for v in values:
@@ -97,13 +126,20 @@ class CronExpr:
         return values
 
     def matches(self, t: time.struct_time) -> bool:
-        """检查时间是否匹配 cron 表达式。"""
+        """检查时间是否匹配 cron 表达式。
+
+        **星期换算**：cron 标准 0=周日、6=周六，而 `time.struct_time.tm_wday`
+        是 0=周一、6=周日。此前直接用 `t.tm_wday` 比对，导致按星期配置的触发器
+        **整体偏移一天**（实测 `'0 12 * * 0'`（周日）在周一匹配、周日反而不匹配）。
+        这里把 tm_wday 换算成 cron 编号：周一0→1 … 周六5→6、周日6→0。
+        """
+        cron_weekday = (t.tm_wday + 1) % 7
         checks = [
             t.tm_min in self.fields[0],
             t.tm_hour in self.fields[1],
             t.tm_mday in self.fields[2],
             t.tm_mon in self.fields[3],
-            t.tm_wday in self.fields[4],
+            cron_weekday in self.fields[4],
         ]
         return all(checks)
 
