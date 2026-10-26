@@ -95,11 +95,19 @@ class TestCopy:
         assert c._data == [[1, 'a']]
         assert c._columns == ['id', 'name']
 
-    def test_copy_is_shallow(self):
+    def test_copy_rows_are_independent(self):
+        # BUG-504: Table 是**可变容器**，copy() 必须复制内部容器结构。
+        # 原精度（BUG-415）只保证"内容正确"，但浅拷贝让副本与原表共享
+        # _data/每行 list/_columns —— u = t.copy(); u.add_col('x') 会让
+        # **原表**也长出一列、u.del_row(0) 删掉原表一行、u.replace() 改原表数据。
+        # 现 Table 覆写 copy()：行 list 与列名列表各自独立，单元格对象仍共享。
         t = Table([[1]], columns=['a'])
         c = t.copy()
         c._data[0][0] = 99
-        assert t._data[0][0] == 99   # 浅拷贝：行对象共享
+        assert t._data[0][0] == 1     # 副本改单元格不再影响原表
+        assert c._data[0][0] == 99
+        assert c._data is not t._data
+        assert c._data[0] is not t._data[0]
 
     def test_encoder_copy(self):
         e = Encryptor('hello')

@@ -1122,6 +1122,14 @@ class Table(Seq):
         Raises:
             ValueError: 列名已存在（BUG-326，列名必须唯一）
         """
+        # BUG-504: col_name 零校验——add_col(123) 会创建**整数列名**（随后
+        # 按名操作与 to_dicts 的键类型混乱），add_col('') 创建空名列。
+        if not isinstance(col_name, str):
+            raise TypeError(
+                f"add_col 的 col_name 必须是字符串，收到 "
+                f"{type(col_name).__name__}: {col_name!r}")
+        if not col_name.strip():
+            raise ValueError("add_col 的 col_name 不能为空字符串")
         # BUG-326: 列名是表格按名操作的主键（GetCol/DelCol/SetColName/
         # QAXColTo* 等），重名列会让这些 API 静默命中其中一列（实测
         # GetCol('id') 返回插入的第 2 列而非第一列）。入口拒绝重名。
@@ -2467,6 +2475,33 @@ class Table(Seq):
         return max(nums) if nums else None
 
     # ==================== 转换 ====================
+
+    def copy(self):        # noqa: D401 - 覆写 VoolsBase.copy
+        """返回**互不影响**的 Table 副本（BUG-504 覆写 VoolsBase.copy）。
+
+        VoolsBase.copy 用 ``copy.copy(self)``（浅拷贝），于是副本与原表共享
+        同一个 ``_data`` 列表、每一行 list 以及 ``_columns``：
+
+            u = t.copy(); u.add_col('x')   # ***原表*** 也多出一列 x
+            u.del_row(0)                   # 原表少一行
+            u.replace(...)                 # 原表数据被改
+
+        容器类必须复制内部容器结构，否则"在副本上加工"会静默破坏原件。
+        单元格对象本身仍按引用共享（值语义足够；Table 不做深拷贝）。
+        """
+        _clone = super().copy()
+        try:
+            _clone._data = [list(_row) for _row in self._data]
+            _clone._columns = list(self._columns)
+            _row_index = getattr(self, "_row_index", None)
+            if isinstance(_row_index, dict):
+                _clone._row_index = {
+                    _k: (list(_v) if isinstance(_v, list) else _v)
+                    for _k, _v in _row_index.items()
+                }
+        except Exception:
+            pass
+        return _clone
 
     def to_dicts(self) -> List[Dict[str, Any]]:
         """转为字典列表"""
