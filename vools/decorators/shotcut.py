@@ -368,16 +368,33 @@ def rate_limit(max_calls: int, period: float, logic: str = 'or', logger: Optiona
         max_calls: 最大调用次数
         period: 时间段（秒）
         logic: 保留的兼容参数（仅存在单条件判断，本实现无多条件可组合）
-        logger: 可选的日志记录器
+        logger: 可选的日志记录器（仅在提供时记录每次调用与返回值）
 
     Returns:
         装饰器函数
 
     Note:
+        BUG-523: max_calls 必须为正整数、period 必须为正数；未提供 logger 时
+        不再打印每次调用的参数/返回值（原实现无条件 print，可能泄露敏感数据）。
         BUG-162: 原实现把 ``calls`` 列表放在 decorator 闭包外层，同一
         ``rate_limit(...)`` 装饰多个函数时配额共享——第一个函数耗尽配额后
         第二个也被拒。现按 ``id(func)`` 分函数独立计数。
     """
+    # BUG-523: 参数零校验——
+    #   ① period <= 0 时窗口过滤 `now - t < period` 恒为假，调用记录永远为空，
+    #     **限流被静默绕过**（配了限流却完全不生效）；
+    #   ② max_calls <= 0 会让每次调用都被拒（装饰器把函数变成永久返回 None）；
+    #   ③ max_calls='x' 直到调用期才在 `len(calls) >= 'x'` 抛 TypeError。
+    if isinstance(max_calls, bool) or not isinstance(max_calls, int):
+        raise TypeError(
+            f"rate_limit() 的 max_calls 必须是正整数，收到 "
+            f"{type(max_calls).__name__}: {max_calls!r}")
+    if max_calls <= 0:
+        raise ValueError(
+            f"rate_limit() 的 max_calls 必须 >= 1（0 会让每次调用都被拒），"
+            f"收到 {max_calls!r}")
+    _require_duration(period, "rate_limit() 的 period", allow_zero=False)
+
     calls_by_func = {}
     lock = threading.Lock()
 
@@ -401,15 +418,14 @@ def rate_limit(max_calls: int, period: float, logic: str = 'or', logger: Optiona
 
                 calls.append(now)
 
+            # BUG-523: 原实现在**没有 logger 时无条件 print** 每次调用的参数与
+            # 返回值——不仅噪音大，还会把敏感实参/结果直接打到 stdout（信息
+            # 泄露）。现仅当显式传入 logger 时记录。
             if logger:
                 logger.info(f"调用 {func.__name__}，参数: {args}, {kwargs}")
-            else:
-                print(f"调用 {func.__name__}，参数: {args}, {kwargs}")
             result = func(*args, **kwargs)
             if logger:
                 logger.info(f"{func.__name__} 返回: {result}")
-            else:
-                print(f"{func.__name__} 返回: {result}")
             return result
         return wrapper
     return decorator
