@@ -26,6 +26,9 @@ vools.cache - 函数签名缓存工具
     ...     Parameter('x', Parameter.POSITIONAL_OR_KEYWORD),
     ...     Parameter('y', Parameter.POSITIONAL_OR_KEYWORD, default=0),
     ... ]))
+    True
+
+    （BUG-472：add_custom_sig 返回 bool —— True=已登记；False=命中既有签名缓存而跳过。）
 
 安全性:
     - 纯 Python 实现，零外部依赖
@@ -207,7 +210,8 @@ def add_custom_sig(
         ...     Parameter('x', Parameter.POSITIONAL_OR_KEYWORD),
         ...     Parameter('y', Parameter.POSITIONAL_OR_KEYWORD, default=0),
         ... ])
-        >>> add_custom_sig(my_cfunc, sig)
+        >>> add_custom_sig(my_cfunc, sig)   # True=已登记；False=命中缓存跳过（BUG-472）
+        True
         >>>
         >>> # 后续调用 get_signature 直接返回注册的签名
         >>> assert get_signature(my_cfunc) is sig

@@ -468,8 +468,9 @@ def stream_parse(
         每个块的解析结果（元数据 + 块索引）
 
     Example:
-        >>> for chunk in stream_parse('large.md', chunk_size=4096):
+        >>> for chunk in stream_parse('large.md', chunk_size=4096):   # doctest: +SKIP
         ...     print(chunk['chunk_index'], chunk['node_count'])
+        ...     # 需要真实存在的大文件，仓库内不保留样本（BUG-512 标 SKIP）
     """
     chunk_idx = 0
     buffer = ''

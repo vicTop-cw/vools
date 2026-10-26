@@ -118,8 +118,14 @@ def to_html(source) -> str:
 
     Example:
         >>> from vools.md import to_html
-        >>> to_html("# Hello")
-        '<h1>Hello</h1>'
+        >>> html = to_html("# Hello")
+        >>> html.startswith('<div class="markdown-body">')
+        True
+        >>> '<h1>Hello</h1>' in html
+        True
+
+    说明（BUG-512）：输出带 `<div class="markdown-body">` 外层容器（GitHub 风格），
+    原 docstring 示例写成裸 `<h1>Hello</h1>`，与实现不符。
     """
     if isinstance(source, str):
         ast = parse(source)
