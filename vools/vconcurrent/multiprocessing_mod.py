@@ -105,6 +105,30 @@ class VProcess(multiprocessing.Process):
         name: Optional[str] = None,
         daemon: Optional[bool] = None,
     ) -> None:
+        # BUG-495: 构造期零校验——target=123 起一个必然失败的进程、
+        # args='abc' 会被**逐字符展开**（与 BUG-490/492 同族）、
+        # name=123 直接进 repr/进程名、daemon='yes' 只当真值。
+        if not callable(target):
+            raise TypeError(
+                f"VProcess 的 target 必须可调用，收到 {type(target).__name__}: {target!r}")
+        if isinstance(args, (str, bytes)) or not isinstance(args, (tuple, list)):
+            raise TypeError(
+                f"VProcess 的 args 必须是位置参数序列（tuple/list），收到 "
+                f"{type(args).__name__}: {args!r}"
+                + ("；字符串会被逐字符展开成多个参数" if isinstance(args, (str, bytes)) else ""))
+        if kwargs is not None and not isinstance(kwargs, dict):
+            raise TypeError(
+                f"VProcess 的 kwargs 必须是 dict 或 None，收到 "
+                f"{type(kwargs).__name__}: {kwargs!r}")
+        if name is not None and not isinstance(name, str):
+            raise TypeError(
+                f"VProcess 的 name 必须是字符串或 None，收到 "
+                f"{type(name).__name__}: {name!r}")
+        if daemon is not None and not isinstance(daemon, bool):
+            raise TypeError(
+                f"VProcess 的 daemon 必须是 bool 或 None，收到 "
+                f"{type(daemon).__name__}: {daemon!r}")
+
         # 结果队列：在 super().__init__ 之前创建，并作为参数传递给子进程
         self._result_queue: Any = multiprocessing.Queue()
         super().__init__(
@@ -247,6 +271,16 @@ class VProcessPool:
     """
 
     def __init__(self, processes: Optional[int] = None) -> None:
+        # BUG-495: ``processes or cpu_count()`` 让 0/-1/'x' 全部**静默退化为
+        # "用满所有核心"——调用方以为限流了，实际全核开跑。
+        if processes is not None:
+            if isinstance(processes, bool) or not isinstance(processes, int):
+                raise TypeError(
+                    f"VProcessPool 的 processes 必须是正整数或 None，收到 "
+                    f"{type(processes).__name__}: {processes!r}")
+            if processes <= 0:
+                raise ValueError(
+                    f"VProcessPool 的 processes 必须 > 0，收到 {processes!r}")
         self._nproc: int = processes or cpu_count()
         self._pool: Optional[Any] = None
         self._async_results: List[Any] = []
@@ -795,6 +829,16 @@ def process_pool(
         result = heavy_compute(10)  # 在进程池中执行，返回 100
     """
 
+    # BUG-495: 与 VProcessPool 同口径校验
+    if processes is not None:
+        if isinstance(processes, bool) or not isinstance(processes, int):
+            raise TypeError(
+                f"process_pool 的 processes 必须是正整数或 None，收到 "
+                f"{type(processes).__name__}: {processes!r}")
+        if processes <= 0:
+            raise ValueError(
+                f"process_pool 的 processes 必须 > 0，收到 {processes!r}")
+
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         key = _register_decorated(func)
         caller = _RegisteredCaller(key)
@@ -834,6 +878,20 @@ def run_in_process(
 
         result = isolated_task(10)  # 在新进程中执行，返回 11
     """
+
+    # BUG-495: daemon/timeout 零校验
+    if daemon is not None and not isinstance(daemon, bool):
+        raise TypeError(
+            f"run_in_process 的 daemon 必须是 bool 或 None，收到 "
+            f"{type(daemon).__name__}: {daemon!r}")
+    if timeout is not None:
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            raise TypeError(
+                f"run_in_process 的 timeout 必须是数值或 None，收到 "
+                f"{type(timeout).__name__}: {timeout!r}")
+        if timeout <= 0:
+            raise ValueError(
+                f"run_in_process 的 timeout 必须 > 0，收到 {timeout!r}")
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         key = _register_decorated(func)
