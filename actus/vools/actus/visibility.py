@@ -210,6 +210,17 @@ class GatedKeyStore:
 
 # ── 数据结构 ──
 
+#: 团队成员合法角色（拼错会静默失去权限，故必须白名单校验）
+MEMBER_ROLES = frozenset({"admin", "member", "viewer"})
+
+
+def _require_str(value, what: str) -> str:
+    """字段必须是字符串（bool/int/None 一律拒绝，避免污染配置）。"""
+    if not isinstance(value, str):
+        raise ValueError(f"{what} 必须是字符串，得到 {type(value).__name__}: {value!r}")
+    return value
+
+
 @dataclass
 class RegistryConfig:
     """注册表配置。"""
@@ -232,13 +243,20 @@ class RegistryConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "RegistryConfig":
+        if not isinstance(d, dict):
+            raise ValueError(
+                f"RegistryConfig 需要 dict，得到 {type(d).__name__}")
+        priority = d.get("priority", 0)
+        if isinstance(priority, bool) or not isinstance(priority, int):
+            raise ValueError(
+                f"RegistryConfig.priority 必须是整数，得到 {priority!r}")
         return cls(
-            name=d.get("name", ""),
-            url=d.get("url", ""),
-            registry_type=d.get("type", "http"),
-            branch=d.get("branch", "main"),
-            auth=d.get("auth", ""),
-            priority=d.get("priority", 0),
+            name=_require_str(d.get("name", ""), "RegistryConfig.name"),
+            url=_require_str(d.get("url", ""), "RegistryConfig.url"),
+            registry_type=_require_str(d.get("type", "http"), "RegistryConfig.type"),
+            branch=_require_str(d.get("branch", "main"), "RegistryConfig.branch"),
+            auth=_require_str(d.get("auth", ""), "RegistryConfig.auth"),
+            priority=priority,
         )
 
 
@@ -258,10 +276,23 @@ class TeamMember:
 
     @classmethod
     def from_dict(cls, d: dict) -> "TeamMember":
+        if not isinstance(d, dict):
+            raise ValueError(
+                f"TeamMember 需要 dict，得到 {type(d).__name__}: {d!r}")
+        user_id = d.get("id", "")
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError(
+                f"TeamMember.id 必须是非空字符串，得到 {user_id!r}"
+                f"（空 id 会让 is_member('') 命中）")
+        role = d.get("role", "member")
+        if role not in MEMBER_ROLES:
+            raise ValueError(
+                f"TeamMember.role 必须是 {sorted(MEMBER_ROLES)} 之一，"
+                f"得到 {role!r}（拼错会静默失去权限）")
         return cls(
-            user_id=d.get("id", ""),
-            role=d.get("role", "member"),
-            public_key=d.get("public_key", ""),
+            user_id=user_id,
+            role=role,
+            public_key=_require_str(d.get("public_key", ""), "TeamMember.public_key"),
         )
 
 
@@ -283,12 +314,25 @@ class TeamConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "TeamConfig":
-        members = [TeamMember.from_dict(m) for m in d.get("members", [])]
+        if not isinstance(d, dict):
+            raise ValueError(
+                f"TeamConfig 需要 dict，得到 {type(d).__name__}")
+        raw_members = d.get("members", [])
+        if not isinstance(raw_members, (list, tuple)):
+            raise ValueError(
+                f"TeamConfig.members 必须是列表，得到 {type(raw_members).__name__}"
+                f"（字符串会被逐字符迭代）")
+        members = [TeamMember.from_dict(m) for m in raw_members]
+        require_signature = d.get("require_signature", True)
+        if not isinstance(require_signature, bool):
+            raise ValueError(
+                f"TeamConfig.require_signature 必须是布尔，得到 {require_signature!r}")
         return cls(
-            name=d.get("team", ""),
+            name=_require_str(d.get("team", ""), "TeamConfig.team"),
             members=members,
-            default_trust=d.get("default_trust", "community"),
-            require_signature=d.get("require_signature", True),
+            default_trust=_require_str(d.get("default_trust", "community"),
+                                       "TeamConfig.default_trust"),
+            require_signature=require_signature,
         )
 
     def is_member(self, user_id: str) -> bool:
