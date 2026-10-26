@@ -1198,33 +1198,53 @@ class Table(Seq):
     
     # ==================== 列类型转换 (QAX 风格) ====================
     
-    def to_date(self, col: Union[str, int]) -> 'Table':
+    # BUG-499: to_date 的"解析不了的字符串保持原样"是既有契约（决策见
+    # tests/test_data_unique_and_todate_regression.py::test_unparsable_kept），
+    # 但**调用方无法得知发生了跳过**——整列转换后可能混着字符串与 datetime，
+    # 下游按日期处理时才炸。新增 strict=True 开关：遇到不可解析的非空字符串
+    # 立即抛 ValueError（带行号与候选格式），默认 False 保持原行为不变。
+    _DATE_FORMATS = ['%Y-%m-%d', '%Y/%m/%d', '%Y-%m-%d %H:%M:%S',
+                     '%Y/%m/%d %H:%M:%S', '%Y%m%d', '%Y%m%d%H%M%S', '%Y.%m.%d']
+
+    def to_date(self, col: Union[str, int], *, strict: bool = False) -> 'Table':
         """列转日期类型 (对应 QAXColToDate)
-        
+
         Args:
             col: 列名或列索引
-        
+            strict: 为 True 时，遇到不可解析的非空字符串立即抛 ValueError
+                （带行号与候选格式）；默认 False 保持既有"保留原值"行为
+                （BUG-499：默认行为无法让调用方感知跳过）
+
         Returns:
             self (修改自身)
+
+        Raises:
+            ValueError: ``strict=True`` 且某行非空字符串无法按任何候选格式解析。
         """
         col_idx = self._get_col_index(col)
-        for row in self._data:
+        for row_no, row in enumerate(self._data):
             if col_idx < len(row) and row[col_idx]:
                 try:
                     if isinstance(row[col_idx], str):
                         # BUG-357: 补上本库自己的主格式 `%Y%m%d`（from_file/
                         # get_date_seq/VDate 都用它）；原实现遇到 '20260115'
                         # 静默保持字符串，列类型悄悄没转。
-                        for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y-%m-%d %H:%M:%S',
-                                    '%Y/%m/%d %H:%M:%S', '%Y%m%d',
-                                    '%Y%m%d%H%M%S', '%Y.%m.%d']:
+                        raw = row[col_idx]
+                        for fmt in self._DATE_FORMATS:
                             try:
-                                row[col_idx] = datetime.strptime(row[col_idx], fmt)
+                                row[col_idx] = datetime.strptime(raw, fmt)
                                 break
                             except ValueError:
                                 continue
+                        else:
+                            if strict:
+                                raise ValueError(
+                                    f"to_date: 第 {row_no} 行的 {raw!r} 无法解析为日期"
+                                    f"（已尝试格式: {self._DATE_FORMATS}）；"
+                                    f"如需保留原值请用默认 strict=False")
                 except (ValueError, TypeError):
-                    pass
+                    if strict:
+                        raise
         return self
     
     def to_num(self, col: Union[str, int]) -> 'Table':
