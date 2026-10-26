@@ -26,6 +26,12 @@ class ConfigParseError(Exception):
 
 def parse_json(text: str) -> Any:
     """解析 JSON 文本 → Python 对象（stdlib json）"""
+    # BUG-521: 入参零校验——parse_yaml(None) 静默返回 {}（空配置），
+    # parse_toml(None) 抛裸 AttributeError: 'NoneType' object has no attribute
+    # 'replace'，parse_json(None) 抛底层 json 的 TypeError（无函数名）。
+    if not isinstance(text, str):
+        raise TypeError(
+            f"parse_json() 的 text 必须是字符串，收到 {type(text).__name__}: {text!r}")
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
@@ -191,6 +197,12 @@ def parse_toml(text: str) -> Dict:
 
     回退链：tomllib (3.11+) → tomli → 简化解析器
     """
+    # BUG-521: 入参零校验——parse_yaml(None) 静默返回 {}（空配置），
+    # parse_toml(None) 抛裸 AttributeError: 'NoneType' object has no attribute
+    # 'replace'，parse_json(None) 抛底层 json 的 TypeError（无函数名）。
+    if not isinstance(text, str):
+        raise TypeError(
+            f"parse_toml() 的 text 必须是字符串，收到 {type(text).__name__}: {text!r}")
     # 优先尝试 tomllib
     try:
         return _toml_parse_with_tomllib(text)
@@ -419,6 +431,12 @@ def parse_yaml(text: str) -> Dict:
 
     回退链：PyYAML → 简化解析器
     """
+    # BUG-521: 入参零校验——parse_yaml(None) 静默返回 {}（空配置），
+    # parse_toml(None) 抛裸 AttributeError: 'NoneType' object has no attribute
+    # 'replace'，parse_json(None) 抛底层 json 的 TypeError（无函数名）。
+    if not isinstance(text, str):
+        raise TypeError(
+            f"parse_yaml() 的 text 必须是字符串，收到 {type(text).__name__}: {text!r}")
     if not text or not text.strip():
         return {}
 
@@ -641,6 +659,16 @@ def parse_config_block(content: str, language: str) -> Any:
     Raises:
         ConfigParseError: 解析失败
     """
+    # BUG-521: language=None 抛裸 AttributeError: 'NoneType' object has no attribute
+    # 'lower'；content=None 也只会落到下游解析器。
+    if not isinstance(language, str) or not language.strip():
+        raise ValueError(
+            f"parse_config_block() 的 language 必须是非空字符串，收到 "
+            f"{type(language).__name__}: {language!r}")
+    if not isinstance(content, str):
+        raise TypeError(
+            f"parse_config_block() 的 content 必须是字符串，收到 "
+            f"{type(content).__name__}: {content!r}")
     lang = language.lower().strip()
 
     if lang == 'json':
@@ -667,14 +695,31 @@ def validate_config(parsed: Any, schema: Optional[Dict] = None) -> bool:
         True 如果配置有效
 
     Note:
-        当前为简化实现，仅检查基本类型。
-        完整 schema 校验可集成 jsonschema 等库。
+        基础校验：解析结果必须是最基本类型（dict/list/str/int/float/bool）。
+        ``schema`` 给出时再做一层**浅层结构校验**（顶层键必须存在；schema 值为
+        类型时要求 isinstance 匹配）。完整 schema 校验可集成 jsonschema 等库。
+
+        BUG-521: 原实现**完全忽略 schema**——传了 schema 也恒返回 True，
+        调用方以为校验通过（如 validate_config({"a": "x"}, {"a": int}) -> True）。
     """
     if parsed is None:
         return False
-    if isinstance(parsed, (dict, list, str, int, float, bool)):
+    if not isinstance(parsed, (dict, list, str, int, float, bool)):
+        return False
+    if schema is None:
         return True
-    return False
+    if not isinstance(schema, dict):
+        raise TypeError(
+            f"validate_config() 的 schema 必须是 dict 或 None，收到 "
+            f"{type(schema).__name__}: {schema!r}")
+    if not isinstance(parsed, dict):
+        return False
+    for _key, _expected in schema.items():
+        if _key not in parsed:
+            return False
+        if isinstance(_expected, type) and not isinstance(parsed[_key], _expected):
+            return False
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════
