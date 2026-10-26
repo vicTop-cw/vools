@@ -24,6 +24,12 @@ memoize_app = typer.Typer(help="Memoize 记忆化命令")
 
 def parse_lambda_or_func(expr: str) -> Callable:
     """解析 lambda 表达式或函数名"""
+    # BUG-518: expr 非字符串时，safe_eval_expression 的错误被 except Exception
+    # 吞掉，随后 hasattr(builtins, expr) 抛裸 TypeError
+    # "attribute name must be string, not 'NoneType'"（看不出是哪个参数）。
+    if not isinstance(expr, str):
+        raise TypeError(
+            f"表达式必须是字符串，收到 {type(expr).__name__}: {expr!r}")
     try:
         return safe_eval_expression(expr, vars={})
     except Exception:
