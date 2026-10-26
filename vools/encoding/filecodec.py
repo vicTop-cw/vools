@@ -137,6 +137,13 @@ def strip_bom(raw: bytes) -> Tuple[bytes, Optional[str]]:
     >>> body.decode("utf-8")
     '中文'
     """
+    # BUG-515: 入参零校验——strip_bom("hello") 抛裸
+    # "TypeError: startswith first arg must be str or a tuple of str, not bytes"
+    if not isinstance(raw, (bytes, bytearray, memoryview)):
+        raise TypeError(
+            f"strip_bom 的 raw 必须是 bytes/bytearray/memoryview，收到 "
+            f"{type(raw).__name__}: {raw!r}")
+    raw = bytes(raw)
     for bom, _enc, bom_name in BOM_SIGNATURES:
         if raw.startswith(bom):
             return raw[len(bom):], bom_name
@@ -226,6 +233,12 @@ def detect(raw: bytes) -> Dict[str, object]:
       若已知编码请显式传给 :func:`read_text`。
     - 全失败 → ``latin-1`` 兜底（任何字节都可解），``confidence="low"``。
     """
+    # BUG-515: detect("hello") 抛裸 TypeError（同 strip_bom）
+    if not isinstance(raw, (bytes, bytearray, memoryview)):
+        raise TypeError(
+            f"detect 的 raw 必须是 bytes/bytearray/memoryview，收到 "
+            f"{type(raw).__name__}: {raw!r}")
+    raw = bytes(raw)
     result: Dict[str, object] = {
         "encoding": "latin-1",
         "bom": None,
@@ -372,6 +385,11 @@ def write_text(path: str, text: str, encoding: str = "utf-8", bom: bool = False,
     'gbk'
     >>> os.remove(p)
     """
+    # BUG-515: write_text(p, None) 抛裸 "AttributeError: 'NoneType' object has
+    # no attribute 'encode'"
+    if not isinstance(text, str):
+        raise TypeError(
+            f"write_text 的 text 必须是字符串，收到 {type(text).__name__}: {text!r}")
     enc = normalize_encoding(encoding)
     if bom and enc in ("utf-16", "utf-32"):
         # Python 的 utf-16/utf-32 codec 自带平台 BOM，需 BOM 时改显式 LE
