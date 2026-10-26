@@ -69,9 +69,14 @@ def test_resolve_target_name_form():
 
 
 def test_resolve_target_path_form():
-    """新格式 .actus.schema.md 的散落路径必须能解析（此前只认 .actus.md）。"""
+    """新格式 .actus.schema.md 的散落路径必须能解析（此前只认 .actus.md）。
+
+    路径按**测试文件位置**推导，不依赖 cwd —— 此前写成相对仓库根的
+    `actus/vools/...`，从 actus/ 目录跑 pytest 时该路径不存在，解析出空 id。
+    """
     from vools.actus.resolver import resolve_target
-    path = os.path.join("vools", "actus", "actions", "basics",
+    here = os.path.dirname(os.path.abspath(__file__))          # …/actus/tests
+    path = os.path.join(here, os.pardir, "vools", "actus", "actions", "basics",
                         "calculator.actus.schema.md")
     r = resolve_target(path)
     assert r.source == "path", r
