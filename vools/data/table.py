@@ -661,14 +661,36 @@ class Table(Seq):
         Returns:
             Table 实例
         """
+        # BUG-506: from_array 零校验——① 非序列（123）抛裸 "'int' object is not
+        # subscriptable"、dict 抛裸 KeyError: 0；② **字符串会被当成一维字符数组**
+        # （'ab' → [['a'],['b']] 两行单列表，静默产出错误表格）；③ columns 与数据
+        # 宽度不匹配时静默接受（columns=['a'] 配 [[1,2]] 会留下错位表头）；
+        # ④ columns 非可迭代抛裸 "'int' object is not iterable"。
+        if arr is not None and not isinstance(arr, (list, tuple)):
+            raise TypeError(
+                f"from_array 的 arr 必须是 list/tuple（二维或一维）或 None，收到 "
+                f"{type(arr).__name__}: {arr!r}")
+        if fields_name is not None and not isinstance(fields_name, (str, list, tuple)):
+            raise TypeError(
+                f"from_array 的 fields_name 必须是 str/list/tuple 或 None，收到 "
+                f"{type(fields_name).__name__}: {fields_name!r}")
+
         if not arr:
             return cls(name=fields_name)
-        
+
         # 展平一维数组
         if not isinstance(arr[0], (list, tuple)):
             arr = [[v] for v in arr]
-        
-        columns = list(fields_name) if fields_name else None
+
+        # BUG-506: 列名数量必须与数据宽度一致，否则表头与单元格永久错位
+        if isinstance(fields_name, (list, tuple)) and arr:
+            _width = len(arr[0]) if isinstance(arr[0], (list, tuple)) else 1
+            if len(fields_name) != _width:
+                raise ValueError(
+                    f"from_array 的 fields_name 数量({len(fields_name)}) 与数据宽度"
+                    f"({_width}) 不一致；表头与单元格会错位")
+
+        columns = list(fields_name) if fields_name and not isinstance(fields_name, str) else None
         return cls(arr, columns=columns, name=fields_name if isinstance(fields_name, str) else None)
     
     @classmethod

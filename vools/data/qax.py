@@ -111,6 +111,12 @@ class Qax(Table):
         Returns:
             Qax 实例
         """
+        # BUG-506: name 零校验——ArrayToQax([[1]], name=123) 会把**整数**写进
+        # _name/_rself_kwargs，后续按名比较/落盘全部异常。
+        if name is not None and not isinstance(name, str):
+            raise TypeError(
+                f"ArrayToQax 的 name 必须是字符串或 None，收到 "
+                f"{type(name).__name__}: {name!r}")
         result = cls.from_array(data, fields_name=columns)
         if name:
             result._name = name
