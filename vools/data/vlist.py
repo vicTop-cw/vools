@@ -415,6 +415,7 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             不满足条件的元素组成的 VList
         """
+        self._check_func(func, "filterfalse")
         if isinstance(func, str):
             func = create_filter_func(func)
         if not hasattr(self, '_data'):
@@ -453,6 +454,7 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             不满足条件的元素组成的 VList
         """
+        self._check_func(func, "wherenot")
         return self.filterfalse(func)
 
     def select(self, func: Union[Callable[[Any], Any], str]) -> 'VList':
@@ -574,6 +576,21 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
             return VList(sorted(self._data, key=safe_func, reverse=reverse))
         return VList(sorted(self._data, key=key_func, reverse=reverse))
 
+    def filter_not(self, func: Union[Callable[[Any], bool], str]) -> 'VList':
+        """反向过滤（BUG-509：原实现继承 ``Seq.filter_not`` 的惰性 ops 版本，
+        对 ``VList`` 已物化的 ``_data`` **不起作用**——``VList([1,2,3,4])
+        .filter_not(123)`` 返回全部 4 个元素且无任何报错）。现与 ``wherenot``
+        对齐：校验参数 + 直接走 ``filterfalse``。
+
+        Args:
+            func: 过滤函数或表达式字符串
+
+        Returns:
+            不满足条件的元素组成的 VList
+        """
+        self._check_func(func, "filter_not")
+        return self.filterfalse(func)
+
     def reverse(self) -> 'VList':
         """反转列表中的元素（就地反转）。
 
@@ -628,6 +645,11 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             键到聚合结果的字典
         """
+        self._check_func(key_func, "reduce_by", "key_func")
+        if not callable(reduce_func):
+            raise TypeError(
+                f"VList.reduce_by() 的 reduce_func 必须可调用，收到 "
+                f"{type(reduce_func).__name__}: {reduce_func!r}")
         if isinstance(key_func, str):
             safe_func = create_map_func(key_func)
             key_func = safe_func
@@ -1054,6 +1076,18 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         类体内 ``map`` 会被同名方法 VList.map 遮蔽，取到的是函数对象而非内建 map。
         因此这里用 None 哨兵，在函数体内解析真正的内建。
         """
+        # BUG-509: 长度不等时静默算出**部分点积**——dotproduct([1,2],[3])
+        # 返回 3（= 1*3），调用方以为算完了。零长度/不可迭代也各有裸错。
+        try:
+            _n1, _n2 = len(vec1), len(vec2)
+        except TypeError as exc:
+            raise TypeError(
+                f"dotproduct 的 vec1/vec2 必须是长度可求的序列，收到 "
+                f"{type(vec1).__name__}/{type(vec2).__name__}") from exc
+        if _n1 != _n2:
+            raise ValueError(
+                f"dotproduct 的两个向量长度必须相同，收到 {_n1} 与 {_n2}"
+                f"（长度不等会静默算出部分点积）")
         import builtins
         if map is None:
             map = builtins.map
@@ -1327,6 +1361,10 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             VList 结果
         """
+        if not callable(func):
+            raise TypeError(
+                f"VList.accummap() 的 func 必须可调用，收到 "
+                f"{type(func).__name__}: {func!r}")
         if window_selector is None and initial_value is None:
             return VList(self.accummap_lazy(func, self.collect()))
         return VList(self.accummap_lazy_optimized(func, self.collect(),
