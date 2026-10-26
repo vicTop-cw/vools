@@ -197,6 +197,17 @@ def shift(iters, num: int = 1, fill_value=None, cycle=False):
     Returns:
         滑动后的列表
     """
+    # BUG-513: shift 的 num 非整数会抛裸 "'>' not supported between 'str' and 'int'"；
+    # iters 非可迭代抛裸 "'int' object is not iterable"。
+    if isinstance(num, bool) or not isinstance(num, int):
+        raise TypeError(
+            f"shift 的 num 必须是整数，收到 {type(num).__name__}: {num!r}")
+    try:
+        iter(iters)
+    except TypeError as exc:
+        raise TypeError(
+            f"shift 的 iters 必须是可迭代对象，收到 "
+            f"{type(iters).__name__}: {iters!r}") from exc
     lst = list(iters)
     n = len(lst)
     if n == 0 or num == 0:
@@ -288,6 +299,13 @@ def get_date_seq(nums=15, date_type='day', fmt='%m%d', run_ds=None, duo=True, re
     Returns:
         日期序列列表
     """
+    # BUG-513: nums 类型/负值零校验（nums=-1 原实现静默返回 []）
+    if isinstance(nums, bool) or not isinstance(nums, int):
+        raise TypeError(
+            f"get_date_seq 的 nums 必须是整数，收到 {type(nums).__name__}: {nums!r}")
+    if nums < 0:
+        raise ValueError(
+            f"get_date_seq 的 nums 不能为负，收到 {nums!r}（0 表示返回空列表）")
     fmt = get_py_fmt(fmt)
     if run_ds is None:
         run_ds = datetime.now().strftime('%Y%m%d')
@@ -661,6 +679,14 @@ def trim(string, chars=None, left=True, right=True):
     Returns:
         修剪后的字符串
     """
+    # BUG-513: 入口零校验——trim(None)/trim(123) 抛裸
+    # "AttributeError: 'NoneType' object has no attribute 'strip'"
+    if not isinstance(string, str):
+        raise TypeError(
+            f"trim 的 string 必须是字符串，收到 {type(string).__name__}: {string!r}")
+    if chars is not None and not isinstance(chars, str):
+        raise TypeError(
+            f"trim 的 chars 必须是字符串或 None，收到 {type(chars).__name__}: {chars!r}")
     if left == False and right == False:
         return string
     if chars is None:
@@ -810,6 +836,10 @@ def get_char(string, rep='★'):
     Returns:
         不在字符串中出现的字符
     """
+    # BUG-513: get_char(123) 抛裸 AttributeError（对 int 调 .count）
+    if not isinstance(string, str):
+        raise TypeError(
+            f"get_char 的 string 必须是字符串，收到 {type(string).__name__}: {string!r}")
     if string.count(rep) == 0:
         return rep
     for rep1 in map(chr, range(1, 128)):
@@ -907,6 +937,10 @@ def split(string, separator, rep='★'):
     Returns:
         分割后的字符串列表
     """
+    # BUG-513: split(None, ',') 抛裸 AttributeError；separator 的校验已有清晰信息
+    if not isinstance(string, str):
+        raise TypeError(
+            f"split 的 string 必须是字符串，收到 {type(string).__name__}: {string!r}")
     if isinstance(separator, str):
         return string.split(separator)
     elif isinstance(separator, (list, tuple, set)):
