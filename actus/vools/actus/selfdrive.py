@@ -87,18 +87,48 @@ class Decomposer:
 
     def __init__(self, max_depth: int = 2, template: Optional[List[str]] = None,
                  planner: Optional[Callable[[str, int], List[str]]] = None):
-        self.max_depth = max(0, max_depth)
+        # 入参校验：`max_depth='x'` 此前在 max() 处抛裸 TypeError；
+        # `template='abc'` 会被 list() **逐字符展开**成 ['a','b','c']
+        # （与 BUG-490/492 的 args='abc' 同族）。
+        if isinstance(max_depth, bool) or not isinstance(max_depth, int):
+            raise TypeError(
+                f"max_depth 必须是整数，得到 {type(max_depth).__name__}: {max_depth!r}")
+        if max_depth < 0:
+            raise ValueError(f"max_depth 必须 ≥0，得到 {max_depth}")
+        if template is not None:
+            if isinstance(template, (str, bytes)):
+                raise TypeError(
+                    f"template 必须是字符串列表，不能是字符串（会被逐字符展开），"
+                    f"得到 {template!r}")
+            if not isinstance(template, (list, tuple)):
+                raise TypeError(
+                    f"template 必须是 list/tuple，得到 {type(template).__name__}")
+            for t in template:
+                if not isinstance(t, str):
+                    raise TypeError(f"template 的元素必须是字符串，得到 {t!r}")
+        self.max_depth = max_depth
         self.template = list(template) if template else list(_DEFAULT_TEMPLATE)
         self.planner = planner
 
+    @staticmethod
+    def _require_goal(goal) -> str:
+        """goal 必须是非空字符串——否则会生成名为「None」的任务。"""
+        if not isinstance(goal, str):
+            raise TypeError(f"goal 必须是字符串，得到 {type(goal).__name__}: {goal!r}")
+        if not goal.strip():
+            raise ValueError("goal 不能为空字符串")
+        return goal
+
     def template_children(self, goal: str, depth: int) -> List[str]:
         """按模板产出子目标（不受 planner 影响），仍受 max_depth 约束。"""
+        goal = self._require_goal(goal)
         if depth >= self.max_depth:
             return []
         return [t.format(goal=goal) for t in self.template]
 
     def children_of(self, goal: str, depth: int) -> List[str]:
         """子目标生成：planner 优先，否则按模板展开；两者都到 max_depth 即止。"""
+        goal = self._require_goal(goal)
         if depth >= self.max_depth:
             return []
         if self.planner:
@@ -150,7 +180,11 @@ class SelfDrive:
                  meta_dir: Optional[str] = None,
                  max_rounds: int = 3,
                  decomposer: Optional[Decomposer] = None):
-        self.goal = goal
+        # goal 必须非空字符串：此前传 None 会一路把「None」当成目标文本写进
+        # 子任务标题（实测 children_of(None) 产出「澄清「None」的验收标准…」）。
+        self.goal = Decomposer._require_goal(goal)
+        if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) or max_rounds < 1:
+            raise ValueError(f"max_rounds 必须是 ≥1 的整数，得到 {max_rounds!r}")
         self.max_depth = max_depth
         self.worker = worker or self._echo_worker
         self.spec_resolver = spec_resolver
