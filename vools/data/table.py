@@ -1247,18 +1247,31 @@ class Table(Seq):
                         raise
         return self
     
-    def to_num(self, col: Union[str, int]) -> 'Table':
+    def to_num(self, col: Union[str, int], *, strict: bool = False) -> 'Table':
         """列转数字类型 (对应 QAXColToNum)
-        
+
         Args:
             col: 列名或列索引
-        
+            strict: 为 True 时，遇到无法解析为数字的非空字符串立即抛 ValueError
+                （带行号与原值）；默认 False 保持既有"置为 None"行为
+                （BUG-500：默认行为会**静默销毁数据**——``'abc'`` 变成 ``None``，
+                调用方既拿不到原值也收不到任何信号）
+
         Returns:
             self (修改自身)
+
+        Raises:
+            ValueError: ``strict=True`` 且某行非空字符串无法解析为数字。
         """
         col_idx = self._get_col_index(col)
-        for row in self._data:
+        for row_no, row in enumerate(self._data):
             if col_idx < len(row) and row[col_idx] is not None:
+                raw = row[col_idx]
+                # BUG-500: 空串/纯空白是"缺失值"而非"解析失败"——与 to_date 的
+                # strict 口径保持一致（不因空单元格报错）。
+                if isinstance(raw, str) and not raw.strip():
+                    row[col_idx] = None
+                    continue
                 try:
                     val = row[col_idx]
                     if isinstance(val, str):
@@ -1269,8 +1282,15 @@ class Table(Seq):
                         pass  # 已经是数字
                     else:
                         row[col_idx] = None
-                except (ValueError, TypeError):
+                        if strict:
+                            raise ValueError(
+                                f"to_num: 第 {row_no} 行的 {raw!r} 不是数字"
+                                f"（类型 {type(raw).__name__}）")
+                except (ValueError, TypeError) as exc:
                     row[col_idx] = None
+                    if strict:
+                        raise ValueError(
+                            f"to_num: 第 {row_no} 行的 {raw!r} 无法解析为数字") from exc
         return self
     
     def to_str(self, col: Union[str, int]) -> 'Table':
