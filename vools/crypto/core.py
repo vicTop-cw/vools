@@ -522,8 +522,17 @@ class Encryptor(VoolsBase, metaclass=CryptoMeta):
     @staticmethod
     def _hash(data: Any, algorithm: str) -> str:
         """通用哈希函数"""
+        # BUG-516: data 零校验——md5(None)/md5(123) 抛裸
+        # "TypeError: object supporting the buffer API required"（看不出是哪个参数、
+        # 期望什么类型）。
+        if not isinstance(data, (str, bytes, bytearray, memoryview)):
+            raise TypeError(
+                f"哈希函数的 data 必须是 str/bytes/bytearray/memoryview，收到 "
+                f"{type(data).__name__}: {data!r}")
         if isinstance(data, str):
             data = data.encode('utf-8')
+        else:
+            data = bytes(data)
         h = hashlib.new(algorithm)
         h.update(data)
         return h.hexdigest()
@@ -555,10 +564,25 @@ class Encryptor(VoolsBase, metaclass=CryptoMeta):
     @staticmethod
     def _hmac(data: Any, key: Union[str, bytes], algorithm: str) -> str:
         """通用 HMAC 函数"""
+        # BUG-516: ① data=None 会被 hmac.new 当"空消息"**静默算出摘要**（与 md5(None)
+        # 报错的行为不一致，调用方无法察觉消息丢失）；② key 非 str/bytes 抛裸
+        # "key: expected bytes or bytearray, but got 'NoneType'"。
+        if not isinstance(data, (str, bytes, bytearray, memoryview)):
+            raise TypeError(
+                f"HMAC 的 data 必须是 str/bytes/bytearray/memoryview，收到 "
+                f"{type(data).__name__}: {data!r}")
+        if not isinstance(key, (str, bytes, bytearray, memoryview)):
+            raise TypeError(
+                f"HMAC 的 key 必须是 str/bytes/bytearray/memoryview，收到 "
+                f"{type(key).__name__}: {key!r}")
         if isinstance(data, str):
             data = data.encode('utf-8')
+        else:
+            data = bytes(data)
         if isinstance(key, str):
             key = key.encode('utf-8')
+        else:
+            key = bytes(key)
         # 获取哈希函数，而不是创建哈希对象
         hash_func = getattr(hashlib, algorithm)
         h = hmac.new(key, data, hash_func)
