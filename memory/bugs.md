@@ -3708,6 +3708,17 @@ f.config = StuffConfig(strict=True)  # 期望严格参数校验 → 行为与 Fa
 
 ### FIXED(2026-10-21T06:00:22Z / BUG-231)
 - evidence: vools/task/backends/ 三后端 `retry_delay_min` 死参数确认（全仓 grep 9 处引用全为参数+赋值或测试断言存储值）：memory_backend L21/L23、sqlite_backend L24/L29、pg L71/L76 —— 存储后零读取，`fail()` 转 RETRY_PENDING 后立即 `retry()`+`acquire()` 成功，`retry_delay_min=0/1/5/999` 行为完全一致（失败任务无间隔热循环重试，恰是该参数要防的）。本轮按 qax「参数未使用」诚实桩先例做文档对齐（真实退避需在 fail 记录 retry_after 并在 claim 状态过滤加到期判定，会改变三后端状态机时序、单位 min/s 无约定、现有测试断言立即 retry+claim 成功，留作后续独立任务）：类 docstring 补 Args 段明确声明「retry_delay_min: 当前仅为 API 兼容占位，不影响重试时序——失败任务立即进入可领取状态，无退避等待（BUG-231）」（memory/sqlite 类头；pg 在用法示例后补 Args 全快照 dsn/table/max_retries/retry_delay_min/autocommit）。验证：两后端 docstring 含「占位」「退避」断言通过、pg docstring 静态校验通过、行为与占位声明一致（立即重试可领取）、不同 retry_delay_min 值对时序无影响。新增回归 tests/test_retry_delay_placeholder_doc_regression.py 5 项 GREEN（文档声明 3 + 行为一致 2，防文档漂移回虚假承诺）；tests/test_task_backends_pg.py 15 项 + tests/ -k backend 78 项 GREEN 无回归。commit 54009c6 推送 gitcode master。
+- real_fix(2026-10-26): **真实退避已实现**（本单此前只做到文档对齐）。
+  三后端 `fail()` 在还有重试次数时写 `next_retry_at = now + retry_delay_min` 分钟，
+  `acquire()` 跳过未到期的 RETRY_PENDING（失败任务不再热循环打库），人工
+  `retry(task_id)` 清空退避立即放行，`retry_delay_min=0` 保持旧行为；
+  sqlite 用 `PRAGMA table_info` + `ALTER TABLE` 幂等补列、pg 用
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` + `make_interval(mins => %s)`；
+  三处 docstring 去掉「仅为 API 兼容占位」。回归锁：`tests/task/test_retry_backoff.py`
+  （双后端 10 用例）+ `tests/test_retry_delay_placeholder_doc_regression.py` 改写为锁新契约。
+  代码随提交 5e5defc 一并入库（并发 agent 的 `git add -A` 把它吞进了 actus 的提交，
+  该提交信息未提 BUG-231，台账以本条为准）。
+
 ## BUG-232 [2026-10-21T06:06:37Z] [high] FIXED
 - summary: sql.core.builder BaseSqlBuilder 占位符正则盲替换引号内字面量——where("name = 'what?'") 生成 'what%s'、'12:30:00' 变 '12%s%s'，SQL 语义静默漂移；带参数时字面量? 先占位致参数索引错位查错值；两处 sub 调用点均需按引号切分
 - detail: vools/sql/core/builder.py `BaseSqlBuilder` 的占位符规范化**盲替换字符串字面量内的占位符形态文本**，SQL 文本静默损坏：
