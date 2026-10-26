@@ -394,6 +394,8 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             处理后的 VList 或 None
         """
+        self._check_func(func, "foreach", allow_none=True)
+        self._check_func(filter_func, "foreach", "filter_func", allow_none=True)
         if filter_func is None:
             if func is None:
                 return self
@@ -443,6 +445,7 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             满足条件的元素组成的 VList
         """
+        self._check_func(func, "where")
         return self.filter(func)
 
     def wherenot(self, func: Union[Callable[[Any], bool], str]) -> 'VList':
@@ -466,6 +469,7 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             映射后的元素组成的 VList
         """
+        self._check_func(func, "select")
         return self.map(func)
 
     def map(self, func: Optional[Union[Callable[[Any], Any], str]] = None) -> Optional['VList']:
@@ -589,6 +593,17 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
             不满足条件的元素组成的 VList
         """
         self._check_func(func, "filter_not")
+        return self.filterfalse(func)
+
+    def filter_false(self, func: Union[Callable[[Any], bool], str]) -> 'VList':
+        """filter_not 的别名（BUG-510：原实现继承 Seq 的惰性 ops 版本，
+        对 VList 已物化的 _data **不生效**——filter_false(123) 返回全部元素）。"""
+        self._check_func(func, "filter_false")
+        return self.filterfalse(func)
+
+    def filternot(self, func: Union[Callable[[Any], bool], str]) -> 'VList':
+        """filter_not 的别名（BUG-510 同上，统一走已校验的 filterfalse）。"""
+        self._check_func(func, "filternot")
         return self.filterfalse(func)
 
     def reverse(self) -> 'VList':
@@ -1465,6 +1480,8 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             VList
         """
+        self._check_func(inner_func, "mapmap", "inner_func")
+        self._check_func(outer_func, "mapmap", "outer_func", allow_none=True)
         if self.size == 0:
             return VList([])
         temp = self
