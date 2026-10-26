@@ -21,6 +21,15 @@ from .constants import is_action_file
 from pathlib import Path
 
 
+#: check_assertion 支持的全部断言类型（validate_spec 用它校验 spec，
+#: 避免 `type: 'bogus'` 一路走到 check_assertion 才表现为「断言不通过」）
+ASSERTION_TYPES = frozenset({
+    "exists", "not_exists", "type", "equals", "not_equals", "approx",
+    "regex", "contains", "not_contains", "length", "range", "subset",
+    "superset", "any_of",
+})
+
+
 # ── FNV-1a 64-bit fingerprint ──
 
 def fnv1a64(data: str) -> str:
@@ -83,21 +92,19 @@ def _find_omega_spec(action_id: str, actions_dir: str) -> Optional[str]:
 
 
 def _find_action_file(action_id: str, actions_dir: str) -> Optional[str]:
-    """查找动作文件路径。"""
-    # 搜索动作文件（.actus.md / .actus.schema.md 双后缀）
-    for root, dirs, files in os.walk(actions_dir):
-        for fname in files:
-            if not is_action_file(fname):
-                continue
-            fpath = os.path.join(root, fname)
-            try:
-                with open(fpath, "r", encoding="utf-8") as f:
-                    content = f.read()
-                if f'"{action_id}"' in content or f"'{action_id}'" in content:
-                    return fpath
-            except Exception:
-                continue
-    return None
+    """查找动作文件路径。**委托给 resolver.find_action_file**（格式无关）。
+
+    这里曾是全仓**第 5 份**查找实现，且判据比前几份更宽松：
+    用 `f'"{action_id}"' in content` 判断 —— 既会误命中「描述/注释里提到该 id」
+    的文件，又**认不出**新格式 `.actus.schema.md` 的 YAML `id: xxx`（无引号）。
+    实测连种子动作 `actus.basics.calculator` 都返回 None，导致
+    `_find_omega_spec` 的「与动作同目录找 spec」分支永远失效。
+    """
+    try:
+        from .resolver import find_action_file
+        return find_action_file(action_id, actions_dir)
+    except Exception:
+        return None
 
 
 # ── Spec 加载与缓存 ──
@@ -146,9 +153,22 @@ def validate_spec(spec: dict) -> Tuple[bool, List[str]]:
     if "assertions" in spec and not isinstance(spec["assertions"], list):
         errors.append("assertions 必须是数组")
     # 验证 assertions 格式
-    for i, assertion in enumerate(spec.get("assertions", [])):
-        if "type" not in assertion:
-            errors.append(f"assertions[{i}] 缺少 type 字段")
+    # 只有 assertions 确实是数组时才逐项校验 —— 此前对字符串继续迭代，
+    # 把 'abc' 逐字符报成 3 条「assertions[0/1/2] 缺少 type」（噪音），
+    # 且 `[None]` 会在 `"type" not in None` 处抛裸 TypeError。
+    if isinstance(spec.get("assertions"), list):
+        for i, assertion in enumerate(spec["assertions"]):
+            if not isinstance(assertion, dict):
+                errors.append(
+                    f"assertions[{i}] 必须是对象，得到 {type(assertion).__name__}")
+                continue
+            atype = assertion.get("type")
+            if not atype:
+                errors.append(f"assertions[{i}] 缺少 type 字段")
+            elif atype not in ASSERTION_TYPES:
+                errors.append(
+                    f"assertions[{i}] 未知 type {atype!r}，"
+                    f"可用: {', '.join(sorted(ASSERTION_TYPES))}")
     return len(errors) == 0, errors
 
 
@@ -195,13 +215,22 @@ def _get_nested(obj: Any, path: str) -> Any:
 # ── 断言引擎（增强版）──
 
 def check_assertion(assertion: dict, actual: Any) -> Tuple[bool, str]:
-    """检查单条断言（增强版，支持 16 种断言类型）。"""
+    """检查单条断言（增强版，支持 16 种断言类型）。
+
+    入参校验：`check_assertion(None, x)` 此前抛裸 `AttributeError`。
+    另修一处**误导性消息**：`exists` 通过时也返回「字段 '' 不存在」，
+    调用方若把消息打进日志会看到「通过 + 不存在」的矛盾输出。
+    """
+    if not isinstance(assertion, dict):
+        raise TypeError(
+            f"assertion 必须是 dict，得到 {type(assertion).__name__}: {assertion!r}")
     atype = assertion.get("type", "exists")
     field = assertion.get("field", "")
     value = _get_nested(actual, field) if field else actual
 
     if atype == "exists":
-        return value is not None, f"字段 '{field}' 不存在"
+        ok = value is not None
+        return ok, (f"字段 '{field}' 存在" if ok else f"字段 '{field}' 不存在")
 
     elif atype == "not_exists":
         return value is None, f"字段 '{field}' 不应存在，实际值为 {value}"
