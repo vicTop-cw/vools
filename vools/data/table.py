@@ -1588,11 +1588,16 @@ class Table(Seq):
 
     # ==================== SQL 风格方法 ====================
 
-    def where(self, expr) -> 'Table':
+    def where(self, expr, *, strict: bool = False) -> 'Table':
         """SQL 风格条件过滤 (WHERE)
 
         Args:
             expr: 字符串表达式 (如 'age > 25') 或 谓词函数 (如 lambda r: r['age'] > 25)
+            strict: 为 True 时，表达式语法错误/引用未知列/含不允许的节点
+                立即抛 ValueError；默认 False 保持既有**安全拒绝语义**
+                （统一返回 False → 结果为空表，见 BUG-94/锁定测试）。
+                BUG-502：默认语义下 `where('age >')` 与"没有匹配行"无法区分，
+                调用方拿不到任何信号。
 
         Returns:
             新的 Table
@@ -1601,20 +1606,26 @@ class Table(Seq):
 
             table.where('age > 25')
             table.where(lambda r: r['age'] > 25 and r['city'] == 'NYC')
+            table.where('age >', strict=True)   # 语法错误立即 ValueError
         """
         if callable(expr):
             predicate = expr
         elif isinstance(expr, str):
-            predicate = self._parse_where_expr(expr)
+            predicate = self._parse_where_expr(expr, strict=strict)
         else:
             raise TypeError('where() expr must be string or callable')
 
         return self.filter(predicate)
 
-    def _parse_where_expr(self, expr: str) -> Callable[[Dict], bool]:
+    def _parse_where_expr(self, expr: str, *, strict: bool = False) -> Callable[[Dict], bool]:
         """解析简单的 SQL where 表达式
 
         支持: <, >, <=, >=, ==, !=, and, or, in
+
+        Args:
+            expr: 表达式字符串
+            strict: True 时对"语法错误/未知列/非白名单节点"抛 ValueError
+                （BUG-502：默认的静默 False 是安全拒绝设计，但调用方无从感知）
         """
         import re
         import ast
@@ -1645,10 +1656,17 @@ class Table(Seq):
                 for node in ast.walk(tree):
                     if not isinstance(node, _ALLOWED_NODES):
                         # dangerous node (function call / attribute access) -> reject
+                        if strict:
+                            raise ValueError(
+                                f"where 表达式含不允许的节点 {type(node).__name__}"
+                                f"（仅支持列比较/布尔/算术，未知列名也会命中此处）: {expr!r}")
                         return False
                 return bool(eval(compile(tree, '<where>', 'eval'),
                                   {'__builtins__': {}}))
-            except Exception:
+            except Exception as exc:
+                if strict:
+                    raise ValueError(
+                        f"where 表达式无法解析/求值: {expr!r}: {exc}") from exc
                 return False
 
         return safe_eval
