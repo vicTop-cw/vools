@@ -101,14 +101,40 @@ def test_no_string_search_identity_antipattern():
     base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "vools", "actus")
     offenders = []
+    # 第 30 轮补强：还要拦「把 id 包在引号里搜全文」这种更宽松的形态。
+    # omega.py 里的那种写法就是这样漏网的——既误命中「描述里提到该 id」的文件，
+    # 又认不出新格式 YAML 的 id: xxx。
+    # 注意：用 AST 排除 **docstring 行**，否则解释这条反模式的文字本身会被判违规。
+    import ast
+    import re
+    generic = re.compile(
+        r"""f["']\\?["']\{(?:action_id|aid)\}\\?["']\\?["']\s+in\s+content""")
+
+    def _doc_lines(tree):
+        out = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+                body = getattr(node, "body", None)
+                if body and isinstance(body[0], ast.Expr) and \
+                        isinstance(body[0].value, ast.Constant) and \
+                        isinstance(body[0].value.value, str):
+                    out.update(range(body[0].lineno, (body[0].end_lineno or body[0].lineno) + 1))
+        return out
+
     for path in glob.glob(os.path.join(base, "**", "*.py"), recursive=True):
         name = os.path.basename(path)
         if name in ("mdtest.py",):        # 夹具生成器，允许
             continue
         try:
             text = open(path, encoding="utf-8").read()
-        except OSError:
+            tree = ast.parse(text)
+        except (OSError, SyntaxError):
             continue
-        if '"id": "{"' in text or '"id":"{"' in text:
-            offenders.append(name)
+        skip = _doc_lines(tree)
+        for i, line in enumerate(text.splitlines(), 1):
+            if i in skip or line.lstrip().startswith("#"):
+                continue
+            if '"id": "{"' in line or '"id":"{"' in line or generic.search(line):
+                offenders.append("%s:%d" % (name, i))
     assert not offenders, "仍有『字符串搜 id』的判断: %s" % offenders
