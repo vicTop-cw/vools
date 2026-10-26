@@ -221,14 +221,27 @@ def create_arrow_function(params: List[tuple], body: str, env: Dict[str, Any],bo
 def arrow_func(expr: str, env: Optional[Dict[str, Any]] = None) -> Callable:
     """
     根据 arrow 表达式生成可调用函数
-    
+
     Args:
-        expr: arrow 表达式，格式为 "参数 => 函数体"
+        expr: arrow 表达式，格式为 "参数 => 函数体"（多参数用逗号：``"x, y => x * y"``）
         env: 执行环境字典，包含可用的变量和函数
-    
+
     Returns:
         可调用的函数对象
+
+    Raises:
+        TypeError: ``expr`` 不是字符串时（BUG-514：原实现抛裸
+            "AttributeError: 'int' object has no attribute 'strip'"）。
+
+    ⚠️ 安全警告（BUG-514 补文档）：
+        ``arrow_func`` 会把 expr 当作**完整 Python** 编译执行（``env`` 默认带
+        完整 ``__builtins__``）——``arrow_func("x => __import__('os')")`` 直接
+        返回 os 模块。**请勿用于不可信输入**；需要沙箱请用
+        :func:`safe_arrow_func`（白名单 AST，禁止 __import__/open/eval 等）。
     """
+    if not isinstance(expr, str):
+        raise TypeError(
+            f"arrow_func 的 expr 必须是字符串，收到 {type(expr).__name__}: {expr!r}")
     if env is None:
         env = {}
     
@@ -595,6 +608,10 @@ def safe_arrow_func(expr: str, env: Optional[Dict[str, Any]] = None) -> Callable
             ...
         vools.security.safe_eval.SafeEvalError: 表达式包含不安全内容
     """
+    if not isinstance(expr, str):
+        raise TypeError(
+            f"safe_arrow_func 的 expr 必须是字符串，收到 "
+            f"{type(expr).__name__}: {expr!r}")
     from ..security.safe_eval import safe_lambda, SafeEvalError
 
     # 解析 arrow 表达式
