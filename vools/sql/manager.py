@@ -114,6 +114,29 @@ class DialectManager:
     # 注册和注销
     # ------------------------------------------------------------------------
 
+    def _default_config_for(self, name_lower: str, dialect_class) -> DialectConfig:
+        """构造方言的默认 DialectConfig（BUG-519）。
+
+        优先用方言实例的 ``get_config()``（各内置方言在这里声明 driver 与
+        端口/库名/占位符/引号），取不到时退回旧行为（driver=方言名）。
+        """
+        try:
+            instance = dialect_class()
+            getter = getattr(instance, "get_config", None)
+            default_cfg = getter() if callable(getter) else None
+        except Exception:
+            default_cfg = None
+
+        if default_cfg is not None:
+            try:
+                fields = dict(vars(default_cfg))
+                fields["name"] = name_lower
+                return DialectConfig(**fields)
+            except Exception:
+                driver = getattr(default_cfg, "driver", "") or name_lower
+                return DialectConfig(name=name_lower, driver=driver)
+        return DialectConfig(name=name_lower, driver=name_lower)
+
     def register(
         self,
         name: str,
@@ -135,10 +158,13 @@ class DialectManager:
                 f"{type(dialect_class).__name__}: {dialect_class!r}")
 
         if config is None:
-            config = DialectConfig(
-                name=name_lower,
-                driver=name_lower,
-            )
+            # BUG-519: 默认配置必须取方言类自己声明的 driver（sqlite3 / psycopg2 /
+            # pyspark），不能用方言名——方言名不是可导入模块，
+            # importlib.import_module('sqlite') 必失败，于是 is_available('sqlite')
+            # 对着一个完全可用的方言恒返回 False（get_dialect 却能成功）。
+            # 同时保留方言自己的 port/host/database/paramstyle/quote 等默认值
+            # （原实现一并丢失，落成 DialectConfig 的平台默认）。
+            config = self._default_config_for(name_lower, dialect_class)
         else:
             config.name = name_lower
 
@@ -514,7 +540,16 @@ def is_available(name: str) -> bool:
 
     返回：
         是否可用
+
+    注（BUG-519）：先按需加载内置方言再判定——manager 自己的注册表在首次
+    使用前是空的，未加载过的方言（哪怕驱动是本体内置的 sqlite3）会被判成
+    False，与 get_dialect() 能成功返回自相矛盾。
     """
+    try:
+        from . import _ensure_dialect_loaded  # 延迟导入，避免与包初始化循环
+        _ensure_dialect_loaded(name)
+    except Exception:
+        pass
     return manager.is_available(name)
 
 
