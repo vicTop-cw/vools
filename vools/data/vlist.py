@@ -122,6 +122,23 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
             pass
         return _clone
 
+    @staticmethod
+    def _check_func(func, method_name: str, arg_name: str = "func",
+                    allow_none: bool = False) -> None:
+        """校验"可调用对象或表达式字符串"参数（BUG-508）。
+
+        ``map``/``filter`` 走 ``_run`` 有清晰校验（BUG-444 修过），但
+        ``flat_map``/``group_by``/``count_by``/``sort_by`` 直接 ``func(item)``，
+        传 123 会抛裸 "'int' object is not callable"——看不出是哪个参数。
+        """
+        if func is None and allow_none:
+            return
+        if callable(func) or isinstance(func, str):
+            return
+        raise TypeError(
+            f"VList.{method_name}() 的 {arg_name} 需要可调用对象或表达式字符串，"
+            f"收到 {type(func).__name__}: {func!r}")
+
     def __len__(self) -> int:
         """返回列表长度。
 
@@ -473,6 +490,7 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             扁平化后的 VList
         """
+        self._check_func(func, "flat_map")
         if isinstance(func, str):
             safe_func = create_map_func(func)
             result = []
@@ -502,6 +520,7 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             扁平化后的 VList
         """
+        self._check_func(func, "flatmap")
         return self.flat_map(func)
 
     def distinct(self) -> 'VList':
@@ -521,6 +540,7 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             键到 VList 分组的字典
         """
+        self._check_func(key_func, "group_by", "key_func")
         if isinstance(key_func, str):
             safe_func = create_map_func(key_func)
             key_func = safe_func
@@ -544,6 +564,7 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             排序后的新 VList
         """
+        self._check_func(key_func, "sort_by", "key_func", allow_none=True)
         if not hasattr(self, '_data'):
             self._data = list(self._evaluate())
         if key_func is None:
@@ -585,6 +606,7 @@ class VList(Seq, VoolsBase, metaclass=ListLikeMeta):
         Returns:
             键到计数的字典
         """
+        self._check_func(key_func, "count_by", "key_func")
         if isinstance(key_func, str):
             safe_func = create_map_func(key_func)
             key_func = safe_func
