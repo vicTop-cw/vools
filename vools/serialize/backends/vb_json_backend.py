@@ -76,6 +76,7 @@ class VBJsonBackend(BaseBackend):
         Returns:
             反序列化后的对象
         """
+        data = self._require_bytes(data, "VBJsonBackend.loads")
         # BUG-309: 与 json 后端对齐——解析结果递归应用 vools_object_hook，
         # 使 register_type 注册类型与内置类型（datetime/set/NONE 哨兵等）可还原。
         return _apply_object_hook(self.parse(data.decode('utf-8')))
