@@ -77,6 +77,12 @@ def get_index_cols(cols: list, *ix):
     Returns:
         对应的列名列表
     """
+    # BUG-526: cols 非列表抛裸 "'NoneType' object has no len()"；越界抛裸
+    # "list index out of range"（不告诉调用方共有几列）。
+    if not isinstance(cols, (list, tuple)):
+        raise TypeError(
+            f"get_index_cols 的 cols 必须是 list/tuple，收到 "
+            f"{type(cols).__name__}: {cols!r}")
     l = len(cols)
 
     def _inner(i):
@@ -241,6 +247,11 @@ def get_py_fmt(fmt='yyyyMMdd'):
     Returns:
         Python标准日期格式
     """
+    # BUG-526: get_py_fmt(None)/get_py_fmt(123) 抛裸
+    # "TypeError: argument of type 'NoneType' is not iterable"
+    if not isinstance(fmt, str):
+        raise TypeError(
+            f"get_py_fmt 的 fmt 必须是字符串，收到 {type(fmt).__name__}: {fmt!r}")
     if not '%' in fmt:
         fmt = fmt.replace('yyyy', '%Y').replace('MM', '%m').replace('dd', '%d').replace('mm', '%M').replace('HH', '%H')
         fmt = fmt.replace('YYYY', '%Y').replace('SS', '%S').replace('ss', '%S').replace('yy', '%y')
@@ -375,6 +386,17 @@ def offset_date(run_date, offset_days, std=False):
     Returns:
         偏移后的日期字符串
     """
+    # BUG-526: run_date 非日期字符串 / offset_days 非数值时抛裸
+    # "argument of type 'NoneType' is not iterable" / "unsupported type for
+    # timedelta days component: str"（看不出是哪个参数）。
+    if not isinstance(run_date, str) and not isinstance(run_date, (_date, datetime)):
+        raise TypeError(
+            f"offset_date 的 run_date 必须是日期字符串（YYYYMMDD / YYYY-MM-DD）"
+            f"或 datetime.date，收到 {type(run_date).__name__}: {run_date!r}")
+    if isinstance(offset_days, bool) or not isinstance(offset_days, (int, float)):
+        raise TypeError(
+            f"offset_date 的 offset_days 必须是数值，收到 "
+            f"{type(offset_days).__name__}: {offset_days!r}")
     if isinstance(run_date, (_date, datetime)):
         date_obj = run_date if isinstance(run_date, _date) else run_date.date()
     else:
@@ -857,6 +879,17 @@ def check_no_overlap(strings):
     Returns:
         如果字符串之间互不包含返回True，否则False
     """
+    # BUG-526: strings 非序列抛裸 "'NoneType' object has no len()"；
+    # 元素非字符串抛裸 "'int' object is not iterable"。
+    if not isinstance(strings, (list, tuple)):
+        raise TypeError(
+            f"check_no_overlap 的 strings 必须是 list/tuple，收到 "
+            f"{type(strings).__name__}: {strings!r}")
+    for _s in strings:
+        if not isinstance(_s, str):
+            raise TypeError(
+                f"check_no_overlap 的 strings 元素必须是字符串，收到 "
+                f"{type(_s).__name__}: {_s!r}")
     return all(strings[i] not in strings[j] for i in range(len(strings)) for j in range(len(strings)) if i != j)
 
 
