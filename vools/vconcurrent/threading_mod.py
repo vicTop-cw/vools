@@ -412,6 +412,11 @@ class VSemaphore:
     """
 
     def __init__(self, value: int = 1) -> None:
+        # BUG-346: value 非数值时抛裸 "'<' not supported…"
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(
+                f"VSemaphore 的 value 必须是整数，收到 "
+                f"{type(value).__name__}: {value!r}")
         if value < 0:
             raise ValueError("semaphore initial value must be >= 0")
         self._sem = threading.Semaphore(value)
@@ -425,7 +430,29 @@ class VSemaphore:
 
         Returns:
             是否成功获取。
+
+        Raises:
+            TypeError: blocking 不是 bool，或 timeout 不是 None/数值时。
+            ValueError: blocking=False 却给了 timeout（与 threading.Semaphore 一致）。
+
+        BUG-346: blocking 零校验——传任意**真值**（如 ``acquire('x')``）会被当成
+        blocking=True 且 timeout=None，于是**永久阻塞**（调用方以为自己给了超时）。
         """
+        if not isinstance(blocking, bool):
+            raise TypeError(
+                f"VSemaphore.acquire 的 blocking 必须是 bool，收到 "
+                f"{type(blocking).__name__}: {blocking!r}"
+                f"（要限时获取请用 acquire(blocking=True, timeout=秒) 或 acquire_timeout(秒)）")
+        if timeout is not None:
+            if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+                raise TypeError(
+                    f"VSemaphore.acquire 的 timeout 必须是数值或 None，收到 "
+                    f"{type(timeout).__name__}: {timeout!r}")
+            if timeout < 0:
+                raise ValueError(
+                    f"VSemaphore.acquire 的 timeout 不能为负，收到 {timeout!r}")
+            if not blocking:
+                raise ValueError("can't specify a timeout for a non-blocking call")
         return self._sem.acquire(blocking=blocking, timeout=timeout)
 
     def acquire_timeout(self, timeout: float) -> bool:
@@ -436,7 +463,16 @@ class VSemaphore:
 
         Returns:
             是否成功获取。
+
+        BUG-346: timeout 类型校验（非数值此前由 threading 抛裸 TypeError）。
         """
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            raise TypeError(
+                f"VSemaphore.acquire_timeout 的 timeout 必须是数值，收到 "
+                f"{type(timeout).__name__}: {timeout!r}")
+        if timeout < 0:
+            raise ValueError(
+                f"VSemaphore.acquire_timeout 的 timeout 不能为负，收到 {timeout!r}")
         return self._sem.acquire(timeout=timeout)
 
     def release(self, n: int = 1) -> None:
@@ -492,6 +528,11 @@ class VLatch:
     """
 
     def __init__(self, count: int) -> None:
+        # BUG-346: count 非数值时 VLatch('x') 抛裸
+        # "TypeError: '<' not supported between instances of 'str' and 'int'"
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError(
+                f"VLatch 的 count 必须是整数，收到 {type(count).__name__}: {count!r}")
         if count < 0:
             raise ValueError("latch count must be non-negative")
         self._count = count
@@ -569,6 +610,11 @@ class VBarrier:
         action: Optional[Callable[[], Any]] = None,
         timeout: Optional[float] = None,
     ) -> None:
+        # BUG-346: parties 非数值时抛裸 "'<' not supported…"
+        if isinstance(parties, bool) or not isinstance(parties, int):
+            raise TypeError(
+                f"VBarrier 的 parties 必须是整数，收到 "
+                f"{type(parties).__name__}: {parties!r}")
         if parties < 0:
             raise ValueError("parties must be non-negative")
         self._barrier = threading.Barrier(parties, action=action, timeout=timeout)
