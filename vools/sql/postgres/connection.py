@@ -50,7 +50,29 @@ class PostgresConnection(Connection):
             password: 密码，默认空字符串
             database: 数据库名，默认 'postgres'
             **kwargs: 额外连接参数
+
+        异常：
+            TypeError: host/user/database 不是字符串，或 port 不是整数
+                （BUG-350：原先 ``PostgresConnection(port='x')`` /
+                ``host=123`` / ``port=-1`` 全部静默接受，直到 connect 才由驱动
+                抛出难读的错误；而 ``vools.db.PostgreSQLConnection`` 早已校验）。
+            ValueError: host 为空串或 port 不在 1..65535。
         """
+        if not isinstance(host, str) or not host.strip():
+            raise ValueError(
+                f"PostgresConnection 的 host 必须是非空字符串，收到 "
+                f"{type(host).__name__}: {host!r}")
+        if isinstance(port, bool) or not isinstance(port, int):
+            raise TypeError(
+                f"PostgresConnection 的 port 必须是整数，收到 "
+                f"{type(port).__name__}: {port!r}")
+        if not 1 <= port <= 65535:
+            raise ValueError(f"PostgresConnection 的 port 必须在 1..65535，收到 {port!r}")
+        for _name, _val in (("user", user), ("password", password), ("database", database)):
+            if not isinstance(_val, str):
+                raise TypeError(
+                    f"PostgresConnection 的 {_name} 必须是字符串，收到 "
+                    f"{type(_val).__name__}: {_val!r}")
         self._host = host
         self._port = port
         self._user = user

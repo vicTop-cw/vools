@@ -40,7 +40,16 @@ class SqliteConnection(Connection):
         参数：
             database: 数据库文件路径，默认为 ':memory:' 表示内存数据库
             **kwargs: 额外的连接参数，将传递给 sqlite3.connect()
+
+        异常：
+            TypeError: database 不是字符串（BUG-350：原先 ``SqliteConnection(None)``
+                / ``(123)`` 构造期静默接受，直到 connect() 才由 sqlite3 抛
+                "TypeError: expected str, bytes or os.PathLike object"）。
         """
+        if not isinstance(database, str):
+            raise TypeError(
+                f"SqliteConnection 的 database 必须是字符串（文件路径或 ':memory:'），"
+                f"收到 {type(database).__name__}: {database!r}")
         self._database = database
         self._conn_kwargs = kwargs
         self._connected = False
