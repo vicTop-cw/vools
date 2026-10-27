@@ -38,6 +38,25 @@ _T = TypeVar("_T")
 # ============================================================================
 
 
+def _check_maxsize(maxsize, where: str) -> None:
+    """BUG-347: maxsize 必须是整数（bool 拒绝）；0/负数按 stdlib 语义表示无界。"""
+    if isinstance(maxsize, bool) or not isinstance(maxsize, int):
+        raise TypeError(
+            f"{where} 的 maxsize 必须是整数（0 或负数表示无界），收到 "
+            f"{type(maxsize).__name__}: {maxsize!r}")
+
+
+def _check_timeout(timeout, where: str) -> None:
+    """BUG-347: timeout 必须是 None 或非负数值。"""
+    if timeout is None:
+        return
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise TypeError(
+            f"{where} 的 timeout 必须是数值或 None，收到 {type(timeout).__name__}: {timeout!r}")
+    if timeout < 0:
+        raise ValueError(f"{where} 的 timeout 不能为负，收到 {timeout!r}")
+
+
 class VQueue:
     """增强版 FIFO 队列，基于 ``queue.Queue``。
 
@@ -58,6 +77,7 @@ class VQueue:
     """
 
     def __init__(self, maxsize: int = 0) -> None:
+        _check_maxsize(maxsize, "VQueue")
         self._queue: "queue.Queue[_T]" = queue.Queue(maxsize=maxsize)
         self._lock = threading.Lock()
 
@@ -72,6 +92,7 @@ class VQueue:
             block: 是否阻塞等待。
             timeout: 阻塞超时（秒），``None`` 表示无限等待。
         """
+        _check_timeout(timeout, "VQueue.put")
         self._queue.put(item, block=block, timeout=timeout)
 
     def put_timeout(self, item: _T, timeout: float) -> bool:
@@ -84,6 +105,7 @@ class VQueue:
         Returns:
             bool: 是否成功放入。
         """
+        _check_timeout(timeout, "VQueue.put_timeout")
         try:
             self._queue.put(item, timeout=timeout)
             return True
@@ -100,6 +122,7 @@ class VQueue:
         Returns:
             取出的元素。
         """
+        _check_timeout(timeout, "VQueue.get")
         return self._queue.get(block=block, timeout=timeout)
 
     def get_timeout(self, timeout: float) -> Optional[_T]:
@@ -111,6 +134,7 @@ class VQueue:
         Returns:
             取出的元素，超时返回 ``None``。
         """
+        _check_timeout(timeout, "VQueue.get_timeout")
         try:
             return self._queue.get(timeout=timeout)
         except queue.Empty:
@@ -293,6 +317,7 @@ class VPriorityQueue:
         Raises:
             IndexError: 队列为空且不阻塞时。
         """
+        _check_timeout(timeout, "VPriorityQueue.get")
         with self._not_empty:
             if not self._heap:
                 if not block:
@@ -311,6 +336,7 @@ class VPriorityQueue:
         Returns:
             取出的元素，超时返回 ``None``。
         """
+        _check_timeout(timeout, "VPriorityQueue.get_timeout")
         try:
             return self.get(block=True, timeout=timeout)
         except IndexError:
@@ -394,6 +420,7 @@ class VLifoQueue:
     """
 
     def __init__(self, maxsize: int = 0) -> None:
+        _check_maxsize(maxsize, "VLifoQueue")
         self._stack: "queue.LifoQueue[_T]" = queue.LifoQueue(maxsize=maxsize)
 
     # ------------------------------------------------------------------
@@ -401,10 +428,12 @@ class VLifoQueue:
     # ------------------------------------------------------------------
     def put(self, item: _T, block: bool = True, timeout: Optional[float] = None) -> None:
         """压入元素。"""
+        _check_timeout(timeout, "VLifoQueue.put")
         self._stack.put(item, block=block, timeout=timeout)
 
     def put_timeout(self, item: _T, timeout: float) -> bool:
         """尝试在指定时间内压入元素。"""
+        _check_timeout(timeout, "VLifoQueue.put_timeout")
         try:
             self._stack.put(item, timeout=timeout)
             return True
@@ -413,10 +442,12 @@ class VLifoQueue:
 
     def get(self, block: bool = True, timeout: Optional[float] = None) -> _T:
         """弹出元素。"""
+        _check_timeout(timeout, "VLifoQueue.get")
         return self._stack.get(block=block, timeout=timeout)
 
     def get_timeout(self, timeout: float) -> Optional[_T]:
         """尝试在指定时间内弹出元素。"""
+        _check_timeout(timeout, "VLifoQueue.get_timeout")
         try:
             return self._stack.get(timeout=timeout)
         except queue.Empty:
@@ -759,6 +790,7 @@ class BoundedChannel:
     """
 
     def __init__(self, maxsize: int = 0) -> None:
+        _check_maxsize(maxsize, "BoundedChannel")
         self._queue: "queue.Queue[_T]" = queue.Queue(maxsize=maxsize)
         self._closed = False
         self._lock = threading.Lock()
