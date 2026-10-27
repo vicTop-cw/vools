@@ -1,6 +1,6 @@
 """vools.rhop - 双方对等镜像任务中继协议（MVP + 配置驱动地基 + v2 镜像 DB / 状态机 / 业务 API + 通用任务队列）。"""
 
-__version__ = "0.3.0"
+__version__ = "0.9.0"
 
 from . import actions, config, crypto, core, interact, session  # noqa: F401
 

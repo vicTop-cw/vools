@@ -52,7 +52,7 @@ __all__ = [
     "tools",
 ]
 
-__version__ = "0.1.1"
+__version__ = "0.9.0"
 
 import os
 import sys

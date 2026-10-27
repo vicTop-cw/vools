@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vools-pyk"
-version = "0.1.1"
+version = "0.9.0"
 authors = [
     { name = "Victor", email = "victortop921129@gmail.com" },
 ]
@@ -36,7 +36,7 @@ requires-python = ">=3.6"
 # 若把它们留成硬依赖，`pip install vools-pyk` 会强行装一份 pyspark，
 # 既拖慢安装，也可能与集群 Spark 版本冲突（Spark 2.4.3 与 Java 11 不兼容）。
 dependencies = [
-    "vools>=0.7.8",
+    "vools>=0.9.0",
 ]
 
 [project.optional-dependencies]
