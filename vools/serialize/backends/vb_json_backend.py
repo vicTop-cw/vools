@@ -510,7 +510,7 @@ class VBJsonBackend(BaseBackend):
         
         return ''.join(result)
 
-    def _stringify(self, obj: Any) -> str:
+    def _stringify(self, obj: Any, _path_ids=None) -> str:  # noqa: C901 - BUG-344 增加环检测入参
         """
         将对象序列化为 JSON 字符串
 
@@ -520,6 +520,10 @@ class VBJsonBackend(BaseBackend):
         Returns:
             JSON 字符串
         """
+        # BUG-344: 循环引用检测——自引用容器此前一路递归到
+        # RecursionError: maximum recursion depth exceeded（错误信息指不到"数据里有环"）。
+        if _path_ids is None:
+            _path_ids = set()
         if obj is None:
             return 'null'
         
@@ -563,16 +567,36 @@ class VBJsonBackend(BaseBackend):
             return '"{}"'.format(self._encode_string(obj))
         
         if isinstance(obj, dict):
-            items = []
-            for key, value in obj.items():
-                key_str = '"{}"'.format(self._encode_string(str(key)))
-                value_str = self._stringify(value)
-                items.append('{}:{}'.format(key_str, value_str))
-            return '{' + ','.join(items) + '}'
-        
+            _oid = id(obj)
+            if _oid in _path_ids:
+                raise ValueError(
+                    "vools.serialize: 输入包含循环引用（字典自引用），"
+                    "vb_json 后端无法表示循环结构。"
+                    "请先断开环，或改用 pickle 后端。")
+            _path_ids.add(_oid)
+            try:
+                items = []
+                for key, value in obj.items():
+                    key_str = '"{}"'.format(self._encode_string(str(key)))
+                    value_str = self._stringify(value, _path_ids)
+                    items.append('{}:{}'.format(key_str, value_str))
+                return '{' + ','.join(items) + '}'
+            finally:
+                _path_ids.discard(_oid)
+
         if isinstance(obj, (list, tuple)):
-            items = [self._stringify(item) for item in obj]
-            return '[' + ','.join(items) + ']'
+            _oid = id(obj)
+            if _oid in _path_ids:
+                raise ValueError(
+                    "vools.serialize: 输入包含循环引用（列表/元组自引用），"
+                    "vb_json 后端无法表示循环结构。"
+                    "请先断开环，或改用 pickle 后端。")
+            _path_ids.add(_oid)
+            try:
+                items = [self._stringify(item, _path_ids) for item in obj]
+                return '[' + ','.join(items) + ']'
+            finally:
+                _path_ids.discard(_oid)
         
         # BUG-309: 未知类型先尝试类型注册表（register_type 自定义类型、
         # 内置 datetime/set/Decimal 等）——与 json 后端 _json_default 同源。
