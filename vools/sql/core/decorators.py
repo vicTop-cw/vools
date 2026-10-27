@@ -493,6 +493,30 @@ def sql_module(dialect=None, connection=None, auto_convert=True):
 
             has_sql_info = hasattr(attr, _SQL_INFO_ATTR)
             if has_sql_info:
+                # BUG-355: 内层已带 @sql_function 的方法此前被**整体跳过**，于是
+                # @sql_module(connection=...) / dialect 完全不下发（实测：方法上写
+                # @sql_function(sql="SELECT ...")、类上给 connection=conn，调用仍报
+                # "提供了静态 SQL 模板但未提供数据库连接"），而且内层装饰把 self 当
+                # 成 SQL 参数（skip_first_arg=False）。这里按「方法自身配置优先、
+                # 类级配置兜底」重新包装，并保留 func_name 与静态 SQL。
+                _info = getattr(attr, _SQL_INFO_ATTR, {}) or {}
+                _base = getattr(attr, '__wrapped__', None)
+                if _base is not None:
+                    _own_conn = _info.get('connection', None)
+                    _rewrapped = _make_sql_wrapper(
+                        _base,
+                        dialect=_info.get('dialect') or dialect,
+                        connection=_own_conn if _own_conn is not None else connection,
+                        sql=_info.get('sql'),
+                        auto_convert=_info.get('auto_convert', auto_convert),
+                        skip_first_arg=True,
+                    )
+                    # @sql_func_name 可能装饰在内层 @sql_function 之上，此时名字挂在
+                    # 包装函数的 _sql_func_name 属性上而不是 _sql_info 里，两处都要看。
+                    _pending_name = _info.get('func_name') or getattr(attr, _FUNC_NAME_ATTR, None)
+                    if _pending_name is not None:
+                        _rewrapped._sql_info['func_name'] = _pending_name
+                    setattr(cls, name, _rewrapped)
                 continue
 
             custom_func_name = getattr(attr, _FUNC_NAME_ATTR, None)
