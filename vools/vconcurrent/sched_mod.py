@@ -85,7 +85,15 @@ class VScheduler:
 
         Returns:
             sched.Event 对象，可用于 cancel()
+
+        Raises:
+            TypeError: when 不是数值（BUG-348：原先抛裸
+                "unsupported operand type(s) for -: 'str' and 'float'"）。
         """
+        if isinstance(when, bool) or not isinstance(when, (int, float)):
+            raise TypeError(
+                f"schedule_at() 的 when 需要数字（绝对时间戳，秒），收到 "
+                f"{type(when).__name__}: {when!r}")
         now = self._scheduler.timefunc()
         delay = max(0.0, when - now)
         return self.schedule(delay, action, *args, **kwargs)
@@ -592,6 +600,17 @@ class cron_like:
         return f'cron_like(running={self._running}, tasks={self.task_count})'
 
 
+def _check_scheduler(scheduler, where: str) -> None:
+    """校验传入的是调度器（VScheduler 或至少具备 cancel_all/stop_all/run 的对象）。"""
+    if isinstance(scheduler, VScheduler):
+        return
+    if all(callable(getattr(scheduler, name, None)) for name in ("cancel_all", "stop_all", "run")):
+        return
+    raise TypeError(
+        f"{where} 的 scheduler 需要调度器实例（VScheduler 或具备 "
+        f"cancel_all/stop_all/run 的对象），收到 {type(scheduler).__name__}: {scheduler!r}")
+
+
 class SchedulerPool:
     """
     多调度器管理，统一启动和停止
@@ -610,13 +629,27 @@ class SchedulerPool:
         self._lock = threading.Lock()
 
     def add(self, scheduler: VScheduler) -> 'SchedulerPool':
-        """添加一个调度器"""
+        """添加一个调度器
+
+        Raises:
+            TypeError: scheduler 不是调度器实例。
+
+        BUG-348: 原先零校验——``add(123)`` 会把整数塞进池子，之后
+        ``cancel_all()/stop_all()/run_all()`` 遍历时抛
+        "AttributeError: 'int' object has no attribute 'cancel_all'"（错误离病因很远）。
+        """
+        _check_scheduler(scheduler, "SchedulerPool.add")
         with self._lock:
             self._schedulers.append(scheduler)
         return self
 
     def remove(self, scheduler: VScheduler) -> bool:
-        """移除一个调度器"""
+        """移除一个调度器
+
+        BUG-348: 同样校验入参类型（原先 ``remove(None)`` 静默返回 True/False 的
+        语义取决于池内容，属静默错值）。
+        """
+        _check_scheduler(scheduler, "SchedulerPool.remove")
         with self._lock:
             if scheduler in self._schedulers:
                 self._schedulers.remove(scheduler)
