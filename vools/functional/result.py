@@ -61,10 +61,31 @@ class Result(Generic[T, E]):
         Returns:
             新的 Result 对象
         """
+        self._require_callable(fn, 'bind')
         if self.is_success:
-            return fn(self._value)
+            result = fn(self._value)
+            # BUG-357: bind/flat_map 的契约是"返回新 Result"——原先返回裸值时
+            # 会被**原样透传**（Success(2).bind(lambda x: x) -> 2），下游再链式
+            # 调用就 AttributeError，且错误离病因很远。
+            if not isinstance(result, Result):
+                raise TypeError(
+                    f"Result.bind()/flat_map() 的回调必须返回 Result 实例，收到 "
+                    f"{type(result).__name__}: {result!r}")
+            return result
         return Result.failure(self._value)
     
+    def _require_callable(self, fn, what: str) -> None:
+        """回调参数校验（BUG-357）。
+
+        Maybe 早在 BUG-438 就有这个校验（``Maybe.map() 的回调必须可调用``），
+        而 Result 的 map/map_err/bind/flat_map 一直零校验：``Success(1).map(None)``
+        抛裸 ``'NoneType' object is not callable``，错误信息看不出是回调参数。
+        """
+        if not callable(fn):
+            raise TypeError(
+                f"Result.{what}() 的回调必须可调用，收到 "
+                f"{type(fn).__name__}: {fn!r}")
+
     def map(self, fn: Callable[[T], R]) -> 'Result[R, E]':
         """
         映射成功值，失败时保持不变
@@ -75,6 +96,7 @@ class Result(Generic[T, E]):
         Returns:
             新的 Result 对象，成功时包含转换后的值
         """
+        self._require_callable(fn, 'map')
         if self.is_success:
             return Result.success(fn(self._value))
         return Result.failure(self._value)
@@ -89,6 +111,7 @@ class Result(Generic[T, E]):
         Returns:
             新的 Result 对象，失败时包含转换后的值
         """
+        self._require_callable(fn, 'map_err')
         if self.is_failure:
             return Result.failure(fn(self._value))
         return Result.success(self._value)
