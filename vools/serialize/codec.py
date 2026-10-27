@@ -25,13 +25,24 @@ __all__ = [
 _NATIVE_BASE_TYPES = (str, int, float, bool, type(None), bytes, list, dict, tuple)
 
 
-def vools_preprocess(obj: Any) -> Any:
+def vools_preprocess(obj: Any, _path_ids=None) -> Any:
     """
     递归预处理对象树，将非原生类型（注册表类型、内置子类等）转换为包装字典。
 
     json/msgpack 的 default 回调不会为内置子类调用（它们被当作原生类型处理），
     因此需要预先遍历对象树，在编码前替换。
+
+    BUG-344: 增加**循环引用检测**——自引用容器（``d['self'] = d``）此前会一路递归到
+    ``RecursionError: maximum recursion depth exceeded``（错误信息完全指不到"数据里有环"）。
+    现在沿当前路径记录容器 id，重入即抛 ``ValueError`` 说明是循环引用，并给出处置建议。
+    共享（非环）引用不受影响：id 在离开容器时移除，同一对象出现在兄弟位置仍可重复序列化。
+
+    Args:
+        obj: 待预处理对象
+        _path_ids: 内部使用（当前递归路径上的容器 id 集合），调用方无需传
     """
+    if _path_ids is None:
+        _path_ids = set()
     obj_type = type(obj)
 
     # 1. 检查类型注册表（处理 orjson 等不经过 default 回调的原生类型，如 enum）
@@ -71,17 +82,28 @@ def vools_preprocess(obj: Any) -> Any:
             'state': state,
         }
 
-    # 3. 递归处理容器类型
-    if isinstance(obj, dict):
-        return {k: vools_preprocess(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return type(obj)(vools_preprocess(item) for item in obj)
-    if isinstance(obj, tuple):
-        # BUG-131: namedtuple 的 __new__ 要求固定位置参数（P(1,2)），不接受生成器，
-        # 直接 type(obj)(generator) 会抛 TypeError。含 _fields 的特征识别后展开为位置参数。
-        if hasattr(obj_type, '_fields'):
-            return type(obj)(*(vools_preprocess(item) for item in obj))
-        return type(obj)(vools_preprocess(item) for item in obj)
+    # 3. 递归处理容器类型（BUG-344：进入容器前登记 id，重入即判循环引用）
+    if isinstance(obj, (dict, list, tuple)):
+        _oid = id(obj)
+        if _oid in _path_ids:
+            raise ValueError(
+                "vools.serialize: 输入包含循环引用（容器自引用），"
+                "json / vb_json / msgpack 后端无法表示循环结构。"
+                "请先断开环（例如用 id 引用替代父指针），或改用 pickle 后端。"
+                f"（类型 {obj_type.__name__}）")
+        _path_ids.add(_oid)
+        try:
+            if isinstance(obj, dict):
+                return {k: vools_preprocess(v, _path_ids) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return type(obj)(vools_preprocess(item, _path_ids) for item in obj)
+            # BUG-131: namedtuple 的 __new__ 要求固定位置参数（P(1,2)），不接受生成器，
+            # 直接 type(obj)(generator) 会抛 TypeError。含 _fields 的特征识别后展开为位置参数。
+            if hasattr(obj_type, '_fields'):
+                return type(obj)(*(vools_preprocess(item, _path_ids) for item in obj))
+            return type(obj)(vools_preprocess(item, _path_ids) for item in obj)
+        finally:
+            _path_ids.discard(_oid)
 
     return obj
 
