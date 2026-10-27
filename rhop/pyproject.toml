@@ -16,7 +16,19 @@ dependencies = [
     "cryptography>=3.4",
     # envelope.py 在导入期就用 attr.s（Py3.6 基线不引入 dataclasses），此前漏声明
     "attrs>=17.0",
+    # **vools 主包是硬依赖，此前漏声明** —— 装完必然 ImportError：
+    #   · envelope.py:17 / task/models.py:261 → vools.core.dataclass_compat
+    #   · crypto.py:25                        → vools.data.vtext
+    #   · task/models.py:314                  → vools.data.vlist
+    # 前两处在**模块级**导入，不是可选依赖。
+    "vools>=0.9.0",
 ]
+
+[project.optional-dependencies]
+# watch.py 需要 vools.reactive.monitoring.file_watcher，而 reactive 在**另一个
+# 发行包** vools-rx 里（vools 主包只提供懒加载与安装提示）。缺它时
+# `rhop.watch` 会给出可读的降级提示，故列为可选。
+watch = ["vools-rx>=0.7.6"]
 
 [project.scripts]
 rhop-task = "vools.rhop.task.cli:main"
