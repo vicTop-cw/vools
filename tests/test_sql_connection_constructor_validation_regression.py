@@ -93,6 +93,20 @@ class TestBehaviourUnchanged:
         )
 
     def test_connect_without_driver_raises_import_error(self):
+        """仅在**本解释器无驱动**时断言 ImportError。
+
+        注意：本测试曾被 FIST run_check 抓到失败——run_check 的 `python` 可能是
+        PATH 上的另一个解释器（那里装了 psycopg2），此时 connect() 会走真实网络
+        并抛 OperationalError/OSError 而非 ImportError。断言必须按环境分流，
+        否则就是"环境依赖的坏测试"。
+        """
+        import importlib.util
+
+        has_driver = any(
+            importlib.util.find_spec(name) is not None for name in ("psycopg2", "psycopg")
+        )
+        if has_driver:
+            pytest.skip("本解释器已安装 PostgreSQL 驱动，连接会走真实网络")
         with pytest.raises(ImportError):
             PostgresConnection().connect()
 
