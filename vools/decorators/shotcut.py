@@ -95,6 +95,11 @@ def safe(func: Callable[..., T] = None, *, default: Any = _MISSING, exceptions: 
                 return default
         return wrapper
 
+    # BUG-524: safe(123) 会把非可调用对象当函数包起来，调用期才炸
+    # "'int' object is not callable"（装饰期毫无提示）。
+    if func is not None and not callable(func):
+        raise TypeError(
+            f"safe() 的 func 必须可调用或 None，收到 {type(func).__name__}: {func!r}")
     if func is None:
         return decorator
     else:
@@ -260,6 +265,17 @@ def conditional(condition: Callable[..., bool], action: str = 'skip'):
     Returns:
         装饰器函数
     """
+    # BUG-524: condition 必须可调用、action 只接受 'skip' / 'warn'。原实现
+    # 零校验——action='bogus' 时既不跳过也不告警，**静默退化为无条件执行**
+    # （装饰器形同不存在）；condition=None/'x' 直到调用期才抛
+    # "TypeError: 'NoneType' object is not callable"。
+    if not callable(condition):
+        raise TypeError(
+            f"conditional() 的 condition 必须可调用，收到 "
+            f"{type(condition).__name__}: {condition!r}")
+    if action not in ('skip', 'warn'):
+        raise ValueError(
+            f"conditional() 的 action 只支持 'skip' / 'warn'，收到 {action!r}")
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> T:
