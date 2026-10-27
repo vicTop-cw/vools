@@ -52,7 +52,7 @@ def _validate_run_expression(text: str) -> None:
 
 
 def _strip_sql_comments(text: str) -> str:
-    """BUG-358: 字面量感知的 SQL 注释剥离。
+    r"""BUG-358: 字面量感知的 SQL 注释剥离。
 
     原实现用正则 `--.*?$|/\*.*?\*/` 直接全局删除——**字符串/标识符字面量内**
     的 `--`、`/* */` 也会被当成注释删掉，整条 SQL 被截断：
