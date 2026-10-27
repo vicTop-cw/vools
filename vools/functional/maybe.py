@@ -79,7 +79,14 @@ class Maybe(Generic[T]):
         """
         self._require_callable(fn, 'bind')
         if self.has_value:
-            return fn(self._value)
+            result = fn(self._value)
+            # BUG-357: bind/flat_map 必须返回 Maybe（原先返回裸值时原样透传：
+            # Some(1).flat_map(lambda x: x + 1) -> 2）。
+            if not isinstance(result, Maybe):
+                raise TypeError(
+                    f"Maybe.bind()/flat_map() 的回调必须返回 Maybe 实例，收到 "
+                    f"{type(result).__name__}: {result!r}")
+            return result
         return Maybe.none()
 
     def map(self, fn: Callable[[T], R]) -> 'Maybe[R]':
