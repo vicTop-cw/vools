@@ -867,7 +867,19 @@ class SpawnManager:
 
         Returns:
             SpawnHandle: 任务句柄。
+
+        Raises:
+            TypeError / ValueError: name 不是非空字符串时（BUG-349：原先
+                ``register(None, fn)`` / ``register('', fn)`` 会被静默接受，
+                名字原样作为字典键存下来，``names()`` 返回 ``[None, '']``）。
         """
+        if not isinstance(name, str):
+            raise TypeError(
+                f"SpawnManager.register 的 name 必须是字符串，收到 "
+                f"{type(name).__name__}: {name!r}")
+        if not name.strip():
+            raise ValueError(
+                f"SpawnManager.register 的 name 不能为空字符串，收到 {name!r}")
         with self._lock:
             if name in self._handles:
                 raise ValueError(f"Task '{name}' already registered")
@@ -931,7 +943,14 @@ class SpawnManager:
                 self.start(name)
 
     def stop(self, name: str, timeout: float = 5.0) -> None:
-        """停止指定任务。"""
+        """停止指定任务。
+
+        Raises:
+            TypeError / ValueError: timeout 不是正数时（BUG-349：原先
+                ``handle.join(timeout='x')`` 抛的 TypeError 被 ``except Exception``
+                吞掉，非法超时**静默退化为直接 kill**）。
+        """
+        _validate_positive_number(timeout, "SpawnManager.stop(timeout)")
         with self._lock:
             handle = self._handles.get(name)
             if handle is None:
@@ -946,7 +965,12 @@ class SpawnManager:
                 handle.kill()
 
     def stop_all(self, timeout: float = 5.0) -> None:
-        """停止全部任务。"""
+        """停止全部任务。
+
+        Raises:
+            TypeError / ValueError: timeout 不是正数时（BUG-349）。
+        """
+        _validate_positive_number(timeout, "SpawnManager.stop_all(timeout)")
         with self._lock:
             names = list(self._handles.keys())
         for name in names:
@@ -1020,7 +1044,13 @@ class SpawnManager:
 
         Returns:
             bool: 全部已结束时为 True，超时则为 False。
+
+        Raises:
+            TypeError / ValueError: timeout 不是正数时（BUG-349：原先抛裸
+                "unsupported operand type(s) for +: 'float' and 'str'"）。
         """
+        if timeout is not None:
+            _validate_positive_number(timeout, "SpawnManager.monitor(timeout)")
         deadline = None if timeout is None else (time.monotonic() + timeout)
         while True:
             with self._lock:
