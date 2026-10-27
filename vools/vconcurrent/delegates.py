@@ -54,6 +54,20 @@ def _require_callable(value: Any, what: str) -> None:
             f"{what} 必须可调用，收到 {type(value).__name__}: {value!r}")
 
 
+def _require_event_name(event: Any, where: str) -> None:
+    """校验事件名是非空字符串（BUG-358，与 EventBus.subscribe 同口径）。"""
+    if not isinstance(event, str) or not event.strip():
+        raise ValueError(
+            f"{where} 的 event 必须是非空字符串，收到 {type(event).__name__}: {event!r}")
+
+
+def _require_msg_type(msg_type: Any, where: str) -> None:
+    """校验消息类型是类（BUG-358）。"""
+    if not isinstance(msg_type, type):
+        raise TypeError(
+            f"{where} 的 msg_type 必须是类，收到 {type(msg_type).__name__}: {msg_type!r}")
+
+
 class Delegate:
     """多播委托，类似 C# 的 delegate。
 
@@ -247,6 +261,9 @@ class AsyncDelegate:
     # ------------------------------------------------------------------
     def add(self, handler: Callable[..., Any]) -> "AsyncDelegate":
         """添加一个回调。"""
+        # BUG-358: Delegate.add 已校验 handler 可调用，AsyncDelegate.add 却零校验——
+        # add(None) 静默登记进处理器列表，直到 invoke 才 "'NoneType' object is not callable"。
+        _require_callable(handler, "回调")
         with self._lock:
             if handler not in self._handlers:
                 self._handlers.append(handler)
@@ -322,6 +339,16 @@ class AsyncDelegate:
         Note:
             由于线程不直接返回值，本方法通过包装函数捕获返回值。
         """
+        # BUG-358: timeout 零校验——'x' 抛裸 "'>' not supported between 'int' and 'str'"，
+        # 负数被静默当成"不等待"。
+        if timeout is not None:
+            if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+                raise TypeError(
+                    f"AsyncDelegate.invoke_and_wait 的 timeout 必须是数值或 None，收到 "
+                    f"{type(timeout).__name__}: {timeout!r}")
+            if timeout < 0:
+                raise ValueError(
+                    f"AsyncDelegate.invoke_and_wait 的 timeout 不能为负，收到 {timeout!r}")
         with self._lock:
             handlers = list(self._handlers)
 
@@ -439,6 +466,13 @@ class EventBus:
         Returns:
             EventBus: 自身，支持链式调用。
         """
+        # BUG-358: priority 零校验——传 'x' 会被登记，随后**任何** subscribe 在排序
+        # 处理器列表时抛 "'<' not supported between instances of 'int' and 'str'"，
+        # 即一次坏入参把整个 EventBus 打成不可用状态。
+        if isinstance(priority, bool) or not isinstance(priority, int):
+            raise TypeError(
+                f"EventBus.subscribe 的 priority 必须是整数，收到 "
+                f"{type(priority).__name__}: {priority!r}")
         if not isinstance(event, str) or not event.strip():
             raise ValueError(
                 f"事件名必须是非空字符串，收到 {type(event).__name__}: {event!r}")
@@ -463,6 +497,8 @@ class EventBus:
         Returns:
             EventBus: 自身，支持链式调用。
         """
+        # BUG-358: subscribe 校验了事件名，unsubscribe 却没校验（None 可静默通过）。
+        _require_event_name(event, "EventBus.unsubscribe")
         with self._lock:
             if event in self._subscribers:
                 self._subscribers[event] = [
@@ -594,6 +630,7 @@ class EventBus:
     # ------------------------------------------------------------------
     def has_subscribers(self, event: str) -> bool:
         """检查事件是否有订阅者（包括通配符）。"""
+        _require_event_name(event, "EventBus.has_subscribers")
         with self._lock:
             return bool(self._subscribers.get(event)) or bool(
                 self._subscribers.get(self._wildcard)
@@ -601,6 +638,7 @@ class EventBus:
 
     def subscriber_count(self, event: str) -> int:
         """获取事件的订阅者数量（包括通配符）。"""
+        _require_event_name(event, "EventBus.subscriber_count")
         with self._lock:
             count = len(self._subscribers.get(event, []))
             count += len(self._subscribers.get(self._wildcard, []))
@@ -778,6 +816,8 @@ class MessageDispatcher:
     # ------------------------------------------------------------------
     def has_handlers(self, msg_type: Type[Any]) -> bool:
         """检查某消息类型是否有处理器（含父类匹配）。"""
+        # BUG-358: register 校验了 msg_type 是类，查询类却没校验。
+        _require_msg_type(msg_type, "MessageDispatcher.has_handlers")
         with self._lock:
             for registered_type in self._handlers:
                 if issubclass(msg_type, registered_type):
@@ -786,6 +826,7 @@ class MessageDispatcher:
 
     def handler_count(self, msg_type: Type[Any]) -> int:
         """获取某消息类型的处理器数量（含父类匹配）。"""
+        _require_msg_type(msg_type, "MessageDispatcher.handler_count")
         with self._lock:
             count = 0
             for registered_type, h_list in self._handlers.items():
