@@ -84,6 +84,7 @@ class MsgpackBackend(BaseBackend, VoolsBase):
         Returns:
             反序列化后的对象
         """
+        data = self._require_bytes(data, "MsgpackBackend.loads")
         from ...serialize.codec import vools_object_hook
         # BUG-379: 写入端 packb 接受**非字符串键**（如 {1: 'a'}），而读取端
         # msgpack>=1.0 默认 strict_map_key=True 会直接拒绝

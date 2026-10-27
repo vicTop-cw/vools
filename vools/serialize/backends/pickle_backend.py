@@ -47,4 +47,5 @@ class PickleBackend(BaseBackend, VoolsBase):
         Returns:
             反序列化后的对象
         """
+        data = self._require_bytes(data, "PickleBackend.loads")
         return pickle.loads(data)

@@ -153,6 +153,7 @@ class JsonBackend(BaseBackend, VoolsBase):
         Returns:
             反序列化后的对象
         """
+        data = self._require_bytes(data, "JsonBackend.loads")
         from ...serialize.codec import vools_object_hook, post_process_orjson
         
         # 尝试 Nim 桥接
