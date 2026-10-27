@@ -42,6 +42,12 @@
 - `CircuitBreaker(recovery_timeout<0)` 被接受 → 恢复判据恒为真，断路器永远停在半开、
   **再也不熔断**（保护静默失效）。
 - 远程下载 SSL 证书校验被禁用（`CERT_NONE`）；白名单语义反转（空白名单被当成"不校验"，SSRF）。
+- `cli.py` 的 `if __name__ == '__main__'` 守卫**写在文件中间**（原第 2034 行）：`python -m
+  vools.actus.cli <cmd>` 下 omega / concurrency / deps / dep-tree / desktop / events / viz /
+  replay / notify / project 导入导出 / export / probe / health / selfheal / template 等
+  **15 个子命令全部 `NameError`**；安装态 console script 走 import 路径，模块体先完整执行
+  再调 `main()`，因此长期未暴露。已把守卫移到文件末尾（`cli.py:2574`，共 2575 行）。
+  诊断记录见 `docs/INFRA_DIAGNOSTIC.md` §5.6 D10。
 
 **中危**
 
