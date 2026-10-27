@@ -63,12 +63,34 @@ class Heartbeat(object):
     def __init__(self, shared: Any, filename: str, interval_sec: float = 5.0,
                  stale_after_sec: float = 15.0, closed_token: str = "closed",
                  worker_id: Optional[str] = None, include_worker: bool = False,
-                 now_fn: Optional[Callable[[], Any]] = None):
+                 now_fn: Optional[Callable[[], Any]] = None,
+                 max_future_skew_sec: float = 60.0):
+        # 参数校验：这几个值配错会让判活**静默失真**——
+        #   · interval_sec <= 0：心跳泵变成忙循环；
+        #   · stale_after_sec <= 0：`age <= stale` 几乎永不成立，B 永远被判死；
+        #   · 0 曾因 `x or 默认值` 被静默替换成默认值（配了 0 却跑成 15），
+        #     所以这里显式判 None，不用 `or`。
+        if interval_sec is None:
+            interval_sec = 5.0
+        if stale_after_sec is None:
+            stale_after_sec = 15.0
+        interval_sec = float(interval_sec)
+        stale_after_sec = float(stale_after_sec)
+        if interval_sec <= 0:
+            raise ValueError(
+                f"interval_sec 必须 >0（<=0 会让心跳泵变成忙循环），得到 {interval_sec}")
+        if stale_after_sec <= 0:
+            raise ValueError(
+                f"stale_after_sec 必须 >0（<=0 会让 B 永远被判死），得到 {stale_after_sec}")
+        # 注意：这里**不**校验 stale_after_sec >= interval_sec。该约束只对
+        # 「写心跳的泵」有意义，由配置层（task/config.py）负责；只读场景
+        # （巡检、单测）用很小的 stale 阈值是合法用法。
         self.shared = shared
         self.filename = str(filename or "rhop.heartbeat")
-        self.interval_sec = float(interval_sec or 5.0)
-        self.stale_after_sec = float(stale_after_sec or 15.0)
+        self.interval_sec = interval_sec
+        self.stale_after_sec = stale_after_sec
         self.closed_token = str(closed_token or "closed")
+        self.max_future_skew_sec = float(max_future_skew_sec or 60.0)
         self.worker_id = worker_id
         self.include_worker = bool(include_worker)
         self._now_fn = now_fn or (lambda: utcnow())
@@ -207,6 +229,14 @@ class Heartbeat(object):
                     "error": "心跳内容不是合法时间戳（也不是 closed）"}
 
         age = (self._now_fn() - parsed).total_seconds()
+        # **未来时间戳**：`age` 为负（B 的时钟超前，或有人把 ts 改到未来）时，
+        # 原判据 `age <= stale_after_sec` 恒成立 → 判 alive，等于让一个已经死掉
+        # 的 B 再"活"好几个小时（fail-open）。超出容差就明确判 unknown 并说明。
+        if age < -self.max_future_skew_sec:
+            return {"state": STATE_UNKNOWN, "ts": stamp, "age_sec": round(age, 3),
+                    "raw": text, "worker_id": worker,
+                    "error": f"心跳时间戳在未来 {-age:.0f}s（超过容差 "
+                             f"{self.max_future_skew_sec:.0f}s），疑似时钟超前或伪造"}
         state = STATE_ALIVE if age <= self.stale_after_sec else STATE_STALE
         return {"state": state, "ts": stamp, "age_sec": round(age, 3),
                 "raw": text, "worker_id": worker, "error": None}

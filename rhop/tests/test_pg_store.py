@@ -418,19 +418,37 @@ class TestABSharedDatabase:
 
     TABLE = "rhop_test_ab_shared"
 
-    def _pair(self):
-        spec = dict(PG_SPEC, table=self.TABLE)
+    def _pair(self, table):
+        spec = dict(PG_SPEC, table=table)
         a = create_store(spec, {"name": "A", "role": "A", "base_dir": "."})
         a.init_schema()
         b = create_store(spec, {"name": "B", "role": "B", "base_dir": "."})
         return a, b
 
     @pytest.fixture
-    def pair(self):
-        a, b = self._pair()
-        yield a, b
-        a.close()
-        b.close()
+    def pair(self, request):
+        """每个用例**独立表**：共用一张表会让上一用例的残留行污染下一用例
+        （此前两个用例共享 rhop_test_ab_shared，先后顺序决定成败）。
+        """
+        table = "rhop_test_ab_%s" % request.node.name.replace("test_", "")[:24]
+        a, b = self._pair(table)
+        try:
+            yield a, b
+        finally:
+            a.close()
+            b.close()
+            try:
+                import psycopg2
+                conn = psycopg2.connect(host=PG_SPEC["host"], port=PG_SPEC["port"],
+                                        user=PG_SPEC["user"],
+                                        password=PG_SPEC["password"],
+                                        dbname=PG_SPEC["dbname"])
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute('DROP TABLE IF EXISTS %s CASCADE' % table)
+                conn.close()
+            except Exception:
+                pass
 
     def test_cross_instance_lifecycle(self, pair):
         a, b = pair
