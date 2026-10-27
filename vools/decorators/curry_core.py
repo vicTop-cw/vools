@@ -254,6 +254,21 @@ class CurryDescriptor:
         return Curried(self.func, is_strict=self.is_strict, delaied=self.delaied, **self.pre_attrs)(*args, **kwargs)
 
 
+def _curry_error_message(func_name: str, exc: BaseException) -> str:
+    """构造 curry 包装后的错误消息（BUG-353）。
+
+    背景：``Curried.__call__`` 内部会 ``return result()``（把已就绪的参数真正应用到
+    原函数）。若原函数本身又经过一层 curry 包装（例如 ``group_by(len)(None)``），
+    内层已经抛过 "Failed to curry X: ..."，外层再包一次就成了
+    "Failed to curry X: Failed to curry X: ..." —— 前缀重复 N 次，既噪声又掩盖真因。
+    这里对"已经是包装后的消息"直接透传。
+    """
+    msg = str(exc)
+    if msg.startswith(f"Failed to curry {func_name}: ") or msg.startswith("Failed to curry "):
+        return msg
+    return f"Failed to curry {func_name}: {msg}"
+
+
 class Curried:
     """柯里化函数包装器，支持部分参数绑定和延迟执行。
     
@@ -529,9 +544,9 @@ class Curried:
                 return result
             return result() if result.is_ready else result
         except TypeError as e:
-            raise TypeError(f"Failed to curry {self.func.__name__}: {e}") from e
+            raise TypeError(_curry_error_message(self.func.__name__, e)) from e
         except Exception as e:
-            raise CurryExecutionError(f"Failed to curry {self.func.__name__}: {e}") from e
+            raise CurryExecutionError(_curry_error_message(self.func.__name__, e)) from e
 
 
 def _curry(func: Optional[Callable[..., Any]] = None, *, is_strict: bool = False, 
