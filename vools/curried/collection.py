@@ -358,7 +358,15 @@ def nth(n: int, iterable: Iterable[A], default: A = None) -> A:
         -1
         >>> nth(-1, range(10))
         9
+
+    Raises:
+        TypeError: n 不是整数时（BUG-353：原先抛裸
+            "'<' not supported between instances of 'str' and 'int'"，再被 curry
+            包成 "Failed to curry nth: ..."，看不出是索引参数）。
     """
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise TypeError(
+            f"nth 的 n 必须是整数索引，收到 {type(n).__name__}: {n!r}")
     if n < 0:
         # 负索引：转换为正索引
         items = list(iterable)
