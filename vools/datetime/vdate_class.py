@@ -66,7 +66,7 @@ class VDate(datetime):
             self._date_processor = DateProcessor(self.strftime('%Y-%m-%d'))
             return
         """初始化 VDate 实例。
-        
+
         Args:
             dt: 日期输入，可以是字符串、时间戳、datetime对象或None（默认当前时间）
             fmt: 日期格式字符串，支持标准Python格式和自定义格式(yyyy, MM, dd等)
@@ -93,12 +93,12 @@ class VDate(datetime):
 
     def do(self, f=print, pre_f=None, sub_f=None):
         """执行函数，支持链式处理。
-        
+
         Args:
             f: 要执行的函数，默认 print
             pre_f: 执行前预处理函数，接收 VDate 对象
             sub_f: 执行后处理函数，接收 VDate 对象
-            
+
         Returns:
             f 的返回值
         """
@@ -118,14 +118,14 @@ class VDate(datetime):
 
     def get_week(self, num: int = 0, weekday: int = 1):
         """获取指定星期对应的日期。
-        
+
         Args:
             num: 周偏移，正数=未来，负数=过去
             weekday: 星期几，1-7（1=周一，7=周日）
-            
+
         Returns:
             格式化后的日期字符串
-            
+
         Raises:
             ValueError: weekday 不在 1-7 范围内
         """
@@ -141,11 +141,11 @@ class VDate(datetime):
 
     def get_month(self, num: int = 0, last_day=False):
         """获取指定月份对应的日期。
-        
+
         Args:
             num: 月份偏移，0表示本月，1=下月，-1=上月
             last_day: True 返回月份最后一天，False 返回月份第一天
-            
+
         Returns:
             格式化后的日期字符串
         """
@@ -175,10 +175,10 @@ class VDate(datetime):
 
     def simplify(self, dates):
         """简化日期列表为连续日期范围。
-        
+
         Args:
             dates: 日期列表，支持 '20240115' 或 '2024-01-15' 格式
-            
+
         Returns:
             spyDate 列表，每个包含 start, end, cnt（天数差+1）
         """
@@ -191,13 +191,13 @@ class VDate(datetime):
     @staticmethod
     def simplify_date_ranges(dates):
         """将日期列表合并为连续日期范围。
-        
+
         Args:
             dates: 日期可迭代对象（tuple, list, set），支持 '20240115' 或 '2024-01-15' 格式
-            
+
         Returns:
             (start, end) 元组列表，表示连续日期范围
-            
+
         Raises:
             TypeError: dates 不是 tuple, list, set 类型
         """
@@ -242,7 +242,6 @@ class VDate(datetime):
         simplified.append((start.strftime(fmt), end.strftime(fmt)))
         return simplified
 
-    @staticmethod
     @staticmethod
     def _generate_date_range(start_date=None, end_date=None, periods=None, freq='D'):
         """生成日期范围列表（内部方法）。
@@ -338,16 +337,16 @@ class VDate(datetime):
 
     def getDateRange(self, start: Optional[str] = None, end: Optional[str] = None, freq: str = 'D', periods: Optional[int] = None) -> List[str]:
         """生成日期范围列表。
-        
+
         Args:
             start: 起始日期字符串（'YYYY-MM-DD' 格式），不指定则使用当前日期或与 end 配合计算
             end: 结束日期字符串（'YYYY-MM-DD' 格式）
             freq: 频率，'D'=天，'W'=周，'M'=月
             periods: 生成数量，与 start 或 end 配合使用
-            
+
         Returns:
             格式化后的日期字符串列表
-            
+
         Raises:
             ValueError: end 和 periods 至少需要提供一个
         """
@@ -395,19 +394,19 @@ class VDate(datetime):
 
     def getDateRangeEx(self, start: Optional[str] = None, end: Optional[str] = None, freq: str = 'D', periods: Optional[int] = None) -> List[str]:
         """生成日期范围列表（扩展版，自动处理起止顺序）。
-        
+
         与 getDateRange 不同，本方法会自动调整 start 和 end 的顺序，
         确保返回的日期列表是从早到晚的顺序。
-        
+
         Args:
             start: 起始日期字符串（'YYYY-MM-DD' 格式）
             end: 结束日期字符串（'YYYY-MM-DD' 格式）
             freq: 频率，'D'=天，'W'=周，'M'=月
             periods: 生成数量
-            
+
         Returns:
             格式化后的日期字符串列表
-            
+
         Raises:
             ValueError: end 和 periods 至少需要提供一个
         """
@@ -469,14 +468,14 @@ class VDate(datetime):
         if args or kwargs or isinstance(fmt, int):
             return super().__new__(cls, dt, fmt, *args, **kwargs)
         """创建新的 VDate 实例（override datetime.__new__）。
-        
+
         Args:
             dt: 日期输入，支持字符串（多种格式）、时间戳、datetime 对象
             fmt: 日期格式字符串
-            
+
         Returns:
             VDate 实例
-            
+
         Raises:
             ValueError: 字符串格式日期但未指定 fmt
             TypeError: 不支持的日期类型
@@ -540,11 +539,11 @@ class VDate(datetime):
     @staticmethod
     def _parse_date(date_str, fmt):
         """解析日期字符串（内部方法）。
-        
+
         Args:
             date_str: 日期字符串
             fmt: 格式字符串
-            
+
         Returns:
             (year, month, day) 元组
         """
@@ -553,10 +552,10 @@ class VDate(datetime):
 
     def add_days(self, days: int) -> 'VDate':
         """加 n 天，返回新的 VDate。
-        
+
         Args:
             days: 天数（正数为未来，负数为过去）
-            
+
         Returns:
             新的 VDate 实例
         """
@@ -565,10 +564,10 @@ class VDate(datetime):
 
     def sub_days(self, days: int) -> 'VDate':
         """减 n 天，返回新的 VDate。
-        
+
         Args:
             days: 天数
-            
+
         Returns:
             新的 VDate 实例
         """
@@ -576,10 +575,10 @@ class VDate(datetime):
 
     def add_months(self, months: int) -> 'VDate':
         """加 n 月，返回新的 VDate（处理年末跨年）。
-        
+
         Args:
             months: 月数（正数为未来，负数为过去）
-            
+
         Returns:
             新的 VDate 实例
         """
@@ -601,10 +600,10 @@ class VDate(datetime):
 
     def sub_months(self, months: int) -> 'VDate':
         """减 n 月，返回新的 VDate。
-        
+
         Args:
             months: 月数
-            
+
         Returns:
             新的 VDate 实例
         """
@@ -612,10 +611,10 @@ class VDate(datetime):
 
     def add_years(self, years: int) -> 'VDate':
         """加 n 年，返回新的 VDate。
-        
+
         Args:
             years: 年数（正数为未来，负数为过去）
-            
+
         Returns:
             新的 VDate 实例
         """
@@ -631,10 +630,10 @@ class VDate(datetime):
 
     def sub_years(self, years: int) -> 'VDate':
         """减 n 年，返回新的 VDate。
-        
+
         Args:
             years: 年数
-            
+
         Returns:
             新的 VDate 实例
         """
@@ -642,12 +641,12 @@ class VDate(datetime):
 
     def get_date_range(self, end_date: Union[str, 'VDate'], freq: str = 'D', fmt: str = '%Y-%m-%d') -> List[str]:
         """获取从当前日期到结束日期的范围。
-        
+
         Args:
             end_date: 结束日期（字符串或 VDate 对象）
             freq: 频率，'D'=天，'W'=周，'M'=月
             fmt: 输出格式
-            
+
         Returns:
             格式化后的日期字符串列表
         """
@@ -665,13 +664,13 @@ class VDate(datetime):
 
     def __add__(self, other: Union[timedelta, int, float]) -> 'VDate':
         """加法运算，支持 timedelta 和整数天数。
-        
+
         Args:
             other: timedelta 对象或天数（整数/浮点数）
-            
+
         Returns:
             新的 VDate 实例
-            
+
         Raises:
             TypeError: 不支持的类型
         """
@@ -688,15 +687,15 @@ class VDate(datetime):
 
     def __sub__(self, other: Union[timedelta, int, float, datetime, 'VDate']) -> Union['VDate', float]:
         """减法运算，支持 timedelta、整数天数和日期。
-        
+
         Args:
             other: timedelta 对象、天数（整数/浮点数）或日期（datetime/VDate）
-            
+
         Returns:
             timedelta 减法返回新的 VDate 实例，
             整数/浮点数减法返回天数差（float），
             日期相减返回天数差（float）
-            
+
         Raises:
             TypeError: 不支持的类型
         """
@@ -716,10 +715,10 @@ class VDate(datetime):
 
     def __eq__(self, other: object) -> bool:
         """相等比较。
-        
+
         Args:
             other: 比较对象，支持 VDate、datetime、date 或字符串
-            
+
         Returns:
             日期相等返回 True，否则返回 False
         """
@@ -749,10 +748,10 @@ class VDate(datetime):
 
     def __lt__(self, other: object) -> bool:
         """小于比较。
-        
+
         Args:
             other: 比较对象，支持 VDate、datetime、date 或字符串
-            
+
         Returns:
             self < other 返回 True，否则返回 False
         """
@@ -772,10 +771,10 @@ class VDate(datetime):
 
     def __le__(self, other: object) -> bool:
         """小于等于比较。
-        
+
         Args:
             other: 比较对象，支持 VDate、datetime、date 或字符串
-            
+
         Returns:
             self <= other 返回 True，否则返回 False
         """
@@ -783,10 +782,10 @@ class VDate(datetime):
 
     def __gt__(self, other: object) -> bool:
         """大于比较。
-        
+
         Args:
             other: 比较对象，支持 VDate、datetime、date 或字符串
-            
+
         Returns:
             self > other 返回 True，否则返回 False
         """
@@ -794,10 +793,10 @@ class VDate(datetime):
 
     def __ge__(self, other: object) -> bool:
         """大于等于比较。
-        
+
         Args:
             other: 比较对象，支持 VDate、datetime、date 或字符串
-            
+
         Returns:
             self >= other 返回 True，否则返回 False
         """
@@ -805,7 +804,7 @@ class VDate(datetime):
 
     def __str__(self) -> str:
         """返回格式化后的日期字符串。
-        
+
         Returns:
             按照 fmt 格式化的日期字符串
         """
@@ -816,7 +815,7 @@ class VDate(datetime):
 
     def __repr__(self) -> str:
         """返回 VDate 的官方表示。
-        
+
         Returns:
             VDate 字符串表示，如 VDate('2024-01-15')
         """
@@ -824,16 +823,16 @@ class VDate(datetime):
 
     def __getattr__(self, name: str) -> object:
         """动态属性访问，支持代理到内部对象。
-        
+
         首先在实例字典中查找，然后代理到父类（datetime），
         最后代理到 _date_processor。
-        
+
         Args:
             name: 属性名称
-            
+
         Returns:
             属性值
-            
+
         Raises:
             AttributeError: 属性不存在
         """
@@ -865,9 +864,9 @@ class VDate(datetime):
 
     def __dir__(self) -> List[str]:
         """返回所有可用属性列表。
-        
+
         合并了实例属性、datetime 属性和 _date_processor 属性。
-        
+
         Returns:
             属性名称列表
         """
@@ -878,10 +877,10 @@ class VDate(datetime):
 
     def toString(self, fmt: Optional[str] = None) -> str:
         """转换为字符串。
-        
+
         Args:
             fmt: 可选的格式字符串，不指定则使用默认格式
-            
+
         Returns:
             格式化后的日期字符串
         """
@@ -891,10 +890,10 @@ class VDate(datetime):
 
     def __reduce_ex__(self, protocol: int) -> tuple:
         """支持 pickle 序列化。
-        
+
         Args:
             protocol: pickle 协议版本
-            
+
         Returns:
             元组，包含重建函数和参数
         """
@@ -906,7 +905,7 @@ class VDate(datetime):
 
     def __getstate__(self) -> dict:
         """获取序列化状态。
-        
+
         Returns:
             包含 fmt 的字典
         """
@@ -915,7 +914,7 @@ class VDate(datetime):
 
     def __setstate__(self, state: dict) -> None:
         """恢复序列化状态。
-        
+
         Args:
             state: 包含 fmt 的字典
         """

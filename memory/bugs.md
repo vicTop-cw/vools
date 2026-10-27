@@ -6519,3 +6519,235 @@ severity medium。
   BUG-339: 4 个 demo 文件全部解析成功 kind=demo ✓
   BUG-340: test_dag_scheduler.py 8 用例全绿 ✓
 - reported_by: vools-bughunt-lead
+## BUG-341 [2026-10-27T01:40:29Z] [low] FIXED
+- summary: utils.tools 第二批入参零校验：get_py_fmt/offset_date/check_no_overlap/get_index_cols 对 None/错误类型抛裸 TypeError（argument of type 'NoneType' is not iterable / object of type 'NoneType' has no len() 等），看不出是哪个参数
+- detail: 修复前实测：
+  get_py_fmt(None) -> TypeError: argument of type 'NoneType' is not iterable
+  offset_date(None,1) -> 同一句裸错；offset_date('20240101','x') -> TypeError: unsupported type for timedelta days component: str
+  check_no_overlap(None) -> TypeError: object of type 'NoneType' has no len()；check_no_overlap([1,2]) -> TypeError: argument of type 'int' is not iterable
+  get_index_cols(None) -> TypeError: object of type 'NoneType' has no len()
+修复：四个入口统一带参数名的 TypeError；offset_date 保留文档承诺的 datetime.date/datetime.datetime 基准日期支持。
+证据：tests/test_utils_tools_batch2_validation_regression.py（26 用例），commit 见后续 execute 步骤。
+- reported_by: vools-lead
+- task_id: T0r752
+
+
+### FIXED(2026-10-27T01:41:08Z / BUG-341)
+- evidence: vools/utils/tools.py 增加入口校验（get_py_fmt/offset_date/check_no_overlap/get_index_cols）；新增 tests/test_utils_tools_batch2_validation_regression.py 26 用例；全量 pytest 绿（EXIT=0）。
+## BUG-342 [2026-10-27T02:19:30Z] [low] FIXED
+- summary: data.vtext 三个入口零校验：like(None/123) 抛裸 AttributeError(.lower)、replace_run_date('bogus') 抛 invalid literal for int: 'bogu'（切片截断，指不到日期参数）、toZipB64(level=99) 抛 zlib Bad compression level
+- detail: 修复前实测：
+  VText('abc').like(None) -> AttributeError: 'NoneType' object has no attribute 'lower'
+  VText('{run_date}').replace_run_date('bogus') -> ValueError: invalid literal for int() with base 10: 'bogu'
+  VText('hi').toZipB64(level=99) -> zlib.error: Bad compression level；level='x' -> 裸 TypeError
+修复：pattern 必须字符串；run_date 只接受 YYYYMMDD / YYYY-MM-DD / date/datetime 并做真实日历校验；level 必须 1..9 整数（bool 拒绝）。
+证据：tests/test_data_vtext_validation_regression.py（40 用例）+ 全量 pytest EXIT=0；commit 909cd97。
+- reported_by: vools-lead
+- task_id: T0r753
+
+
+### FIXED(2026-10-27T02:19:37Z / BUG-342)
+- evidence: vools/data/vtext.py 增加 like/replace_run_date/toZipB64 入口校验；新增 tests/test_data_vtext_validation_regression.py 40 用例；全量 pytest EXIT=0（commit 909cd97）。
+## BUG-343 [2026-10-27T03:11:33Z] [low] FIXED
+- summary: data.vtext 的 _strip_sql_comments docstring 未加 raw 前缀，导致 \* 成为无效转义序列：py3.11 DeprecationWarning / py3.12+ SyntaxWarning，每次 import 都告警，-W error 下 import 失败
+- detail: 缺陷：vools/data/vtext.py 的 _strip_sql_comments docstring 中写正则 `/*.*?*/`（含 \*），字符串非 raw → invalid escape sequence。
+复现：compile(源码) / 清 pyc 后 import 均报 DeprecationWarning: invalid escape sequence '\*' @ L55；pytest 运行期显示 SyntaxWarning。
+修复：docstring 改为 raw 字符串，保留正则原貌。
+证据：全库逐文件 compile() 复扫 0 处；新增 tests/test_no_invalid_escape_sequences_regression.py（含反向自检：故意写坏样例必须被抓到）；全量 pytest EXIT=0；commit 3bc7ce2。
+- reported_by: vools-lead
+- task_id: T0r754
+
+
+### FIXED(2026-10-27T03:12:02Z / BUG-343)
+- evidence: vools/data/vtext.py docstring 改 raw；新增 tests/test_no_invalid_escape_sequences_regression.py 全库无效转义守卫（含反向自检）；全量 pytest EXIT=0（commit 3bc7ce2）。
+## BUG-344 [2026-10-27T03:34:48Z] [medium] FIXED
+- summary: serialize 对循环引用输入抛 RecursionError（maximum recursion depth exceeded）而非明确的循环引用错误；json/vb_json/msgpack 三后端均如此，pickle 正常
+- detail: 修复前实测：d = {}; d['self'] = d → dumps(d, 'json'/'vb_json'/'msgpack') 全部 RecursionError: maximum recursion depth exceeded（指不到'数据里有环'）。
+根因：codec.vools_preprocess 与 vb_json._stringify 递归遍历容器时无环检测。
+修复：沿当前路径维护容器 id 集合，重入抛 ValueError（说明循环引用 + 断开环/改 pickle 建议）；离开容器移除 id，共享非环引用不误报。
+证据：tests/test_serialize_cycle_detection_regression.py（20 用例：三后端×dict/list/深层环、共享引用不误报、失败后集合无残留、pickle 环往返）；全量 pytest EXIT=0；commit 22c9716。
+- reported_by: vools-lead
+- task_id: T0r755
+
+
+### FIXED(2026-10-27T03:34:53Z / BUG-344)
+- evidence: vools/serialize/codec.py + backends/vb_json_backend.py 增加循环引用检测（明确 ValueError）；新增 tests/test_serialize_cycle_detection_regression.py 20 用例；全量 pytest EXIT=0（commit 22c9716）。
+## BUG-345 [2026-10-27T03:57:07Z] [medium] FIXED
+- summary: cache.persist 两缺陷：① persist('x')/persist(123) 静默返回 wrapper，当装饰器用时抛 AttributeError: 'str' object has no attribute '__module__'；② 合法 JSON 但缺 result/start_time/end_time 字段的缓存文件抛 KeyError: 'result'（而损坏 JSON 却能优雅重算）
+- detail: ① persist("x") 返回 wrapper 不报错；@persist("x") 在 wrapper 深处抛 AttributeError: 'str' object has no attribute '__module__'（指不到'把字符串当函数'）。
+② 缓存文件 {"no_result": 1} → KeyError: 'result'；{"result": 1} → 缺时间戳下游异常；而 {not-json 是优雅重算 —— 同类坏缓存两种命运。
+修复：入口校验 func 必须 callable/None（带修复建议）；读取后校验三字段齐全，缺失按未命中重算；返回处双重防御。
+证据：tests/test_cache_persist_invalid_cache_regression.py（15 用例：非可调用 func、缺键/缺时间戳/坏 JSON/非 dict 载荷、新鲜缓存命中、force 重算、BUG-470 按参指纹、不可序列化返回值）；全量 pytest EXIT=0（vconcurrent multiprocessing 两项为负载下已知 flake，单跑 34/34 绿）；commit 4ad960b。
+- reported_by: vools-lead
+- task_id: T0r756
+
+
+### FIXED(2026-10-27T03:57:12Z / BUG-345)
+- evidence: vools/cache/persist.py 增加 func 可调用校验 + 缓存字段完整性校验（缺字段按未命中重算）；新增 tests/test_cache_persist_invalid_cache_regression.py 15 用例；全量 pytest EXIT=0（commit 4ad960b）。
+## BUG-346 [2026-10-27T04:14:47Z] [high] FIXED
+- summary: vconcurrent 原语两缺陷：① VLatch('x')/VBarrier('x')/VSemaphore('x') 抛裸 TypeError: '<' not supported between instances of 'str' and 'int'；② VSemaphore.acquire('x') 把 truthy 的 blocking 当 True 且 timeout=None → 永久阻塞
+- detail: ① 三个构造函数直接做 `< 0` 比较，非数值入参抛裸 TypeError。
+② acquire(blocking=True, timeout=None) 签名下传任意真值（如字符串）会被当成阻塞调用，调用方以为传了超时参数，实际无限等待（探针实测 120s 未返回，须 kill 进程）。
+修复：构造参数校验整数（bool 拒绝）；acquire 校验 blocking 必须 bool、timeout 非负数值、blocking=False 带 timeout 抛 ValueError；acquire_timeout 同校验。
+证据：tests/test_vconcurrent_primitives_validation_regression.py（40 用例，含'必须真的在超时附近返回' 的时间断言防回归成永久阻塞）；tests/vconcurrent 357 用例全绿；全量 pytest 绿；commit 653b2cc。
+- reported_by: vools-lead
+- task_id: T0r757
+
+
+### FIXED(2026-10-27T04:14:53Z / BUG-346)
+- evidence: vools/vconcurrent/threading_mod.py 增加 VLatch/VBarrier/VSemaphore 构造与 acquire/acquire_timeout 参数校验；新增 tests/test_vconcurrent_primitives_validation_regression.py 40 用例（含不阻塞的时间断言）；commit 653b2cc。
+## BUG-347 [2026-10-27T04:26:44Z] [medium] FIXED
+- summary: vconcurrent.queues 的 maxsize/timeout 零校验：VQueue('x')/VLifoQueue('x')/BoundedChannel('x') 构造期静默接受，首次 is_full()/put()/send() 才抛裸 TypeError: '<'/'>' not supported between 'str' and 'int'；get_timeout('x') 等同形
+- detail: 修复前实测：VQueue('x').is_full() → TypeError: '<' not supported between instances of 'int' and 'str'；VQueue('x').put(1) → '>' not supported…；BoundedChannel('x').send(1) 同形；q.get_timeout('x') / q.put_timeout(1,'x') 同类裸错。
+修复：三个构造函数校验 maxsize 为整数（bool 拒绝，0/负数按 stdlib 语义=无界）；VQueue 的 get/put/get_timeout/put_timeout 与 VLifoQueue/VPriorityQueue 的 get_timeout 统一校验 timeout 为 None 或非负数值。
+证据：tests/test_vconcurrent_queues_validation_regression.py（40 用例，全部带超时参数防挂死）；tests/vconcurrent 全绿；全量 pytest 绿；commit bbcd1ad。
+- reported_by: vools-lead
+- task_id: T0r758
+
+
+### FIXED(2026-10-27T04:26:52Z / BUG-347)
+- evidence: vools/vconcurrent/queues.py 增加 _check_maxsize/_check_timeout 及 13 处入口校验；新增 tests/test_vconcurrent_queues_validation_regression.py 40 用例；commit bbcd1ad。
+## BUG-348 [2026-10-27T04:47:19Z] [medium] FIXED
+- summary: sched_mod 两缺陷：① schedule_at('x', fn) 抛裸 TypeError(unsupported operand type(s) for -: 'str' and 'float')；② SchedulerPool.add(123) 静默塞进池子，之后 cancel_all()/stop_all() 抛 AttributeError: 'int' object has no attribute 'cancel_all'（污染在 add、崩溃在批量操作）
+- detail: ① schedule_at 直接做 when - now 运算，非数值入参抛裸 TypeError。
+② SchedulerPool.add/remove 零校验：add(123) 进入 _schedulers，后续 cancel_all/stop_all/run_all 遍历时逐个调用对方方法 → AttributeError；remove(None) 走「未加入」分支静默返回 False。
+修复：schedule_at 校验 when 数值；add/remove 校验调度器（VScheduler 或具备 cancel_all/stop_all/run 的对象，保留鸭子类型兼容）。
+证据：tests/test_vconcurrent_sched_validation_regression.py（22 用例，含坏 add 后池子未被污染）；tests/vconcurrent 全绿；全量 pytest 绿；commit c818ec8。
+- reported_by: vools-lead
+- task_id: T0r759
+
+
+### FIXED(2026-10-27T04:47:21Z / BUG-348)
+- evidence: vools/vconcurrent/sched_mod.py 增加 schedule_at when 校验与 SchedulerPool.add/remove 的调度器校验（保留鸭子类型）；新增 tests/test_vconcurrent_sched_validation_regression.py 22 用例；commit c818ec8。
+## BUG-349 [2026-10-27T04:57:00Z] [medium] FIXED
+- summary: SpawnManager 两缺陷：① register(None/'') 静默接受非字符串名字（names() 返回 [None, '']）；② stop_all(timeout='x') 静默返回 None——stop 内 join 的 TypeError 被 except 吞掉，非法超时退化为直接 kill
+- detail: ① register(name) 无校验：None/'' 原样作为 _handles 字典键，公共查询面 names()/status() 出现非字符串名字。
+② monitor(timeout='x') 抛裸 TypeError(unsupported operand type(s) for +: 'float' and 'str')；stop(name, timeout='x') 中 handle.join(timeout='x') 的 TypeError 被 `except Exception: pass` 吞掉 → 静默退化为直接 kill；stop_all 沿用它，非法 timeout 完全无报错。
+修复：register 要求 name 非空字符串；monitor/stop/stop_all 复用 _validate_positive_number 校验 timeout（monitor 允许 None）。
+证据：tests/test_vconcurrent_spawn_manager_validation_regression.py（30 用例）；tests/vconcurrent 全绿；全量 pytest 绿；commit 0de759c。
+- reported_by: vools-lead
+- task_id: T0r760
+
+
+### FIXED(2026-10-27T04:57:03Z / BUG-349)
+- evidence: vools/vconcurrent/spawns.py 增加 register(name) 与 monitor/stop/stop_all(timeout) 校验（复用既有 _validate_positive_number）；新增回归 30 用例；commit 0de759c。
+## BUG-350 [2026-10-27T05:11:20Z] [medium] FIXED
+- summary: sql 连接构造参数零校验：SqliteConnection(None/123) 静默接受（connect 时才由 sqlite3 抛错）；PostgresConnection(port='x'/-1、host=123) 全部静默接受，而 vools.db.PostgreSQLConnection 早有校验
+- detail: ① SqliteConnection(database) 无校验：None/123 构造成功，connect() 时才抛 "TypeError: expected str, bytes or os.PathLike object"。
+② PostgresConnection(host/port/user/password/database) 无校验：port='x'、port=-1、host=123 全部静默接受，直到 connect() 才由驱动报难读错误；而 vools.db.PostgreSQLConnection 早已校验 port 1..65535 与 host 非空字符串（同类实现口径分裂）。
+修复：sqlite database 必须字符串（'' 保留 sqlite3 临时库语义）；postgres host 非空字符串、port 1..65535 整数（bool 拒绝）、user/password/database 必须字符串。
+证据：tests/test_sql_connection_constructor_validation_regression.py（30 用例）；29 个 SQL 测试文件全绿；全量 pytest 绿；commit fcbbdd8。
+- reported_by: vools-lead
+- task_id: T0r761
+
+
+### FIXED(2026-10-27T05:11:29Z / BUG-350)
+- evidence: vools/sql/sqlite/connection.py + vools/sql/postgres/connection.py 增加构造参数校验；新增 tests/test_sql_connection_constructor_validation_regression.py 30 用例；commit fcbbdd8。
+
+
+### FIXED(2026-10-27T05:13:48Z / BUG-350)
+- evidence: vools/sql/sqlite/connection.py + postgres/connection.py 构造参数校验；tests/test_sql_connection_constructor_validation_regression.py 30 用例（含修正环境依赖的驱动断言：有驱动则 skip）；commit fcbbdd8 + 1d04e31。
+## BUG-351 [2026-10-27T05:30:32Z] [medium] FIXED
+- summary: serialize 后端对象直用时 loads/loads_hex 缺少入参校验：JsonBackend().loads(None) 抛裸 AttributeError(.decode)、MsgpackBackend().loads(None) 抛裸 bytes-like 错误、loads_hex(None) 抛裸 fromhex 错误（顶层便捷函数早已校验）
+- detail: 顶层 vools.serialize.loads/loads_hex 有校验，但直接使用后端对象时没有：
+  JsonBackend().loads(None) -> AttributeError: 'NoneType' object has no attribute 'decode'
+  JsonBackend().loads('str') -> AttributeError: 'str' object has no attribute 'decode'
+  MsgpackBackend().loads(None) -> TypeError: a bytes-like object is required
+  JsonBackend().loads_hex(None) -> TypeError: fromhex() argument must be str
+修复：BaseBackend 增加 _require_bytes() 与 loads_hex 校验（bytes 先 ASCII 解码，因 bytes.fromhex() 只接受 str）；四个后端 loads() 统一调用，错误带「类名.loads」。
+证据：tests/test_serialize_backend_input_validation_regression.py（51 用例，含 bytearray/memoryview 与 bytes-hex 入参）；既有 serialize 测试全绿；全量 pytest EXIT=0；commit 1754440。
+- reported_by: vools-lead
+- task_id: T0r762
+
+
+### FIXED(2026-10-27T05:30:35Z / BUG-351)
+- evidence: vools/serialize/backends/base.py 增加 _require_bytes/loads_hex 校验；四个后端 loads() 统一校验；新增 tests/test_serialize_backend_input_validation_regression.py 51 用例；commit 1754440。
+## BUG-352 [2026-10-27T05:36:23Z] [medium] FIXED
+- summary: task.batch_execute 参数零校验：priority='x'、max_retries=-1、worker_nums=0、queue=123 全部静默接受；is_worker 传真值会**静默切换语义**（返回任务 ID 而非执行结果）；task_args=[1] 晚期抛裸 concatenate 错误
+- detail: ① priority='x' / max_retries=-1 / worker_nums=0 / queue=123 均被静默接受（worker_nums=0 时任务永不执行）。
+② is_worker='x'（truthy 非 bool）被当成 True —— 装饰器从「直接执行返回结果」静默变成「提交队列返回任务 ID」。
+③ task_args=[1] / task_args='ab' 直到执行期才抛 "TypeError: can only concatenate tuple (not 'int') to tuple"。
+修复：工厂期校验 priority/max_retries/worker_nums 整数（bool 拒绝）、范围、is_worker 必须 bool、queue 必须 TaskQueue/None、task_args/task_kwargs 序列与元素类型（带下标）。
+证据：tests/test_task_batch_execute_validation_regression.py（34 用例）+ tests/task 全绿；全量 pytest 绿；commit 18d143c。
+- reported_by: vools-lead
+- task_id: T0r763
+
+
+### FIXED(2026-10-27T05:36:25Z / BUG-352)
+- evidence: vools/task/decorators/task_decorator.py 增加 batch_execute 工厂期参数校验；新增 tests/test_task_batch_execute_validation_regression.py 34 用例；commit 18d143c。
+## BUG-353 [2026-10-27T05:45:32Z] [low] FIXED
+- summary: curry 包装的异常信息重复前缀（Failed to curry X: Failed to curry X: …，嵌套 curry 时叠加）；curried.nth 索引非整数抛裸 '<' not supported 而非参数错误
+- detail: ① Curried.__call__ 内部 `return result()` 真正执行原函数时，若内层已抛包装过的 "Failed to curry X: ..."，外层 except 再包一次 → 前缀重复 N 次，噪声且掩盖真因（实测 group_by(len)(None)、capitalize(None)、flatten(None) 均为双前缀）。
+② nth('x')([1,2]) → "Failed to curry nth: '<' not supported between instances of 'str' and 'int'"，看不出错在索引参数。
+修复：新增 _curry_error_message()（已是包装消息则透传）；nth 校验 n 为整数（bool 拒绝）。
+证据：tests/test_decorators_curry_error_message_regression.py（16 用例，含前缀只出现 1 次的断言）+ 既有 curried/curry 测试全绿；全量 pytest 绿；commit 6b2d040。
+- reported_by: vools-lead
+- task_id: T0r764
+
+
+### FIXED(2026-10-27T05:45:34Z / BUG-353)
+- evidence: vools/decorators/curry_core.py 增加 _curry_error_message 去重前缀；vools/curried/collection.py nth 增加索引校验；新增回归 16 用例；commit 6b2d040。
+## BUG-354 [2026-10-27T05:55:36Z] [low] FIXED
+- summary: serialize 三个装饰器（serializable/serialize_method/deserialize_method）的 backend 零校验：传 123 等非字符串静默返回装饰器，直到每次调用才抛 Unknown backend
+- detail: serializable(123) / serialize_method(123) / deserialize_method(123) 全部静默接受，真正报错发生在**每次调用**的 Serializer(backend=123) 处（"Unknown backend: 123"）——错误离装饰点很远且每调用一次暴露一次。
+修复：工厂期校验 backend 必须字符串或 None（裸装饰路径沿用 BUG-371 分支），错误信息列出可用后端。
+证据：tests/test_serialize_decorators_backend_validation_regression.py（14 用例，含 pickle 往返需模块级类的说明）+ 既有 serialize 测试全绿；全量 pytest 绿；commit bd72d20。
+- reported_by: vools-lead
+- task_id: T0r765
+
+
+### FIXED(2026-10-27T05:55:38Z / BUG-354)
+- evidence: vools/serialize/decorators.py 增加 _check_backend_param 与三处工厂期校验；新增回归 14 用例；commit bd72d20。
+## BUG-355 [2026-10-27T06:07:43Z] [medium] FIXED
+- summary: @sql_module(connection=...) 的类级配置不下发给带 @sql_function 的方法：内层静态 SQL + 类级连接仍报「提供了静态 SQL 模板但未提供数据库连接」，且内层装饰把 self 当 SQL 参数
+- detail: 修复前实测：
+  @sql_module(connection=conn)
+  class Repo:
+      @sql_function(sql='SELECT COUNT(*) FROM u')
+      def count(self) -> int: ...
+  Repo().count() -> RuntimeError: sql_function: 提供了静态 SQL 模板但未提供数据库连接...
+根因：sql_module 遍历类方法时，对已带 _sql_info 的方法直接 continue，类级 dialect/connection 完全不下发；且内层 sql_function 创建包装器时 skip_first_arg=False，把 self 当成 SQL 参数。
+修复：对已装饰方法按「方法自身配置优先、类级配置兜底」重新包装（skip_first_arg=True），保留静态 SQL 与 @sql_func_name（含装饰在内层之上的情形）。
+证据：tests/test_sql_module_config_propagation_regression.py（9 用例：内层静态 SQL/带参 SQL/方法自身连接优先/func_name 保留/未装饰方法不变/无 SQL 返回 None）；30 个 SQL 测试文件全绿；全量 pytest 绿；commit 3c06ecc。
+- reported_by: vools-lead
+- task_id: T0r766
+
+
+### FIXED(2026-10-27T06:07:46Z / BUG-355)
+- evidence: vools/sql/core/decorators.py sql_module 对已带 _sql_info 的方法重新包装并下发类级配置；新增 tests/test_sql_module_config_propagation_regression.py 9 用例；commit 3c06ecc。
+## BUG-356 [2026-10-27T06:16:36Z] [low] FIXED
+- summary: utils.tools.build_text 的 dct/lst/max_iter_num 零校验：dct=123 静默忽略（占位符原样返回）、lst 非可迭代晚期报错、max_iter_num='x' 裸 TypeError、负数静默不迭代
+- detail: 实测：build_text('x={a}', dct=123) 返回 'x={a}'（调用方以为已替换）；build_text('x', lst=123) 由 transferCols 晚期抛 TypeError（指不到参数）；max_iter_num='x' → "'>' not supported between 'str' and 'int'"；max_iter_num=-1 被静默当成不迭代。
+修复：dct 需映射或 None、lst 需可迭代（非 str/bytes）或 None、max_iter_num 非负整数（0 保留语义）。
+证据：tests/test_utils_build_text_validation_regression.py（25 用例，含嵌套占位符迭代与自定义 sep/check_key）；全量 pytest 绿；commit 6de6ec5。
+- reported_by: vools-lead
+- task_id: T0r767
+
+
+### FIXED(2026-10-27T06:16:38Z / BUG-356)
+- evidence: vools/utils/tools.py build_text 增加 dct/lst/max_iter_num 校验；新增 tests/test_utils_build_text_validation_regression.py 25 用例；commit 6de6ec5。
+## BUG-357 [2026-10-27T06:29:58Z] [low] FIXED
+- summary: functional.Result 回调零校验（与 Maybe 的 BUG-438 修复不一致）+ Maybe/Result 的 bind/flat_map 把回调返回的**裸值原样透传**（Some(1).flat_map(lambda x: x+1) -> 2），破坏 monad 契约
+- detail: ① Success(2).map(None) -> TypeError: 'NoneType' object is not callable（Maybe.map 早有清晰报错）；bind/map_err/flat_map 同类。
+② Some(1).flat_map(lambda x: x + 1) -> 2、Success(2).bind(lambda x: x * 2) -> 4——回调返回非包装值被原样透传，下游链式调用才 AttributeError。
+修复：Result 增加 _require_callable（map/map_err/bind/flat_map）；Maybe.bind/Result.bind 校验回调返回值为对应包装类型。
+证据：tests/test_functional_result_maybe_validation_regression.py（22 用例，含 Failure/Nothing 短路、from_unsafe、is_none/is_success property 语义）+ 既有 functional 测试全绿；全量 pytest 绿；commit 85f6c2d。
+- reported_by: vools-lead
+- task_id: T0r768
+
+
+### FIXED(2026-10-27T06:30:00Z / BUG-357)
+- evidence: vools/functional/result.py 增加 _require_callable 与四处校验；vools/functional/maybe.py bind 返回类型校验；新增回归 22 用例；commit 85f6c2d。
+## BUG-358 [2026-10-27T06:46:48Z] [medium] FIXED
+- summary: vconcurrent.delegates 族校验缺失：AsyncDelegate.add(None) 静默登记、invoke_and_wait(timeout) 裸错/负数静默；EventBus.priority='x' 污染排序致后续 subscribe 崩溃、unsubscribe/查询类缺事件名校验；Dispatcher 查询类裸 issubclass 错
+- detail: ① AsyncDelegate.add(None) 静默登记（Delegate.add 有 _require_callable，Async 没有）；invoke_and_wait(timeout='x') 抛裸 "'>' not supported"，timeout=-1 静默不等待。
+② EventBus.subscribe(priority='x') 被接受，随后**任何** subscribe 在排序处理器列表时抛 "'<' not supported between instances of 'int' and 'str'"——一次坏入参把整个 bus 打成不可用；unsubscribe(None)/has_subscribers(None)/subscriber_count(None) 缺事件名校验。
+③ MessageDispatcher.has_handlers(None)/handler_count(None) 抛裸 "issubclass() arg 1 must be a class"。
+修复（AST 精确定位 8 处）：AsyncDelegate.add 复用可调用校验；timeout 校验；EventBus.priority 必须 int；EventBus 查询/退订校验事件名；Dispatcher 查询校验 msg_type。
+证据：tests/test_vconcurrent_delegates_validation_regression.py（22 用例，含坏入参后 bus 仍可用）；tests/vconcurrent + test_delegates + test_eventbus 全绿；全量 pytest 绿；commit 902bbb6。
+- reported_by: vools-lead
+- task_id: T0r769
+
+
+### FIXED(2026-10-27T06:46:53Z / BUG-358)
+- evidence: vools/vconcurrent/delegates.py 增加 AsyncDelegate/EventBus/MessageDispatcher 参数校验（8 处）；新增 tests/test_vconcurrent_delegates_validation_regression.py 22 用例；commit 902bbb6。

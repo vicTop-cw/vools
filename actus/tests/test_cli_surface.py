@@ -8,6 +8,7 @@
   2. **没有 `--version` 选项** —— 直接落进 argparse 用法错误（exit 2）。
   3. **无子命令时静默退出** —— `actus` 什么都不打印就 exit 2，用户看不到用法。
 """
+import os
 import subprocess
 import sys
 
@@ -18,9 +19,13 @@ ACTUS = __import__("os").path.dirname(
 
 
 def _cli(*args):
+    env = dict(os.environ)
+    # P1-1：强制子进程从源码树 import，回滚到系统 site-packages 的旧装会
+    # 报 0.8.0（与源码 0.7.9 冲突）。actus/vools/ 是源码真源所在。
+    env["PYTHONPATH"] = os.path.join(ACTUS, "vools") + os.pathsep + env.get("PYTHONPATH", "")
     return subprocess.run([sys.executable, "-m", "vools.actus.cli", *args],
                           capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", cwd=ACTUS, timeout=300)
+                          errors="replace", cwd=ACTUS, timeout=300, env=env)
 
 
 # --------------------------------------------------------------------------
