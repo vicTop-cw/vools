@@ -11,7 +11,7 @@ name = "vools-actus"
 # 0.7.9：docs/41 的 sigma / scattered / repo / publisher 四个模块此前**从未进过
 # 任何已发布的 wheel**（0.7.8 发布于 09-27，那四个模块是 10-12 才写的），
 # 所以本地源码与 PyPI 上的 0.7.8 内容并不相同 —— 必须靠版本号区分。
-version = "0.8.0"
+version = "0.9.0"
 authors = [
     { name = "Victor", email = "victortop921129@gmail.com" },
 ]
@@ -39,7 +39,7 @@ classifiers = [
 # 但 vools-actus 早已不支持；声明 >=3.6 会让 3.6 用户 pip 装上即 SyntaxError。
 requires-python = ">=3.7"
 dependencies = [
-    "vools>=0.7.0",
+    "vools>=0.9.0",
     # 引擎不止 mdtest 需要 vools.bridge：model.parse_cfg()（加载任何一条动作都要走）
     # 与 executor 的逐块执行都 import vools.bridge.md.*。这些符号来自已发布的
     # vools-bridges（主包 vools 只把它放在 [bridges] extras 里，装了 vools 也没有），
@@ -51,7 +51,7 @@ dependencies = [
     # `vools.bridge.md.runner.is_routable`，而实测已发布的 **0.7.8 wheel 里没有这个符号**
     # （装 0.7.8 后 `from vools.bridge.md.runner import is_routable` 直接 ImportError）。
     # 钉 0.7.7/0.7.8 都会让"装得上但校验一跑就炸"的组合被解析出来。
-    "vools-bridges>=0.7.9",
+    "vools-bridges>=0.9.0",
 ]
 
 [project.optional-dependencies]
