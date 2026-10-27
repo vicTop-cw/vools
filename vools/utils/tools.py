@@ -520,6 +520,26 @@ def build_text(raw_text_mode="", dct=None, lst=None, sep="\n ,", check_key: str 
             f"{type(raw_text_mode).__name__}: {raw_text_mode!r}")
     txt = copy.deepcopy(raw_text_mode)
 
+    # BUG-356: dct/lst 类型与 max_iter_num 校验——
+    #   ① dct=123 被静默忽略（模板原样返回，调用方以为已替换）；
+    #   ② max_iter_num='x' 抛裸 "'>' not supported between 'str' and 'int'"；
+    #   ③ max_iter_num 负数被静默当成"不迭代"（模板占位符原样返回）。
+    if dct is not None and not hasattr(dct, "keys"):
+        raise TypeError(
+            f"build_text() 的 dct 需要映射（dict 等）或 None，收到 "
+            f"{type(dct).__name__}: {dct!r}")
+    if lst is not None and (isinstance(lst, (str, bytes)) or not hasattr(lst, "__iter__")):
+        raise TypeError(
+            f"build_text() 的 lst 需要可迭代对象（非字符串）或 None，收到 "
+            f"{type(lst).__name__}: {lst!r}")
+    if isinstance(max_iter_num, bool) or not isinstance(max_iter_num, int):
+        raise TypeError(
+            f"build_text() 的 max_iter_num 必须是整数，收到 "
+            f"{type(max_iter_num).__name__}: {max_iter_num!r}")
+    if max_iter_num < 0:
+        raise ValueError(
+            f"build_text() 的 max_iter_num 不能为负，收到 {max_iter_num!r}（0 表示不迭代）")
+
     if dct:
         dct = toOrderedDict(dct)
         kys = ["{" + k + "}" for k in dct.keys()]
