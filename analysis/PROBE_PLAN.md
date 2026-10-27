@@ -1385,6 +1385,14 @@ def probe_from_language_map():
   4. force=True 时强制刷新
 ```
 
+> **实测现状（2026-10-27 补记）**：上面「串行 ~5-15 秒 / 并行 ~2-4 秒」是**目标值**。
+> - 第 2 条（线程池并行）**已落地**：`probe/__init__.py` 用
+>   `ThreadPoolExecutor(max_workers=min(8, 探测器数))` 并发跑 9-10 个探测器，
+>   结果按原始顺序合并；`verbose` 打印用锁串行化。
+> - 并行化**之前**的实测串行耗时约 **79 秒**——远高于本文档原先估计的 5-15 秒
+>   （版本探测的 `subprocess` 开销被低估）。**并行后的耗时本轮未复测**，故 2-4 秒仍只是目标值。
+> - 第 3、4 条（24h TTL 缓存 + `force_refresh`）此前即已生效（`probe/cache.py`）。
+
 ### 8.2 探测结果缓存
 
 ```python
@@ -1403,47 +1411,130 @@ def probe_from_language_map():
 
 ## 九、分阶段落地
 
+> **进度总览（2026-10-27 按代码事实核验，文档司令补记）**
+>
+> | 阶段 | 状态 | 一句话 |
+> |---|---|---|
+> | Phase 0 — 核心探测 + 权限 + 环境 | ✅ **已完成** | Phase 0 涉及的 10 个模块全部落地（`probe/` 现共 15 个 `.py`、3059 行） |
+> | Phase 1 — Python 包 + 动作分析 + 缓存 | ✅ **已完成** | `python_pkgs.py` / `actions.py` / `cache.py` 均在位 |
+> | Phase 2 — 平台特定 + 并行化 | ⚠️ **基本完成（待跨平台实跑）** | 并行化 8 线程已落地；平台细项已实现，余 Homebrew + 跨平台实跑 |
+> | Phase 3 — CLI + 集成 | ✅ **已完成** | `actus probe` 含 4 个开关 + MCP `actus_probe` + `intent.py` ready 过滤 |
+>
+> 本节的复选框**按实际代码核对**，未完成的**不勾**。路径约定：下面的 `probe/xxx.py`
+> 对应仓库内 `actus/vools/actus/probe/xxx.py`，`tests/xxx.py` 对应 `actus/tests/xxx.py`。
+>
+> ⚠️ **行数与实现细节为 2026-10-27 19:2x 的核验快照**：`probe/` 目录在同一轮里有多条线
+> 并行开发（`platform_tools.py` / 线程池 / `cache.py` schema 版本化 / `report.py` 都在动），
+> 行数会继续变；**模块存在性、接线位置、`grep` 零命中这三类判据不受影响**，可随时复核。
+
 ### Phase 0 — 核心探测 + 权限 + 环境（1 周）
 
-- [ ] `probe/base.py` — ProbeItem + Prober 基类
-- [ ] `probe/platform.py` — 平台信息采集
-- [ ] `probe/permissions.py` — 权限与身份探测（管理员/root、文件权限、目录 ACL）★新增
-- [ ] `probe/environment.py` — 环境变量探测（PATH、敏感 key、虚拟环境、代理）★新增
-- [ ] `probe/resources.py` — 系统资源探测（psutil：CPU/内存/磁盘/网络）★新增
-- [ ] `probe/TOOL_TABLE.py` — 已知工具表
-- [ ] `probe/system_tools.py` — 系统工具探测（PATH + well-known paths + version）
-- [ ] `probe/runtimes.py` — 语言运行时探测（复用 runtimes.py）
-- [ ] `probe/compilers.py` — 编译器探测（复用 compile_cmd.py）
-- [ ] `probe/__init__.py` — probe() 入口函数
-- [ ] `tests/test_probe_basic.py` — 基础探测测试
-- [ ] **里程碑**：`probe()` 返回完整 ProbeReport，在本机跑通
+- [x] `probe/base.py` — ProbeItem + Prober 基类 ✅ 已实现（74 行，含 `ProbeItem` / `Prober`）
+- [x] `probe/platform.py` — 平台信息采集 ✅ 已实现（`get_platform_info()` / `PlatformProber`；核验快照 145 行）
+- [x] `probe/permissions.py` — 权限与身份探测（管理员/root、文件权限、目录 ACL）★新增 ✅ 已实现（124 行）
+- [x] `probe/environment.py` — 环境变量探测（PATH、敏感 key、虚拟环境、代理）★新增 ✅ 已实现（128 行）
+- [x] `probe/resources.py` — 系统资源探测（psutil：CPU/内存/磁盘/网络）★新增 ✅ 已实现（118 行）
+- [x] `probe/TOOL_TABLE.py` — 已知工具表 ✅ 已实现（94 行）
+- [x] `probe/system_tools.py` — 系统工具探测（PATH + well-known paths + version）✅ 已实现（81 行）
+- [x] `probe/runtimes.py` — 语言运行时探测（复用 runtimes.py）✅ 已实现（78 行）
+- [x] `probe/compilers.py` — 编译器探测（复用 compile_cmd.py）✅ 已实现（68 行）
+- [x] `probe/__init__.py` — probe() 入口函数 ✅ 已实现（`__all__ = ['probe', 'ProbeReport', 'format_summary']`；核验快照 183 行）
+- [x] `tests/test_probe_basic.py` — 基础探测测试 ✅ 已实现，**但实际文件名为 `tests/test_probe.py`**（294 行；
+      计划里的 `test_probe_basic.py` 从未创建）。覆盖面：ProbeItem 往返/异常吞掉、platform/
+      permissions/environment/resources 字段形状、敏感值不外泄、完整 ProbeReport、已知工具检出、`format_summary`
+- [x] **里程碑**：`probe()` 返回完整 ProbeReport，在本机跑通 ✅ 已实现（`tests/test_probe.py::test_probe_returns_full_report`）
 
 ### Phase 1 — Python 包 + 动作分析 + 缓存（1 周）
 
-- [ ] `probe/python_pkgs.py` — Python 包探测（importlib + pkg_resources 回退）
-- [ ] `probe/actions.py` — 动作依赖分析（检查 .actus.md 的 deps 字段）
-- [ ] `probe/cache.py` — 探测结果缓存（24h TTL）
-- [ ] `tests/test_probe_packages.py` — 包探测测试
-- [ ] `tests/test_probe_actions.py` — 动作分析测试
-- [ ] **里程碑**：probe() 返回动作的 ready/blocked 状态
+- [x] `probe/python_pkgs.py` — Python 包探测（importlib + pkg_resources 回退）✅ 已实现（155 行）
+- [x] `probe/actions.py` — 动作依赖分析（检查 .actus.md 的 deps 字段）✅ 已实现（95 行，`_scan_actions_dir()` + `ActionsProber`）
+- [x] `probe/cache.py` — 探测结果缓存（TTL）✅ 已实现（同一轮已扩为 schema 版本化 + 原子写 + 优雅降级；核验快照 305 行。注意默认 TTL 实为 **1 小时**，见 `_CACHE_TTL`，非本行原写的 24h）
+- [x] `tests/test_probe_packages.py` — 包探测测试 ✅ **覆盖已有，但计划文件名不存在**：用例落在
+      `tests/test_probe.py`（`test_pkg_version_reads_real_metadata` /
+      `test_pkg_version_missing_pkg_is_empty` / `test_python_packages_prober_reports_versions`）
+- [~] `tests/test_probe_actions.py` — 动作分析测试 ⚠️ **计划文件名不存在**，也没有等价专项用例；
+      `ActionsProber` 目前只被 `tests/test_probe.py:263` 的「完整报告包含 actions 类别」间接覆盖。
+      实现已在位（`probe/actions.py`），缺的是**动作分析的单测**
+- [x] **里程碑**：probe() 返回动作的 ready/blocked 状态 ✅ 已实现（`probe/actions.py` + CLI/MCP 消费，见 Phase 3）
 
 ### Phase 2 — 平台特定 + 并行化（1 周）
 
-- [ ] Windows 特有探测（VS Build Tools、WSL、Windows Terminal）
-- [ ] Linux 特有探测（distro、包管理器、systemd）
-- [ ] macOS 特有探测（SIP、Homebrew、Xcode CLT）
-- [ ] 线程池并行探测（8 线程）
-- [ ] `tests/test_probe_windows.py` — Windows 特定测试
-- [ ] **里程碑**：三个平台各自跑通
+> ⚠️ **本节状态在 2026-10-27 晚发生变化**：并行化与平台细项探测已由同一轮的另一路
+> （`probe/platform_tools.py` + `probe/__init__.py` 线程池，落盘时间 19:10-19:16）
+> **实现并带测试**；下面的勾选按**该轮核验后的代码事实**重新标定，实测证据见每项括注。
+
+- [x] Windows 特有探测（VS Build Tools、WSL、Windows Terminal）✅ 已实现
+      （`probe/platform_tools.py`：`_probe_windows_vs_build_tools` 走 `vswhere.exe`、
+      `_probe_windows_wsl` 走 `wsl.exe -l -v`（含 UTF-16LE 解码）、
+      `_probe_windows_terminal` 走 `wt.exe` App Execution Alias + 商店包目录名取版本；
+      早期版本只有 `platform.py` 的版本号与 Program Files 路径）
+- [~] Linux 特有探测（distro、包管理器、systemd）⚠️ **三项中两项新落地**：
+      `platform.py` 的 `_get_linux_distro()`（快照第 65 行；`distro` 库 + `/etc/os-release` 回退）、
+      `platform_tools.py` 的 `systemd`（`systemctl --version` + `/run/systemd/system` /
+      PID1 判据，`usable` 区分「可执行存在」与「真能管服务」）与
+      `package_manager`（apt/dnf/pacman/zypper/apk 家族判定）**均已在位**；
+      **但 Linux 分支无实跑证据**（本机为 Windows），故不勾 `[x]`
+- [~] macOS 特有探测（SIP、Homebrew、Xcode CLT）⚠️ **三项中两项在位、Homebrew 缺**：
+      `platform.py` 的 `_get_sip_status()`（快照第 89 行；`csrutil status`）、
+      `platform_tools.py` 的 `xcode_clt`（`xcode-select -p` + `clang --version` 实证）已完成；
+      **Homebrew 探测未实现**（`grep -ni "brew" probe/platform_tools.py` 零命中），
+      且 macOS 分支无实跑证据
+- [x] 线程池并行探测（8 线程）✅ 已实现（`probe/__init__.py:15` `import concurrent.futures`、
+      `:38` `_MAX_PROBE_WORKERS = 8`、`:143` `ThreadPoolExecutor(max_workers=workers)`，
+      并行度取 `min(8, 探测器数)`；`as_completed` 收结果后**按原始顺序合并**，不改变 items 结构；
+      `verbose` 进度打印用 `threading.Lock` 串行化防交错）。
+      **耗时说明**：并行前实测串行约 **79 秒**；并行后的实际耗时**本轮未复测**
+      （复跑 `probe()` 会写 `_meta/probe.cache.json`，为免污染工作区未执行），
+      故 §8.1 的「2-4 秒」仍属**目标值**而非实测值
+- [~] `tests/test_probe_windows.py` — Windows 特定测试 ⚠️ **该文件名仍不存在**，
+      但等价覆盖已由 `tests/test_probe_platform_tools.py` 承担
+      （Windows 的 vswhere/WSL/WT 三种输出形态与解析）；另 `tests/test_probe.py:93`
+      `test_platform_windows_specific_fields` 覆盖 `platform.py` 字段。
+      计划文件名与实际文件名不一致，**建议把计划项改名为 `test_probe_platform_tools.py`**
+- [~] **里程碑**：三个平台各自跑通 ⚠️ **部分**：Windows 已实跑（`probe()` 完整报告 +
+      `platform_tools` 的 Windows 三探测）；Linux / macOS 分支代码与单测在位，
+      但**无对应平台的实跑证据**，不勾
 
 ### Phase 3 — CLI + 集成（1 周）
 
-- [ ] `vools actus probe` CLI 命令（人类可读输出）
-- [ ] `vools actus probe --json` — JSON 输出（机器消费）
-- [ ] `vools actus probe --cache/--force` — 缓存控制
-- [ ] 集成到 `intent.py` — 推荐动作时只推荐 ready 的
-- [ ] 集成到 MCP server — 暴露 probe 工具给 LLM
-- [ ] **里程碑**：`vools actus probe` 一条命令看全貌
+- [x] `vools actus probe` CLI 命令（人类可读输出）✅ 已实现（`actus/vools/actus/cli.py:165` 注册 `probe` 子命令，
+      `:932` 分发，`:2446-2452` 人类可读走 `format_summary`）
+- [x] `vools actus probe --json` — JSON 输出（机器消费）✅ 已实现（`cli.py:170` `--json` → `as_json`，输出完整结构化报告）
+- [x] `vools actus probe --cache/--force` — 缓存控制 ✅ 已实现（`cli.py:166-169`：
+      `--force-refresh`/`--force` 与 `--max-age N`（默认 3600），另有 `--verbose`）
+- [x] 集成到 `intent.py` — 推荐动作时只推荐 ready 的 ✅ 已实现（`actus/vools/actus/intent.py:48-96`：
+      `set_ready_ids()` / `set_probe_report()` / `_is_ready()`，注释直指「PROBE_PLAN.md §9 Phase 3」）
+- [x] 集成到 MCP server — 暴露 probe 工具给 LLM ✅ 已实现（`actus/vools/actus/mcp_server.py:416` 注册
+      `actus_probe`，`:1345` 分发）
+- [x] **里程碑**：`vools actus probe` 一条命令看全貌 ✅ 已实现
+
+### 进度小结（2026-10-27 补记）
+
+- **谁补的**：文档司令（cmd-docs），按代码事实核验后回填复选框，**不含任何未核实的进度**。
+  同一轮另有「平台司令」落地了 Phase 2 的并行化与平台细项探测（见下）。
+- **本轮的结论**：Phase 0 / 1 / 3 **已完成**（原文档的 30 个复选框全是 `[ ]`，与代码严重脱节）；
+  Phase 2 **基本完成**——并行化 8 线程、Windows 三探测（VS Build Tools / WSL / Windows Terminal）、
+  Linux 两项（systemd / 包管理器）、macOS 的 Xcode CLT 均已落地，余：
+  ① **Homebrew 探测未实现**；② **Linux / macOS 无实跑证据**（本机 Windows）；
+  ③ 计划里的 `tests/test_probe_windows.py` 实际以 `tests/test_probe_platform_tools.py` 兑现。
+- **剩余工作清单（按优先级）**：
+  1. 补 Homebrew 探测；在 Linux / macOS 实机上跑一次 `probe()` 与 `test_probe_platform_tools.py`，
+     拿到跨平台证据后再把 Phase 2 里程碑勾满；
+  2. 复测并行后耗时并回填 §8.1（当前「2-4 秒」仍是目标值）；
+  3. 补 `tests/test_probe_actions.py`（`ActionsProber` 目前只有 `test_probe.py:263` 的间接覆盖）；
+  4. 计划文档与本节的测试文件名对齐：`test_probe_basic.py` / `test_probe_packages.py`
+     实际是 `test_probe.py`，`test_probe_windows.py` 实际是 `test_probe_platform_tools.py`。
+- **核验方式与证据**：
+  - `ls` + `wc -l`：`probe/` 现有 15 个 `.py`（原 14 个 + 新增 `platform_tools.py`），
+    Phase 0 的 10 个模块 + Phase 1 的 3 个模块全部在位；
+  - `grep -n` 核对 CLI 开关（`cli.py:165/166/168/170/172`）、MCP 工具名
+    （`mcp_server.py:416/1345`）、`intent.py:48-96` 的 ready 接线；
+  - `grep -n "ThreadPoolExecutor\|_MAX_PROBE_WORKERS" probe/__init__.py`：并行实现确认；
+  - `grep -ni "vs_build|wsl|windows_terminal|systemd|package_manager|xcode" probe/platform_tools.py`：
+    平台细项实现确认；`grep -ni "brew"` **零命中** → Homebrew 确实未做；
+  - `ls tests/test_probe_windows.py` 失败 → 该文件确实不存在；
+  - `python -m pytest tests/test_probe_parallel.py tests/test_probe_platform_tools.py` →
+    **16 passed, 3 skipped**（exit 0，2026-10-27 19:20 实测）。
 
 ---
 

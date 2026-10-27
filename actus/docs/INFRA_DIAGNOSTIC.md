@@ -1,6 +1,7 @@
 # Actus 基建诊断报告
 
 > 生成时间：2026-10-20 15:40（终版：P0/P1 清零，P2 余 1 项）
+> 补记时间：2026-10-27（第三轮：补 D10/D11 两条安装态缺陷，见 §5.6）
 > 视角：以"pip install vools-actus 后的真实安装态"为基准重新审视（非源码树便利视角）
 > 方法：实测（隔离 site-packages 模拟安装态 + 真实执行链路端到端 + MCP/CLI 协议层）+ 代码审查 + 全量测试
 
@@ -176,6 +177,46 @@ usage 示例的 python 块、permissions 的 yaml 块 fence 行同样带 `#!run`
 
 ---
 
+## 五.6、第三轮补记（2026-10-27，安装态两处静默缺陷）
+
+> 这两条都是**「源码树绿、pip 装完红」**的打包/入口层缺陷，与前两轮的逻辑缺陷不同族：
+> 本地开发永远踩不到，只有按"用户 `pip install` 后的真实安装态"审视才会暴露。
+
+### D10（🔴 严重）：`cli.py` 的 `if __name__ == '__main__'` 守卫写在文件中间——`python -m` 下 15 个子命令全 `NameError`
+
+- **现象**：`python -m vools.actus.cli <cmd>` 调用 omega / concurrency / deps / dep-tree /
+  desktop / events / viz / replay / notify / project(导入导出) / export / probe / health /
+  selfheal / template 等**十余个子命令全部 `NameError`**；而**安装态的 console script
+  （`actus <cmd>`）完全正常**
+- **根因**：`if __name__ == '__main__': main()` 被写在文件中段（原第 2034 行），
+  而 `main()` 内部的分发分支中，该位置**之后才定义的函数/常量**在 `python -m` 直接执行
+  模块时尚未求值（`-m` 走 `runpy` 执行模块体，模块体执行到中段守卫就进了 `main()`，
+  后半段定义被跳过）→ 落到那些分支即 `NameError`
+- **为什么长期没暴露**：安装态走 console script 入口点（`import` 模块后再调 `main`，
+  整个模块体先完整执行完），所以只有**源码树 + `python -m`** 这条路径才会中招；
+  而这是开发者最常用的调试方式，偏偏 CI 主要跑 pytest（同样是 import 路径）——两处盲区叠加
+- **修复**：把守卫移到**文件末尾**（现 `actus/vools/actus/cli.py:2574`，文件共 2575 行），
+  保证模块体全部定义先完成再进 `main()`
+- **验证**：`grep -n "__name__" actus/vools/actus/cli.py` 仅剩文件末尾一处；
+  `python -m vools.actus.cli <上述子命令>` 不再 `NameError`
+
+### D11（🔴 严重）：种子动作 `.sig` 未进 wheel 的 `package-data`——`pip` 装完 `actus verify` 全报 Signature file not found
+
+- **现象**：源码树里对 4 个种子动作跑 `actus verify` 全绿；`pip install` 后同一命令
+  **4/4 报 `Signature file not found`**
+- **根因**：`pyproject.toml` 的 `[tool.setuptools.package-data]` 当时只收
+  `actions/**/*.actus.md` 与 `actions/**/*.actus.schema.md`，
+  **`.sig` 后缀没有 glob**——签名文件根本没被打进 wheel
+  （`vools/actus/actions/basics/` 下 4 个 `.actus.schema.md.sig` 在源树存在、装完消失）
+- **修复**：package-data 补 `"actions/*.sig"` + `"actions/**/*.sig"`
+  （现 `actus/pyproject.toml:125-126`，就地留了注释说明这条坑）
+- **验证**：wheel 内容含 4 个 `.sig`；安装态 `actus verify` 4/4 通过
+- **同族教训**：凡是"数据文件"（`.md` / `.sig` / `.json` / `.mjs`）都必须显式写进
+  `package-data`，`packages.find` 只负责 `.py`。本仓 `_shiki/`、`schemas/` 也是同一坑的
+  不同受害者（见 `pyproject.toml` 内对应注释）
+
+---
+
 ## 五、当前剩余缺口（🔴 P0 已清，P1 已清，P2 余 1 项）
 
 ### P1 缺口（已全部完成）
@@ -220,7 +261,7 @@ usage 示例的 python 块、permissions 的 yaml 块 fence 行同样带 `#!run`
 
 ## 八、结论与下一步
 
-**基建主体已完成**：两轮诊断 + 两轮推进累计修复 12 个缺陷（D1-D9 +
+**基建主体已完成**：三轮诊断 + 两轮推进累计修复 14 个缺陷（D1-D11 +
 `ACTUS_METRICS_DIR` + demo 相对路径解析 + adapter 三种引用形态）。
 分类体系从"建好"走到"可用"：MCP tools/list 与 `actus list` 都带
 `kind/purpose/industry` 过滤，单动作工具描述带分类摘要，种子动作带
