@@ -123,6 +123,24 @@ def deserialize(backend: Optional[str] = None):
     return decorator
 
 
+def _check_backend_param(backend, where: str) -> None:
+    """校验 backend 参数（BUG-354）。
+
+    ``serializable(123)`` / ``serialize_method(123)`` / ``deserialize_method(123)``
+    原先静默接受非字符串 backend，直到**每次调用**才在 ``Serializer(backend=123)``
+    处抛 "Unknown backend: 123"（错误离装饰点很远）。这里在工厂期就拒绝。
+
+    注意：裸装饰用法（``@serialize_method`` 不带括号）会把被装饰函数传进来——
+    调用方需先处理该路径，本函数只校验"非 callable"的非法值。
+    """
+    if backend is None or isinstance(backend, str):
+        return
+    raise TypeError(
+        f"{where} 的 backend 必须是字符串后端名或 None，收到 "
+        f"{type(backend).__name__}: {backend!r}"
+        f"（可用后端见 vools.serialize，例如 'json' / 'pickle' / 'vb_json' / 'msgpack'）")
+
+
 def serializable(backend: Optional[str] = None):
     """
     类装饰器：为类添加序列化/反序列化方法
@@ -147,6 +165,8 @@ def serializable(backend: Optional[str] = None):
         # AttributeError（'str' object has no attribute 'serialize'）。
         _cls = backend
         return serializable(None)(_cls)
+
+    _check_backend_param(backend, "serializable()")
 
     def decorator(cls: Type) -> Type:
         be = backend or get_default_backend() or 'pickle'
@@ -193,6 +213,8 @@ def serialize_method(backend: Optional[str] = None):
         _method = backend
         return serialize_method(None)(_method)
 
+    _check_backend_param(backend, "serialize_method()")
+
     def decorator(method: Callable) -> Callable:
         @wraps(method)
         def wrapper(self, *args, **kwargs):
@@ -234,6 +256,8 @@ def deserialize_method(backend: Optional[str] = None):
         # BUG-371: 支持裸装饰 @deserialize_method（原实现把方法当成 backend 吞掉）
         _method = backend
         return deserialize_method(None)(_method)
+
+    _check_backend_param(backend, "deserialize_method()")
 
     def decorator(method: Callable) -> Callable:
         @wraps(method)
