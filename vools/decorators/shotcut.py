@@ -548,6 +548,27 @@ def enumize(*values):
     Returns:
         装饰器函数
     """
+    # BUG-525: values 零校验——
+    #   ① 非字符串值在装饰期抛裸 "AttributeError: 'int' object has no attribute
+    #     'upper'"；② 空调用让装饰器什么都不做（静默 no-op）；③ 重复值静默覆盖
+    #     （'a','a' 得到 A=1 而不是报错）；④ 'a-b' 之类会被 setattr 成不可点访问的
+    #     属性名（A-B），调用方永远取不到。
+    if not values:
+        raise ValueError("enumize() 需要至少一个枚举值")
+    _seen = set()
+    for _v in values:
+        if not isinstance(_v, str) or not _v.strip():
+            raise TypeError(
+                f"enumize() 的枚举值必须是非空字符串，收到 "
+                f"{type(_v).__name__}: {_v!r}")
+        _attr = _v.upper()
+        if not _attr.isidentifier():
+            raise ValueError(
+                f"enumize() 的枚举值 {_v!r} 大写后 {_attr!r} 不是合法标识符"
+                f"（无法作为类属性名访问）")
+        if _attr in _seen:
+            raise ValueError(f"enumize() 的枚举值重复：{_v!r}（属性名 {_attr}）")
+        _seen.add(_attr)
     def decorator(cls):
         for i, value in enumerate(values):
             setattr(cls, value.upper(), i)
