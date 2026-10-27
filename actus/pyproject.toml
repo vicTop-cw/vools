@@ -118,6 +118,12 @@ include = ["vools*"]
     "actions/*.actus.schema.md",
     "actions/**/*.actus.md",
     "actions/**/*.actus.schema.md",
+    # 种子动作的签名（ed25519 .sig）：**必须随 wheel 分发**。
+    # 此前 package-data 只收 .md/.schema.md，4 个种子动作的 .sig 没进包 ——
+    # 用户 pip 装完跑 `actus verify` 全部报 Signature file not found
+    # （本地源树能过、装完就红，属打包层缺陷而非签名本身）。
+    "actions/*.sig",
+    "actions/**/*.sig",
     # _shiki/：highlight.py 的 SHIKI_SCRIPT 指向 _shiki/render.mjs（Shiki 高亮）。
     # 此前 package-data 未包含它，wheel 落盘后 render.mjs 缺失，
     # `check_shiki_available()` 恒为 False（与"迁移漏搬 bundle"同族缺陷，只是发生在打包层）。
