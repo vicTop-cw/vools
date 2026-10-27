@@ -2,10 +2,20 @@
 
 工作流自动化与动作编排引擎，提供动作数据模型、执行器、工作流调度、注册表、密钥管理、信任决策、安全扫描、沙箱环境等核心功能。
 
+> **当前版本 0.9.0** —— 变更详情见 [CHANGELOG.md](CHANGELOG.md)。
+> 本版主题是「验收 + 缺陷围剿」：补全七种 kind 的执行语义、resolver 六形态 target、
+> MCP 接入、远程动作信任四件套，并修掉 25 个 actus 内缺陷与 6 个解析层缺陷。
+
 ## 安装
 
 ```bash
 pip install vools-actus
+```
+
+依赖两个姊妹包（通常同步发布）：
+
+```bash
+pip install "vools>=0.9.0" "vools-bridges>=0.9.0"
 ```
 
 ## 资源与路径（开发必读）
@@ -212,27 +222,54 @@ print("Hello from Actus!")
 ## CLI 使用
 
 ```bash
-# 执行动作
+# 版本与帮助
+actus --version                # actus 0.9.0
+actus                          # 无子命令时打印用法（退出码 2）
+
+# 执行动作（<target> 支持六种形态，见下）
 actus run my_action.actus.schema.md
+actus run myapp.calculator               # 按动作 id
+actus run Calculator                     # 按可读名
+actus run 9f2a11add43fbf12a546606fb2b962ab # 按内容 md5
 
-# 预览动作
+# 预览 / 依赖检查 / 注册表 / 工作流
 actus preview my_action.actus.schema.md
-
-# 检查依赖
 actus check my_action.actus.schema.md
-
-# 构建注册表
 actus registry build /path/to/actions
-
-# 运行工作流
 actus workflow run my_workflow.yaml
+actus validate                          # 批量校验（valid=true / invalid={}）
 ```
+
+**入参的七种来源**（`actus run <target> <params>`）：
+
+| 写法 | 含义 |
+|---|---|
+| `'{"a": 1}'` | JSON 字面量 |
+| `@args.json` | 本地 JSON 文件 |
+| `-` | 从 stdin 读 |
+| `@https://…/args.json` | 远程 JSON（需 `--allow-host`） |
+| `@action:<id>` | 执行另一个动作并取其出参作为入参 |
+
+**远程动作的安全开关**（默认全部从严）：
+
+```bash
+actus run https://example.com/a.actus.md \
+  --allow-host example.com \                 # 域名白名单（默认拒绝所有远程）
+  --expect-digest <sha256> \                 # 内容指纹校验
+  --require-signature default                # 签名验签（本地可信公钥名）
+```
+
+`--allow-unverified-remote` 可显式放行未校验的远程动作（自担供应链风险）。
+
+**退出码约定**（脚本化调用依赖它）：`0` 成功 / `1` 运行期失败 / `2` 用法错误。
 
 ## 依赖
 
 - Python >= 3.7（与 pyproject.toml `requires-python` 一致；3.7 引入 PEP 563，
   publisher/repo/scattered/semver/sigma 模块依赖）
-- vools >= 0.7.0
+- `vools >= 0.9.0`
+- `vools-bridges >= 0.9.0`（`vools.bridge.md.*` 解析层；`vools` 主包只把它放在
+  `[bridges]` extras 里，装 `vools` 不会自带，故列为硬依赖）
 
 ## 许可证
 
