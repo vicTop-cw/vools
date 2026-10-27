@@ -230,7 +230,56 @@ def batch_execute(func: Optional[Callable] = None,
     Raises:
         ValueError: 同时提供task_args和task_kwargs但长度不一致
         ValueError: 既未提供task_args也未提供task_kwargs
+        TypeError: priority/max_retries/worker_nums/is_worker/queue 类型非法，
+            或 task_args 元素不是序列、task_kwargs 元素不是映射（BUG-352：原先
+            priority='x'、max_retries=-1、queue=123、is_worker='x' 全部被静默接受；
+            is_worker 传真值会**静默切换执行语义**（返回任务 ID 而非结果））。
     """
+    # BUG-352: 参数校验前置到工厂期（is_worker 尤其重要——truthy 非 bool 会静默改变语义）
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        raise TypeError(
+            f"batch_execute 的 priority 必须是整数，收到 {type(priority).__name__}: {priority!r}")
+    if isinstance(max_retries, bool) or not isinstance(max_retries, int):
+        raise TypeError(
+            f"batch_execute 的 max_retries 必须是整数，收到 "
+            f"{type(max_retries).__name__}: {max_retries!r}")
+    if max_retries < 0:
+        raise ValueError(f"batch_execute 的 max_retries 不能为负，收到 {max_retries!r}")
+    if isinstance(worker_nums, bool) or not isinstance(worker_nums, int):
+        raise TypeError(
+            f"batch_execute 的 worker_nums 必须是整数，收到 "
+            f"{type(worker_nums).__name__}: {worker_nums!r}")
+    if worker_nums < 1:
+        raise ValueError(f"batch_execute 的 worker_nums 必须 >= 1，收到 {worker_nums!r}")
+    if not isinstance(is_worker, bool):
+        raise TypeError(
+            f"batch_execute 的 is_worker 必须是 bool（True=提交到任务队列并返回任务 ID，"
+            f"False=直接执行并返回结果），收到 {type(is_worker).__name__}: {is_worker!r}")
+    if queue is not None and not isinstance(queue, TaskQueue):
+        raise TypeError(
+            f"batch_execute 的 queue 必须是 TaskQueue 实例或 None，收到 "
+            f"{type(queue).__name__}: {queue!r}")
+    if task_args is not None:
+        if isinstance(task_args, (str, bytes)) or not isinstance(task_args, (list, tuple)):
+            raise TypeError(
+                f"batch_execute 的 task_args 必须是序列（每个元素是一组位置参数），收到 "
+                f"{type(task_args).__name__}: {task_args!r}")
+        for _i, _item in enumerate(task_args):
+            if isinstance(_item, (str, bytes)) or not isinstance(_item, (list, tuple)):
+                raise TypeError(
+                    f"batch_execute 的 task_args[{_i}] 必须是 tuple/list（一组位置参数），"
+                    f"收到 {type(_item).__name__}: {_item!r}")
+    if task_kwargs is not None:
+        if isinstance(task_kwargs, (str, bytes)) or not isinstance(task_kwargs, (list, tuple)):
+            raise TypeError(
+                f"batch_execute 的 task_kwargs 必须是序列（每个元素是 dict），收到 "
+                f"{type(task_kwargs).__name__}: {task_kwargs!r}")
+        for _i, _item in enumerate(task_kwargs):
+            if not isinstance(_item, dict):
+                raise TypeError(
+                    f"batch_execute 的 task_kwargs[{_i}] 必须是 dict，收到 "
+                    f"{type(_item).__name__}: {_item!r}")
+
     def decorator(fn: Callable) -> Callable:
         @functools.wraps(fn)
         def wrapper(*args, **kwargs) -> List[Any]:
