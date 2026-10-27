@@ -397,6 +397,12 @@ class VText(str):
             ``ignorecase=False`` 在 Windows 上形同虚设（legacy 即有此问题）。
             统一大小写后走 fnmatchcase，使 ignorecase 在所有平台都真正生效。
         """
+        # BUG-342: pattern 零校验——like(None)/like(123) 抛裸
+        # "AttributeError: 'NoneType' object has no attribute 'lower'"
+        if not isinstance(pattern, str):
+            raise TypeError(
+                f"like() 的 pattern 必须是字符串（支持 * / ? 通配符），收到 "
+                f"{type(pattern).__name__}: {pattern!r}")
         txt = str(self)
         if ignorecase:
             txt, pattern = txt.lower(), pattern.lower()
@@ -696,6 +702,14 @@ class VText(str):
         返回:
           VText, 形如 "Z:AAA..." 或 "R:BBB..."
         """
+        # BUG-342: level 零校验——level=99 抛 zlib 的
+        # "error: Bad compression level"（无参数名）；level='x' 抛裸 TypeError。
+        if isinstance(level, bool) or not isinstance(level, int):
+            raise TypeError(
+                f"toZipB64() 的 level 必须是 1..9 的整数，收到 "
+                f"{type(level).__name__}: {level!r}")
+        if not 1 <= level <= 9:
+            raise ValueError(f"toZipB64() 的 level 必须在 1..9，收到 {level!r}")
         src = text if text is not None else str(self)
         if src is None:
             src = ""
@@ -958,10 +972,29 @@ class VText(str):
             # 未传 run_date 时用当天 YYYYMMDD 兜底，行为与 legacy vicSql 一致。
             import datetime as _dt_now
             run_date = _dt_now.datetime.now().strftime("%Y%m%d")
-        # run_date 可能是 VDate 或 str，统一成 yyyy-MM-dd
-        rd = str(run_date)
-        if len(rd) == 8:
-            rd = "{}-{}-{}".format(rd[0:4], rd[4:6], rd[6:8])
+        # run_date 可能是 VDate / date / str，统一成 yyyy-MM-dd
+        # BUG-342: 原实现直接切片——传 'bogus' 会抛
+        # "ValueError: invalid literal for int() with base 10: 'bogu'"
+        # （被截断的 4 字符，完全看不出是日期参数错了）。
+        import datetime as _dt_rd
+        if isinstance(run_date, (_dt_rd.date, _dt_rd.datetime)):
+            rd = run_date.strftime("%Y-%m-%d")
+        else:
+            _raw = str(run_date).strip()
+            if len(_raw) == 8 and _raw.isdigit():
+                rd = "{}-{}-{}".format(_raw[0:4], _raw[4:6], _raw[6:8])
+            elif len(_raw) == 10 and _raw[4] == "-" and _raw[7] == "-":
+                rd = _raw
+            else:
+                raise ValueError(
+                    f"replace_run_date() 的 run_date 需要 YYYYMMDD / YYYY-MM-DD "
+                    f"字符串或 date/datetime，收到 {run_date!r}")
+            try:
+                _dt_rd.date(int(rd[0:4]), int(rd[5:7]), int(rd[8:10]))
+            except ValueError as exc:
+                raise ValueError(
+                    f"replace_run_date() 的 run_date 不是合法日期：{run_date!r}（{exc}）"
+                ) from exc
 
         import re as _re
         import datetime as _dt
