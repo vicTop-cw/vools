@@ -254,6 +254,19 @@ def persist(func: Optional[Callable] = None,
             f"  - @persist()                             # 使用默认 __persist__ 目录\n"
         )
     
+    # BUG-345: func 零校验——persist("x") / persist(123) 会静默返回 wrapper，
+    # 直到真正当装饰器用时才在 wrapper 里抛
+    # "AttributeError: 'str' object has no attribute '__module__'"（完全看不出是
+    # 把字符串当函数传了）。与同库 once/cache_with_ttl 的可调用校验口径对齐。
+    if func is not None and not callable(func):
+        raise TypeError(
+            f"参数 'func' 类型错误: 期望 callable 或 None, 实际收到 {type(func).__name__}。\n"
+            f"修复建议: 裸用 @persist 时不要传位置参数，配置项用关键字，例如:\n"
+            f"  - @persist                      # 直接装饰函数\n"
+            f"  - @persist(file_key='my_cache')  # 带配置时用关键字参数\n"
+            f"  - persist(my_func)              # 显式包装一个函数对象"
+        )
+
     # 使用默认配置
     default_force_when = force_when if force_when is not None else _default_force_when_by_day
     default_target_folder = target_folder
@@ -306,6 +319,16 @@ def persist(func: Optional[Callable] = None,
                         start_time = cache_data.get('start_time')
                         end_time = cache_data.get('end_time')
 
+                        # BUG-345: 合法 JSON 但缺 result/start_time/end_time 的缓存
+                        # （被截断、旧格式、人工编辑）此前一路走到 `return
+                        # cache_data['result']` 抛 KeyError: 'result'；而"损坏 JSON"
+                        # 却是优雅重算——同一类坏缓存两种命运。这里统一按无效缓存处理。
+                        if not isinstance(cache_data, dict) or any(
+                                k not in cache_data
+                                for k in ('result', 'start_time', 'end_time')):
+                            raise ValueError(
+                                "缓存文件缺少 result/start_time/end_time 字段，按未命中处理")
+
                         if call_force_when is not None and start_time is not None and end_time is not None:
                             if call_force_when(result, start_time, end_time):
                                 need_refresh = True
@@ -318,7 +341,7 @@ def persist(func: Optional[Callable] = None,
                     need_refresh = True
                     cache_data = None
 
-            if not need_refresh and cache_data is not None:
+            if not need_refresh and isinstance(cache_data, dict) and 'result' in cache_data:
                 return cache_data['result']
             
             start_time = time.time()
