@@ -402,7 +402,8 @@ class PgTaskBackend:
         cur.execute(
             'SELECT id, task_name, task_type, task_value, payload, status, priority,'
             ' retry_count, max_retries, error_message, back_info, dependencies, ts,'
-            ' worker_id, locked_by, created_at, updated_at, started_at, completed_at'
+            ' worker_id, locked_by, created_at, updated_at, started_at, completed_at,'
+            ' next_retry_at'
             ' FROM "{t}" WHERE id=%s'.format(t=self.table), (task_id,))
         row = cur.fetchone()
         cur.close()
@@ -410,7 +411,8 @@ class PgTaskBackend:
             return None
         cols = ["id", "task_name", "task_type", "task_value", "payload", "status", "priority",
                 "retry_count", "max_retries", "error_message", "back_info", "dependencies", "ts",
-                "worker_id", "locked_by", "created_at", "updated_at", "started_at", "completed_at"]
+                "worker_id", "locked_by", "created_at", "updated_at", "started_at",
+                "completed_at", "next_retry_at"]
         out = dict(zip(cols, row))
         out["payload"] = _loads(out["payload"])
         out["back_info"] = _loads(out["back_info"])
