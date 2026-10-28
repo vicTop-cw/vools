@@ -30,6 +30,7 @@
 """
 import json
 import os
+import re
 import sys
 import io
 from pathlib import Path
@@ -822,6 +823,20 @@ def _dispatch(args) -> int:
     if args.command == 'registry':
         return _cmd_registry(args)
 
+    # 多注册表 / 团队 / 私有动作 / 可见性（改前 parser 声明了但这里没有分支，
+    # 实测 rc=2 + 零输出 → 用户敲 `actus team` 什么都看不到）
+    if args.command == 'reg':
+        return _cmd_reg(args)
+
+    if args.command == 'team':
+        return _cmd_team(args)
+
+    if args.command == 'private':
+        return _cmd_private(args)
+
+    if args.command == 'visibility':
+        return _cmd_visibility(args)
+
     if args.command == 'install':
         return _cmd_install(args)
 
@@ -1333,6 +1348,289 @@ def _parse_params(s: str) -> dict:
 
 
 # ── 动作市场命令 ──
+
+# ── 多注册表 / 团队 / 私有动作 / 可见性（visibility.py 的 CLI 接线）──
+# 改前这四个命令族在 parser 里声明了，但 _dispatch 里**没有任何分支**：
+# 实测 `actus team` 等一律 rc=2 + 零输出 —— 连「命令不存在」都不说一声，
+# 是本项目假功能家族里最阴的一种（静默失联）。
+# 支撑能力一直在 vools/actus/visibility.py（RegistryManager / TeamManager /
+# VisibilityEngine），本轮把这些能力真正接到 CLI 上。
+
+
+def _vis_config_dir():
+    """visibility 家族的配置目录：默认 ~/.actus，可用 ACTUS_CONFIG_DIR 覆盖。"""
+    return os.environ.get('ACTUS_CONFIG_DIR') or None
+
+
+def _cmd_reg(args) -> int:
+    """reg 子命令：多注册表管理（visibility.RegistryManager）。"""
+    from vools.actus.visibility import RegistryManager, RegistryConfig
+
+    manager = RegistryManager(_vis_config_dir())
+    command = getattr(args, 'reg_command', None)
+
+    if command is None:
+        print('用法: actus reg <add|remove|list>', file=sys.stderr)
+        return 1
+
+    if command == 'list':
+        registries = manager.list_registries()
+        if not registries:
+            print('📭 暂无注册表配置')
+            return 0
+        print(f'📚 已配置注册表 ({len(registries)}):')
+        for registry in registries:
+            print(f'   - {registry.name} [{registry.registry_type}] {registry.url} '
+                  f'(branch={registry.branch}, priority={registry.priority})')
+        return 0
+
+    if command == 'add':
+        if manager.get_registry(args.name) is not None:
+            print(f'❌ 注册表已存在: {args.name}', file=sys.stderr)
+            return 1
+        manager.add_registry(RegistryConfig(
+            name=args.name, url=args.url, registry_type=args.type,
+            branch=args.branch, priority=args.priority))
+        print(f'✅ 已添加注册表: {args.name} ({args.url})')
+        return 0
+
+    if command == 'remove':
+        if manager.remove_registry(args.name) is None:
+            print(f'❌ 注册表不存在: {args.name}', file=sys.stderr)
+            return 1
+        print(f'✅ 已移除注册表: {args.name}')
+        return 0
+
+    print(f'❌ 未知的 reg 子命令: {command}', file=sys.stderr)
+    return 1
+
+
+def _cmd_team(args) -> int:
+    """team 子命令：团队管理（visibility.TeamManager）。"""
+    from vools.actus.visibility import TeamManager
+
+    manager = TeamManager(_vis_config_dir())
+    command = getattr(args, 'team_command', None)
+
+    if command is None:
+        print('用法: actus team <create|list|add-member|remove-member>', file=sys.stderr)
+        return 1
+
+    if command == 'list':
+        wanted = getattr(args, 'team', None)
+        if wanted:
+            team = manager.get_team(wanted)
+            if team is None:
+                print(f'❌ 团队不存在: {wanted}', file=sys.stderr)
+                return 1
+            print(f'👥 团队 {team.name} ({len(team.members)} 名成员):')
+            for member in team.members:
+                print(f'   - {member.user_id} ({member.role})')
+            return 0
+        names = manager.list_teams()
+        if not names:
+            print('📭 暂无团队')
+            return 0
+        print(f'👥 团队 ({len(names)}):')
+        for name in names:
+            team = manager.get_team(name)
+            print(f'   - {name} ({len(team.members) if team else 0} 名成员)')
+        return 0
+
+    if command == 'create':
+        if manager.get_team(args.name) is not None:
+            print(f'❌ 团队已存在: {args.name}', file=sys.stderr)
+            return 1
+        team = manager.create_team(args.name, args.creator)
+        print(f'✅ 已创建团队: {team.name}（创建者 {args.creator} 为 admin）')
+        return 0
+
+    if command == 'add-member':
+        if manager.add_member(args.team, args.user, args.role):
+            print(f'✅ 已添加成员: {args.user} → {args.team} ({args.role})')
+            return 0
+        print(f'❌ 添加失败: 团队不存在或成员已在团队里（{args.team} / {args.user}）',
+              file=sys.stderr)
+        return 1
+
+    if command == 'remove-member':
+        if manager.remove_member(args.team, args.user):
+            print(f'✅ 已移除成员: {args.user} ← {args.team}')
+            return 0
+        print(f'❌ 移除失败: 团队不存在或该成员不在团队里（{args.team} / {args.user}）',
+              file=sys.stderr)
+        return 1
+
+    print(f'❌ 未知的 team 子命令: {command}', file=sys.stderr)
+    return 1
+
+
+def _cmd_private(args) -> int:
+    """private 子命令：私有动作管理（visibility.VisibilityEngine）。"""
+    from vools.actus.visibility import VisibilityEngine
+
+    engine = VisibilityEngine(config_dir=_vis_config_dir())
+    command = getattr(args, 'private_command', None)
+
+    if command is None:
+        print('用法: actus private <add|remove|list>', file=sys.stderr)
+        return 1
+
+    if command == 'list':
+        actions = engine.list_private_actions()
+        if not actions:
+            print('📭 暂无私有动作')
+            return 0
+        print(f'🔒 私有动作 ({len(actions)}):')
+        for entry in actions:
+            action_id = entry.get('action_id') or entry.get('id') or '?'
+            author = entry.get('author') or ''
+            path = entry.get('path') or ''
+            extra = ''
+            if author:
+                extra += f' (author={author})'
+            if path:
+                extra += f' → {path}'
+            print(f'   - {action_id}{extra}')
+        return 0
+
+    if command == 'add':
+        metadata = {}
+        if getattr(args, 'author', ''):
+            metadata['author'] = args.author
+        if getattr(args, 'path', ''):
+            metadata['path'] = args.path
+        engine.add_private_action(args.action_id, metadata)
+        print(f'✅ 已登记私有动作: {args.action_id}')
+        return 0
+
+    if command == 'remove':
+        if engine.remove_private_action(args.action_id):
+            print(f'✅ 已移除私有动作: {args.action_id}')
+            return 0
+        print(f'❌ 私有动作不存在: {args.action_id}', file=sys.stderr)
+        return 1
+
+    print(f'❌ 未知的 private 子命令: {command}', file=sys.stderr)
+    return 1
+
+
+# 动作文件里的 ```json #!cfg 元数据块（与 adapter.py 的解析口径一致）
+_CFG_BLOCK_RE = re.compile(r"(```json\s*#!cfg\s*\n)(.*?)(```)", re.DOTALL)
+
+
+def _write_action_visibility(action_path: str, level: str):
+    """把动作 `#!cfg` 块里的 visibility 改成 level，返回 (ok, message)。
+
+    只动这一个标量：块里已有 "visibility" 就替换它的值，没有就插到块首。
+    **写完立刻重新解析整份动作文件**校验，不通过就把原文写回去并报错 ——
+    宁可失败也不留一份解析不了的动作文件（本仓库的 scaffolder 曾整体覆盖过
+    动作文件，这里不想重演那次事故）。
+    """
+    try:
+        with open(action_path, 'r', encoding='utf-8') as handle:
+            original = handle.read()
+    except OSError as exc:
+        return False, f'读取动作文件失败: {exc}'
+
+    match = _CFG_BLOCK_RE.search(original)
+    if match is None:
+        return False, '动作文件里找不到 ```json #!cfg``` 元数据块'
+
+    block = match.group(2)
+    if re.search(r'"visibility"\s*:\s*"[^"]*"', block):
+        new_block = re.sub(r'("visibility"\s*:\s*)"[^"]*"',
+                           lambda m: m.group(1) + '"%s"' % level, block, count=1)
+    else:
+        brace = block.find('{')
+        if brace < 0:
+            return False, '#!cfg 块不是 JSON 对象'
+        new_block = (block[:brace + 1]
+                     + '\n  "visibility": "%s",' % level
+                     + block[brace + 1:])
+
+    updated = original[:match.start(2)] + new_block + original[match.end(2):]
+    try:
+        with open(action_path, 'w', encoding='utf-8') as handle:
+            handle.write(updated)
+        from vools.actus.model import parse_cfg_from_file
+        parsed = parse_cfg_from_file(action_path)
+        if (parsed.meta.get('visibility') or '').strip().lower() != level:
+            raise ValueError('写回后 visibility 校验不一致')
+    except Exception as exc:
+        try:
+            with open(action_path, 'w', encoding='utf-8') as handle:
+                handle.write(original)          # 回滚到原文
+        except OSError:
+            pass
+        return False, f'{type(exc).__name__}: {exc}（已回滚原文件）'
+    return True, ''
+
+
+def _cmd_visibility(args) -> int:
+    """visibility 子命令：动作可见性查询 / 设置。
+
+    get 读真实来源（私有动作索引 / 动作文件 #!cfg 的 visibility 字段）；
+    set 用 `_write_action_visibility` 定点改写 #!cfg 里的可见性并校验回滚。
+    """
+    from vools.actus.visibility import VisibilityEngine
+
+    engine = VisibilityEngine(config_dir=_vis_config_dir())
+    command = getattr(args, 'visibility_command', None)
+
+    if command is None:
+        print('用法: actus visibility <get|set>', file=sys.stderr)
+        return 1
+
+    if command == 'get':
+        if engine.get_private_action(args.action_id) is not None:
+            print(f'🔒 {args.action_id}: private（私有动作索引）')
+            return 0
+        try:
+            import vools.actus as actuscore
+            action = actuscore.get_action(args.action_id)
+        except Exception as exc:
+            print(f'❌ 无法读取动作 {args.action_id}: {exc}', file=sys.stderr)
+            return 1
+        level = (action.meta.get('visibility') or 'public').strip().lower()
+        print(f'👁️  {args.action_id}: {level}')
+        return 0
+
+    if command == 'set':
+        level = args.level
+        if level == 'team':
+            if not args.team:
+                print('❌ --level team 需要同时用 --team 指定团队名', file=sys.stderr)
+                return 1
+            from vools.actus.visibility import TeamManager
+            if TeamManager(_vis_config_dir()).get_team(args.team) is None:
+                print(f'❌ 团队不存在: {args.team}', file=sys.stderr)
+                return 1
+        try:
+            import vools.actus as actuscore
+            action = actuscore.get_action(args.action_id)
+        except Exception as exc:
+            print(f'❌ 无法读取动作 {args.action_id}: {exc}', file=sys.stderr)
+            return 1
+
+        action_path = getattr(action, 'path', '') or ''
+        if not action_path or not os.path.isfile(action_path):
+            print(f'❌ 找不到动作文件: {args.action_id}', file=sys.stderr)
+            return 1
+
+        old_level = (action.meta.get('visibility') or 'public').strip().lower()
+        ok, message = _write_action_visibility(action_path, level)
+        if not ok:
+            print(f'❌ 设置可见性失败: {message}', file=sys.stderr)
+            return 1
+        print(f'✅ 可见性已更新: {args.action_id} {old_level} → {level}')
+        if level == 'team':
+            print(f'   团队: {args.team}')
+        return 0
+
+    print(f'❌ 未知的 visibility 子命令: {command}', file=sys.stderr)
+    return 1
+
 
 def _cmd_registry(args) -> int:
     """registry 子命令：构建/校验/查看注册表索引。"""

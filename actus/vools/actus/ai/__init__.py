@@ -41,11 +41,14 @@ __all__ = [
     'Planner', 'LlmPlanner', 'Plan', 'PlanStep', 'plan_from_intent',
     # 会话
     'AgentSession', 'SessionEvent', 'session_path',
+    # 用量记账（成本账本的写入通道）
+    'usage_record_stats',
 ]
 
 from .base import (
     LLMClient, LLMResponse, Message, ToolSpec, ToolCall,
     Role, StopReason, ErrorKind, ERROR_MAP, llm_error_code,
+    usage_record_stats,
 )
 from .registry import register_provider, get_provider, available_providers, PRESETS
 from .catalog import (

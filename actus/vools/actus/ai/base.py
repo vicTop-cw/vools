@@ -25,7 +25,9 @@ Example:
 
 __all__ = ['Role', 'StopReason', 'ErrorKind', 'ERROR_MAP', 'ToolSpec',
            'ToolCall', 'Message', 'LLMResponse', 'LLMClient',
-           'llm_error_code']
+           'llm_error_code', 'records_usage', 'usage_record_stats']
+
+import functools
 
 # 角色：system / user / assistant / tool
 Role = str
@@ -227,3 +229,159 @@ class LLMClient(object):
             禁止抛异常 —— 调用方（doctor / 动作前置校验）会无保护调用它。
         """
         return False
+
+
+# ---------------------------------------------------------------------------
+# 用量记账（best-effort）
+#
+# 审计背景：`cost.record_cost()` 全库从未被调用 —— 账本永远是空的，于是
+# `check_budget()` 恒 `spent_usd=0`、`alert_budget_if_over()` 的告警分支在生产
+# 路径上永远走不到（"承诺了但没做"）。现在两个真实 provider 的 `complete()`
+# 成功后由 `@records_usage` 记账：一处实现，两处挂载；不碰 Selector/Planner 的
+# 调用点，也不让测试里的 FakeClient 往真实账本里写垃圾行。
+#
+# 三条硬约束：
+#   1. **记账失败绝不影响 LLM 调用**：异常在这里吞掉，但计入 `usage_record_stats()`
+#      的计数器（留信号，不静默）。
+#   2. **cost_usd 口径必须诚实**：只有价格表能唯一定位到该模型时才写估算值，并把
+#      来源写进 `cost_source`；否则写 `None`（账本里是 JSON null）+ `unknown` 标记，
+#      **绝不用 0 冒充真实成本**（0 的语义是"确实免费"，那是另一件事）。
+#   3. **失败响应不记账**（`stop_reason='error'` 没发生真实调用）；成功但端点
+#      不返回 usage 的调用**照记一行**（tokens=0、cost_usd=null、
+#      cost_source='unknown:no-usage-tokens'）—— 调用确实发生了，装作没发生才是失真。
+# ---------------------------------------------------------------------------
+
+# 记账通道运行计数（排障用；模块级，进程内累积）
+_USAGE_RECORD_ATTEMPTS = 0
+_USAGE_RECORD_FAILURES = 0
+_USAGE_RECORD_LAST_ERROR = ''
+
+# 账本里 `action_id` 的取值：这不是动作调用，是 AI 层自己的用量
+_USAGE_ACTION_ID = 'ai.llm.complete'
+
+# 价格表来源标识（写进账本行，让"这个数从哪来"可追溯）
+_PRICE_SOURCE = 'estimated:routing.PROVIDER_COST_PERF'
+
+
+def usage_record_stats():
+    """返回记账通道的计数（只读）。
+
+    Returns:
+        dict: attempts（尝试次数）、failures（失败次数）、last_error（最近一次
+        失败原因，成功过则为空串）。排障时用它判断"账本为空"是"没调用"还是
+        "记账一直失败"—— 后者在日志里不会有任何痕迹。
+    """
+    return {
+        'attempts': _USAGE_RECORD_ATTEMPTS,
+        'failures': _USAGE_RECORD_FAILURES,
+        'last_error': _USAGE_RECORD_LAST_ERROR,
+    }
+
+
+def _lookup_price_per_1k(provider, model):
+    """从 routing.PROVIDER_COST_PERF 查每 1k token 的估算单价。
+
+    返回 (price, matched):
+      price   —— float 或 None（价格表里没有 → None，绝不返回 0 冒充免费）
+      matched —— 命中的来源描述（provider/model），供账本行追溯
+
+    查找顺序：先按 (provider, model) 精确命中；再按 model 扫全表（同一模型在
+    不同 provider 下单价可能不同，扫到多个则取字典序第一个并把歧义写进 matched）。
+    价格表本身是**路由打分用的启发式表**（含 rank 字段），不是正式计费表 ——
+    所以账本把结果标成 estimated，而不是 final。
+    """
+    if not model:
+        return None, ''
+    try:
+        from .routing import PROVIDER_COST_PERF
+    except Exception:
+        return None, ''
+
+    entry = PROVIDER_COST_PERF.get(provider, {}).get(model)
+    if isinstance(entry, dict):
+        price = entry.get('price_per_1k')
+        if isinstance(price, (int, float)) and not isinstance(price, bool):
+            return float(price), '%s/%s' % (provider, model)
+
+    matches = []
+    for prov in sorted(PROVIDER_COST_PERF):
+        candidate = PROVIDER_COST_PERF[prov].get(model)
+        if isinstance(candidate, dict):
+            price = candidate.get('price_per_1k')
+            if isinstance(price, (int, float)) and not isinstance(price, bool):
+                matches.append((prov, float(price)))
+    if len(matches) == 1:
+        prov, price = matches[0]
+        return price, '%s/%s' % (prov, model)
+    if len(matches) > 1:
+        prov, price = matches[0]
+        ambiguous = ','.join(p for p, _v in matches)
+        return price, '%s/%s(ambiguous:%s)' % (prov, model, ambiguous)
+    return None, ''
+
+
+def _record_usage(client, response):
+    """把一次成功调用写进成本账本。调用方负责兜异常。"""
+    global _USAGE_RECORD_ATTEMPTS, _USAGE_RECORD_FAILURES, _USAGE_RECORD_LAST_ERROR
+    _USAGE_RECORD_ATTEMPTS += 1
+
+    from ..cost import record_cost
+
+    provider = getattr(client, 'name', '') or 'unknown'
+    model = getattr(response, 'model', '') or getattr(client, 'model', '') or ''
+    prompt_tokens = int(getattr(response, 'prompt_tokens', 0) or 0)
+    completion_tokens = int(getattr(response, 'completion_tokens', 0) or 0)
+    total_tokens = prompt_tokens + completion_tokens
+
+    price, matched = _lookup_price_per_1k(provider, model)
+    if total_tokens <= 0:
+        # 调用成功但端点是"无 usage"的形状（部分本地 OpenAI 兼容端点如此）：
+        # 调用确实发生了，只是我们不知道它的规模 —— 记一行 null，而不是装作没发生。
+        cost_usd = None
+        cost_source = 'unknown:no-usage-tokens'
+    elif price is None:
+        cost_usd = None                      # 诚实：未知就是未知，不是 0
+        cost_source = 'unknown:no-price-entry'
+    else:
+        cost_usd = round(total_tokens / 1000.0 * price, 8)
+        cost_source = _PRICE_SOURCE
+
+    record_cost(
+        _USAGE_ACTION_ID,
+        provider,
+        cost_usd,
+        tokens=total_tokens,
+        model=model,
+        extra={
+            'prompt_tokens': prompt_tokens,
+            'completion_tokens': completion_tokens,
+            'cost_source': cost_source,
+            'price_per_1k': price,                  # None = 价格表没有该模型
+            'price_source_matched': matched,        # 命中项，便于回溯
+            'stop_reason': getattr(response, 'stop_reason', ''),
+        },
+    )
+
+
+def records_usage(method):
+    """装饰 `LLMClient.complete`：成功返回后 best-effort 记账。
+
+    只挂在**真实 provider** 上（见 providers/*.py 的 `@records_usage`）：
+    测试里的 FakeClient 直接构造、不经过这里，不会往真实账本写垃圾行。
+
+    记账失败只累加 `usage_record_stats()` 的计数，**不影响返回值、不抛异常** ——
+    "成本模块崩了导致 LLM 调用失败"是不能接受的失败模式。
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        response = method(self, *args, **kwargs)
+        global _USAGE_RECORD_FAILURES, _USAGE_RECORD_LAST_ERROR
+        try:
+            if isinstance(response, LLMResponse) and not response.failed:
+                _record_usage(self, response)
+        except Exception as exc:      # 记账故障绝不上抛
+            _USAGE_RECORD_FAILURES += 1
+            _USAGE_RECORD_LAST_ERROR = '%s: %s' % (type(exc).__name__, exc)
+        return response
+
+    return wrapper

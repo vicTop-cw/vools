@@ -295,24 +295,68 @@ def _lookup_in_path_index(cmd, path_index, mode=os.F_OK | os.X_OK):
     return shutil.which(cmd, mode, path=os.pathsep.join(narrowed))
 
 
-def _find_tool(name, aliases, well_known_paths, path_index=None):
-    """查找工具可执行文件，返回路径或 None。
+def _path_candidates(cmd, path_index):
+    """按 which 的判据枚举该命令在 PATH 里的**全部**命中（保持 PATH 顺序、去重）。
+
+    只在 `prefer_non_wrapper=True` 时用：要看「同一个命令在多个 PATH 目录里有没有
+    更合适的候选」。判据仍是 which 本体（`shutil.which(cmd, path=单个目录)`），
+    本模块不重写候选名生成规则。
+    """
+    if not cmd:
+        return []
+    if os.path.dirname(cmd):
+        found = shutil.which(cmd)
+        return [found] if found else []
+    if path_index is None:
+        directories = _path_dirs()
+    else:
+        directories = _dirs_possibly_containing(cmd, path_index)
+    hits = []
+    for directory in directories:
+        found = shutil.which(cmd, path=directory)
+        if found and found not in hits:
+            hits.append(found)
+    return hits
+
+
+def _find_tool_with_meta(name, aliases, well_known_paths, path_index=None,
+                         prefer_non_wrapper=False):
+    """查找工具，返回 (path, meta)。meta 记录「是否绕过了 wrapper 候选」。
 
     path_index=None（**platform_tools.py 的三参调用**）→ 与改前逐字等价：
     走 shutil.which + 已知路径 glob。
     path_index=...（本模块自己的调用）→ 先用索引把 which 的搜索范围缩到可能命中的
-    那几个目录（判据仍是 which 本体），未命中再走已知路径 glob；结果与三参版一致。
+    那几个目录（判据仍是 which 本体），未命中再走已知路径 glob。
+
+    prefer_non_wrapper=True（**默认 False，只有 system_tools 的取版本路径用**）：
+    同一个命令命中多个候选时，优先选**非 .CMD/.BAT 的直接可执行文件**
+    （原生二进制不必经 cmd.exe 再起解释器/桌面 shim，实测 node 65ms vs 128ms）；
+    若候选全是 wrapper，仍按原顺序取第一个（**不发明新顺序**）。
     """
     aliases = list(aliases or [])
+    meta = {"preferred_non_wrapper": False, "skipped_wrappers": []}
 
     # 1) PATH 搜索
     for cmd in [name] + aliases:
+        if prefer_non_wrapper:
+            hits = _path_candidates(cmd, path_index)
+            if not hits:
+                continue
+            chosen = hits[0]
+            if _is_script_wrapper(chosen):
+                for candidate in hits[1:]:
+                    if not _is_script_wrapper(candidate):
+                        meta["preferred_non_wrapper"] = True
+                        meta["skipped_wrappers"] = [chosen]
+                        chosen = candidate
+                        break
+            return chosen, meta
         if path_index is None:
             path = shutil.which(cmd)
         else:
             path = _lookup_in_path_index(cmd, path_index)
         if path:
-            return path
+            return path, meta
 
     # 2) 已知路径搜索（两种模式共用，行为不变）
     sys_platform = sys.platform
@@ -320,9 +364,19 @@ def _find_tool(name, aliases, well_known_paths, path_index=None):
     for pattern in patterns:
         matches = globmod.glob(pattern, recursive=True)
         if matches:
-            return matches[0]
+            return matches[0], meta
 
-    return None
+    return None, meta
+
+
+def _find_tool(name, aliases, well_known_paths, path_index=None,
+               prefer_non_wrapper=False):
+    """查找工具可执行文件，返回路径或 None。
+
+    **契约冻结**：platform_tools.py 直接 import 本函数并三参调用，默认参数必须
+    保持「与改前逐字等价」。`prefer_non_wrapper` 是新增的可选开关（默认 False）。"""
+    return _find_tool_with_meta(name, aliases, well_known_paths, path_index,
+                                prefer_non_wrapper)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -577,8 +631,12 @@ def _is_script_wrapper(path):
     return lowered.endswith(".cmd") or lowered.endswith(".bat")
 
 
-def _lookup_one(entry, path_index=None):
-    """阶段 1 工作单元：解表项 + 查找可执行文件。"""
+def _lookup_one(entry, path_index=None, prefer_non_wrapper=False):
+    """阶段 1 工作单元：解表项 + 查找可执行文件。
+
+    `prefer_non_wrapper=True` 时把「是否绕过了 wrapper 候选」一并带回
+    （`preferred_non_wrapper` / `skipped_wrappers`），供条目 extra 与 stats 留痕。
+    """
     try:
         name, aliases, version_cmd, well_known_paths, timeout = entry
     except (TypeError, ValueError) as exc:
@@ -589,7 +647,8 @@ def _lookup_one(entry, path_index=None):
         }
 
     try:
-        path = _find_tool(name, aliases, well_known_paths, path_index)
+        path, meta = _find_tool_with_meta(name, aliases, well_known_paths,
+                                          path_index, prefer_non_wrapper)
     except Exception as exc:        # 串行版这里会抛穿整个探测器
         return {
             "name": name,
@@ -603,6 +662,8 @@ def _lookup_one(entry, path_index=None):
         "path": path,
         "version_cmd": version_cmd,
         "timeout": timeout,
+        "preferred_non_wrapper": bool((meta or {}).get("preferred_non_wrapper")),
+        "skipped_wrappers": list((meta or {}).get("skipped_wrappers") or []),
     }
 
 
@@ -720,6 +781,8 @@ class SystemToolsProber(Prober):
             "version_max_ms": 0,
             "gating_tool": None,
             "slow_tools": [],
+            # 本轮窄优化：取版本路径上「绕过了 .CMD/.BAT wrapper 候选」的工具
+            "preferred_candidates": [],
         }
         if total == 0:
             self.last_stats = stats
@@ -743,7 +806,8 @@ class SystemToolsProber(Prober):
             # ── 阶段 1：并发查找（索引命中判定，不存在的工具也很快）──
             lookups = {}
             for index, entry in enumerate(entries):
-                lookups[executor.submit(_lookup_one, entry, path_index)] = index
+                lookups[executor.submit(_lookup_one, entry, path_index,
+                                        True)] = index
             found, failed_lookup, expired_lookup = _wait_for(lookups, deadline)
             expired_lookup = set(expired_lookup)
 
@@ -798,7 +862,13 @@ class SystemToolsProber(Prober):
                     continue
 
                 stats["lookup_ok"] += 1
-                resolved[index] = (info.get("name"), path)
+                # 取版本路径开 prefer_non_wrapper=True（窄用）：「取一个版本号」场景
+                # 里原生二进制永远比 .CMD/.BAT 包装（cmd.exe → 解释器/桌面 shim）合适。
+                resolved[index] = (info.get("name"), path,
+                                   bool(info.get("preferred_non_wrapper")))
+                if info.get("preferred_non_wrapper"):
+                    stats.setdefault("preferred_candidates", []).append(
+                        (info.get("name"), list(info.get("skipped_wrappers") or [])))
                 timeout = info.get("timeout")
                 if not timeout:
                     timeout = self.timeout
@@ -814,12 +884,15 @@ class SystemToolsProber(Prober):
                 version_jobs, deadline)   # 超预算的那批在下面的 else 分支里标记
 
             for index in sorted(resolved):
-                name, path = resolved[index]
+                name, path, preferred_non_wrapper = resolved[index]
                 if index in versions:
                     info = versions[index]
                     error = info.get("error")
                     elapsed_ms = info.get("elapsed_ms")
                     extra = dict(info.get("extra") or {})
+                    # 「我绕过了 wrapper 候选」必须可查（本轮新增的窄优化）
+                    if preferred_non_wrapper:
+                        extra["version_candidate_preferred"] = True
                     # 慢工具如实标注：整批墙钟 ≈ 最慢那个工具的耗时（阶段 2 是 barrier），
                     # 所以「这次探测为什么慢」必须能在报告里查得到（加信号，不砍数据）。
                     if isinstance(elapsed_ms, (int, float)) and elapsed_ms >= _SLOW_VERSION_MS:

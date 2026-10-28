@@ -20,7 +20,7 @@ import socket
 import urllib.error
 import urllib.request
 
-from ..base import LLMResponse, LLMClient, llm_error_code
+from ..base import LLMResponse, LLMClient, llm_error_code, records_usage
 from ..registry import register_provider
 
 # 不实现流式：显式报错好过静默返回不完整结果。
@@ -184,6 +184,7 @@ class OpenAICompatClient(LLMClient):
 
     # ── LLMClient 协议 ──
 
+    @records_usage          # 成功调用后 best-effort 记账（见 base.records_usage）
     def complete(self, messages, tools=None, temperature=0.0, max_tokens=None,
                  stream=False):
         """发起一次补全。失败编码进返回值，不抛异常。"""
