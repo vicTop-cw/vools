@@ -6,6 +6,7 @@
 
 import json
 import os
+import re
 import logging
 from typing import Dict, List, Optional
 from pathlib import Path
@@ -304,6 +305,18 @@ def list_templates() -> List[dict]:
     ]
 
 
+_PLACEHOLDER_RE = re.compile(r"\$\{(action_id|action_name|description)\}")
+
+
+def _escape_snippet(value: str) -> str:
+    """插入模板代码前转义会破坏生成文件语法的字符（本轮只处理 `\"\"\"`）。
+
+    描述里出现 `\"\"\"` 会把生成的 Python 三引号字符串提前闭合 → 文件语法错误，
+    而且要等到下游解析/执行才炸。转义成 `\\\"\\\"\\\"` 后仍是合法文本。
+    """
+    return str(value).replace('"""', '\\"\\"\\"')
+
+
 def apply_template(template_id: str, action_id: str, name: str,
                    description: str = "") -> Optional[str]:
     """应用模板生成动作代码。
@@ -316,21 +329,30 @@ def apply_template(template_id: str, action_id: str, name: str,
 
     返回:
         生成的动作代码字符串。
+
+    审计修（二次替换）：改前是三次链式 `str.replace` —— 后一次替换会展开**前一次
+    插入文本里**的占位符（实测 name='MyName${description}' 时被塞了两次同名描述）。
+    现在用 `re.sub` **单次扫描**，回调里按 token 取值，插入的值不会被再次扫描；
+    同时对插入值做最小转义（见 `_escape_snippet`）。
     """
     template = get_template(template_id)
     if not template:
         return None
 
-    code = template["body"]
-    code = code.replace("${action_id}", action_id)
-    code = code.replace("${action_name}", name)
-    code = code.replace("${description}", description or template["description"])
-    return code
+    values = {
+        'action_id': action_id,
+        'action_name': name,
+        'description': description or template["description"],
+    }
+    return _PLACEHOLDER_RE.sub(
+        lambda m: _escape_snippet(values.get(m.group(1), '')),
+        template["body"])
 
 
 def create_action_from_template(template_id: str, action_id: str, name: str,
                                 output_dir: str, description: str = "",
-                                parameters: dict = None) -> Optional[str]:
+                                parameters: dict = None,
+                                force: bool = False) -> Optional[str]:
     """从模板创建完整动作文件。
 
     参数:
@@ -340,6 +362,7 @@ def create_action_from_template(template_id: str, action_id: str, name: str,
         output_dir: 输出目录
         description: 描述
         parameters: 参数定义
+        force: 目标文件已存在时是否覆盖（默认 False = 拒绝，与 scaffold 同款保护）
 
     返回:
         创建的文件路径，失败返回 None。
@@ -380,6 +403,11 @@ def create_action_from_template(template_id: str, action_id: str, name: str,
     if not safe_id or safe_id in ('.', '..'):
         raise ValueError(f'action_id 非法（不能为空或含路径逃逸）: {action_id!r}')
     out_path = Path(output_dir) / f"{safe_id}{ext}"
+    # 审计修（静默覆盖，第 4 例同族）：改前无条件 write_text —— 同名文件被静默替换。
+    # 现在走 errors.check_path_target 这个**共用判断**（scaffold 也用同一份），
+    # 目标已存在且未 force → 抛 ActionError('action_exists')。
+    from .errors import check_path_target
+    check_path_target(str(out_path), force=force, what='动作文件')
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     content = f"#!cfg\n```json\n{cfg_json}\n```\n\n{code}"

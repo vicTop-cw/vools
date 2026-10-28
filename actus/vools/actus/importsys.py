@@ -21,6 +21,7 @@
 缓存: 编译结果缓存到 `_meta/imports_cache/`，源文件未变化时直接复用。
 """
 
+import json
 import os
 import re
 import hashlib
@@ -219,10 +220,21 @@ class ImportResolver:
         }
 
     def resolve(self, decl: ImportDecl) -> Tuple[bool, str, Optional[Path]]:
-        """解析一条 import 声明。
+        """解析一条 import 声明，返回 (ok, message, 产物路径)。
 
-        返回: (成功, 信息, 输出文件路径)
+        审计修三处：
+          1. **路径逃逸（读）**：`decl.path` 来自动作元数据的
+             `#!import <lang>:<path> as <alias>`，此前直接 `repo_root / decl.path`
+             —— 带 `../` 就能读**仓外**源文件。现在用 `errors.ensure_within` 限制在
+             repo_root 内（与 project / bugreport 共用同一份检查）。
+          2. **假缓存命中**：此前 `if cached.exists(): 缓存命中` —— 上次编译失败、
+             被超时 kill 留下的半成品、或用户手放的任意文件，都会被当成有效产物。
+             现在先编译到临时文件，**成功后才 `os.replace` 成最终名**（原子），
+             失败则删掉临时文件 ⇒ "缓存命中"等价于"曾经成功编译过"。
+          3. 失败原因如实回传（不再给一句空 message）。
         """
+        from .errors import ensure_within
+
         backend = self._backends.get(decl.language)
         if not backend:
             return False, f"不支持的语言: {decl.language}", None
@@ -230,36 +242,79 @@ class ImportResolver:
         if not backend.is_available():
             return False, f"{decl.language} 编译器不可用", None
 
-        source_path = self.repo_root / decl.path
+        try:
+            source_path = Path(ensure_within(
+                str(self.repo_root), str(self.repo_root / decl.path),
+                what='import 源文件路径'))
+        except ValueError as exc:
+            return False, str(exc), None
         if not source_path.exists():
             return False, f"源文件不存在: {decl.path}", None
 
         # 计算缓存键
         cache_key = self._cache_key(source_path)
         cached = self.cache_dir / f"{decl.alias}_{cache_key}"
+        marker = cached.with_name(cached.name + ".ok")
 
-        if cached.exists():
-            return True, "缓存命中", cached
+        # 缓存有效性：产物 + **成功标记**都要在，且标记与本次 cache_key/alias 一致。
+        # 只判 exists() 时，用户手放的任意文件、或历史遗留的半成品都会被当成有效产物
+        # （实测：往最终名字放一个内容为 GARBAGE 的文件 → 直接返回"缓存命中"）。
+        if cached.exists() and marker.exists():
+            try:
+                meta = json.loads(marker.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                meta = None
+            if (isinstance(meta, dict)
+                    and meta.get("cache_key") == cache_key
+                    and meta.get("alias") == decl.alias):
+                return True, "缓存命中", cached
 
-        # 编译
-        ok, msg = backend.compile(source_path, cached)
-        if ok:
-            return True, f"编译成功: {decl.path}", cached
-        return False, msg, None
+        # 编译到临时文件：成功才落下最终名，失败/超时不留半成品
+        tmp_path = cached.with_name(cached.name + f".tmp{os.getpid()}")
+        try:
+            ok, msg = backend.compile(source_path, tmp_path)
+            if not ok:
+                return False, msg or '编译失败（无详细输出）', None
+            os.replace(tmp_path, cached)
+        except OSError as exc:
+            return False, f'编译产物落盘失败: {exc}', None
+        finally:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
 
-    def resolve_all(self, decls: List[ImportDecl]) -> Dict[str, Path]:
-        """解析所有 import 声明。
+        # 落"成功标记"：只有真正编译成功才会写，缓存命中据此判定
+        try:
+            marker.write_text(json.dumps({
+                "alias": decl.alias,
+                "cache_key": cache_key,
+                "language": decl.language,
+                "source": decl.path,
+            }, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass      # 标记写不了最多导致下次重编译，不影响本次结果
+        return True, f"编译成功: {decl.path}", cached
 
-        返回: {alias: 路径} 字典。
+    def resolve_all(self, decls: List[ImportDecl]) -> Tuple[bool, List[str], Dict[str, Path]]:
+        """解析所有 import 声明 → (全部成功?, 缺失的 alias 列表, {alias: 路径})。
+
+        审计修（静默降级）：改前失败只 `logger.warning` 并**丢掉该 alias**，
+        直接返回缺项字典 —— 调用方拿着半截导入表继续跑，运行时才炸。
+        现在失败显式交回调用方（**默认语义 = 导入不全即整体失败**，是否硬停由调用方
+        决定）；缺失项同时保留 warning 便于排障。
         """
-        results = {}
+        results: Dict[str, Path] = {}
+        missing: List[str] = []
         for decl in decls:
             ok, msg, path = self.resolve(decl)
             if ok:
                 results[decl.alias] = path
             else:
+                missing.append(decl.alias)
                 logger.warning(f"导入失败 [{decl}]: {msg}")
-        return results
+        return (not missing), missing, results
 
     def _cache_key(self, source_path: Path) -> str:
         """基于文件内容生成缓存键。"""
@@ -279,26 +334,34 @@ class ImportResolver:
 
 # ── 便捷函数 ───────────────────────────────────────────────────────────────
 
-def resolve_imports_for_action(action_meta: dict, repo_root: str = ".") -> Dict[str, Path]:
+def resolve_imports_for_action(action_meta: dict, repo_root: str = ".",
+                               strict: bool = False
+                               ) -> Tuple[bool, List[str], Dict[str, Path]]:
     """为动作解析所有 import 声明。
 
     参数:
         action_meta: 动作的 meta 字典（含 #!cfg 内容）。
         repo_root: 仓库根目录。
+        strict: True 时导入不全直接抛 `ImportError`；默认 False 把结果交回调用方
+            （原来的"只返回字典"会静默丢失败项 —— 见 `ImportResolver.resolve_all`）。
 
     返回:
-        {alias: 路径} 字典。
+        (全部成功?, 缺失 alias 列表, {alias: 路径})
     """
     cfg_text = action_meta.get("_cfg_text", "")
     if not cfg_text:
-        return {}
+        return True, [], {}
 
     decls = parse_imports(cfg_text)
     if not decls:
-        return {}
+        return True, [], {}
 
     resolver = ImportResolver(repo_root)
-    return resolver.resolve_all(decls)
+    ok, missing, results = resolver.resolve_all(decls)
+    if strict and not ok:
+        raise ImportError('import 声明解析失败（缺少 %s）: %s'
+                          % (', '.join(missing), action_meta.get('id', '?')))
+    return ok, missing, results
 
 
 def check_imports_available(action_meta: dict, repo_root: str = ".") -> List[dict]:

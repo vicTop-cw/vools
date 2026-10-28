@@ -1,7 +1,8 @@
 """统一错误类型：所有失败都收敛为 ActionError，携带 docs/08 §5 的结构化错误码。"""
 
 __all__ = ['ActionError', 'ERROR_CODES',
-           'OPERATION_OK_STATUSES', 'is_failure_status']
+           'OPERATION_OK_STATUSES', 'is_failure_status',
+           'check_path_target', 'ensure_within']
 
 # ── 业务结果状态 → 成败（CLI 与 MCP 共用同一份判据）──
 # 为什么放这里：`cli._out_result` 与 `mcp_server.text_result` 都要判"这次操作
@@ -53,6 +54,9 @@ ERROR_CODES = [
     # 分流出来 —— `internal` 只表示**引擎自身**异常，调用方靠此区分"我的代码错"
     # 还是"引擎错"（executor._run_blocks 的失败分支发这个码）。
     'block_failed',
+    # 覆盖保护：目标已存在且调用方没有显式 force。scaffold 一直在用这个码，
+    # 本轮把它登记进来（此前只在代码里出现、名单里没有）。
+    'action_exists',
 ]
 
 class ActionError(Exception):
@@ -78,4 +82,53 @@ class ActionError(Exception):
     def to_payload(self) -> dict:
         """转为 docs/03 §7.2 的 error 载荷。"""
         return {'code': self.code, 'message': self.message, 'details': self.details}
+
+
+# ── 跨模块共用的两条「写之前先判」规则 ──
+# 为什么放这里：这两条判断此前在 scaffold / installer / publisher / template /
+# project / importsys / bugreport 里各写了一份（或干脆漏写）。errors.py 无重依赖，
+# 是这些模块的共同祖先，适合放共用判断。
+
+def check_path_target(path: str, force: bool = False, what: str = '目标',
+                      code: str = 'action_exists') -> str:
+    """写入前检查目标：已存在且未显式 force → 抛 ActionError(code)；否则原样返回 path。
+
+    共用范围（本轮）：
+      * `scaffold.scaffold_action()` —— 与这里等价（它原本就是这套语义）；
+      * `template.create_action_from_template()` —— 本轮改为调用本函数（此前**没有**保护）。
+    `installer` / `publisher` 的覆盖判定暂时**没有**合并：它们还带「内容相同则幂等
+    no-op」的语义（installer 还带用户配置快照/还原），语义比"存在即拒绝"宽；
+    将来要统一，应当给本函数加 `idempotent_if_same=` 之类的参数，而不是各写一份。
+    """
+    import os
+    if force or not os.path.exists(path):
+        return path
+    raise ActionError(
+        code,
+        '%s已存在，拒绝覆盖: %s（如需覆盖请用 force=True / CLI 的 --force）'
+        % (what, path),
+        {'path': path})
+
+
+def ensure_within(base: str, candidate: str, what: str = '路径',
+                  error_cls=ValueError) -> str:
+    """`candidate` 解析后必须**严格落在** `base` 之内；越界抛 `error_cls`。
+
+    返回 `realpath(candidate)`。与 `installer._inside_install_dir` 是同一把尺子
+    （realpath 之后再比，顺带挡住软链/junction 指向外面）；抽到公共模块是因为
+    `project.load/save_project`、`importsys` 的 `#!import` 路径、`bugreport._check_source`
+    都需要同一个判断 —— 此前各自手写（或干脆没有）。
+
+    `error_cls` 让调用方保持自己的异常约定（如 bugreport 传 `BugreportError`）。
+    """
+    import os
+    try:
+        root = os.path.realpath(base)
+        real = os.path.realpath(candidate)
+    except (OSError, ValueError) as exc:
+        raise error_cls('%s无法解析: %r（%s）' % (what, candidate, exc))
+    if real.startswith(root + os.sep):
+        return real
+    raise error_cls('%s会越出允许目录，已拒绝: %r（基准 %r）'
+                    % (what, candidate, base))
 

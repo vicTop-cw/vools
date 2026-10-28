@@ -122,17 +122,25 @@ def _resolve_ref_call_id(project_dir: Optional[str], ref_call_id: int) -> str:
 
 
 def _check_source(project_dir: Optional[str], source: str) -> str:
-    """source 必须是项目根内真实存在的文件，入账时归一为相对路径。"""
+    """source 必须是项目根内真实存在的文件，入账时归一为相对路径。
+
+    审计修（与 docstring 承诺不符）：改前只判 `os.path.isfile`，**仓外绝对路径**
+    也会被接受并以 `../../` 形式记进账本（实测 `source=<tmp>/SECRET_OUTSIDE.txt`
+    → 账本记 `来源：../tmp.../SECRET_OUTSIDE.txt`），破坏"出处可核实"的语义。
+    现在用 `errors.ensure_within`（与 project / importsys 共用的同一份包含性检查）。
+    """
+    from .errors import ensure_within
     root = os.path.abspath(project_dir or _default_root())
     cand = source.replace('\\', '/')
     full = cand if os.path.isabs(cand) else os.path.join(root, cand)
-    full = os.path.normpath(full)
+    full = ensure_within(root, os.path.normpath(full), what='来源路径',
+                         error_cls=BugreportError)
     if not os.path.isfile(full):
         raise BugreportError(f'来源 {source} 不是仓库内真实存在的文件')
     try:
         return os.path.relpath(full, root).replace('\\', '/')
     except ValueError:
-        return cand
+        raise BugreportError(f'来源 {source} 不在项目目录内')
 
 
 def _bump_hit(text: str, entry_id: str) -> Tuple[str, int]:

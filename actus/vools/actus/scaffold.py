@@ -306,15 +306,11 @@ def scaffold_action(
 
     # ── 覆盖保护（数据丢失防线）──
     # 动作文件是本命令的**主要产物**，绝不能静默覆盖用户手写的动作。
+    # 判断走 errors.check_path_target（与 template.create_action_from_template 共用
+    # 同一份实现，避免"每个写文件的模块各抄一遍覆盖保护"）。
+    from .errors import check_path_target
     overwritten = os.path.exists(file_path)
-    if overwritten and not force:
-        from .errors import ActionError
-        raise ActionError(
-            'action_exists',
-            '动作文件已存在，拒绝覆盖: %s（如需覆盖请用 force=True / CLI 的 --force）'
-            % file_path,
-            {'path': os.path.abspath(file_path), 'id': aid},
-        )
+    check_path_target(file_path, force=force, what='动作文件')
 
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(rendered)
