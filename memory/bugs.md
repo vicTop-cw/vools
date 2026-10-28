@@ -6877,3 +6877,13 @@ severity medium。
 - evidence: 修复提交 `b48dace`。① **纳入受管键**：`renew_lock=false` 与 `renew_interval_sec=0`（0 = 自动取 `lock_ttl_sec/2`）进 `config.py::DEFAULT_QUEUE`。② **配置期拒绝**（不再静默 clamp）：`TaskConfig` 校验 `lock_ttl_sec > 0`、`renew_interval_sec >= 0`，开启续期时若 `renew_interval_sec > lock_ttl_sec/2` 直接抛 `SecretError`（文案含两个键名与缺陷号）。③ **实现层兜底**：`queue.py::_start_renewal` 的上界由 `min(interval, ttl)` 收紧为 `min(interval, ttl/2)`，防运行期人为调小 ttl 后「续期」与「判死」同拍被抢先回收。④ 文档：`docs/task-queue.md` §15「任务租约与续期」写明该约束。
 - 判据：`tests/test_task_resilience.py::TestRenewIntervalValidation` 4 用例（受管键与 0 语义 / `renew_interval_sec=100000` 越界拒绝且报错点名 `renew_interval_sec`+`lock_ttl_sec` / 恰好等于 `ttl/2` 时接受 / 负值拒绝）。
 - 证据：rhop 全量 `python -m pytest tests` → **604 passed / 40 skipped / 0 failed**。
+
+## BUG-368 [2026-10-28T08:37:13Z] [medium] FIXED
+- summary: [rhop-pg] **并发启动时 `init_schema` 的 DDL 互相死锁**：多个进程/会话同时 `create_store`（表已存在 → 走 29 条 `ALTER TABLE` 迁移路径）时，各自反复取同一张表的 `AccessExclusiveLock`；实测「10 轮 × 4 会话」→ **20 次失败，全部 `deadlock detected`**。多个 worker / A+B 两侧同时起来时，初始化本身就挂。
+- detail: 现象（真实 PG 14.24，WSL 内复现）：每轮先串行建一次表，然后 4 个线程用绝对时间戳对齐、**同时** `create_store`（内部 `init_schema`：`CREATE TABLE IF NOT EXISTS` + 29 条 `ALTER TABLE ADD COLUMN` + 3 条版本元数据语句，全在同一事务）→ 每轮约 2 个会话死锁，10 轮累计 20 次；报错形如 `StoreError: 初始化 PostgreSQL 表 X 失败: deadlock detected … waits for AccessExclusiveLock …`。
+  影响：容器编排 / 批量拉起 / A+B 同时启（正是本包的标准拓扑）时，`create_store` 直接抛异常；调用方通常没有重试逻辑，表现为「偶尔起不来」，且只在并发时出现，单机自测很难撞到。
+  根因：BUG-362 引入的逐列 ALTER 迁移，让「同一事务内对同一张表反复取表级锁」的窗口显著变长；PG 不会为并发 DDL 做死锁预防（只检测），只能由应用层串行化。
+- 建议（已按此修复）：`init_schema` 在同一事务内先取**事务级 advisory lock** —— `pg_advisory_xact_lock(hashtext(命名空间), hashtext(表名))` 把整个迁移串行化；再 `SET LOCAL lock_timeout = <spec.migration_lock_timeout_ms>ms`（默认 5000）给「拿锁 + 后续 DDL」设上限，拿不到锁就抛**可读的** StoreError（提示另一个会话正在迁移、可重试），绝不无限等。锁用**两段式**（固定命名空间 + 表名哈希）：不同表互不阻塞，也不与同实例上其它应用的 advisory lock 撞键；事务级锁随 COMMIT/ROLLBACK 自动释放，无需手动 unlock。
+- 证据：修复后同一场景（10 轮 × 4 会话）→ **0 失败 / 0 死锁**；**变异验证**：把 `init_schema` 还原成修复前实现 → 21 次死锁，说明新用例不是恒绿装饰；新增 `rhop/tests/test_pg_store_concurrency.py`（5 条：并发不死锁 / 等锁超时给可读错误 / 锁按表隔离 / 单进程重复 init 幂等 / 默认超时为正）。WSL 内 PG 用例合计 **64 passed**（test_pg_store 40 + concurrency 5 + explicit_columns 7 + schema_migration 12）；Windows 全量 **604 passed / 45 skipped**（PG 不可达时 pg 用例整组 skip，含新增 5 条）。
+- 溯源：本 bug 由 BUG-363 的并发领取探针**顺带**撞出来（探针为对齐起跑让 4 个会话同时 create_store）；BUG-363 本身判定为 WORKS-AS-DESIGNED，与本条无因果关系。
+- reported_by: 接手司令（vools-lead 派单）

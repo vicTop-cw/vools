@@ -62,6 +62,29 @@ _SCHEMA_VERSION = 1
 #: 迁移时跳过的身份列（任何版本的表都存在；补齐反而引入 UNIQUE/序列冲突）
 _MIGRATION_SKIP = ("task_id", "task_name")
 
+#: 迁移互斥锁的**命名空间**（两段式 advisory lock 的第一段）。
+#: 用固定常量而不是临时哈希：同一个 PG 实例上可能有别的应用也在用 advisory lock，
+#: 固定命名空间把我们的锁限制在「本包 + 本表」，不与别人撞 int4 键。
+_MIGRATION_LOCK_NAMESPACE = "vools.rhop.task.store.schema"
+
+#: 迁移锁的默认等待上限（毫秒）。拿不到就报「另一个会话正在迁移」，绝不无限等。
+#: 0 表示不设上限（退化成旧行为，仅调试用）。
+_DEFAULT_MIGRATION_LOCK_TIMEOUT_MS = 5000
+
+
+def _is_lock_timeout(exc) -> bool:
+    """异常是否属于「等锁超时 / 死锁被 PG 中止 / 语句被取消」。
+
+    不导入 psycopg2 也能判：优先看 SQLSTATE（55P03 lock_not_available、
+    40P01 deadlock_detected、57014 query_canceled），再用报错文本兜底。
+    """
+    code = getattr(exc, "pgcode", None)
+    if code in ("55P03", "40P01", "57014"):
+        return True
+    text = str(exc).lower()
+    return ("lock timeout" in text) or ("deadlock detected" in text) \
+        or ("canceling statement due to lock" in text)
+
 #: 列定义单一来源：CREATE TABLE 与「旧表补列」迁移都从这里生成，避免两处漂移。
 #: 顺序必须与 models.TASK_COLUMNS 一致（有测试自校）。
 _COLUMN_DDL = (
@@ -151,6 +174,12 @@ class PgTaskStore(TaskStore):
         self.connect_timeout = int(self.spec.get("connect_timeout") or 10)
         self.lock_ttl_sec = float(self.spec.get("lock_ttl_sec") or 900)
         self.claim_scan_limit = int(self.spec.get("claim_scan_limit") or 500)
+        # 迁移等锁上限（毫秒）：并发启动时把「建表 + 补列 + 版本」串行化，
+        # 但绝不无限等；超时抛 StoreError 让调用方重试。
+        self.migration_lock_timeout_ms = int(
+            self.spec.get("migration_lock_timeout_ms")
+            if self.spec.get("migration_lock_timeout_ms") is not None
+            else _DEFAULT_MIGRATION_LOCK_TIMEOUT_MS)
 
         self._conn = self._connect()
         self.init_schema()
@@ -184,10 +213,39 @@ class PgTaskStore(TaskStore):
             )
         return conn
 
+    def migration_lock_sql(self):
+        """迁移互斥语句 + 参数：`pg_advisory_xact_lock(namespace, hashtext(table))`。
+
+        为什么必须用它（BUG-368，实测）：多个 worker 同时启动时，各进程的 `init_schema`
+        都会跑「建表 + 29 条 ALTER TABLE + 3 条版本语句」；这些 DDL 各自要取表的
+        AccessExclusiveLock，交错执行就会互相等成死锁 —— 实测「10 轮 × 4 会话同时
+        create_store」→ **20 次失败，全部是 deadlock detected**。
+
+        * **事务级锁**（`_xact_`）：随 COMMIT/ROLLBACK 自动释放，无需手动 unlock，
+          因此调用点必须在本方法所在的同一个事务里；
+        * **两段式**：第一段固定命名空间，第二段 `hashtext(表名)` —— 不同表互不阻塞，
+          也不与同实例上其它应用的单段 advisory lock 撞键；
+        * hashtext 的理论碰撞只会导致「两张无关表偶然串行化」，不影响正确性。
+        """
+        return ("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                (_MIGRATION_LOCK_NAMESPACE, self.table))
+
     def init_schema(self) -> None:
-        """建表 + 建索引 + 幂等补列（旧库自愈，BUG-362）。"""
+        """建表 + 建索引 + 幂等补列（旧库自愈，BUG-362）。
+
+        并发启动安全（BUG-368）：整个迁移在**一个事务**里，开头先取事务级 advisory lock
+        串行化，再用 `SET LOCAL lock_timeout` 给「拿锁 + 后续 DDL」设上限 ——
+        拿不到锁时抛可读的 StoreError（提示另一个会话正在迁移、可重试），不无限等。
+        单进程/无竞争时只多一次 advisory lock（亚毫秒级），行为与之前一致。
+        """
+        timeout_ms = max(0, int(self.migration_lock_timeout_ms))
+        lock_sql, lock_params = self.migration_lock_sql()
         try:
             with self._conn.cursor() as cur:
+                # SET LOCAL 只作用于本事务；0 = 不设上限（旧行为）
+                if timeout_ms > 0:
+                    cur.execute("SET LOCAL lock_timeout = %s", ("%dms" % timeout_ms,))
+                cur.execute(lock_sql, lock_params)
                 cur.execute(self.schema_sql())
                 for stmt in self.migration_sql():
                     cur.execute(stmt)
@@ -195,7 +253,16 @@ class PgTaskStore(TaskStore):
                     cur.execute(stmt)
             self._conn.commit()
         except Exception as exc:
-            self._conn.rollback()
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            if _is_lock_timeout(exc):
+                raise StoreError(
+                    "初始化 PostgreSQL 表 %s 时等锁超时（%dms）：另一个会话正在做同样的"
+                    "建表/迁移。并发启动会短暂串行化（属正常现象），请稍后重试；"
+                    "若频繁发生，可调大 spec.migration_lock_timeout_ms。%s"
+                    % (self.table, timeout_ms, exc))
             raise StoreError("初始化 PostgreSQL 表 %s 失败: %s" % (self.table, exc))
 
     def schema_sql(self) -> str:
