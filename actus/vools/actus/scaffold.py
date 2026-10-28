@@ -331,12 +331,33 @@ def scaffold_action(
         test_path = os.path.join(test_dir, test_file)
         test_file_skipped = os.path.exists(test_path)
         if not test_file_skipped:
+            # ⚠️ 这里是**真断言**骨架，绝不能再写 `assert True`：仓库里那 5 个
+            # `assert True` 骨架制造了 5 个假绿灯 —— 其中 zh.actus.md 被静默覆盖
+            # 两次、测试从不报警。动作被删 / 被改名 / 被覆盖成别的 id / 校验失败，
+            # 下面任意一条都必须红。
+            # 路径**从 __file__ 推导**：生成时算好 tests/ → 动作文件 的相对路径，
+            # 兼容 output_dir 与 repo_root 的任意组合，不硬编码绝对路径。
+            rel_to_action = os.path.relpath(file_path, test_dir).replace(os.sep, '/')
             with open(test_path, 'w', encoding='utf-8') as f:
                 f.write(
-                    f'"""回归骨架（scaffold 自动生成）：动作 {aid}。"""\n\n\n'
+                    f'"""{aid} 的回归用例（scaffold 自动生成，真断言）。\n\n'
+                    f'任一坏掉都会红：动作文件被删/改名、id 被覆盖成别的动作、\n'
+                    f'validate_action 报错（文件被改坏 / schema 不合规）。\n'
+                    f'"""\n\n'
+                    f'import os\n\n'
+                    f'from vools.actus.model import parse_cfg_from_file\n'
+                    f'from vools.actus.validate import validate_action\n\n'
+                    f'ACTION_FILE = os.path.normpath(os.path.join(\n'
+                    f'    os.path.dirname(os.path.abspath(__file__)), "{rel_to_action}"))\n\n\n'
                     f'def test_{aid.replace(".", "_")}_runs():\n'
                     f'    """{aid} 的回归用例。"""\n'
-                    f'    assert True\n'
+                    f'    assert os.path.isfile(ACTION_FILE), (\n'
+                    f'        "动作文件不存在（被删除或改名？）: %s" % ACTION_FILE)\n'
+                    f'    action = parse_cfg_from_file(ACTION_FILE)\n'
+                    f'    assert action.meta.get("id") == "{aid}", (\n'
+                    f'        "动作 id 漂移（文件被覆盖成别的动作？）: %r" % (action.meta.get("id"),))\n'
+                    f'    errors = validate_action(action)\n'
+                    f'    assert errors == [], "动作校验失败: %s" % errors\n'
                 )
 
     # 5) 首次校验

@@ -21,11 +21,13 @@ API:
 > 它只依赖标准库 + `vools.security.otp`，没有反向依赖 Actus，所以能安全上移。
 """
 
+import contextlib
 import hashlib
 import hmac
 import json
 import os
 import secrets
+import shutil
 import sqlite3
 import struct
 import time
@@ -79,7 +81,24 @@ except ImportError:
 
 
 # ── 常量 ──
-DEFAULT_VAULT_DIR = os.path.join(os.getcwd(), "_meta", "vault")
+#
+# 审计修复（P1）：改前 `DEFAULT_VAULT_DIR = os.path.join(os.getcwd(), "_meta", "vault")`
+# —— **import 时绑定进程 cwd**，于是"在哪个目录跑 actus，密钥库就落在哪个目录的
+# `_meta/vault/`"，实测干净子进程里 db 直接创建在 cwd 下（0o666，无 chmod）。
+# 后果：密钥库 + `seed_key` 进当前项目目录（极易被 git 提交 / 同步盘 / 打包带走）。
+# 现在默认与 vault.py 对齐到 `~/.actus/vault2/`，可用 ACTUS_VAULT2_DIR 覆盖；
+# 旧位置的库由 `_maybe_migrate_legacy()` 自动迁移（见下）。DEFAULT_VAULT_DIR 仍保留
+# 作为"默认值快照"，运行时一律走 `default_vault_dir()`（让 env 覆盖与 cwd 无关）。
+def default_vault_dir() -> str:
+    """默认密钥库目录：`~/.actus/vault2`（可用 ACTUS_VAULT2_DIR 覆盖）。"""
+    override = (os.environ.get("ACTUS_VAULT2_DIR") or "").strip()
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    return os.path.join(os.path.expanduser("~"), ".actus", "vault2")
+
+
+DEFAULT_VAULT_DIR = default_vault_dir()      # 兼容旧引用（常量仅是快照）
+LEGACY_VAULT_SUBDIR = os.path.join("_meta", "vault")   # 旧位置：<cwd>/_meta/vault
 DEFAULT_TIME_STEP = 60
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_SECONDS = 900
@@ -178,15 +197,91 @@ def _make_backend(cipher_alg: str, row_key: bytes):
 # ── Vault2 ──
 class Vault2:
     def __init__(self, vault_dir: str = None):
-        self.vault_dir = vault_dir or DEFAULT_VAULT_DIR
-        os.makedirs(self.vault_dir, exist_ok=True)
+        explicit = vault_dir is not None
+        self.vault_dir = os.path.abspath(vault_dir or default_vault_dir())
         self.db_path = os.path.join(self.vault_dir, "vault2.db")
         self.audit_path = os.path.join(self.vault_dir, "audit.log")
+        # 迁移状态（status() 会如实回报；None = 无需迁移）
+        self.migrated_from: Optional[str] = None
+        self.migration_conflict: Optional[str] = None
+        if not explicit:
+            self._maybe_migrate_legacy()
+        os.makedirs(self.vault_dir, exist_ok=True)
+        self._harden_permissions()
         self._init_schema()
+        self._harden_permissions()
         self._sessions: Dict[str, dict] = {}
+        self._audit_mode_set = False
+
+    def _maybe_migrate_legacy(self) -> None:
+        """把旧位置（`<cwd>/_meta/vault`）的库迁到新位置（**移动**，不复制）。
+
+        规则（lead 裁决）：
+          * 旧有 / 新无（或新目录为空）→ 自动迁移（shutil.move），记 `migrated_from`；
+          * 两边都有 → **不合并**，记 `migration_conflict`（ambiguous），让人处理；
+          * 显式传了 vault_dir → 完全不做迁移（调用方自己负责）。
+        迁移失败不静默：写进 `migration_conflict`，status() 可见。
+        """
+        legacy = os.path.abspath(os.path.join(os.getcwd(), LEGACY_VAULT_SUBDIR))
+        if not os.path.isdir(legacy):
+            return
+        if legacy == self.vault_dir:
+            return
+        new_exists = os.path.isdir(self.vault_dir) and bool(os.listdir(self.vault_dir))
+        if new_exists:
+            self.migration_conflict = (
+                "ambiguous: 新旧密钥库同时存在，未自动合并"
+                "（旧=%s，新=%s）—— 请人工确认保留哪一份" % (legacy, self.vault_dir))
+            return
+        try:
+            parent = os.path.dirname(self.vault_dir)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            if os.path.isdir(self.vault_dir):
+                os.rmdir(self.vault_dir)          # 空目录：让 move 直接落位
+            shutil.move(legacy, self.vault_dir)    # 移动（不是复制）
+            self.migrated_from = legacy
+        except OSError as exc:
+            self.migration_conflict = (
+                "move_failed: 旧密钥库迁移失败（%s: %s），仍使用新位置 %s"
+                % (type(exc).__name__, exc, self.vault_dir))
+
+    def _harden_permissions(self) -> None:
+        """密钥库目录 0700 / 库与审计文件 0600（POSIX 生效；Windows 尽力而为）。
+
+        审计修复（L1 加固配套）：改前全模块无任何 chmod，实测 db 权限位 0o666。
+        这里对目录/已知文件做 best-effort chmod；失败不抛（可能是 Windows/smb）。
+        """
+        targets = ((self.vault_dir, 0o700), (self.db_path, 0o600),
+                   (self.audit_path, 0o600))
+        for path, mode in targets:
+            if not os.path.exists(path):
+                continue
+            try:
+                os.chmod(path, mode)
+            except OSError:
+                pass
+
+    @contextlib.contextmanager
+    def _db(self):
+        """打开库连接并**保证关闭**（审计修复：句柄泄漏）。
+
+        改前 14 处都写成 `with sqlite3.connect(...) as conn:` —— sqlite3 的
+        连接上下文管理器只在退出时 commit/rollback，**不会 close**。实测后果：
+        Windows 上 vault2.db 的文件句柄悬留，迁移/备份/删除时报
+        `PermissionError: [WinError 32] 另一个程序正在使用此文件`
+        （本轮迁移功能首次实测就撞上它）；长驻进程还会持续泄漏句柄。
+        现在统一走本 helper：yield 后 commit，finally 一定 close。
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
 
     def _init_schema(self):
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS identities (
@@ -261,8 +356,16 @@ class Vault2:
         record = {"ts": int(time.time()), "action": action, "identity_id": identity_id,
                   "machine_id": machine_id, "target": target, "success": success,
                   "reason": reason, "caller": caller}
+        existed = os.path.exists(self.audit_path)
         with open(self.audit_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        if not existed:
+            # 审计日志可能含 caller/identity 元数据 → 首次创建后收紧权限（best-effort）
+            try:
+                os.chmod(self.audit_path, 0o600)
+            except OSError:
+                pass
+            self._audit_mode_set = True
 
     def _machine_fingerprint(self) -> str:
         import platform
@@ -312,7 +415,7 @@ class Vault2:
         recovery_key = self._generate_recovery_key()
         recovery_key_hash = self._hash_recovery_key(recovery_key, seed_key.hex())
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             conn.execute(
                 "INSERT INTO identities (id, name, pin_hash, salt, seed_key, security_level, "
                 "recovery_key_hash, key_salt, created_at) "
@@ -340,7 +443,7 @@ class Vault2:
     def auth(self, identity_id: str, machine_id: str, pin: str,
              hardware_token: str = None) -> dict:
         now = int(time.time())
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             row = conn.execute(
                 "SELECT pin_hash, salt, seed_key, security_level, failed_attempts, locked_until, key_salt "
                 "FROM identities WHERE id=?", (identity_id,)
@@ -449,7 +552,7 @@ class Vault2:
         if not (new_pin and new_pin.isdigit() and len(new_pin) == 6):
             return {"status": "error", "message": "新 PIN 必须是 6 位数字"}
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             row = conn.execute(
                 "SELECT salt, seed_key, recovery_key_hash, security_level "
                 "FROM identities WHERE id=?", (identity_id,)
@@ -515,7 +618,7 @@ class Vault2:
         identity_id = sess["identity_id"]
         master_key = sess["master_key"]
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             row = conn.execute(
                 "SELECT value, secret_type, security_level, expires_at, metadata, "
                 "cipher_alg, key_salt, key_iters, key_dklen "
@@ -609,7 +712,7 @@ class Vault2:
         now = int(time.time())
         sid = str(uuid.uuid4())
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             existing = conn.execute(
                 "SELECT id FROM secrets WHERE identity_id=? AND name=?",
                 (identity_id, name),
@@ -648,7 +751,7 @@ class Vault2:
             return {"status": "error", "message": "会话无效或已过期"}
 
         identity_id = sess["identity_id"]
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             rows = conn.execute(
                 "SELECT name, secret_type, security_level, created_at, expires_at, metadata, "
                 "cipher_alg, key_salt IS NULL as is_legacy "
@@ -677,7 +780,7 @@ class Vault2:
             return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
 
         identity_id = sess["identity_id"]
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             row = conn.execute(
                 "SELECT id FROM secrets WHERE identity_id=? AND name=?",
                 (identity_id, name),
@@ -705,7 +808,7 @@ class Vault2:
         identity_id = sess["identity_id"]
         master_key = sess["master_key"]
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             row = conn.execute(
                 "SELECT value, secret_type, security_level, expires_at, metadata, "
                 "cipher_alg, key_salt, key_iters, key_dklen "
@@ -807,7 +910,7 @@ class Vault2:
         identity_id = sess["identity_id"]
         master_key = sess["master_key"]
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             # 查询可用备份（未过期）
             if backup_id:
                 rows = conn.execute(
@@ -994,7 +1097,7 @@ class Vault2:
             return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
 
         identity_id = sess["identity_id"]
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             rows = conn.execute(
                 "SELECT id, name, fingerprint, registered_at, last_seen_at "
                 "FROM machines WHERE identity_id=?",
@@ -1018,7 +1121,7 @@ class Vault2:
     def cleanup_rotated_backups(self) -> dict:
         """清理过期的轮换备份（保留 7 天）。可外部定时任务调用。"""
         now = int(time.time())
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             conn.execute("DELETE FROM rotated_backups WHERE expires_at <= ?", (now,))
             deleted = conn.total_changes
         return {"status": "ok", "deleted": deleted}
@@ -1044,26 +1147,65 @@ class Vault2:
         return {"status": "ok", "count": len(records), "logs": records}
 
     # ── status ──
-    def status(self) -> dict:
+    def status(self, token: str = None) -> dict:
+        """密钥库状态。
+
+        审计修复（P3 元数据泄露 + ③ L1 加固提示）：
+          * 改前**无需任何认证**就返回 identities/secrets/legacy_secrets/
+            active_sessions —— 本机任意进程都能枚举"有没有密钥库、存了几条、
+            几个会话"。现在无 token 只返回 `initialized`/`vault_dir`/迁移状态；
+            计数必须带有效 session token。
+          * token 有效时额外返回 L1 身份告警（③）：L1 没有动态码第二因子，
+            拿到 db 文件即可解出全部 secrets（审计实测），建议升级 L2/L3。
+        """
         exists = os.path.isfile(self.db_path)
-        identity_count = 0
-        secret_count = 0
-        legacy_count = 0
+        base = {
+            "status": "ok",
+            "initialized": exists,
+            "vault_dir": self.vault_dir,
+        }
+        if self.migrated_from:
+            base["migrated_from"] = self.migrated_from
+        if self.migration_conflict:
+            base["migration_conflict"] = self.migration_conflict
+        if not token:
+            # 未认证：只给"初始化没初始化"，不泄露计数
+            return base
+
+        ok, _sess = self._verify_token(token)
+        if not ok:
+            base.update({"status": "error", "message": "会话无效或已过期"})
+            return base
+
+        identity_count = secret_count = legacy_count = l1_count = 0
         if exists:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._db() as conn:
                 identity_count = conn.execute("SELECT COUNT(*) FROM identities").fetchone()[0]
                 secret_count = conn.execute("SELECT COUNT(*) FROM secrets").fetchone()[0]
                 legacy_count = conn.execute(
                     "SELECT COUNT(*) FROM secrets WHERE key_salt IS NULL"
                 ).fetchone()[0]
-        return {
-            "status": "ok",
-            "initialized": exists,
+                l1_count = conn.execute(
+                    "SELECT COUNT(*) FROM identities WHERE security_level='L1'"
+                ).fetchone()[0]
+        base.update({
             "identities": identity_count,
             "secrets": secret_count,
             "legacy_secrets": legacy_count,
             "active_sessions": len(self._sessions),
-        }
+            "l1_identities": l1_count,
+        })
+        warnings = []
+        if l1_count:
+            warnings.append(
+                "L1 身份无第二因子：拿到 vault2.db 文件即可解出全部 secrets"
+                "（seed_key 与库同文件），建议升级到 L2/L3 或改用外部密钥保护")
+        if legacy_count:
+            warnings.append("存在 %d 条旧格式（无行级密钥）secret，建议运行迁移"
+                            % legacy_count)
+        if warnings:
+            base["warnings"] = warnings
+        return base
 
     # ── 懒迁移：公共方法（供外部触发批量迁移） ──
     def migrate_legacy_secrets(self, token: str) -> dict:
@@ -1075,9 +1217,9 @@ class Vault2:
         identity_id = sess["identity_id"]
         master_key = sess["master_key"]
         migrated = 0
-        failed = 0
+        failed_names: List[str] = []
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._db() as conn:
             rows = conn.execute(
                 "SELECT name, value, secret_type, security_level, expires_at, metadata "
                 "FROM secrets WHERE identity_id=? AND key_salt IS NULL",
@@ -1106,11 +1248,26 @@ class Vault2:
                     )
                     migrated += 1
                 except Exception:
-                    failed += 1
+                    failed_names.append(name)
 
+        failed = len(failed_names)
         self._audit("migrate_legacy", identity_id, sess["machine_id"],
-                   success=(failed == 0), reason=f"migrated={migrated}, failed={failed}")
-        return {"status": "ok", "migrated": migrated, "failed": failed}
+                    success=(failed == 0),
+                    reason="migrated=%d, failed=%d" % (migrated, failed))
+        result = {"migrated": migrated, "failed": failed,
+                  "failed_names": failed_names}
+        if failed:
+            # 审计修复（④ 假成功）：改前 failed>0 仍返回 status=ok
+            # （实测 {"status":"ok","migrated":0,"failed":1}），调用方会误判
+            # "旧格式已全部升级"。现在有失败即 error，并点名失败条目。
+            result.update({
+                "status": "error",
+                "message": "有 %d 条旧格式 secret 迁移失败（密文损坏或密钥不匹配），"
+                           "未迁移的条目仍保持旧格式" % failed,
+            })
+        else:
+            result["status"] = "ok"
+        return result
 
 
 # ── 模块级便捷函数（单例） ──
@@ -1153,8 +1310,9 @@ def audit_log(token: str, limit: int = 100) -> dict:
     return _get_vault2().audit_log(token, limit)
 
 
-def status() -> dict:
-    return _get_vault2().status()
+def status(token: str = None) -> dict:
+    """密钥库状态：无 token 只返回 initialized/vault_dir；计数需 token。"""
+    return _get_vault2().status(token)
 
 
 def migrate_legacy_secrets(token: str) -> dict:

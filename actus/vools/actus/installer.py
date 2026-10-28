@@ -306,19 +306,40 @@ class ActionInstaller:
         real = os.path.realpath(os.path.join(self._install_dir, install_name))
         return real.startswith(root + os.sep)
 
-    def uninstall(self, repo_url: str = None, name: str = None) -> dict:
+    def _find_manifest_for_path(self, target_dir: str) -> Optional[dict]:
+        """安装清单里 `local_path` 命中 target_dir 的那条记录；没有返回 None。"""
+        try:
+            reg = registry_mod.ActionRegistry(cache_dir=self._cache_dir)
+            manifests = reg.list_installed()
+        except Exception:
+            return None
+        wanted = os.path.realpath(target_dir)
+        for manifest in manifests:
+            local_path = manifest.get('local_path') or ''
+            if local_path and os.path.realpath(local_path) == wanted:
+                return manifest
+        return None
+
+    def uninstall(self, repo_url: str = None, name: str = None,
+                  force: bool = False) -> dict:
         """卸载已安装的动作仓库。
 
         参数:
             repo_url: 仓库 URL。
             name: 安装名称（与 repo_url 互斥）。
+            force: 目标目录**不在安装清单里**时是否仍允许删除（默认 False = 拒绝）。
 
-        返回:
-            {'status': 'ok', 'removed': '...'}
+        契约（审计修，已批准）：**默认只删安装清单里记录过的目录**。
+        改前只要传个 name 就 rmtree install_dir 下任意子目录 —— 实测把一个
+        「从未由 actus 安装、内含用户文件」的目录传错名字就整个删掉了，
+        报的还是 status=ok。现在：清单里没有该 local_path → 拒绝并提示 force。
         """
         install_name = name or (self._url_to_install_name(repo_url) if repo_url else None)
         if not install_name:
             return {"status": "error", "message": "Must provide repo_url or name"}
+        # 与 install 保持一致：名字里的路径分隔符只取最后一段
+        install_name = os.path.basename(
+            str(install_name).replace('\\', '/').rstrip('/')) or install_name
 
         target_dir = os.path.join(self._install_dir, install_name)
         # 安装名是调用方直接给的字符串：url 那条路有 _url_to_install_name 清洗，这条路没有。
@@ -330,14 +351,30 @@ class ActionInstaller:
         if not os.path.isdir(target_dir):
             return {"status": "error", "message": f"Not installed: {install_name}"}
 
+        manifest = self._find_manifest_for_path(target_dir)
+        if manifest is None and not force:
+            return {"status": "error",
+                    "message": (f'该目录不在安装清单里，拒绝删除: {target_dir}'
+                                f'（确需删除这个非 actus 安装的目录，请显式传 force=True / --force）'),
+                    "details": {"path": os.path.abspath(target_dir),
+                                "install_name": install_name}}
+
         _rmtree_force(target_dir)          # 只读 .git 对象：普通 rmtree 会 PermissionError
 
-        # 移除安装清单
-        if repo_url:
-            reg = registry_mod.ActionRegistry(cache_dir=self._cache_dir)
-            reg.remove_installation(repo_url)
+        # 移除安装清单：按 local_path 命中即可，不再要求调用方必须传 repo_url，
+        # 否则用 name 卸载会留下一份指向已删目录的陈旧清单条目。
+        removed_manifest = False
+        if manifest is not None:
+            try:
+                reg = registry_mod.ActionRegistry(cache_dir=self._cache_dir)
+                reg.remove_installation(manifest.get('url') or repo_url)
+                removed_manifest = True
+            except Exception:
+                removed_manifest = False
 
-        return {"status": "ok", "removed": install_name, "path": target_dir}
+        return {"status": "ok", "removed": install_name, "path": target_dir,
+                "manifest_removed": removed_manifest,
+                "forced": bool(manifest is None and force)}
 
     # ── 更新 ──
 
@@ -447,9 +484,30 @@ class ActionInstaller:
                 cwd=local_path, timeout=10)
             remote_commit = remote.stdout.split()[0] if remote.returncode == 0 and remote.stdout else ""
 
+            # 审计修：查不到 ≠ 已是最新。
+            # 改前 `has_update = local != remote and remote != ""`，在「目录不是 git 仓 /
+            # 没有 origin / git 不可用 / 网络不通」时 remote 为空 → has_update=False 且
+            # status=ok，CLI 于是打印「✅ 已是最新版本」——**根本没比对过**。
+            # 现在：任一 commit 拿不到就返回 status='unknown'（has_update=None），
+            # 明确告诉调用方「无法确认」，让 CLI/脚本不会误判成"最新"。
+            if not local_commit or not remote_commit:
+                reasons = []
+                if not local_commit:
+                    reasons.append('本地 git 版本未知（目录可能不是 git 仓或 git 不可用）')
+                if not remote_commit:
+                    reasons.append('远端版本未知（remote 不可达 / 未配置 origin / 网络不通）')
+                return {
+                    "status": "unknown",
+                    "has_update": None,
+                    "message": '无法确认远端版本：' + '；'.join(reasons),
+                    "local_commit": local_commit,
+                    "remote_commit": remote_commit,
+                    "url": manifest.get("url")
+                }
+
             return {
                 "status": "ok",
-                "has_update": local_commit != remote_commit and remote_commit != "",
+                "has_update": local_commit != remote_commit,
                 "local_commit": local_commit,
                 "remote_commit": remote_commit,
                 "url": manifest.get("url")
@@ -824,10 +882,11 @@ def resolve_action_path(action_id: str,
     return installer.resolve_action_path(action_id)
 
 
-def uninstall_actions(repo_url: str = None, name: str = None) -> dict:
-    """便捷函数：卸载动作仓库。"""
+def uninstall_actions(repo_url: str = None, name: str = None,
+                      force: bool = False) -> dict:
+    """便捷函数：卸载动作仓库（force=True 才允许删非安装清单目录）。"""
     installer = ActionInstaller()
-    return installer.uninstall(repo_url=repo_url, name=name)
+    return installer.uninstall(repo_url=repo_url, name=name, force=force)
 
 
 def update_actions(repo_url: str = None, name: str = None) -> dict:

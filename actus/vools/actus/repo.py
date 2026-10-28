@@ -104,6 +104,14 @@ def parse_ref(ref: str) -> Dict[str, Optional[str]]:
                         f'无法解析仓引用：{ref!r}（期望 <owner>/<name>.actus[:action_id]）',
                         {'ref': ref})
     owner = m.group('owner')
+    # 审计修：正则的 owner 段允许 `.` / `..`，于是 `parse_ref('../evil.actus')`
+    # 会得到 owner='..' 而不报错。目前 owner 只用于拼远端 URL / 展示，未见路径
+    # 拼接，但这是数据卫生问题；将来一旦有代码把 owner 当路径段就会直接变成穿越。
+    # 这里按白名单拒掉「纯点号」的 owner。
+    if owner is not None and not owner.strip('.'):
+        raise RepoError('action_not_found',
+                        f'非法的仓 owner：{owner!r}（不能是 . 或 ..）',
+                        {'ref': ref, 'owner': owner})
     name = m.group('name')
     if not name.endswith(REPO_SUFFIX):
         name = name + REPO_SUFFIX
