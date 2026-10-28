@@ -1,14 +1,30 @@
-name: Sync to GitCode
+name: Sync to GitCode (mirror)
+
+# 方向：GitHub = 源，GitCode = 只读镜像。
+# 为什么单向：CI 在 GitHub 上跑（test-actus 矩阵）、提交/PR/tag 都在 GitHub 产生；
+# 两个仓库双向 force-push 同一条分支，语义上就是"最后写的赢" —— 谁跑谁覆盖对方，
+# 2026-10-28 事故（GitCode 的旧 master 覆盖 GitHub main，删掉 test-actus 整个作业）
+# 就是这么发生的。单向 + 只快进，才能保证"镜像永远不会反向吃掉源"。
+#
+# 安全约定（本文件必须始终满足）：
+#   * 不 push --force / --force-with-lease；非快进一律跳过并报警；
+#   * 绝不交叉映射分支（master 与 main 是两个分支，永远不互相覆盖）；
+#   * 绝不替换/删除 .github/workflows（workflow 只在 GitHub 维护）；
+#   * tag 只增不删（同名冲突由 GitCode 拒绝，不 force）；
+#   * token 只用 secrets，绝不硬编码。
 
 on:
   push:
     branches:
       - main
-      - master
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: sync-to-gitcode
+  cancel-in-progress: false
 
 jobs:
   sync-to-gitcode:
@@ -19,24 +35,40 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.GITCODE_SSH_PRIVATE_KEY }}
 
-      - name: Sync GitHub to GitCode (add-only, GitHub as source)
+      - name: Mirror GitHub branches to GitCode (fast-forward only)
         run: |
-          set -e
+          set -euo pipefail
           git clone --no-single-branch "https://github.com/${{ github.repository }}.git" /tmp/repo
           cd /tmp/repo
           git remote add gc "git@gitcode.com:VictorTop/vools.git"
-          git fetch gc
-          git config user.email "actions@github.com"
-          git config user.name "GitHub Actions"
-          # 1) 用 GitCode 版 .github/workflows 完全替换本地（保留 GitCode 侧 workflow，避免创建新 workflow 被拒绝）
-          git rm -r --cached .github/workflows >/dev/null 2>&1 || true
-          rm -rf .github/workflows
-          git checkout "gc/master" -- .github/workflows >/dev/null 2>&1 || true
-          git add .github/workflows
-          git commit -m "chore: preserve GitCode workflow files (add-only sync)" >/dev/null 2>&1 || true
-          # 2) 推送所有 GitHub 分支：GitHub 为源，覆盖 GitCode 同名分支；GitCode 独有分支保留
-          for b in $(git for-each-ref --format='%(refname:short)' refs/heads); do
-            git push --force gc "$b:$b" 2>&1 || echo "push failed on $b"
+          git fetch --prune gc
+
+          skipped=""
+          for ref in $(git for-each-ref --format='%(refname)' refs/remotes/origin); do
+            b="${ref#refs/remotes/origin/}"
+            [ -z "$b" ] && continue
+            [ "$b" = "HEAD" ] && continue
+            # 同名镜像：GitHub 的 main 只推 GitCode 的 main；master 同理，绝不交叉。
+            if git push gc "refs/remotes/origin/$b:refs/heads/$b"; then
+              echo "✅ 已快进镜像: $b"
+            else
+              skipped="$skipped $b"
+              echo "::warning title=分支未同步（非快进，已跳过）::$b 在 GitCode 侧有分叉提交；本任务绝不 force 覆盖，请人工确认"
+            fi
           done
-          # 3) 标签只增不删（GitCode 已存在的同名标签会拒绝，保留 GitCode 版）
-          git push gc --tags 2>&1 || true
+
+          # tag 只增不删：已存在/不一致的标签会被 GitCode 拒绝；不加 --force、不删除
+          git push gc --tags || echo "::notice::部分 tag 已在 GitCode 存在或内容不同，按『只增不删』保留原样"
+
+          {
+            echo "### GitHub → GitCode 镜像结果"
+            echo ""
+            echo "- 已快进的分支/标签见上方日志"
+            if [ -n "$skipped" ]; then
+              echo "- ⚠️ 因非快进被跳过的分支:$skipped"
+              echo "- 处理方式：人工确认后，在 GitCode 侧合并或丢弃其分叉提交；本 workflow 不会 force"
+            else
+              echo "- 无跳过的分支"
+            fi
+            echo "- 源 = GitHub，镜像 = GitCode；workflow 文件只由 GitHub 维护"
+          } >> "$GITHUB_STEP_SUMMARY"
