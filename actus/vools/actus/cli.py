@@ -3113,7 +3113,6 @@ def _cmd_notify(args) -> int:
         stats = manager.stats()
         print('📊 通知系统统计:')
         print(f'   总发送: {stats["total_sent"]}')
-        print(f'   规则数: {stats["rules_count"]}')
         print(f'   渠道: {", ".join(stats["channels"])}')
         return 0
 
