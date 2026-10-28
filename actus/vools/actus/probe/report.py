@@ -49,7 +49,10 @@ from .base import ProbeItem
 #   3: `elapsed_ms` 语义从「仅并行段」改为「总墙钟」，并新增分段字段
 #      probers_ms / dimensions_ms / assemble_ms / cache_write_ms
 #      （同名老字段两套口径不可比 → schema=2 的缓存必须整体失效）
-REPORT_SCHEMA_VERSION = 3
+#   4: 新增 `report_source`（probe / cache）字段；缓存命中路径改为**重算 summary**，
+#      `cache.load_cache` 也会校验 summary 与 items 自洽 —— 旧缓存没有这层保证，
+#      可能带着伪造/过期的 summary 冒充新报告，故 schema=3 的缓存整体失效
+REPORT_SCHEMA_VERSION = 4
 
 # 关键工具分类：只有这些分类的条目才会进 summary["key_tools"]（保持改前口径）
 _KEY_TOOL_CATEGORIES = ("system_tools", "compilers", "runtimes")
@@ -216,6 +219,18 @@ def _as_dict(value) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _normalize_source(value) -> str:
+    """`report_source` 归一：只接受 "probe" / "cache"，其它值标 "unknown"。
+
+    为什么不让任意字符串通过：这是「报告怎么来的」的真值字段，写错或乱写会直接
+    误导消费方（拿缓存当实测）。空值按默认 "probe"（老调用方没传这个参数）。
+    """
+    text = _clean(value).lower()
+    if text in ("probe", "cache"):
+        return text
+    return "probe" if not text else "unknown"
+
+
 # ---------------------------------------------------------------------------
 # ProbeReport
 # ---------------------------------------------------------------------------
@@ -225,6 +240,10 @@ class ProbeReport:
 
     `timings`（新增，可选）：{分类名: 毫秒} 的逐探测器耗时。不传则从
     `ProbeItem.elapsed_ms` 自动推导（compute_timings），行为向后兼容。
+    `report_source`（新增，可选）：`"probe"`（本次真探测）或 `"cache"`
+    （来自 `_meta/probe_cache.json`）。**缓存是本地文件，形状合法但内容不可信**
+    （手写一份就能冒充报告），所以来源必须让消费方看得见：`--json` 里是
+    `report_source`，人类可读摘要会多打一行"from cache"提示 + 复核建议。
     `extra_dims`（前向兼容）：调用方若因结构演进多传了维度关键字（如
     `platform_tools_info=...`），不会被 TypeError 拒掉，而是原样收进 `extra`
     并并入 `to_dict()` —— 采集层与报告层分开改时不至于互相炸。
@@ -234,7 +253,8 @@ class ProbeReport:
                  platform_info: dict = None, permissions_info: dict = None,
                  environment_info: dict = None, resources_info: dict = None,
                  items: list = None, summary: dict = None,
-                 timings: dict = None, **extra_dims):
+                 timings: dict = None, report_source: str = "probe",
+                 **extra_dims):
         self.timestamp = timestamp or time.time()
         self.elapsed_ms = elapsed_ms
         self.platform_info = platform_info or {}
@@ -244,11 +264,13 @@ class ProbeReport:
         self.items = items or []
         self.summary = summary or {}
         self.timings = dict(timings) if isinstance(timings, dict) else {}
+        self.report_source = _normalize_source(report_source)
         self.extra = dict(extra_dims)
 
     def to_dict(self) -> Dict[str, Any]:
         data = {
             "schema_version": REPORT_SCHEMA_VERSION,
+            "report_source": self.report_source,
             "timestamp": self.timestamp,
             "elapsed_ms": _round_ms(self.elapsed_ms or 0),
             "platform": self.platform_info,
@@ -381,6 +403,15 @@ def _render_header(report, verbose: bool) -> list:
     lines = ["=" * _LINE_WIDTH, "vools probe report", "=" * _LINE_WIDTH]
     age_text = " (age %s)" % _humanize_seconds(age) if age is not None else ""
     lines.append("Timestamp: %s%s" % (_format_timestamp(stamp), age_text))
+
+    # 来源标注：缓存是本地文件（形状合法即可伪造），必须让读者知道手里这份
+    # 不是刚探测的。只对 cache / unknown 多打一行，正常 probe 输出保持不变。
+    source = _clean(getattr(report, "report_source", "probe")).lower() or "probe"
+    if source == "cache":
+        lines.append("Source: cache  (from cache; use --force-refresh to re-probe)")
+    elif source == "unknown":
+        lines.append("Source: unknown")
+
     lines.append("Total wall: %s (%.1f ms)" % (_humanize_ms(wall), wall))
 
     segments = [(label, _segment_ms(report, key)) for label, key in _TIMING_SEGMENTS]

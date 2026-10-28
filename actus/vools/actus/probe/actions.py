@@ -29,6 +29,15 @@ PROBE_PLAN.md §4.7 规划了 `analyze_actions(actions_dir, probe_report)`，§9
   判据，读该条目的 `extra["verdicts"]` 即可（**需要改 `intent.py`，不在本次
   作用域，需求已写进汇报**）。
 
+**`ready` 的语义边界（诚实标注，见 `READY_SCOPE_DEPS_ONLY`）**
+------------------------------------------------------------
+`verdict=ready` 只代表「声明的 deps 都满足 + 动作文件可解析」，**不保证**入口块
+的语言/指令被当前引擎支持 —— 后者只能在执行期确定。实测反例：`actus.basics.calculator`
+依赖全满足、`verdict=ready`，但 `actus run` 报「未知指令: devtools」。
+本模块**不做**块语言/指令的静态校验：支持面随引擎实现漂移，静态校验极易把能跑的
+动作误判 blocked（假阴性）；改为把限定符 `ready_scope="deps_only"` 随结果与每个
+verdict 一起下发，让消费方按"必要非充分条件"使用。
+
 依赖语法（不另立一套）
 ----------------------
 `deps` 的写法以 `vools/actus/dependency.py` 的 `DependencyResolver.parse_deps`
@@ -110,6 +119,11 @@ _UNVERIFIABLE_REASONS = {
     "mcp": "探测报告未覆盖 MCP server 能力",
     "cs_build": "探测报告未覆盖 C# 构建产物（cs_*）",
 }
+
+# `verdict=ready` 的语义范围（随结果下发，防止消费方过度解读）。
+# "deps_only" = 只保证「声明的 deps 都满足 + 动作文件可解析」，
+# **不保证**入口块语言/指令被当前引擎支持 —— 那只能执行期确定。
+READY_SCOPE_DEPS_ONLY = "deps_only"
 
 
 # ---------------------------------------------------------------------------
@@ -516,14 +530,25 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
 
     返回 dict:
         total / ready / blocked / missing_deps  ← §4.7 契约字段
-        verdicts:      {action_id: {verdict, deps, missing_deps, blocked_reasons,
-                                    deps_declared, deps_field, path, parse_error}}
+        **ready_scope**: 恒为 `"deps_only"` —— `verdict=ready` 的语义限定符
+        verdicts:      {action_id: {verdict, ready_scope, deps, missing_deps,
+                                    blocked_reasons, deps_declared, deps_field,
+                                    path, parse_error}}
         undeclared:    [action_id ...]   没声明 deps 的动作（键缺失或值为 null；明确信号）
         parse_failed:  [action_id ...]   连文件都解析不了的动作
         unverifiable:  {action_id: [dep ...]}  报告无法判定的依赖
         duplicate_ids: [{id, kept, ignored}]   同 id 多份的动作文件
         index_source:  "probe_report" | "self-probe"
         exists:        动作根是否存在
+
+    **`verdict=ready` 到底是什么保证**（重要，消费方必读）：
+    ready = 「声明的 deps 都已满足，且动作文件可解析」，**不保证**入口块的语言/
+    指令被当前引擎支持 —— 那取决于执行期才能确定的能力（例如某动作的 `webview2`
+    块里用了引擎未实现的 `devtools` 指令：依赖全满足、文件也合法，但 `actus run`
+    会在执行期报「未知指令」）。实测案例：`actus.basics.calculator` 在本机
+    `verdict=ready`，而 `actus run actus.basics.calculator` 失败。
+    需要更强保证的消费方（如 IntentRouter 门禁）应把本字段当作**必要条件而非
+    充分条件**，并结合执行期结果；`ready_scope` 字段就是为了让这层限定可被机器读取。
 
     判定纪律：**探测不到 = blocked**；报告无法判定的依赖类型同样 blocked；
     deps 缺失/类型错误/文件解析失败/依赖成环都有各自信号，绝不静默默认 ready。
@@ -541,6 +566,9 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
     for entry in entries:
         verdicts[entry["id"]] = {
             "verdict": "pending",
+            # 逐动作也带一份语义限定符：消费方只拿到 verdicts 时同样不会被
+            # `ready` 误导（值同 results["ready_scope"]，当前恒为 deps_only）。
+            "ready_scope": READY_SCOPE_DEPS_ONLY,
             "deps": [],
             "missing_deps": [],
             "blocked_reasons": [],
@@ -679,10 +707,17 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
                     record["missing_deps"].append(label)
 
     # ── 汇总 ──
+    # ready_scope 是**语义限定符**，随结果与每个 verdict 一起下发给消费方：
+    #   "deps_only" = verdict=ready 只代表「声明的 deps 都满足 + 动作文件可解析」，
+    #   **不保证**入口块的语言/指令被当前引擎支持（那取决于执行期，例如
+    #   `webview2 ... devtools` 这类指令在运行前无法判定）。
+    # 为什么不做完整校验：块语言/指令的支持面随引擎实现漂移，静态校验极易
+    # 假阴性（把能跑的动作误判 blocked）；诚实标注比过度承诺更可靠。
     results = {
         "total": len(entries),
         "ready": 0,
         "blocked": 0,
+        "ready_scope": READY_SCOPE_DEPS_ONLY,
         "missing_deps": {},
         "verdicts": verdicts,
         "undeclared": [],

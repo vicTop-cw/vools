@@ -45,7 +45,15 @@
 - **探测报告新增第 3 个条目 `action_readiness`**：`probe()` 报告里**终于有 ready/blocked 字段**
   （items **172 → 173**）；既有两个条目 `actions` / `action_dependencies` 一个字段都没改。
   实跑 **`total=14 ready=14 blocked=0`**，其中 8 个种子动作未声明 `deps`（带 `undeclared` 显式信号）
-  —— **真实动作里没有任何一个声明非空 deps，0 blocked 是正确结果，没有为了演示编造 blocked**。
+  —— **真实动作里没有任何一个声明非空 deps，所以"0 blocked"是依赖层面的正确结论**，
+  没有为了演示编造 blocked。（限定语见下一条：`ready` 的语义范围仅到依赖层。）
+- **`ready` 的语义边界显式化（`ready_scope="deps_only"`）**：`verdict=ready` 只表示
+  「声明的 deps 都满足 + 动作文件可解析」，**不保证**入口块的语言/指令被当前引擎支持 ——
+  后者只能在执行期确定。实测反例：`actus.basics.calculator` 依赖全满足、`verdict=ready`，
+  但 `actus run` 报「块执行失败: 未知指令: devtools」。本包**不做**指令级静态校验
+  （支持面随引擎漂移，静态校验极易把能跑的动作误判 blocked = 假阴性），改为把
+  `ready_scope` 随 `analyze_actions()` 结果与每个 `verdicts[id]` 一起下发，
+  消费方（含 `IntentRouter` 门禁）应把它当作**必要条件而非充分条件**。
 - **`runtime:` 依赖前缀真正进 resolver**（`dependency.py`）：此前 `_parse_dep_string` 无该分支，
   `runtime:python` 会被当成一个名叫 `runtime:python` 的动作、永远找不到 → **永远 blocked**。
   现新增 `DepType.RUNTIME` + 解析分支 + `fix_command` + `_check_runtime()`，
@@ -87,6 +95,16 @@
   `[]` / `{"timestamp":"abc"}` 这类损坏缓存**直接崩**。现全部优雅降级
   （缺失/损坏/形状不对/时钟回拨 → 视为无缓存），并新增 **`schema_version` 闸门**
   （旧缓存不能冒充新报告）+ 原子写（tempfile + `os.replace`）+ `cache_info()`。
+- **缓存报告"来源不可辨"**（审计发现：手写一份形状合法的 `_meta/probe_cache.json`，
+  `probe()` 会全盘接受 → `platform.os=TotallyFakeOS`、`is_admin=True`、`items=['ghost']`；
+  更糟的是其中的 `summary` 被原样当结论，实测能渲染出 `Available: 999 (99900%)` /
+  `Unavailable: -998`）。本轮**不做**完整性签名（HMAC/密钥是另一个量级的设计），改为三件事：
+  ①`ProbeReport` 新增 `report_source`（`"probe"` / `"cache"`）并进 `--json`，
+  人类可读摘要对缓存来源多打一行 `Source: cache (from cache; use --force-refresh to re-probe)`；
+  ②缓存命中后**用重建的 items 重算 `summary`**（不再相信缓存里的数字）；
+  ③`cache.load_cache` 增加 summary 自洽性校验（`total != len(items)` 或
+  `available+unavailable != total` 或出现负数 → 直接判该缓存无效）。
+  以上使 **`schema_version` 3 → 4**（旧缓存整体失效一次，避免带着不可信 summary 的缓存继续被消费）。
 - **报告夹带 13 个 NUL**：`wsl --version` 是 UTF-16 输出，解码后带 NUL，
   导致 `actus probe | grep` 把整份输出判成 binary。→ 所有取值经 `_clean()` 去控制字符、折叠空白。
 - **KPI 曾是自欺欺人**：`elapsed_ms` 在四个维度采集器**之前**计算，实测 wall 13.66s 却上报 8714ms

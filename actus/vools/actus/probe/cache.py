@@ -196,6 +196,23 @@ def _validate_payload(data) -> tuple:
     summary = data.get("summary")
     if summary is not None and not isinstance(summary, dict):
         return False, "summary-not-an-object(%s)" % type(summary).__name__
+    # summary 自洽性：缓存是本地文件，手写一份"形状合法"的 JSON 就能把
+    # `available_items` 改成 999 冒充结论。probe() 命中后已改为**重算** summary
+    # （见 __init__.py），这里是第二道闸：数字与 items 对不上的缓存直接判无效，
+    # 让伪造/损坏的缓存在"缓存层"就被拦掉，而不是等渲染层去兜。
+    # 空 summary 放行（历史/测试 seed 的载荷可能没有 summary，由 probe() 重算）。
+    if summary:
+        totals = tuple(summary.get(k) for k in
+                       ("total_items", "available_items", "unavailable_items"))
+        if any(isinstance(v, bool) or not isinstance(v, int) for v in totals):
+            return False, "summary-bad-counts(%r)" % (totals,)
+        total, available, unavailable = totals
+        if total != len(items):
+            return False, "summary-total-mismatch(total=%d, items=%d)" % (
+                total, len(items))
+        if available < 0 or unavailable < 0 or available + unavailable != total:
+            return False, "summary-inconsistent(total=%d, available=%d, unavailable=%d)" % (
+                total, available, unavailable)
 
     return True, ""
 
