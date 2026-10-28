@@ -603,6 +603,16 @@ def _v2_session(force: bool = False):
     if not all(creds):
         return None, None, ('未配置 v2 凭据（%s / %s / %s），v2 读不可用'
                             % (V2_IDENTITY_ENV, V2_MACHINE_ENV, V2_PIN_ENV))
+    # 读路径不该"凭空造库"：`Vault2()` 构造即建目录+建 schema，而 `resolver_status()` /
+    # `rotate_seed_key_v2()` 这类调用在**没注册身份**时也会走到这里 —— 实测两次把
+    # 空的 `~/.actus/vault2/vault2.db` 写进真实用户目录（只读诊断产生写副作用）。
+    # 库文件不存在 ⇒ 直接报"未注册"，不构造 Vault2（注册入口 `vault2.register()`
+    # 走的是公开 API，不受影响）。
+    _v2_dir = (os.environ.get('ACTUS_VAULT2_DIR') or
+               os.path.join(os.path.expanduser('~'), '.actus', 'vault2'))
+    if not os.path.isfile(os.path.join(_v2_dir, 'vault2.db')):
+        return None, None, ('v2 密钥库不存在（%s 下没有 vault2.db）—— 请先用 '
+                            'vault2.register() 注册身份' % _v2_dir)
     now = time.time()
     cache = _V2_SESSION_CACHE
     if (not force and cache.get('creds') == creds and cache.get('token')
@@ -871,6 +881,35 @@ def write_secret(name: str, value: str, scope: str = 'global',
                 'message': 'v2 写入失败：%s' % result.get('message')}
     return {'status': 'ok', 'name': raw, 'source': 'v2', 'warnings': []}
 
+
+def rotate_seed_key_v2(caller: str = None) -> dict:
+    """轮换 v2 身份的 `seed_key`（CLI / MCP 共用的**薄包装**）。
+
+    为什么放这里：轮换需要**已认证会话**，而 CLI/MCP 都没有 auth 界面 —— 它们用
+    环境凭据（`VAULT_IDENTITY_ID` / `VAULT_MACHINE_ID` / `VAULT_PIN`）建立 v2 会话，
+    这正是 `_v2_session()` 的职责。把它包成公开函数，避免 CLI/MCP 各抄一遍。
+
+    语义要点：
+      * v2 不可用 → `refused` + `vault2_unavailable`（可行动提示），**不静默降级**；
+      * 轮换成功 → **清空会话缓存**（旧 token 已被 vault2 主动失效）；
+      * 失败 → 原样透传 `rotate_failed`（磁盘未改动）。
+    """
+    v2, token, reason = _v2_session()
+    if v2 is None:
+        return {"status": "refused", "code": "vault2_unavailable",
+                "message": ("v2 不可用，无法轮换 seed_key：%s。"
+                            "两条出路：① 配置 v2 凭据（VAULT_IDENTITY_ID / "
+                            "VAULT_MACHINE_ID / VAULT_PIN）；② 该身份若是旧格式"
+                            "（无 key_salt），只能重新注册" % reason)}
+    try:
+        result = v2.rotate_seed_key(token, caller=caller)
+    except Exception as exc:                       # noqa: BLE001 —— 统一出参契约
+        return {"status": "error", "code": "rotate_failed",
+                "message": "%s: %s" % (type(exc).__name__, exc)}
+    if result.get("status") == "ok":
+        # 旧 token 已被 vault2 主动失效；缓存不清会让下一次调用拿着废 token
+        _V2_SESSION_CACHE.clear()
+    return result
 
 def resolve_vault_refs(secrets_config: List[dict], meta_dir: str = '') -> dict:
     """批量解析动作的 `vault://` 引用（executor 注入 secrets 用）。

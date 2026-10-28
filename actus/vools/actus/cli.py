@@ -300,6 +300,16 @@ def _build_parser():
     p_vault_delete = vault_sub.add_parser('delete', help='删除密钥')
     p_vault_delete.add_argument('key', help='密钥名称')
     p_vault_delete.add_argument('--scope', default='global', help='作用域')
+
+    p_vault_rotate = vault_sub.add_parser(
+        'rotate-seed', help='轮换 seed_key（破坏性：会失效该身份所有会话）')
+    p_vault_rotate.add_argument(
+        '--yes', action='store_true',
+        help='确认执行（破坏性操作，必须显式给出；缺省只打印警告并 rc=1）')
+    p_vault_rotate.add_argument(
+        '--json', dest='json_output', action='store_true',
+        default=argparse.SUPPRESS,
+        help='机器可读输出：扁平 JSON（形状与 MCP 一致）')
     p_vault_delete.add_argument('--all', action='store_true',
                                 help='同时删除旧库 v1 的副本（**破坏性**：默认只删 v2）')
 
@@ -1337,6 +1347,25 @@ def _dispatch_vault(args) -> int:
         return _out_result(_delete_secret_merged(
             meta_dir, args.key, args.scope,
             include_v1=bool(getattr(args, 'all', False))))
+    if args.vault_command == 'rotate-seed':
+        # 破坏性操作：**必须显式 --yes**。缺省只警告 + rc=1 ——
+        # 不静默等 stdin（脚本里会挂住），也不悄悄执行。
+        confirm_msg = ('轮换 seed_key 是破坏性操作：会重加密全部密钥与备份、'
+                       '失效该身份的所有会话，并让 recovery_key 失效。'
+                       '确认执行请加 --yes。')
+        if not getattr(args, 'yes', False):
+            if getattr(args, 'json_output', False):
+                _out({'status': 'refused', 'code': 'confirmation_required',
+                      'message': confirm_msg})
+            else:
+                print('⚠️  ' + confirm_msg, file=sys.stderr)
+            return 1
+        from vools.actus.vault import rotate_seed_key_v2
+        r = rotate_seed_key_v2(caller='cli.vault')
+        # warnings 必须可见（尤其 recovery_key_invalidated）—— 不能静默
+        for warning in (r.get('warnings') or []):
+            print('⚠️  ' + warning, file=sys.stderr)
+        return _out_result(r)
     else:
         _out({'status': 'failed', 'error': {'code': 'invalid_command',
                                             'message': 'vault 子命令: set/get/list/delete'}})
