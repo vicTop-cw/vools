@@ -326,16 +326,17 @@ class NotificationManager:
         return out
 
     def stats(self) -> dict:
-        """统计信息：**成功/失败分开计数**，total_sent 只算真的发出去了的。"""
+        """统计信息：**成功/失败分开计数**，total_sent 只算真的发出去了的。
+
+        规则特性（`add_rule`/`check_rules`/`NotifyRule`）已整条删除（全仓零调用，
+        "规则永不评估却打印规则数"属统计名不副实），故不再输出 `rules_count` 兼容键；
+        唯一读取方 `cli.py` 的 `notify stats` 打印行也已一并删除。
+        """
         delivered = sum(1 for e in self._history if e.get("delivered"))
         return {
             "total_sent": delivered,
             "total_failed": len(self._history) - delivered,
             "total_recorded": len(self._history),
-            # 规则特性已删除（第 10 轮审计：add_rule/check_rules 全仓零调用）。
-            # 兼容键：cli.py 的 `notify stats` 仍打印这一行（本轮 cli.py 禁改），
-            # 待该文件所有者删除打印行后，本键一并移除。
-            "rules_count": 0,
             "channels": [c.value for c in self._senders.keys()],
         }
 
