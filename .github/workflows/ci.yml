@@ -110,11 +110,10 @@ jobs:
     #   * 只读命名扫描 / desktop smoke / CI 自检 —— **告警级**（continue-on-error），
     #     只写 Job Summary，不阻塞合并。
     #
-    # ⚠️ 重要结构事实：仓库根的 `.gitignore` 有 `build/`，所以
-    # `actus/build/audit/*.py` **没有入库**（git ls-files 为空）。因此：
-    #   - desktop smoke 直接内联在本 workflow 里（不依赖未入库脚本）；
-    #   - AST 扫描步骤先检测脚本是否存在：存在就跑（有人 un-ignore 之后自动生效），
-    #     不存在就在 Summary 里明确写"扫描器未入库 → 本守卫当前是盲的"。
+    # 审计脚本现已迁到 **`actus/tools/audit/`**（被 git 跟踪）。
+    # 背景：原先在 `actus/build/audit/`，而 `.gitignore` 有 `build/` —— 57 个脚本
+    # **0 个入库**，"可复跑的证据"实际不可复现，CI 守卫也只能是盲的。
+    # 现在脚本入库，AST 扫描是**真守卫**（脚本缺失会明确报错到 Summary）。
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -192,23 +191,16 @@ jobs:
         run: |
           summary="$GITHUB_STEP_SUMMARY"
           { echo; echo "### 只读命名 vs 写副作用（**告警级**）"; echo; } >> "$summary"
-          scanner="build/audit/readonly_name_writes.py"
-          if [ ! -f "$scanner" ]; then
-            echo "- ⚠️ 扫描器未入库：\`$scanner\` 不存在（仓库根 \`.gitignore\` 有 \`build/\`）。" >> "$summary"
-            echo "- 后果：**本守卫当前是盲的**。修复方式（二选一，需 owner 决定）：" >> "$summary"
-            echo "  1. \`git add -f actus/$scanner actus/build/audit/ci_readonly_summary.py\`；" >> "$summary"
-            echo "  2. 把扫描器移出 \`build/\`（如 \`actus/tools/audit/\`）并更新本步骤路径。" >> "$summary"
-            echo "- 本步骤仍按告警级存在：脚本入库后**自动生效**，无需再改 workflow。" >> "$summary"
-            exit 0
+          scanner="tools/audit/readonly_name_writes.py"
+          renderer="tools/audit/ci_readonly_summary.py"
+          # 脚本已入库（tools/ 不被忽略）：缺失属于**真回归**，明确报出来
+          if [ ! -f "$scanner" ] || [ ! -f "$renderer" ]; then
+            echo "- ❌ 审计脚本缺失（\`$scanner\` / \`$renderer\`）—— 它们本应在仓库里。" >> "$summary"
+            echo "- 后果：**本守卫失效**。请检查是否被误删/误移到被忽略目录。" >> "$summary"
+            exit 1
           fi
           python "$scanner" --depth 3 --json readonly-writes.json | tee readonly-writes.txt || true
-          renderer="build/audit/ci_readonly_summary.py"
-          if [ -f "$renderer" ]; then
-            python "$renderer" readonly-writes.json >> "$summary" || true
-          else
-            echo "- ⚠️ 渲染器未入库（\`$renderer\`）：原始结果见下方 ```" >> "$summary"
-            { echo '```'; tail -20 readonly-writes.txt; echo '```'; } >> "$summary"
-          fi
+          python "$renderer" readonly-writes.json >> "$summary" || true
           # 已知局限（误报来源）见扫描器 docstring：kwarg 常量关闭写、三方库按名字
           # 归类、动态分派/反射、只覆盖 vools/actus/。**告警不是门禁**，别为清零放宽检测。
 

@@ -37,7 +37,7 @@ classifiers = [
 # 真实最低 3.7：publisher/repo/scattered/semver/sigma 使用了 PEP 563
 # `from __future__ import annotations`（3.7 引入）。核心 vools 仍支持 3.6，
 # 但 vools-actus 早已不支持；声明 >=3.6 会让 3.6 用户 pip 装上即 SyntaxError。
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 dependencies = [
     "vools>=0.9.0",
     # 引擎不止 mdtest 需要 vools.bridge：model.parse_cfg()（加载任何一条动作都要走）
@@ -92,8 +92,8 @@ keyring = [
 # import vools.actus.desktop 必 ModuleNotFoundError，且【没有任何 extra 能补救】，
 # 只能手 pip。与本仓惯例相违（typer→cli、cryptography→security、pandas→pyk 的
 # [spark]）。补 desktop extra：fastapi 提供 app 与 Jinja2Templates（后者运行期
-# 需要 jinja2），uvicorn 是 start() 的服务器。下限取仍支持 requires-python
-# (>=3.7) 的版本，新版 pip 会各自挑兼容解析。
+# 需要 jinja2），uvicorn 是 start() 的服务器。版本下限取与 requires-python
+# (>=3.8) 一致的跨度，新版 pip 会各自挑兼容解析。
 desktop = [
     "fastapi>=0.68",
     "uvicorn>=0.13",
