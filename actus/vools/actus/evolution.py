@@ -50,12 +50,21 @@ class EvolutionEngine:
     """
 
     def __init__(self, repo_root: str = None, config: EvolutionConfig = None):
+        # 审计修（`_meta` 手写 → paths.meta_dir()）：显式 repo_root 时沿用
+        # `<repo_root>/_meta/evolution`；未指定时跟随 paths.meta_dir()
+        # （ACTUS_META_DIR > repo_root()/_meta）。
+        explicit_root = repo_root is not None
         if repo_root is None:
             from .indexer import _repo_root
             repo_root = _repo_root()
         self._repo_root = repo_root
         self._config = config or EvolutionConfig()
-        self._evolution_dir = os.path.join(repo_root, '_meta', 'evolution')
+        if explicit_root:
+            meta_base = os.path.join(repo_root, '_meta')
+        else:
+            from .paths import meta_dir as _paths_meta_dir
+            meta_base = _paths_meta_dir()
+        self._evolution_dir = os.path.join(meta_base, 'evolution')
         os.makedirs(self._evolution_dir, exist_ok=True)
         self._history: List[EvolutionRecord] = []
 

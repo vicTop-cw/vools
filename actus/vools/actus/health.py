@@ -189,9 +189,19 @@ def check_network() -> HealthCheckResult:
 
 
 def check_meta_directory(repo_root: str = ".") -> HealthCheckResult:
-    """检查元数据目录。"""
+    """检查元数据目录。
+
+    审计修（`_meta` 手写 → paths.meta_dir()）：`repo_root` 为默认值（`.``/空）
+    时改为检查真源目录（ACTUS_META_DIR > repo_root()/_meta）；显式给了 repo_root
+    才按 `<repo_root>/_meta` 检查，避免 `actus health` 在 ACTUS_META_DIR 隔离下
+    去检查 shell 当前目录。
+    """
     start = time.time()
-    meta_dir = Path(repo_root) / "_meta"
+    if repo_root in (None, '', '.'):
+        from .paths import meta_dir as _paths_meta_dir
+        meta_dir = Path(_paths_meta_dir())
+    else:
+        meta_dir = Path(repo_root) / "_meta"
 
     if not meta_dir.exists():
         return HealthCheckResult("meta_directory", "warn", "_meta 目录不存在", time.time() - start, "运行 `actus init` 初始化项目")

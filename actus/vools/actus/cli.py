@@ -906,8 +906,11 @@ def _dispatch(args) -> int:
 
     if args.command == 'workflow':
         from vools.actus.workflow import run_workflow
-        repo_root = os.environ.get('ACTUS_REPO_ROOT', '')
-        meta_dir = os.path.join(repo_root, '_meta')
+        # 审计修（`_meta` 手写 → paths.meta_dir()）：改前 `os.environ.get(
+        # 'ACTUS_REPO_ROOT','')` + join 得 `'_meta'` —— env 未设时是**相对路径**，
+        # 且完全无视 ACTUS_META_DIR。现在跟随真源。
+        from vools.actus.paths import meta_dir as _meta_dir_path
+        meta_dir = _meta_dir_path()
         r = run_workflow(args.workflow_id, meta_dir=meta_dir,
                          max_workers=args.max_workers, confirmed=args.confirmed)
         # workflow 的 status ∈ ok / failed / partial；只有 ok 才是成功。
@@ -1181,8 +1184,10 @@ def _dispatch_vault(args) -> int:
     from vools.actus.vault import Vault
     import os as _os
 
-    repo_root = _os.environ.get('ACTUS_REPO_ROOT', '')
-    meta_dir = _os.path.join(repo_root, '_meta')
+    # 审计修（`_meta` 手写 → paths.meta_dir()）：env 未设时旧写法得到相对的
+    # `_meta`（跟着 shell cwd），且无视 ACTUS_META_DIR —— 保险库会落到意外位置。
+    from vools.actus.paths import meta_dir as _meta_dir_path
+    meta_dir = _meta_dir_path()
     vault = Vault(meta_dir)
 
     if args.vault_command == 'set':
@@ -1215,8 +1220,9 @@ def _dispatch_triggers(args) -> int:
     import os as _os
     from vools.actus.triggers import Trigger, validate_trigger, TriggerEngine
 
-    repo_root = _os.environ.get('ACTUS_REPO_ROOT', '')
-    meta_dir = _os.path.join(repo_root, '_meta')
+    # 审计修（`_meta` 手写 → paths.meta_dir()）：同上，换成真源。
+    from vools.actus.paths import meta_dir as _meta_dir_path
+    meta_dir = _meta_dir_path()
 
     def _executor(trigger, event=None):
         import vools.actus as actuscore
