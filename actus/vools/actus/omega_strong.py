@@ -21,6 +21,8 @@ Actus 原先的 Omega（`omega.py`）只做**执行后**的 Ω-gate（产出对 
 import json
 import os
 import re
+import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
@@ -195,19 +197,60 @@ def _find_corrupt_backup(path: str) -> Optional[str]:
 
 
 def _save_ledger(data: Dict[str, Any], meta_dir: Optional[str] = None) -> str:
-    """写账本（原子替换）。**损坏状态禁止覆盖**：先把历史备份/修好再写。"""
+    """写账本（原子替换）。**损坏状态禁止覆盖**：先把历史备份/修好再写。
+
+    并发修复（第 10 轮实测）：改前 tmp 名固定为 `path + '.tmp'` —— 同一进程内
+    多线程并发写时（即使有文件锁）Windows 上偶发 `os.replace` WinError 5
+    （拒绝访问），20 线程压测 5 轮出现 1 次。现在：
+      * 每次写入用**唯一**临时文件名（tempfile.mkstemp，同目录保证同盘）；
+      * `os.replace` 对 Windows 瞬时占用做有限重试；
+      * 失败时清理临时文件。
+    """
     if data.get('corrupt'):
         raise ActionError(
             'internal',
             '账本已损坏（原文件已备份为 .corrupt-*），拒绝写入以免覆盖历史；'
             '请先人工检查/修复该账本')
     path = _ledger_path(data['task_id'], meta_dir)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
-    return path
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix='.ledger-', suffix='.tmp', dir=directory)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        last_error = None
+        for attempt in range(20):        # Windows 上目标被瞬时占用 → 短暂重试
+            try:
+                os.replace(tmp, path)
+                return path
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(0.01 * (attempt + 1))
+        raise last_error
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
+
+
+#: 进程内按账本路径的线程锁（文件锁只保证跨进程；同进程多线程用 threading.Lock
+#: 更可靠 —— 本轮 20 线程压测正是在同进程内撞上 os.replace 竞争）。
+_PROCESS_LOCKS: Dict[str, Any] = {}
+_PROCESS_LOCKS_GUARD = None
+
+
+def _thread_lock_for(path: str):
+    global _PROCESS_LOCKS_GUARD
+    if _PROCESS_LOCKS_GUARD is None:
+        _PROCESS_LOCKS_GUARD = threading.Lock()
+    with _PROCESS_LOCKS_GUARD:
+        lock = _PROCESS_LOCKS.get(path)
+        if lock is None:
+            lock = threading.RLock()
+            _PROCESS_LOCKS[path] = lock
+    return lock
 
 
 @contextmanager
@@ -221,6 +264,12 @@ def _ledger_lock(path: str):
     """
     lock_path = path + '.lock'
     os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    # 进程内线程锁优先（文件锁的跨进程语义在"同一进程多线程"下不可靠 ——
+    # 本轮 20 线程压测撞到 os.replace 竞争，故双层加锁：线程锁 + 文件锁）。
+    thread_lock = _thread_lock_for(path)
+    if not thread_lock.acquire(timeout=_LEDGER_LOCK_TIMEOUT):
+        raise ActionError('internal', 'omega 账本被本进程其它线程占用，获取锁超时: %s'
+                          % path)
     handle = open(lock_path, 'a+b')
     acquired = False
     try:
@@ -262,6 +311,7 @@ def _ledger_lock(path: str):
             except OSError:
                 pass
         handle.close()
+        thread_lock.release()
 
 
 def _deliverable_digest(deliverable: Any) -> Dict[str, Any]:

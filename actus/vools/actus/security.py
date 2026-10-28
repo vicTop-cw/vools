@@ -224,19 +224,8 @@ class InputValidator:
         r"subprocess\..*shell\s*=\s*True",
     ]
 
-    # 路径遍历模式
-    PATH_TRAVERSAL = [
-        r"\.\./",
-        r"\.\.\\",
-        r"%2e%2e%2f",
-        r"%2e%2e/",
-        r"\.\.%2f",
-    ]
-
     def __init__(self):
         self._dangerous = [re.compile(p, re.IGNORECASE) for p in self.DANGEROUS_PATTERNS]
-        self._traversal = [re.compile(p, re.IGNORECASE) for p in self.PATH_TRAVERSAL]
-
     def check_command(self, command: str) -> Tuple[bool, List[str]]:
         """检查命令是否安全。"""
         issues = []
@@ -245,23 +234,10 @@ class InputValidator:
                 issues.append(f"危险命令模式: {pattern.pattern}")
         return len(issues) == 0, issues
 
-    def check_path(self, path: str, base_dir: str = None) -> Tuple[bool, List[str]]:
-        """检查路径是否安全。"""
-        issues = []
-        for pattern in self._traversal:
-            if pattern.search(path):
-                issues.append(f"路径遍历: {pattern.pattern}")
-
-        if base_dir:
-            try:
-                resolved = Path(path).resolve()
-                base = Path(base_dir).resolve()
-                if not str(resolved).startswith(str(base)):
-                    issues.append(f"路径越界: {path} 不在 {base_dir} 内")
-            except Exception:
-                issues.append(f"无法解析路径: {path}")
-
-        return len(issues) == 0, issues
+    # 审计删除（第 10 轮）：`check_path()` 全仓**零调用**，且它的两项职责
+    # （路径遍历正则、base_dir 包含性）已由 `errors.ensure_within`（realpath
+    # 包含性，比正则更稳）与各调用点覆盖 —— 按 lead 裁决删掉重复实现，
+    # 避免"两份尺子"给出不一致结论。
 
     def sanitize_filename(self, filename: str) -> str:
         """清理文件名。"""
@@ -295,12 +271,17 @@ class SandboxEnhancer:
                 issues.append("sandbox 动作不允许子进程")
 
         # 检查 permissions
-        permissions = action_meta.get("permissions", [])
+        # 审计修复（第 10 轮）：改前只匹配 `network:` / `subprocess:` 两个前缀，
+        # 而引擎真实使用的权限名是 `net:connect` / `process:spawn` / `files:write`
+        # （见 executor._pending_ops 与 constants.PERMISSIONS）—— 策略检查因此
+        # **永远看不到真实权限声明**，等于从未生效。现在两套写法都认。
+        permissions = action_meta.get("permissions", []) or []
         for perm in permissions:
-            if perm.startswith("network:") and not self.policy.allow_network:
-                issues.append(f"网络权限被拒绝: {perm}")
-            if perm.startswith("subprocess:") and not self.policy.allow_subprocess:
-                issues.append(f"子进程权限被拒绝: {perm}")
+            name = str(perm)
+            if name.startswith(("network:", "net:")) and not self.policy.allow_network:
+                issues.append(f"网络权限被拒绝: {name}")
+            if name.startswith(("subprocess:", "process:")) and not self.policy.allow_subprocess:
+                issues.append(f"子进程权限被拒绝: {name}")
 
         return len(issues) == 0, issues
 

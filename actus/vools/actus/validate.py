@@ -46,23 +46,28 @@ from .paths import repo_root
 #   real, notes = split_validation(errors)
 #   ok = is_valid(errors)            # 只看 real
 #   for note in notes: print('⚠️', note, file=sys.stderr)
+#: 校验结果前缀约定（split_validation 只把这两类当"提示"，不影响 valid）：
+#:   runtime: 环境提示（缺 contracts / 没装 jsonschema / 语言路由不可用）
+#:   warning: 非致命发现（旧格式依赖退化、安全扫描命中但信任级足够…）
 RUNTIME_NOTE_PREFIX = 'runtime:'
+WARNING_PREFIX = 'warning:'
+NOTE_PREFIXES = (RUNTIME_NOTE_PREFIX, WARNING_PREFIX)
 
 
 def split_validation(errors) -> Tuple[List[str], List[str]]:
-    """把校验结果拆成 (真实错误, 运行时提示)。
+    """把校验结果拆成 (真实错误, 提示)。
 
     Args:
         errors: validate_action() 的返回值（或任意字符串列表）。
 
     Returns:
-        (real_errors, runtime_notes)。runtime_notes 是**环境提示**，
-        不表示动作不合规，输出侧应展示但不影响 valid/退出码。
+        (real_errors, notes)。`runtime:`（环境问题）与 `warning:`（非致命发现）
+        都归入 notes：输出侧应展示，但不影响 valid/退出码。
     """
     real_errors: List[str] = []
     runtime_notes: List[str] = []
     for entry in errors or []:
-        if str(entry).startswith(RUNTIME_NOTE_PREFIX):
+        if str(entry).startswith(NOTE_PREFIXES):
             runtime_notes.append(entry)
         else:
             real_errors.append(entry)
@@ -194,6 +199,12 @@ def validate_action(action: Action) -> List[str]:
     """校验单个动作，返回错误列表（空 = 通过）。
 
     覆盖 docs/03 §6 全部五条基准校验 + §7.3 契约自检 + docs/10 新增字段校验。
+
+    `validate_action` 同时承担 CLI `actus validate <id>` / 索引构建（它们对
+    `.actus.schema.md` 也调本函数），因此形式 B 的**正文结构**检查在这里补一次
+    （C14b）—— 否则 `validate_schema_md` 里的 C14 永远不会被 CLI 路径执行
+    （实测缺章节的 schema-md 动作 rc=0）。注意不整体切到 `validate_schema_md`：
+    它对非 exec kind 的 entry 要求更严，会让 link/alias 等合法动作误红。
     """
     errors: List[str] = []
     meta = action.meta
@@ -279,6 +290,16 @@ def validate_action(action: Action) -> List[str]:
     # 13) usage 可执行形态（存在但纯描述 → 打回，future_plan §3 #8）
     errors.extend(check_usage_executable(meta))
 
+    # 14) 安全扫描（第 10 轮接线：security.SecurityScanner 写好了但产品零调用。
+    # 低信任动作命中 → `security:` 错误；其余信任级 → `warning:` 提示，不判红。
+    # 见 check_security() 的 docstring 与 split_validation 的前缀约定。）
+    errors.extend(check_security(action))
+
+    # 15) 形式 B 正文结构（关键接线点：CLI validate / indexer 对 schema-md 也走本
+    # 函数，不在这一层补的话 check_schema_md_structure 永远不执行）
+    if str(getattr(action, 'path', '') or '').endswith('.actus.schema.md'):
+        errors.extend(check_schema_md_structure(action.body, meta))
+
     return errors
 
 
@@ -346,6 +367,12 @@ def check_classification(meta: Dict) -> List[str]:
     kind 是唯一打回级字段：它决定系统如何执行该动作（exec/link/demo/...），
     错误值导致执行逻辑混乱（如把 link 当 exec 执行）。已在 validate_action
     第 3b 步内联校验，此函数供独立调用（如 CLI check 单项验证）。
+
+    ⚠️ 第 10 轮审计标注：本函数**不在产品校验路径上**（全仓唯一调用方是
+    `tests/test_classification.py`，5 处），**不是漏接线** —— `validate_action`
+    第 3b 步已内联等价的 kind 校验；purpose/industry 按设计只做 notices、不拦截。
+    保留它是为了「单项分类校验」的可测试性；若要收紧，应让 validate_action
+    复用本函数并删掉内联副本（当前保持两份属于已知冗余，不影响正确性）。
     """
     errors: List[str] = []
     kind = meta.get('kind')
@@ -1295,13 +1322,20 @@ def analyze_graph(actions: Dict[str, Action]) -> Dict[str, dict]:
 
 
 def load_and_validate(path: str) -> Action:
-    """便捷入口：解析 + 校验，失败抛 ActionError。"""
+    """便捷入口：解析 + 校验，失败抛 ActionError。
+
+    审计修复（第 10 轮）：校验结果按 `split_validation` 分档 ——
+    `runtime:`（环境）/`warning:`（非致命发现，如缺 `## Implementation` 标题、
+    高信任动作的安全扫描提示）**不再让动作判 invalid**；只有真实错误抛错。
+    否则刚接线的 warning 通道会把大量合法动作挡在执行路径外（实测 e2e 7+ 红）。
+    """
     action = parse_cfg_from_file(path)
     errs = validate_action(action)
-    if errs:
+    real_errors, notes = split_validation(errs)
+    if real_errors:
         raise ActionError('action_invalid',
                           f'动作校验失败: {action.meta.get("id", path)}',
-                          {'errors': errs})
+                          {'errors': real_errors, 'warnings': notes})
     return action
 
 
@@ -1391,24 +1425,107 @@ def validate_schema_md(action: Action) -> List[str]:
     # C13: usage 可执行形态（future_plan §3 #8）
     errors.extend(check_usage_executable(meta))
 
+    # C14: 正文结构（审计修复：check_schema_md_structure 写好了但**零调用** ——
+    # 实测缺 `## Implementation` / 声明了 args 却没有 `## Input Schema` 的
+    # `.actus.schema.md` 照样通过 `actus validate`（rc=0）。现在真接线。
+    # 必要性与 ACTUS_SCHEMA_SPEC 对齐：区域 7（实现块）必需；区域 3/4 规范未强制，
+    # 只有**声明了** args/依赖时才要求对应章节（现有 4 个种子动作因此不被误伤）。
+    errors.extend(check_schema_md_structure(action.body, meta))
+
+    # C15: 安全扫描（审计修复：security.SecurityScanner 此前产品零调用）
+    errors.extend(check_security(action))
+
     return errors
 
 
-def check_schema_md_structure(body: str) -> List[str]:
-    """校验 .actus.schema.md 正文结构完整性。
+def check_schema_md_structure(body: str, meta: dict = None) -> List[str]:
+    """校验 .actus.schema.md 正文结构完整性（已接线到 validate_schema_md）。
 
-    检查必需的 Markdown 区域是否存在：
-    - ## Input Schema（JSON 代码块）
-    - ## Dependencies（YAML 代码块）
-    - ## Implementation（至少一个代码块）
+    审计修复：本函数此前是**死代码**（只出现在 `__all__`），缺章节的动作照样通过。
+    接线时按 ACTUS_SCHEMA_SPEC 校正了"必需"口径（原实现要求三段齐全，会把仓库里
+    4 个不带 Input Schema/Dependencies 的种子动作全部判红）：
+
+    - **区域 7 `## Implementation`：必需** —— `entry` 必须指向该区域的 tag 代码块；
+    - **区域 3 `## Input Schema`：声明了 args 才必需**（规范未强制无参动作写它）；
+    - **区域 4 `## Dependencies`：声明了依赖才必需**。
+
+    `meta` 为动作元数据（用于判断是否声明了 args/dependencies）；缺省时保持旧行为
+    的向后兼容：仅按"是否出现对应代码块/字段"判断，meta 为空则只强制 Implementation。
     """
-    errors = []
-    required_sections = [
-        ('input schema', '## Input Schema'),
-        ('dependencies', '## Dependencies'),
-        ('implementation', '## Implementation'),
-    ]
-    for name, heading in required_sections:
-        if heading.lower() not in body.lower():
-            errors.append(f'structure: 缺少 {heading} 区域（{name}）')
+    meta = meta or {}
+    lower = body.lower()
+    errors: List[str] = []
+
+    # 区域 7：`## Implementation` 标题 —— **约定而非硬约束**（引擎里大量合法动作
+    # 只有带 tag 的实现块、没有这个标题；实测把它当错误会让 7+ 个 e2e 测试红）。
+    # 因此缺它只给 `warning:` 提示（见 split_validation：不判 invalid，但会显示）。
+    if '## implementation' not in lower:
+        errors.append('warning: 缺少 ## Implementation 区域（建议补，规范示例结构；不影响 valid）')
+
+    def _declared(keys, marks):
+        if any(meta.get(k) for k in keys):
+            return True
+        return any(mark in lower for mark in marks)
+
+    # 区域 4：依赖声明（**真正声明了 pip/system/env 依赖**才要求章节）
+    # 注意：model 会把 `## Permissions` 的 YAML 收进 meta['dependencies'] 的
+    # 'permissions' 键 —— 所以这里必须看具体的 pip/system/env，而不是"非空 dict"，
+    # 否则只声明权限的种子动作（calculator 等）会被误判"声明了依赖"。
+    deps_meta = meta.get('dependencies')
+    declared_deps = any(mark in lower for mark in ('#!deps', '#!dependencies'))
+    if isinstance(deps_meta, dict):
+        declared_deps = declared_deps or any(
+            deps_meta.get(k) for k in ('pip', 'system', 'env'))
+    elif deps_meta:
+        declared_deps = True
+
+    # 区域 3：输入契约（声明了 args 才要求）
+    if _declared(('args', 'input_schema'), ('#!args', '#!input')) \
+            and '## input schema' not in lower:
+        errors.append('structure: 声明了 args 但缺少 ## Input Schema 区域（JSON Schema 代码块）')
+
+    if declared_deps and '## dependencies' not in lower:
+        errors.append('structure: 声明了依赖但缺少 ## Dependencies 区域（YAML 代码块）')
+
     return errors
+
+
+def check_security(action: Action) -> List[str]:
+    """安全策略 / 敏感信息 / 危险命令扫描（第 10 轮接线）。
+
+    审计背景：`security.SecurityScanner.scan_action`（权限策略 + 敏感信息正则 +
+    危险命令模式）写好了但**产品代码零调用** —— 一个从不调用的安全检查模块
+    比没有更糟（给的是虚假安全感）。现在在 validate 的**两条路径**（形式 A/B）
+    都接线，按 lead 裁决**分级**：
+
+    - 低信任动作（`trust` ∈ sandbox / community）：命中 → `security:` **错误**
+      （这些信任级的用途就是被强校验，判 invalid 合理）；
+    - 其余信任级（audit / trusted）：命中 → `warning:` **提示**
+      （不判 invalid，避免现有动作无故全红，但必须出现在输出里）。
+
+    扫描器自身异常 → 降级为 `warning:`（不因扫描器故障让所有动作红），
+    且文案明确，不静默吞掉。
+    """
+    try:
+        from .security import get_security_scanner
+    except Exception as exc:  # noqa: BLE001 —— 安全模块不可导入时只提示，不判错
+        return ['warning: 安全扫描不可用（%s: %s）' % (type(exc).__name__, exc)]
+
+    action_id = str(action.meta.get('id') or '')
+    try:
+        result = get_security_scanner().scan_action(
+            action_id, action.meta, action.raw or action.body or '')
+    except Exception as exc:  # noqa: BLE001
+        return ['warning: 安全扫描异常（%s: %s）' % (type(exc).__name__, exc)]
+
+    issues = [str(m) for m in (result.get('issues') or [])]
+    findings = result.get('sensitive_findings') or []
+    if findings:
+        patterns = sorted({str(f.get('pattern', '?')) for f in findings})
+        issues.append('检测到 %d 处疑似敏感信息（%s）'
+                      % (len(findings), ', '.join(patterns)[:120]))
+
+    trust = str(action.meta.get('trust') or 'audit').strip().lower()
+    if trust in ('sandbox', 'community'):
+        return ['security: %s' % m for m in issues]
+    return ['warning: %s' % m for m in issues]

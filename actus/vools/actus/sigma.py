@@ -7,7 +7,7 @@
 能力清单（docs/41 §A2）：
     1. spec 解析          parse_module / parse_module_text / extract_sigma_block
     2. Iron Laws 校验     check_iron_laws（17 条，可机检的落地，不可机检的显式 advisory）
-    3. verify 调用        verify_module / verify_spec / run_sigma_block（语言路由入口）
+    3. verify 调用        verify_module / run_sigma_block（语言路由入口；verify_spec 已删——它只是 verify_module 的薄包装且全仓零调用）
     4. spec JSON 生成     to_spec_json / validate_spec_json
     5. sigma-spec2judge   judge_spec（spec JSON → judge 验收断言）
     6. sigma-bootstrap    bootstrap（spec → impl 骨架 → verify 闭环）
@@ -30,7 +30,7 @@ __all__ = [
     # 解析
     'parse_module', 'parse_module_text', 'extract_sigma_block', 'parse_package',
     # 校验
-    'check_iron_laws', 'check_python', 'verify_module', 'verify_spec',
+    'check_iron_laws', 'check_python', 'verify_module',
     'SpecError', 'IronLawViolation',
     # spec JSON
     'to_spec_json', 'validate_spec_json', 'load_spec_json', 'SigmaEngine',
@@ -3185,22 +3185,6 @@ def verify_module(module: Dict[str, Any], strict: bool = True) -> Dict[str, Any]
     """对已解析模块做完整验证：Iron Laws + 规范测试。"""
     report = check_iron_laws(module, strict=strict)
     report['verdict'] = 'pass' if report['passed'] else 'fail'
-    return report
-
-
-def verify_spec(path: str, strict: bool = True) -> Dict[str, Any]:
-    """验证一份规约：`.md`（Sigma 模块）或 `.json`（spec JSON）。"""
-    if path.endswith('.json'):
-        spec = load_spec_json(path)
-        errors = validate_spec_json(spec)
-        judged = judge_spec(spec=spec)
-        return {'kind': 'spec_json', 'passed': not errors and judged['exit_code'] == 0,
-                'schema_errors': errors, 'judge': judged['summary'],
-                'fingerprint': fingerprint_of(_module_from_spec(spec))}
-    module = parse_module(path)
-    report = verify_module(module, strict=strict)
-    report['kind'] = 'sigma_md'
-    report['source'] = path
     return report
 
 

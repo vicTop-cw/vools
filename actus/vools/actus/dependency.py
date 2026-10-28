@@ -422,10 +422,6 @@ class DependencyResolver:
             return DepCheckResult(dep.name, True, f"动作 {dep.name} 存在: {found}")
         return DepCheckResult(dep.name, False, f"动作 {dep.name} 未找到")
 
-    def check_all(self, deps: List[Dependency]) -> List[DepCheckResult]:
-        """检查所有依赖。"""
-        return [self.check_dep(d) for d in deps]
-
     def resolve(self, deps: List[Dependency], auto_install: bool = False) -> Tuple[bool, List[str]]:
         """解析依赖，返回 (是否全部满足, 消息列表)。
 
