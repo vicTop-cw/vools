@@ -255,9 +255,12 @@ class SftpChannel(OnlineChannel):
 
     - paramiko 可导入：内建 paramiko 后端，send/receive 真实读写（put/get）；
       连接失败且存在注入 writer/reader 时回退注入式
-    - paramiko 缺失：完全回退注入式 reader/writer（兼容旧 MVP 形态）
-    - 可用性探测：probe 注入优先；probe_mode="tcp"（默认）走 TCP 端口探测；
-      probe_mode="sftp" 且 paramiko 可用时走真实 SFTP 连接探测
+    - paramiko 缺失：完全回退注入式 reader/writer（兼容旧 MVP 形态）；
+      **此时若没有注入，`available()` 直接 False**（没有后端就没有搬数据的能力），
+      想知道端口通不通请用 `port_reachable()`
+    - 可用性探测：`available()` = 有搬数据的能力 **且** 对端可达。
+      其中「对端可达」的探测顺序：probe 注入优先 →
+      probe_mode="sftp"（paramiko 可用时走真实 SFTP 连接）→ TCP 端口探测
     - sftp_cfg 统一入口：兼容 vq/sparksql-exe configs.py FTP_connect 形态
       {host, port, user, password, key_path, dir}，显式参数优先
     """
@@ -305,12 +308,43 @@ class SftpChannel(OnlineChannel):
             )
         self.name = "sftp:{0}@{1}:{2}".format(username or "*", host, remote_dir)
 
-    def available(self):
+    def _can_transfer(self):
+        """是否**真的有搬数据的能力**：paramiko 后端存在，或注入了 writer/reader。
+
+        「能力」与「对端可达」是两件事，见 `available()` 与 `port_reachable()` 的分工。
+        """
+        return (self._backend is not None
+                or self._writer is not None
+                or self._reader is not None)
+
+    def port_reachable(self):
+        """只回答「对端端口通不通」（诊断用），**不代表本通道能读写**。
+
+        与 `available()` 拆开的原因：paramiko 缺失时 TCP 端口照样可能通，
+        但此时没有后端、也没有注入 reader/writer —— `send()`/`receive()` 会抛
+        `NotImplementedError`。把「端口通」当成「可用」就是拿合法假值冒充真实值。
+        探测顺序保持历史语义：注入 probe > probe_mode（sftp 走真实连接）> TCP。
+        """
         if self._probe is not None:
-            return self._probe()
+            return bool(self._probe())
         if self._probe_mode == "sftp" and self._backend is not None:
             return self._backend.available()
         return _default_sftp_probe(self.host, self.port)
+
+    def available(self):
+        """能否真正读写 = **既有搬数据的能力** 且 **对端可达**。
+
+        历史缺陷（2026-10-28 修正）：此前只做 TCP 端口探测。paramiko 缺失且未注入
+        reader/writer 时，端口通 → `available()` 返回 True，但 `send()`/`receive()`
+        立刻抛 `NotImplementedError` —— `select_transport` 会把这条通道选中，随后
+        同步全线失败，症状是「选上了却什么都传不过去」。
+
+        现在「无后端且无注入」直接 False（不触发网络探测）。想知道端口通不通仍可调
+        `port_reachable()`，那两个信号从此不会互相冒充。
+        """
+        if not self._can_transfer():
+            return False
+        return bool(self.port_reachable())
 
     def send(self, filename, content):
         if self._backend is not None:

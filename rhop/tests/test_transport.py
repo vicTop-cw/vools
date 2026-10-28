@@ -268,7 +268,12 @@ class TestSftpChannelParamiko:
 
 
 class TestSftpChannelParamikoMissing:
-    """paramiko 导入失败：SftpChannel 无后端，注入式行为与旧 MVP 一致。"""
+    """paramiko 导入失败：SftpChannel 无后端，只能靠注入式 reader/writer。
+
+    注意 `available()` 的语义（2026-10-28 修正）：无后端且未注入时**直接 False**，
+    不再因为 TCP 端口通就报可用——否则 select_transport 会选中一条 send/receive
+    必然抛 NotImplementedError 的通道。「端口通不通」改由 `port_reachable()` 回答。
+    """
 
     def test_no_backend_when_paramiko_missing(self, monkeypatch):
         import vools.rhop.transport.online as online_mod
@@ -303,5 +308,9 @@ class TestSftpChannelParamikoMissing:
             lambda host, port: calls.append((host, port)) or False,
         )
         ch = SftpChannel("example.invalid", "/srv/rhop", probe=None, probe_mode="sftp")
+        # 无后端且未注入 ⇒ 不可用；**且不触发网络探测**（不拿端口通冒充可用）
         assert ch.available() is False
+        assert calls == []
+        # 「端口通不通」是另一个问题：probe_mode="sftp" 在无 paramiko 时降级到 TCP 探测
+        assert ch.port_reachable() is False
         assert calls == [("example.invalid", 22)]  # 降级 TCP 探测
