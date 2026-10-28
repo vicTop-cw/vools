@@ -20,20 +20,42 @@ Actus 原先的 Omega（`omega.py`）只做**执行后**的 Ω-gate（产出对 
 
 import json
 import os
+import re
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from .paths import meta_dir
 from . import calllog
 from . import omega as _omega
-from .errors import ActionError
+from .errors import ActionError, ensure_within
 
 __all__ = ['omega_mark', 'gate_mark', 'omega_enabled', 'gate_enabled',
            'omega_max_rounds_default', 'omega_norm_max_rounds',
-           'OmegaStrong', 'get_ledger', 'load_ledger']
+           'OmegaStrong', 'get_ledger', 'load_ledger', 'ledger_corrupt']
 
 _TZ = timezone(timedelta(hours=8))
+
+#: task_id 白名单：拒绝路径分隔符 / 控制字符 / `..` / 超长（防任意文件读写）。
+_TASK_ID_RE = re.compile(r'^[^/\\\x00-\x1f]{1,128}$')
+#: 账本/检查记录里允许的时间格式（ISO8601，允许 `Z` 与秒级）。
+_LEDGER_LOCK_TIMEOUT = 5.0
+
+
+def _validate_task_id(task_id: Any) -> str:
+    """task_id → 规范化字符串；非法（含路径分隔符/.. 等）抛 param_invalid。"""
+    text = '' if task_id is None else str(task_id)
+    if (not text or not _TASK_ID_RE.match(text)
+            or '..' in text or text in ('.', '..')):
+        raise ActionError(
+            'param_invalid',
+            '非法 task_id: %r（不允许空、路径分隔符、控制字符或 ".."）' % (task_id,))
+    return text
+
+
+def _ledger_dir(meta_dir_arg: Optional[str] = None) -> str:
+    return os.path.join(meta_dir_arg or _default_meta(), 'omega_strong')
 
 # 标记（出现在任务/节点描述中即生效）
 OMEGA_MARK = '[omega:required]'
@@ -90,28 +112,95 @@ def _default_meta() -> str:
 
 
 def _ledger_path(task_id: str, meta_dir: Optional[str] = None) -> str:
-    return os.path.join(meta_dir or _default_meta(), 'omega_strong',
-                        f'{task_id}.json')
+    """账本文件路径（**防路径逃逸**）。
+
+    审计修复（P1 任意文件读写）：改前 `task_id` 直接拼进文件名 ——
+    `task_id='../../escaped'` 能把账本写到 `_meta/omega_strong/../../escaped.json`，
+    绝对 `task_id` 更能无视 ACTUS_META_DIR 写到任意 `<abs>.json`（load 侧同样可读）。
+    task_id 来自 CLI/MCP 入参，属于不可信输入。现在：白名单挡住分隔符/`..`，
+    再用 `errors.ensure_within` 的 realpath 包含性检查兜底（与团队名/公钥路径同一把尺子）。
+    """
+    tid = _validate_task_id(task_id)
+    base = _ledger_dir(meta_dir)
+    try:
+        return ensure_within(base, os.path.join(base, tid + '.json'),
+                             what='omega 账本路径')
+    except ValueError as exc:
+        raise ActionError('param_invalid', '非法 omega 账本路径: %s' % exc)
+
+
+def ledger_corrupt() -> bool:
+    """上次 `load_ledger` 是否遇到损坏账本（诊断用；损坏的已备份为 `.corrupt-*`）。"""
+    return bool(_load_ledger_state.get('corrupt'))
+
+
+#: `load_ledger` 的损坏状态（进程内诊断；写侧据此拒绝覆盖）
+_load_ledger_state: Dict[str, Any] = {'corrupt': False, 'path': None}
 
 
 def load_ledger(task_id: str, meta_dir: Optional[str] = None) -> Dict[str, Any]:
-    path = _ledger_path(task_id, meta_dir)
+    """读账本。缺失 → 空账本；**损坏 → 备份为 `.corrupt-<ts>` + 返回带 corrupt 标记的
+    空账本（写侧会拒绝覆盖，绝不静默清空历史）**。
+
+    审计修复（P2 静默清空）：改前 `except Exception` 直接返回空账本 —— 损坏文件
+    被当成"没有记录"，下一次 `_append` 落盘就把原历史（可能是 approved 语料/
+    复验记录）覆盖掉。现在损坏时先把原文件改名留证，并让写路径 fail-closed。
+    """
+    tid = _validate_task_id(task_id)
+    path = _ledger_path(tid, meta_dir)
+    empty = {'task_id': tid, 'records': [], 'max_rounds': omega_max_rounds_default()}
+    existing_backup = _find_corrupt_backup(path)
     if not os.path.isfile(path):
-        return {'task_id': task_id, 'records': [], 'max_rounds':
-                omega_max_rounds_default()}
+        if existing_backup:
+            # 之前检测到损坏并改名备份过 → 状态**粘住**：写侧继续拒绝，直到人工处理
+            broken = dict(empty)
+            broken.update({'corrupt': True, 'corrupt_backup': existing_backup,
+                           'corrupt_reason': '原账本损坏已备份，等待人工确认'
+                                             '（删除 .corrupt-* 备份后才会允许重写）'})
+            _load_ledger_state.update({'corrupt': True, 'path': path})
+            return broken
+        return empty
     try:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-    except Exception:  # noqa: BLE001
-        return {'task_id': task_id, 'records': [], 'max_rounds':
-                omega_max_rounds_default()}
-    data.setdefault('task_id', task_id)
+        if not isinstance(data, dict):
+            raise ValueError('账本顶层不是对象: %s' % type(data).__name__)
+    except (OSError, ValueError) as exc:
+        backup = '%s.corrupt-%d' % (path, int(time.time()))
+        try:
+            os.replace(path, backup)
+        except OSError:
+            backup = None
+        _load_ledger_state.update({'corrupt': True, 'path': path})
+        broken = dict(empty)
+        broken.update({'corrupt': True, 'corrupt_backup': backup,
+                       'corrupt_reason': '%s: %s' % (type(exc).__name__, exc)})
+        return broken
+    data.setdefault('task_id', tid)
     data.setdefault('records', [])
     data.setdefault('max_rounds', omega_max_rounds_default())
+    _load_ledger_state.update({'corrupt': False, 'path': path})
     return data
 
 
+def _find_corrupt_backup(path: str) -> Optional[str]:
+    """是否存在该账本的 `.corrupt-*` 备份（损坏状态的粘性标记）。"""
+    directory = os.path.dirname(path)
+    prefix = os.path.basename(path) + '.corrupt-'
+    if not os.path.isdir(directory):
+        return None
+    backups = [os.path.join(directory, name) for name in os.listdir(directory)
+               if name.startswith(prefix)]
+    return sorted(backups)[-1] if backups else None
+
+
 def _save_ledger(data: Dict[str, Any], meta_dir: Optional[str] = None) -> str:
+    """写账本（原子替换）。**损坏状态禁止覆盖**：先把历史备份/修好再写。"""
+    if data.get('corrupt'):
+        raise ActionError(
+            'internal',
+            '账本已损坏（原文件已备份为 .corrupt-*），拒绝写入以免覆盖历史；'
+            '请先人工检查/修复该账本')
     path = _ledger_path(data['task_id'], meta_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + '.tmp'
@@ -119,6 +208,93 @@ def _save_ledger(data: Dict[str, Any], meta_dir: Optional[str] = None) -> str:
         json.dump(data, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
     return path
+
+
+@contextmanager
+def _ledger_lock(path: str):
+    """账本读改写互斥锁（跨进程；Windows 用 msvcrt，POSIX 用 fcntl）。
+
+    审计修复（P2 并发丢更新）：改前 `_append`/`_update_status` 是裸的
+    read-modify-write —— 两个实例各自 load→append→save，后写者会把先写者的
+    记录整个覆盖掉（实测 A 的记录消失）。这里用 `path + '.lock'` 上的排他锁
+    串行化整段读改写。
+    """
+    lock_path = path + '.lock'
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    handle = open(lock_path, 'a+b')
+    acquired = False
+    try:
+        deadline = time.time() + _LEDGER_LOCK_TIMEOUT
+        if os.name == 'nt':
+            import msvcrt
+            while not acquired:
+                try:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    acquired = True
+                except OSError:
+                    if time.time() >= deadline:
+                        raise ActionError('internal', 'omega 账本被占用，获取锁超时: %s'
+                                          % path)
+                    time.sleep(0.05)
+        else:
+            import fcntl
+            while not acquired:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                except OSError:
+                    if time.time() >= deadline:
+                        raise ActionError('internal', 'omega 账本被占用，获取锁超时: %s'
+                                          % path)
+                    time.sleep(0.05)
+        yield
+    finally:
+        if acquired:
+            try:
+                if os.name == 'nt':
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        handle.close()
+
+
+def _deliverable_digest(deliverable: Any) -> Dict[str, Any]:
+    """交付物指纹：类型 + 大小 + sha256（dict/list 先规范化 JSON）。
+
+    审计修复（P2 复验不可追溯）：`result_verify` 改前只判 `deliverable is not None`，
+    且交付物**不进记录** —— 空 `{}` 也能"通过"，事后无法证明验的是哪份产物。
+    这里给记录留下可核对的指纹（不存原文，避免把密钥/大对象写进账本）。
+    """
+    import hashlib
+    if isinstance(deliverable, (dict, list)):
+        payload = json.dumps(deliverable, ensure_ascii=False, sort_keys=True,
+                             default=str).encode('utf-8')
+        kind = 'dict' if isinstance(deliverable, dict) else 'list'
+    elif isinstance(deliverable, bytes):
+        payload = deliverable
+        kind = 'bytes'
+    else:
+        payload = str(deliverable).encode('utf-8')
+        kind = type(deliverable).__name__
+    return {'type': kind, 'size': len(payload),
+            'sha256': hashlib.sha256(payload).hexdigest()}
+
+
+def _parse_iso(value: Any) -> Optional[datetime]:
+    """ISO8601 字符串 → datetime（带时区则保留；解析失败返回 None）。"""
+    if not value:
+        return None
+    text = str(value).strip().replace('Z', '+00:00')
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def _log(tool: str, ok: bool, params: dict, result: dict,
@@ -168,23 +344,26 @@ class OmegaStrong:
                                            r.get('id', '')))[-1]
 
     def _append(self, rec: Dict[str, Any]) -> None:
-        data = self._load()
-        data['max_rounds'] = self.max_rounds
-        # 同 id 覆盖（upsert 语义）
-        data['records'] = [r for r in data['records']
-                           if r.get('id') != rec['id']] + [rec]
-        self._save(data)
+        # 读改写整段加锁：防并发丢更新（两个进程各自 load→append→save 会互相覆盖）
+        with _ledger_lock(_ledger_path(self.task_id, self.meta_dir)):
+            data = self._load()
+            data['max_rounds'] = self.max_rounds
+            # 同 id 覆盖（upsert 语义）
+            data['records'] = [r for r in data['records']
+                               if r.get('id') != rec['id']] + [rec]
+            self._save(data)
 
     def _update_status(self, rec_id: str, status: str,
                        content: Optional[str] = None) -> None:
-        data = self._load()
-        for r in data['records']:
-            if r.get('id') == rec_id:
-                r['status'] = status
-                r['updated_at'] = _now_iso()
-                if content is not None:
-                    r['content'] = content
-        self._save(data)
+        with _ledger_lock(_ledger_path(self.task_id, self.meta_dir)):
+            data = self._load()
+            for r in data['records']:
+                if r.get('id') == rec_id:
+                    r['status'] = status
+                    r['updated_at'] = _now_iso()
+                    if content is not None:
+                        r['content'] = content
+            self._save(data)
 
     # ── 第一环：语料创建（执行前） ──
     def spec_create(self, author: str, content: Any,
@@ -300,6 +479,9 @@ class OmegaStrong:
         rnd = self._count(T_RESULT) + 1
         rid = f'result:{self.task_id}:r{rnd}'
         passed = str(verdict).lower() in ('pass', 'approved', 'approve', 'ok')
+        # 交付物指纹（审计修复 P2）：改前 deliverable 只判 `not None`，且**不进记录** ——
+        # 空 dict 也能"复验通过"，事后无法证明验的是哪个交付物。现在记录类型/大小/sha256。
+        deliverable_digest = _deliverable_digest(deliverable)
         # 若语料带 spec 且 deliverable 为 dict → 顺带跑一次 Ω-gate，作为客观佐证
         gate = None
         if passed and isinstance(deliverable, dict) and spec.get('spec'):
@@ -310,6 +492,7 @@ class OmegaStrong:
         rec = {'id': rid, 'task_id': self.task_id, 'spec_type': T_RESULT,
                'content': json.dumps({'reviewer': reviewer, 'verdict': verdict,
                                       'reason': reason,
+                                      'deliverable': deliverable_digest,
                                       'gate': gate}, ensure_ascii=False),
                'status': 'approved' if passed else 'rejected',
                'author': reviewer, 'created_at': _now_iso(),
@@ -319,6 +502,7 @@ class OmegaStrong:
             out = {'ok': True, 'stage': T_RESULT, 'result_id': rid,
                    'task_id': self.task_id, 'round': rnd,
                    'status': 'approved', 'reviewer': reviewer, 'reason': reason,
+                   'deliverable': deliverable_digest,
                    'gate': gate, 'next_action': 'verify', 'escalated': False}
             _log('omega.result_verify', True, {'task_id': self.task_id},
                  {'result_id': rid, 'status': 'approved'},
@@ -342,21 +526,41 @@ class OmegaStrong:
 
     # ── 外部命令判据（[gate:required]） ──
     def check_record(self, check: dict) -> Dict[str, Any]:
-        """记录一次外部命令检查结果。门禁状态一律由 check['ok']（exit_code==0）
-        推导（fail-closed），不信任调用方传入的 status，防止伪造通过。"""
+        """记录一次外部命令检查结果。
+
+        审计修复（P2 假通过）：改前门禁状态由调用方传入的 `check['ok']` 直接决定 ——
+        实测 `check_record({'ok': True})` 就能记成 `passed` 并让 `check_gate` 放行，
+        记录里连 `cmd`/`exit_code` 都没有（"不跑命令即过门禁"）。现在：
+          * 必须提供非空 `cmd` 与整数 `exit_code`（否则 param_invalid）；
+          * 门禁状态**只由 `exit_code == 0` 推导**，`ok`/`status` 一律忽略。
+        """
         t0 = time.perf_counter()
-        eff = 'passed' if bool(check.get('ok')) else 'failed'
+        if not isinstance(check, dict):
+            raise ActionError('param_invalid', 'check 必须是对象（含 cmd / exit_code）')
+        cmd = check.get('cmd')
+        if not isinstance(cmd, str) or not cmd.strip():
+            raise ActionError('param_invalid',
+                              "check 缺少非空 cmd（门禁判据必须是一次真实命令）")
+        exit_code = check.get('exit_code')
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+            raise ActionError('param_invalid',
+                              'check 缺少整数 exit_code（门禁状态只由 exit_code 推导）')
+        eff = 'passed' if exit_code == 0 else 'failed'
+        record_payload = {k: v for k, v in check.items()
+                          if k not in ('ok', 'status')}
+        record_payload['exit_code'] = exit_code
         rnd = self._count(T_CHECK) + 1
         cid = f'check:{self.task_id}:r{rnd}'
         self._append({'id': cid, 'task_id': self.task_id, 'spec_type': T_CHECK,
-                      'content': json.dumps(check, ensure_ascii=False),
+                      'content': json.dumps(record_payload, ensure_ascii=False,
+                                            default=str),
                       'status': eff, 'author': 'run_check',
                       'created_at': _now_iso(), 'updated_at': _now_iso()})
         _log('omega.check_record', eff == 'passed', {'task_id': self.task_id},
-             {'check_id': cid, 'status': eff},
+             {'check_id': cid, 'status': eff, 'exit_code': exit_code},
              int((time.perf_counter() - t0) * 1000), self.task_id)
         return {'ok': True, 'check_id': cid, 'task_id': self.task_id,
-                'round': rnd, 'status': eff}
+                'round': rnd, 'status': eff, 'exit_code': exit_code, 'cmd': cmd}
 
     # ── 门禁 ──
     def execute_gate(self, task: Any = None) -> Tuple[bool, str]:
@@ -395,10 +599,25 @@ class OmegaStrong:
         if cur.get('status') != 'passed':
             return False, (f'gate: 最新外部检查 [{cur["id"]}] 状态为 '
                            f'[{cur["status"]}]，未通过前禁止验收')
-        if task_updated_at and cur.get('created_at', '') < task_updated_at:
-            return False, (f'gate: 检查记录 [{cur["id"]}]（{cur["created_at"]}）'
-                           f'早于任务最后更新（{task_updated_at}），代码可能已变更，'
-                           f'请重新执行 run_check')
+        if task_updated_at:
+            # 审计修复（P3）：改前直接按字符串比 `created_at < task_updated_at`，
+            # 两边格式/时区不一致（`Z` vs `+08:00`、带/不带秒）就会误判"过期/新鲜"。
+            # 现在优先解析成 datetime 比较；解析失败才退回字符串比较。
+            created_raw = cur.get('created_at', '')
+            created_dt = _parse_iso(created_raw)
+            updated_dt = _parse_iso(task_updated_at)
+            stale = None
+            if created_dt is not None and updated_dt is not None:
+                try:
+                    stale = created_dt < updated_dt
+                except TypeError:      # 一边带 tz 一边不带 → 退化为字符串比较
+                    stale = str(created_raw) < str(task_updated_at)
+            else:
+                stale = str(created_raw) < str(task_updated_at)
+            if stale:
+                return False, (f'gate: 检查记录 [{cur["id"]}]（{created_raw}）'
+                               f'早于任务最后更新（{task_updated_at}），代码可能已变更，'
+                               f'请重新执行 run_check')
         return True, 'fresh_passed'
 
     # ── 超限升级 ──
