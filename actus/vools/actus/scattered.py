@@ -567,7 +567,7 @@ def check_scattered(path: str, authorized_root: Optional[str] = None,
     report['authorized_root'] = sc.root.replace(os.sep, '/')
 
     from .model import parse_cfg_from_file
-    from .validate import validate_action
+    from .validate import validate_action, split_validation
 
     try:
         action = parse_cfg_from_file(sc.path)
@@ -585,10 +585,15 @@ def check_scattered(path: str, authorized_root: Optional[str] = None,
                         'entry': action.meta.get('entry')}
 
     errs = validate_action(action)
-    if errs:
+    # `runtime:` 是环境提示（裸仓库缺 contracts / 没装 jsonschema），不是动作缺陷：
+    # 只有真实错误进 errors（决定 valid），提示进 warnings（展示但不判失败）。
+    real_errors, runtime_notes = split_validation(errs)
+    if real_errors:
         report['errors'].append({'code': 'action_invalid',
-                                 'message': f'规范校验失败：{len(errs)} 项',
-                                 'details': {'errors': errs}})
+                                 'message': f'规范校验失败：{len(real_errors)} 项',
+                                 'details': {'errors': real_errors}})
+    if runtime_notes:
+        report['warnings'].extend(runtime_notes)
 
     raw_deps = list(action.meta.get('deps') or [])
     path_deps, declared_deps, id_deps, core_deps = _split_deps(raw_deps)
