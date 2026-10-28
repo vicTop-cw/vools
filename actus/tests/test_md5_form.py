@@ -49,7 +49,8 @@ def test_index_records_md5_for_schema_actions(tmp_path):
     """索引必须把新格式动作的 md5 收进 by_md5。"""
     from vools.actus.indexer import scan_actions
     _write(tmp_path, "probe.actus.schema.md", SCHEMA_ACTION)
-    actions = scan_actions(str(tmp_path), validate=False)
+    # 测试卫生：关掉 mtime 缓存，避免 scan_actions 把缓存写进真实仓库 _meta/。
+    actions = scan_actions(str(tmp_path), validate=False, use_cache=False)
     hit = actions.get("myapp.md5probe")
     assert hit is not None, "索引里找不到动作"
     assert len(hit.md5) == 32, "索引里的 md5 为空"

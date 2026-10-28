@@ -17,6 +17,14 @@ import pytest
 
 from vools.actus.indexer import build_index
 
+
+@pytest.fixture(autouse=True)
+def _repo_root_to_tmp(tmp_path, monkeypatch):
+    """测试卫生：`scan_actions` 的 mtime 缓存只认 `_repo_root()`（不看
+    `ACTUS_META_DIR`），不隔离就会把缓存写进真实仓库 `_meta/`。指到 tmp。"""
+    monkeypatch.setenv("ACTUS_REPO_ROOT", str(tmp_path))
+
+
 GOOD = """---
 id: {aid}
 name: N
@@ -53,7 +61,9 @@ def _index(tmp_path, files):
     adir.mkdir()
     for name, text in files.items():
         _write(str(adir), name, text)
-    return build_index(actions_dir=str(adir))
+    # 测试卫生：显式 meta_dir，否则 build_index 会把索引/mtime 缓存写进真实仓库
+    # `_meta/`（它只认 _repo_root()，不看 ACTUS_META_DIR）。
+    return build_index(actions_dir=str(adir), meta_dir=str(tmp_path / "_meta"))
 
 
 def test_bad_demo_with_frontmatter_is_reported(tmp_path):
