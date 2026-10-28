@@ -6887,3 +6887,26 @@ severity medium。
 - 证据：修复后同一场景（10 轮 × 4 会话）→ **0 失败 / 0 死锁**；**变异验证**：把 `init_schema` 还原成修复前实现 → 21 次死锁，说明新用例不是恒绿装饰；新增 `rhop/tests/test_pg_store_concurrency.py`（5 条：并发不死锁 / 等锁超时给可读错误 / 锁按表隔离 / 单进程重复 init 幂等 / 默认超时为正）。WSL 内 PG 用例合计 **64 passed**（test_pg_store 40 + concurrency 5 + explicit_columns 7 + schema_migration 12）；Windows 全量 **604 passed / 45 skipped**（PG 不可达时 pg 用例整组 skip，含新增 5 条）。
 - 溯源：本 bug 由 BUG-363 的并发领取探针**顺带**撞出来（探针为对齐起跑让 4 个会话同时 create_store）；BUG-363 本身判定为 WORKS-AS-DESIGNED，与本条无因果关系。
 - reported_by: 接手司令（vools-lead 派单）
+
+## BUG-369 [2026-10-28T10:38:00Z] [medium] FIXED
+- summary: [rhop] `RhopWatcher.start()` 没有「就绪」语义：返回时监听尚未生效，紧随其后写入 shared path 的新文件可能**整个漏掉**（受控实验 8 轮漏 5 轮；`test_watch` 据此 2/5 红）
+- detail: 机制：rx 三个后端（`_Win32WatchBackend` / `_InotifyWatchBackend` / `_PollingWatchBackend`）的 `start()` 都只是 `Thread(...).start()` 后立即返回，**基线快照 / 句柄注册发生在各自 `_run()` 线程内部**；`FileDispatcher.start()` 仅转调 `backend.start()`，全链路无 ready 语义（`grep -n "baseline|ready|wait_until"` 零命中），`is_running` 也只表示「线程已拉起」。于是 start() 返回后立刻写入的文件可能被当成「启动前已存在」而不产生事件。
+  影响：任何「启动 watcher → 立刻投包」的用法都可能丢第一个包。`RhopWatcher` 目前只被测试使用，但它是模块 docstring 里的公开用法示例 —— 属 API 契约模糊，调用方无法从签名看出「何时才真的在监听」。
+  取证（受控 A/B，同一行为只改「写之前等不等」）：A 组 start() 后立刻写 → **8 轮漏事件 5 轮**；B 组等 ready 后再写 → 0 轮；修复后 A 组 → **0 轮**。测试侧表现：`test_watcher_ignores_non_rhop_and_bad_token` 单跑 5 次 2 红（10.84s / 11.19s 撞 8s deadline）。
+- 建议（已按此修）：把「等监听生效」放进 `start()`，而不是让每个调用方去猜：写一个**故意不匹配业务扩展名**的哨兵文件（`.rhop-ready-<hex>-<n>.tmp`）→ 等 watcher **自己收到它的事件** → 删除；收到事件即证明「基线已建立、事件流已通」。哨兵若被基线吞掉（无事件）就换名重试 —— 收敛靠**真实事件**，不用 `sleep`；超时（`ready_timeout`，默认 5s）记 warning 后照常启动（best-effort，不抛错），并新增 `wait_until_started(timeout)` 供调用方自检。
+- 证据：`vools/rhop/watch.py` 新增 `_handshake()` / `wait_until_started()` / `start(wait_ready=True, ready_timeout=5.0)`；`tests/test_watch.py` **一行未动**（改产品不改测试 —— 该测试的「start 后立刻写」本就是合法用法）。修复后同一条用例连跑 10 次 **10/10 绿**（0.74-0.86s，改前单次超时 10.8s+），`test_watch.py` 整文件 3/3 绿；受控实验 A 组由 5/8 漏 → 0/8 漏。全量 Windows 连接口 `604 passed / 47 skipped / 0 failed`。
+- reported_by: 接手司令（vools-lead 派单）
+
+### FIXED(2026-10-28T10:38:00Z / BUG-369)
+- evidence: `vools/rhop/watch.py`：`_handshake()`（写 `.rhop-ready-<hex>-<n>.tmp` 哨兵 → 等 watcher **自己的事件** → 删；被基线吞掉就换名重试）+ `start(wait_ready=True, ready_timeout=5.0)` + `wait_until_started(timeout)`。判据：受控 A/B 实验 A 组（start 后立刻写）由 **5/8 漏 → 0/8 漏**；此前 2/5 红的 `test_watcher_ignores_non_rhop_and_bad_token` 连跑 **10/10 绿**（0.74-0.86s），整文件 3/3 绿；`tests/test_watch.py` 一行未改。
+
+## BUG-370 [2026-10-28T10:38:00Z] [low] FIXED
+- summary: [rhop-tests] pg 测试卫生缺陷：`_SESSION_TABLE` 只建不删，**每跑一轮 pg 用例就在库里留一张表 + 一张 `_schema_meta`**（人工清理治不了本）
+- detail: 现象：`tests/test_pg_store.py` 用 `_SESSION_TABLE = "rhop_test_pg_%d" % int(time.time())` 建表，而 fixture 只在**下次建表时** DROP 自己那张，会话结束没有任何 teardown；另有两条创建路径绕过 `_pg_store`（AB 用例 `_pair()`、集成用例 `TestPgTaskQueueIntegration` 走 `cfg.build_store()`，且 `_pair` 的 teardown 只删主表、不删 `_schema_meta`）。实测本轮开始时库里累计 **19 张 `rhop_*` 表 + 孤儿序列**，每跑一轮就再生一批。
+  影响：库里积一堆 `rhop_test_pg_*` 让下一次读到的人困惑，也让「PG 是否干净」这类验收口径失效（本轮之前每次清理完再跑一遍测试又回来）。
+- 建议（已按此修）：**精确跟踪 + 会话回收**，刻意不用 `DROP TABLE rhop_%` 通配（并发跑测试会误删别人的表）：模块级 `_SESSION_TABLES` 登记**实际创建过**的表名（`_pg_store` / AB `_pair` / 集成用例三处都登记），模块内 **session 级 autouse fixture** 在 teardown 时删 `"<table>"` 与 `"<table>_schema_meta"`；best-effort —— 连不上库或单表失败用 `warnings` 留信号，不静默、也不拖垮测试。放**模块内**而非全局 `conftest.py`：该机制只对 pg 模块有意义，避免扩大 blast radius（且 PG 不可达时一个连接都不建）。
+- 证据：新增 `test_session_tables_are_tracked_and_reclaimed`（建表 → 断言已登记 → 真跑回收 → `to_regclass()` 查库确认表与 `_schema_meta` 都不存在 → 登记清空）与 `test_session_tables_reclaim_without_registry_is_noop`；WSL 真 PG 跑 `test_pg_store.py + test_pg_store_concurrency.py` → **47 passed**，跑完立即查库 `relname like 'rhop%'` → **0**（整改前 19 张 → 0）。全量 Windows `651 collected / 0 failed`。
+- reported_by: 接手司令（vools-lead 派单）
+
+### FIXED(2026-10-28T10:38:00Z / BUG-370)
+- evidence: `tests/test_pg_store.py`：`_SESSION_TABLES` 精确跟踪（`_pg_store` / AB `_pair` / 集成用例三处登记）+ 模块内 session 级 autouse fixture 回收 `"<table>"` 与 `"<table>_schema_meta"`（不用 `rhop_%` 通配；best-effort 失败 `warnings` 留信号）。判据：WSL 真 PG `test_pg_store.py + test_pg_store_concurrency.py` → **47 passed**，跑完查库 `relname like 'rhop%'` → **0**（整改前累计 19 张）；新增 2 条回归用例（登记+回收+`to_regclass()` 验证 / 空登记 no-op）。
