@@ -14,37 +14,87 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
+class RunHistoryCorruptError(Exception):
+    """历史文件存在但读不出来（损坏 / 不可读 / 结构非法）。
+
+    「还没执行过」与「历史文件坏了」必须分得开：改前两者都返回 `[]`，
+    CLI 一律打印「📭 暂无执行历史」exit 0 —— 用户不会去修，replay/export
+    永远空转，而报告里看不出任何异常。
+    """
+
+
+def _normalize_exec_record(record: Dict) -> Dict:
+    """把执行器写的运行记录（`runs/<exec_id>.json`）归一成历史记录形状。
+
+    两种记录字段不同：执行器写 `action` / `exec_id` / `result.status`，
+    `history.json` 用 `action_id` / `run_id`|`id` / `status`。归一后
+    export（表格的动作/状态列）与 replay 两种数据源走同一套消费代码。
+    """
+    result = record.get("result") if isinstance(record.get("result"), dict) else {}
+    exec_id = record.get("exec_id") or record.get("run_id") or record.get("id")
+    return {
+        "run_id": exec_id,
+        "exec_id": record.get("exec_id"),
+        "action_id": record.get("action") or record.get("action_id"),
+        "params": record.get("params"),
+        "status": result.get("status") or record.get("status") or "",
+        "timestamp": record.get("timestamp", ""),
+        "result": result or None,
+    }
+
+
+def _load_exec_records(meta_dir: str) -> List[dict]:
+    """回落数据源：真实执行记录 `runs/<exec_id>.json`（records.list_run_records）。"""
+    from .records import list_run_records
+
+    raw = list_run_records(meta_dir, limit=10 ** 6)
+    return [_normalize_exec_record(r) for r in raw if isinstance(r, dict)]
+
+
 def load_run_history(meta_dir: str = ".", limit: int = 0) -> List[dict]:
-    """加载运行历史。
+    """加载运行历史，按时间倒序。
 
     参数:
         meta_dir: 元数据目录。
         limit: 返回条数限制（0=全部）。
 
     返回:
-        运行记录列表，按时间倒序。
+        运行记录列表（dict 列表），按时间倒序。
+
+    数据源（本轮修）：优先 `runs/history.json`；**该文件不存在时回落到真实
+    执行记录** `runs/<exec_id>.json`（`records.list_run_records`）。
+    改前只读 history.json，而全仓没有任何代码写这个文件 —— 于是不设
+    `ACTUS_META_DIR` 时 replay/export 永远打印「📭 暂无执行历史」，
+    功能在真实使用中等于不存在。
+
+    文件**存在但损坏**时抛 `RunHistoryCorruptError`（不再静默当成空历史），
+    由 CLI 明确报「历史文件损坏」并 exit 1。
     """
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
         raise ValueError(f"limit 必须是 ≥0 的整数（0=全部），得到 {limit!r}")
     history_file = Path(meta_dir) / "runs" / "history.json"
-    if not history_file.exists():
-        return []
 
-    try:
-        content = json.loads(history_file.read_text(encoding="utf-8"))
+    if history_file.exists():
+        try:
+            content = json.loads(history_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            raise RunHistoryCorruptError(f"{history_file}: {exc}") from exc
         if isinstance(content, list):
-            records = content
-        elif isinstance(content, dict) and "runs" in content:
-            records = content["runs"]
-        else:
+            records = [r for r in content if isinstance(r, dict)]
+        elif isinstance(content, dict) and isinstance(content.get("runs"), list):
+            records = [r for r in content["runs"] if isinstance(r, dict)]
+        elif isinstance(content, dict):
             records = [content]
+        else:
+            raise RunHistoryCorruptError(
+                f"{history_file}: 顶层既不是数组也不是对象（{type(content).__name__}）")
+    else:
+        records = _load_exec_records(meta_dir)
 
-        records.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
-        if limit > 0:
-            records = records[:limit]
-        return records
-    except (json.JSONDecodeError, OSError):
-        return []
+    records.sort(key=lambda r: str(r.get("timestamp", "")), reverse=True)
+    if limit > 0:
+        records = records[:limit]
+    return records
 
 
 EXPORT_FORMATS = ("json", "csv", "markdown", "md", "html")
@@ -189,7 +239,8 @@ def export_history(meta_dir: str = ".", output_path: str = "",
         limit: 记录数限制。
 
     返回:
-        导出的内容字符串（如果 output_path 为空）。
+        导出的内容字符串（output_path 为空时）；写文件时返回**写入路径**；
+        没有任何记录时返回 None（唯一表示「没东西可导」的返回值）。
     """
     # 未知 format_ 此前**静默回退成 json**：调用方要 csv 却拿到 JSON，无任何提示。
     if format_ not in EXPORT_FORMATS:
@@ -213,12 +264,16 @@ def export_history(meta_dir: str = ".", output_path: str = "",
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         Path(output_path).write_text(result, encoding="utf-8")
-        return None
+        # 返回写入路径（原来是 None）：None 必须只表示「没有可导出的记录」，
+        # 否则 CLI 无法区分「写成功了」与「根本没写」—— 改前它对着一个根本
+        # 不存在的文件打印「✅ 已导出到: ...」并 exit 0（CI 随后 FileNotFoundError）。
+        return str(output_path)
 
     return result
 
 
 __all__ = [
+    'RunHistoryCorruptError',
     'export_history',
     'export_to_csv',
     'export_to_html',

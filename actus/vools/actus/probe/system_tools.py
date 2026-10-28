@@ -71,7 +71,27 @@ import threading
 import time
 
 from .base import Prober, ProbeItem
+from .._proc import kill_tree as _kill_tree
 from .TOOL_TABLE import TOOL_TABLE
+
+
+# 超时后杀进程树，再回收管道的宽限（秒）。
+# **宽限只是兜底、不是等待策略**：tree-kill 成功后管道应立即关闭，0.1~0.2s 足够
+# （参考 platform_tools.py 的 _REAP_TIMEOUT=0.1，同一族问题的成熟取值）。
+# 上一版取 5s 会把最坏情况放大成「5s 超时 + 5s 宽限 = 10s」，比不修还慢；
+# 宽限内管道仍未关闭时直接关本地管道返回，不再陪它等。
+_KILL_GRACE_SEC = 0.2
+
+# 取版本「慢工具」阈值（毫秒）：超过它的工具会在条目 extra 里带
+# `version_probe_ms`，让「这次探测为什么慢」在报告 JSON 里可查（不掩盖、不砍数据）。
+_SLOW_VERSION_MS = 800
+
+# `.CMD/.BAT` 脚本类工具的 per-tool 超时**默认上限**（秒，<=0 关闭）。
+# 为什么单给这一类：它们经 cmd.exe 再起解释器/桌面 shim（本机 pnpm 是 DSH Desktop
+# 的 Electron shim，单次 1.2~7s），是整批墙钟的唯一长尾。3s 对「取一个版本号」已很宽松，
+# 正常的 pnpm/npm（1.2~1.8s）不会被截；**且被截时如实标记** timeout（error +
+# `version_kill_ms` + stats 计数），绝不静默当"未安装"。
+_DEFAULT_WRAPPER_TIMEOUT_CAP = 3.0
 
 
 # ── 版本探测子进程的工作目录：临时目录（防止副产物污染用户工作区）──
@@ -313,6 +333,21 @@ def _find_tool(name, aliases, well_known_paths, path_index=None):
 _VERSION_PATTERN = re.compile(r"\d+\.\d+(?:\.\d+)*")
 
 
+class _CompletedOutput(object):
+    """把 Popen + communicate 的产物包装成 subprocess.run 的用法（stdout/stderr/returncode）。
+
+    `_get_version_detail` 的下游（解码、崩溃判定、退出码信号）只读这三个属性，
+    换成 Popen 是为了**超时能杀进程树**（见该函数 docstring），这里保持下游零改动。
+    """
+
+    __slots__ = ("stdout", "stderr", "returncode")
+
+    def __init__(self, proc, stdout, stderr):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode = proc.returncode
+
+
 def _decode_output(raw):
     """子进程输出 bytes → (text, 解码档位)。档位：utf-8 / locale / replace。
 
@@ -372,15 +407,73 @@ def _get_version_detail(path, version_args, timeout=5):
     会把转储文件写到**当前工作目录**（JVM 的 hs_err_pid*.log / replay_pid*.log），
     不隔离就会把垃圾留在用户的项目目录里。命中崩溃特征串时记
     version_error_kind="crashed"；非零退出码也会在 extra 里留 version_returncode。
+
+    **超时必须杀进程树**（本轮修的真缺陷）：改前用 `subprocess.run(timeout=N)`，
+    而它在 Windows 上只 kill 直接子进程。实测本机 `pnpm` 是 DSH Desktop 的
+    Electron shim（.CMD → cmd.exe → DSH Desktop.exe），5s 超时后 cmd.exe 被杀、
+    但**孙进程还握着继承的管道**，`communicate()` 继续阻塞 → 5s 超时实测拖到
+    6.8~7.1s（这就是 7027ms 尖峰的直接来源）。现在改成 Popen + 超时后
+    `_proc.kill_tree()`（本包已有的进程树 kill 单源）再回收管道，超时即时生效。
     """
+    cmd = [path] + list(version_args or ())
+    proc = None
     try:
-        cmd = [path] + list(version_args or ())
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout,
-                              cwd=_probe_tmpdir())
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=_probe_tmpdir(),
+            creationflags=creationflags,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        return "", "version probe failed to run (%s): %s" % (
+            type(exc).__name__, exc), {
+            "version_error_kind": "spawn_error",
+            "version_exception": type(exc).__name__,
+        }
+    except Exception as exc:       # 兜底但**不静默**：未知异常同样留痕
+        return "", "version probe failed (%s): %s" % (
+            type(exc).__name__, exc), {
+            "version_error_kind": "unexpected",
+            "version_exception": type(exc).__name__,
+        }
+
+    try:
+        stdout_raw, stderr_raw = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
+        # 关键：杀**整棵**进程树（孙进程会握着继承的管道，只杀直接子进程会继续阻塞）
+        kill_started = time.monotonic()
+        try:
+            _kill_tree(proc)
+        except Exception:
+            pass
+        # 宽限只作兜底：树杀成功后管道应立刻关闭。若宽限内仍未关闭（孙进程
+        # 握管 / 自我重启），**直接关掉本地管道返回**，绝不再陪它等 —— 否则
+        # 「5s 超时 + 长宽限」会把最坏情况放大到 10s，比不修还慢。
+        try:
+            stdout_raw, stderr_raw = proc.communicate(timeout=_KILL_GRACE_SEC)
+        except Exception:
+            for stream in (getattr(proc, "stdout", None),
+                           getattr(proc, "stderr", None)):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except Exception:
+                    pass
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            stdout_raw, stderr_raw = b"", b""
         return "", "version probe timeout after %ss (per-tool timeout)" % (timeout,), {
             "version_error_kind": "timeout",
             "version_timeout_s": timeout,
+            # 超时后的清理开销（毫秒）：暴露「tree-kill + 宽限」实际花了多久，
+            # 供报告层核对修复是否生效（tree-kill 不完整时这里会明显偏大）。
+            "version_kill_ms": round((time.monotonic() - kill_started) * 1000.0),
         }
     except (subprocess.SubprocessError, OSError) as exc:
         return "", "version probe failed to run (%s): %s" % (
@@ -394,6 +487,8 @@ def _get_version_detail(path, version_args, timeout=5):
             "version_error_kind": "unexpected",
             "version_exception": type(exc).__name__,
         }
+
+    proc = _CompletedOutput(proc, stdout_raw, stderr_raw)
 
     stdout_text, stdout_decode = _decode_output(proc.stdout)
     stderr_text, stderr_decode = _decode_output(proc.stderr)
@@ -476,6 +571,12 @@ def _entry_label(entry):
     return "<invalid TOOL_TABLE entry>"
 
 
+def _is_script_wrapper(path):
+    """是否 .CMD/.BAT 这类「经 cmd.exe 再起解释器」的脚本包装（慢且可能有孙进程）。"""
+    lowered = str(path).lower()
+    return lowered.endswith(".cmd") or lowered.endswith(".bat")
+
+
 def _lookup_one(entry, path_index=None):
     """阶段 1 工作单元：解表项 + 查找可执行文件。"""
     try:
@@ -506,7 +607,12 @@ def _lookup_one(entry, path_index=None):
 
 
 def _version_one(path, version_args, timeout):
-    """阶段 2 工作单元：取版本（占一个跨探测器共享的内层并发槽位）。"""
+    """阶段 2 工作单元：取版本（占一个跨探测器共享的内层并发槽位）。
+
+    返回值额外带 `elapsed_ms`：这是**逐工具**耗时，用来在报告里如实标出
+    「这次探测被哪个工具拖住了」（见 `_SLOW_VERSION_MS`），不参与版本判定。
+    """
+    _started = time.monotonic()
     with _inner_slot():
         try:
             version, error, extra = _get_version_detail(path, version_args, timeout)
@@ -516,8 +622,10 @@ def _version_one(path, version_args, timeout):
                 "error": "version probe wrapper crashed (%s): %s" % (
                     type(exc).__name__, exc),
                 "extra": {},
+                "elapsed_ms": round((time.monotonic() - _started) * 1000.0, 1),
             }
-    return {"version": version, "error": error, "extra": extra}
+    return {"version": version, "error": error, "extra": extra,
+            "elapsed_ms": round((time.monotonic() - _started) * 1000.0, 1)}
 
 
 def _wait_for(futures_map, deadline):
@@ -568,12 +676,23 @@ class SystemToolsProber(Prober):
     `last_stats`（只读诊断，不进报告）记录本次并发/预算/索引的落地情况。
     """
 
-    def __init__(self, timeout=5, max_workers=None, total_budget=None):
+    def __init__(self, timeout=5, max_workers=None, total_budget=None,
+                 wrapper_timeout_cap=None):
         Prober.__init__(self, timeout=timeout)
         # 主线程 16 / 被外层池调用时 8（见 _resolve_workers 的实测数据）
         self.max_workers = _resolve_workers(max_workers)
         self.total_budget = (_DEFAULT_TOTAL_BUDGET if total_budget is None
                              else float(total_budget))
+        # `.CMD/.BAT` 脚本类工具的 per-tool 超时上限（见 _DEFAULT_WRAPPER_TIMEOUT_CAP）。
+        # 传 None = 用默认 3s；传 <=0 = 关闭（完全按 TOOL_TABLE 的 timeout）；
+        # 超时的工具会被**如实标记** timeout（error + version_probe_ms + stats 计数），
+        # 绝不静默当"未安装"。
+        if wrapper_timeout_cap is None:
+            self.wrapper_timeout_cap = _DEFAULT_WRAPPER_TIMEOUT_CAP
+        else:
+            self.wrapper_timeout_cap = float(wrapper_timeout_cap)
+        if self.wrapper_timeout_cap <= 0:
+            self.wrapper_timeout_cap = None
         self.last_stats = {}
 
     def probe(self):
@@ -596,6 +715,11 @@ class SystemToolsProber(Prober):
             "version_ok": 0,
             "version_failed": 0,
             "version_expired": 0,
+            # 慢工具诊断（不进报告条目结构，只在本对象上可查；报告里靠条目 extra
+            # 的 version_probe_ms 如实标注「这次被哪个工具拖住了」）
+            "version_max_ms": 0,
+            "gating_tool": None,
+            "slow_tools": [],
         }
         if total == 0:
             self.last_stats = stats
@@ -678,6 +802,10 @@ class SystemToolsProber(Prober):
                 timeout = info.get("timeout")
                 if not timeout:
                     timeout = self.timeout
+                # 可选硬上限（默认关闭）：只管 .CMD/.BAT 这类「shell → 解释器」脚本，
+                # 超时的工具照样被如实标记（timeout + version_probe_ms），不静默。
+                if self.wrapper_timeout_cap and _is_script_wrapper(path):
+                    timeout = min(timeout, self.wrapper_timeout_cap)
                 version_jobs[executor.submit(
                     _version_one, path, info.get("version_cmd"), timeout)] = index
 
@@ -690,7 +818,18 @@ class SystemToolsProber(Prober):
                 if index in versions:
                     info = versions[index]
                     error = info.get("error")
-                    extra = info.get("extra") or {}
+                    elapsed_ms = info.get("elapsed_ms")
+                    extra = dict(info.get("extra") or {})
+                    # 慢工具如实标注：整批墙钟 ≈ 最慢那个工具的耗时（阶段 2 是 barrier），
+                    # 所以「这次探测为什么慢」必须能在报告里查得到（加信号，不砍数据）。
+                    if isinstance(elapsed_ms, (int, float)) and elapsed_ms >= _SLOW_VERSION_MS:
+                        extra["version_probe_ms"] = round(elapsed_ms)
+                        stats.setdefault("slow_tools", []).append(
+                            (name or "?", round(elapsed_ms)))
+                    if isinstance(elapsed_ms, (int, float)) and elapsed_ms > stats.get(
+                            "version_max_ms", 0):
+                        stats["version_max_ms"] = round(elapsed_ms)
+                        stats["gating_tool"] = name
                     if error:
                         # 工具在、版本没取到：available 仍为 True（path 有效），
                         # 但 error 与串行版的「静默空串」不同 —— 留下原因与诊断。

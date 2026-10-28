@@ -29,6 +29,7 @@
     python -m actus triggers remove <action_id> # 移除触发器
 """
 import json
+import os
 import sys
 import io
 from pathlib import Path
@@ -317,9 +318,10 @@ def _build_parser():
     p_uninstall.add_argument('--name', help='安装名称')
 
     # publish 子命令
-    p_publish = sub.add_parser('publish', help='发布当前仓库到动作市场')
+    p_publish = sub.add_parser('publish', help='生成注册表索引并打印发布步骤')
     p_publish.add_argument('--registry', help='注册表索引文件路径')
-    p_publish.add_argument('--sign', action='store_true', help='签名所有动作')
+    p_publish.add_argument('--sign', action='store_true', help='签名所有动作（ed25519，复用 actus sign）')
+    p_publish.add_argument('--key', default='default', help='--sign 使用的签名密钥名（默认 default）')
     p_publish.add_argument('--dry-run', action='store_true', help='仅验证不发布')
 
     # search 子命令
@@ -388,11 +390,15 @@ def _build_parser():
                        default='ascii', help='输出格式')
     p_viz.add_argument('--output', help='输出文件路径')
     p_viz.add_argument('--action', help='指定动作 ID（可视化其工作流）')
+    p_viz.add_argument('--sample', action='store_true',
+                       help='无工作流定义时渲染内置示例（会明确标注是示例）')
 
     # replay 子命令
     p_replay = sub.add_parser('replay', help='重放历史执行')
-    p_replay.add_argument('--run-id', help='执行记录 ID')
+    p_replay.add_argument('--run-id', help='执行记录 ID（run_id / id / exec_id 任一）')
     p_replay.add_argument('--dry-run', action='store_true', help='仅打印不执行')
+    p_replay.add_argument('--limit', type=int, default=10,
+                          help='最多重放最近 N 条（0=全部；--dry-run 同样遵守）')
 
     # notify 子命令
     p_notify = sub.add_parser('notify', help='通知系统管理')
@@ -1426,8 +1432,44 @@ def _cmd_uninstall(args) -> int:
         return 1
 
 
+def _publish_sign_actions(index: dict, repo_dir: str, key_name: str):
+    """签名索引里的每个动作文件，返回 (已签名列表, 失败列表)。
+
+    复用 `actus sign` 同一条链路（trust_model.SignatureVerifier.sign_file），
+    不另写签名实现。失败项带可读原因，调用方决定退出码。
+    """
+    from vools.actus.trust_model import SignatureVerifier
+
+    verifier = SignatureVerifier()
+    signed = []
+    failures = []
+    for entry in index.get('actions', []) or []:
+        if not isinstance(entry, dict):
+            continue
+        action_id = entry.get('id', '?')
+        rel_path = entry.get('path') or ''
+        fpath = os.path.join(repo_dir, rel_path) if rel_path else ''
+        if not fpath or not os.path.isfile(fpath):
+            failures.append((action_id, f'找不到动作文件: {rel_path or "<path 缺失>"}'))
+            continue
+        result = verifier.sign_file(fpath, key_name=key_name)
+        if result.get('status') == 'ok':
+            signed.append((action_id, result.get('output', '')))
+        else:
+            failures.append((action_id, result.get('message', '未知错误')))
+    return signed, failures
+
+
 def _cmd_publish(args) -> int:
-    """publish 子命令：发布当前仓库到动作市场。"""
+    """publish 子命令：生成注册表索引并打印发布步骤（不自动发布）。
+
+    改前两处「假」：
+    1. `--sign` 只打印「✏️  签名动作（待实现）...」，紧接着照样打印
+       「✅ 注册表索引已生成」并 exit 0 —— 用户以为签名成功了；
+    2. 帮助文案写「发布当前仓库到动作市场」，实现只生成索引 + 打印 4 步手工 git。
+    现在 --sign 真正签名（复用 actus sign 的 trust_model 链路），任何签名失败
+    都打到 stderr 且 exit 1，**不再输出任何"✅ 成功"字样**。
+    """
     from vools.actus.registry import ActionRegistry
 
     repo_dir = os.getcwd()
@@ -1444,7 +1486,27 @@ def _cmd_publish(args) -> int:
         return 0
 
     if args.sign:
-        print('✏️  签名动作（待实现）...')
+        signed, failures = _publish_sign_actions(
+            index, repo_dir, getattr(args, 'key', 'default'))
+        if failures:
+            for action_id, reason in failures:
+                print(f'❌ 签名失败: {action_id}: {reason}', file=sys.stderr)
+            print(f'❌ {len(failures)} 个动作签名失败（成功 {len(signed)} 个），未完成发布准备',
+                  file=sys.stderr)
+            if any('Private key not found' in reason for _a, reason in failures):
+                print('   提示：先运行 `actus keygen --name %s` 生成签名密钥'
+                      % getattr(args, 'key', 'default'), file=sys.stderr)
+            return 1
+        if signed:
+            print(f'✍️  已签名 {len(signed)} 个动作:')
+            for action_id, output in signed:
+                try:
+                    shown = os.path.relpath(output, repo_dir)
+                except ValueError:
+                    shown = output
+                print(f'   - {action_id} → {shown}')
+        else:
+            print('ℹ️  仓库里没有可签名的动作')
 
     print(f'✅ 注册表索引已生成: {os.path.join(repo_dir, ".actus.registry.json")}')
     print(f'   动作数: {len(index.get("actions", []))}')
@@ -2043,7 +2105,9 @@ def _cmd_omega(args) -> int:
         generate_diff_report, run_gate, compute_output_fingerprint,
         _find_omega_spec, clear_spec_cache
     )
-    from vools.actus.records import load_records
+    # 审计修复：records.py 没有 load_records（导出名是 list_run_records），
+    # 原写法让 `omega verify` 恒崩在 ImportError 上。
+    from vools.actus.records import list_run_records
 
     # verify 子命令
     if args.omega_command == 'verify':
@@ -2097,7 +2161,7 @@ def _cmd_omega(args) -> int:
 
     # learn 子命令
     elif args.omega_command == 'learn':
-        records = load_records(limit=args.limit)
+        records = list_run_records(limit=args.limit)
         if args.action_id:
             records = [r for r in records if r.get('action_id') == args.action_id]
         spec = learn_spec_from_history(records)
@@ -2242,8 +2306,33 @@ def _cmd_events(args) -> int:
     return 0
 
 
+# viz 的内置示例工作流。只允许由显式 --sample 触发 —— 改前它被当成
+# 「没有工作流定义」时的默认输出（exit 0），用户/AI 会误以为是本项目的工作流。
+_VIZ_SAMPLE_WORKFLOW = {
+    "nodes": [
+        {"id": "trigger", "label": "触发器", "type": "trigger"},
+        {"id": "action1", "label": "动作 A"},
+        {"id": "action2", "label": "动作 B"},
+        {"id": "end", "label": "完成"},
+    ],
+    "edges": [
+        ("trigger", "action1"),
+        ("trigger", "action2"),
+        ("action1", "end"),
+        ("action2", "end"),
+    ],
+}
+
+
 def _cmd_viz(args) -> int:
-    """viz 子命令：工作流可视化。"""
+    """viz 子命令：工作流可视化。
+
+    改前「找不到 .actus.workflow.json」时会把一段**硬编码示例**
+    （trigger/action1/action2/end）当结果输出并 exit 0，加 --output 还会把它
+    落盘成文件 —— 用户和 AI 调用方会把它当成「本项目的工作流」写进报告，
+    属于闭环假数据。现在：找不到定义就明确报错 exit 1；示例只由显式
+    `--sample` 触发，且 stderr 标注「这是示例」。
+    """
     from vools.actus.viz import visualize_workflow, visualize_action_workflow
     from vools.actus.indexer import _repo_root
     from vools.actus.model import Action
@@ -2255,12 +2344,12 @@ def _cmd_viz(args) -> int:
         # 可视化指定动作的工作流
         action_path = os.path.join(root, "actions", args.action + ".actus.md")
         if not os.path.exists(action_path):
-            # 搜索子目录
+            # 搜索子目录。改前是内层 for 里 break —— 只跳出内层，外层 os.walk
+            # 继续走，后找到的同名文件会覆盖 action_path（可能可视化错的那个）。
             for dirpath, _, files in os.walk(os.path.join(root, "actions")):
-                for f in files:
-                    if f == args.action + ".actus.md":
-                        action_path = os.path.join(dirpath, f)
-                        break
+                if args.action + ".actus.md" in files:
+                    action_path = os.path.join(dirpath, args.action + ".actus.md")
+                    break
         if not os.path.exists(action_path):
             print(f'❌ 动作不存在: {args.action}')
             return 1
@@ -2274,23 +2363,15 @@ def _cmd_viz(args) -> int:
             with open(wf_path, encoding="utf-8") as f:
                 wf = json.load(f)
             result = visualize_workflow(wf, args.format)
+        elif getattr(args, 'sample', False):
+            print('ℹ️  注意：以下是 --sample 的内置**示例**工作流，'
+                  '不是你项目的工作流', file=sys.stderr)
+            result = visualize_workflow(_VIZ_SAMPLE_WORKFLOW, args.format)
         else:
-            # 默认展示示例
-            sample = {
-                "nodes": [
-                    {"id": "trigger", "label": "触发器", "type": "trigger"},
-                    {"id": "action1", "label": "动作 A"},
-                    {"id": "action2", "label": "动作 B"},
-                    {"id": "end", "label": "完成"},
-                ],
-                "edges": [
-                    ("trigger", "action1"),
-                    ("trigger", "action2"),
-                    ("action1", "end"),
-                    ("action2", "end"),
-                ],
-            }
-            result = visualize_workflow(sample, args.format)
+            print(f'❌ 未找到工作流定义: {wf_path}', file=sys.stderr)
+            print('   想看示例请加 --sample；想可视化单个动作请用 --action <id>',
+                  file=sys.stderr)
+            return 1
 
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -2301,41 +2382,167 @@ def _cmd_viz(args) -> int:
     return 0
 
 
+def _replay_action_id(record: dict) -> str:
+    """取记录里的动作 id（历史记录两种写法都有：action_id 与旧格式 action）。"""
+    for key in ('action_id', 'action'):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ''
+
+
+def _replay_record_matches(record: dict, wanted: str) -> bool:
+    """--run-id 匹配：run_id / id / exec_id 任一命中即可。
+
+    改前是 `r.get('run_id') == r.get('id') == args.run_id` —— Python 的链式比较
+    等价于 `run_id == id and id == wanted`，而历史记录里 run_id 与 id 是
+    **二选一**出现的两个键（build/audit/tmp_meta/runs/history.json 实测：一条只有
+    run_id=run-A1，另一条只有 id=run-B2），两者永不相等 ⇒ 任何 --run-id 都匹配不上。
+    执行器自己写的记录用的又是 exec_id，所以三个键都要认。
+    """
+    return any(record.get(key) == wanted
+               for key in ('run_id', 'id', 'exec_id'))
+
+
+def _parse_replay_params(raw):
+    """把记录里的 params 归一成 (dict, error)。
+
+    历史记录的 params 形态并不统一：可能是 dict、JSON 字符串，也可能是
+    Python repr（`"{'message': 'hello'}"`，单引号 —— build/audit/tmp_meta 实测）。
+    解析失败返回可读原因，由调用方跳过并计入失败清单，绝不静默当空参重放。
+    """
+    import ast
+    import json
+
+    if raw is None:
+        return {}, None
+    if isinstance(raw, dict):
+        return raw, None
+    if not isinstance(raw, str):
+        return {}, f'params 类型不支持（{type(raw).__name__}）'
+    text = raw.strip()
+    if not text:
+        return {}, None
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        try:
+            parsed = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            return {}, f'无法解析为 JSON 或 Python 字面量: {text[:60]!r}'
+    if not isinstance(parsed, dict):
+        return {}, f'params 解析结果不是对象（{type(parsed).__name__}）'
+    return parsed, None
+
+
 def _cmd_replay(args) -> int:
-    """replay 子命令：重放历史执行。"""
-    from vools.actus.export import load_run_history
+    """replay 子命令：重放历史执行。
+
+    改前是假功能（本轮修复）：
+    1. 非 --dry-run 分支固定打印「(重放执行待实现)」，**从不执行**；
+    2. `run_id == id == args.run_id` 是链式比较 bug，--run-id 恒匹配不上。
+
+    现在非 dry-run 真正调用现有执行入口 `vools.actus.execute(...)`（与
+    `actus exec` 同一条路径，不另造执行器），单条失败不中断整批，
+    结尾汇总「成功 N / 失败 M」，有失败时退出码 1。
+    """
+    from vools.actus.export import load_run_history, RunHistoryCorruptError
     from vools.actus.indexer import _repo_root
     import os
 
     root = _repo_root()
     meta_dir = os.environ.get('ACTUS_META_DIR') or os.path.join(root, '_meta')
-    records = load_run_history(meta_dir)
+    try:
+        records = load_run_history(meta_dir)
+    except RunHistoryCorruptError as exc:
+        print(f'❌ 历史文件损坏: {exc}', file=sys.stderr)
+        return 1
 
     if not records:
         print('📭 暂无执行历史')
         return 0
 
     if args.run_id:
-        records = [r for r in records if r.get('run_id') == r.get('id') == args.run_id]
+        records = [r for r in records if _replay_record_matches(r, args.run_id)]
         if not records:
             print(f'❌ 未找到执行记录: {args.run_id}')
             return 1
 
+    limit = getattr(args, 'limit', None)
+    if limit is None or limit < 0:
+        limit = 10
+    if limit and len(records) > limit:
+        print(f'ℹ️  历史共 {len(records)} 条，本次只处理最近 {limit} 条'
+              f'（--limit 0 可全部处理）')
+        records = records[:limit]
+
     print(f'🔁 重放 {len(records)} 条执行记录:')
+    succeeded = 0
+    failures = []          # [(记录标识, 原因)]
+
     for r in records:
         ts = r.get('timestamp', '')
-        action = r.get('action_id', r.get('id', ''))
+        action = _replay_action_id(r)
         status = r.get('status', '')
-        params = r.get('params', {})
-        print(f'   [{ts}] {action} ({status})')
-        if params:
-            print(f'      参数: {params}')
+        raw_params = r.get('params', {})
+        label = r.get('run_id') or r.get('id') or r.get('exec_id') or ts or '<无标识>'
+        print(f'   [{ts}] {action or "<缺少 action_id>"} ({status})')
+        if raw_params:
+            print(f'      参数: {raw_params}')
+
         if args.dry_run:
             print(f'      (dry-run，跳过)')
+            continue
+
+        # ── 预检：无法重放的记录给出可读理由后跳过（不中断整批）──
+        if not action:
+            reason = '记录缺少 action_id/action 字段，无法确定要重放哪个动作'
+            failures.append((label, reason))
+            print(f'      ⏭️  跳过: {reason}')
+            continue
+
+        params, param_error = _parse_replay_params(raw_params)
+        if param_error:
+            failures.append((label, f'params 解析失败: {param_error}'))
+            print(f'      ⏭️  跳过: params 解析失败 —— {param_error}')
+            continue
+
+        # ── 真正执行：复用 vools.actus.execute（与 exec 子命令同一入口）──
+        try:
+            import vools.actus as actuscore
+            result = actuscore.execute(action, params, meta_dir=meta_dir)
+        except Exception as exc:          # 执行入口自身抛异常也不许中断整批
+            reason = f'{type(exc).__name__}: {exc}'
+            failures.append((label, reason))
+            print(f'      ❌ 重放失败: {reason}')
+            continue
+
+        if isinstance(result, dict) and result.get('status') == 'ok':
+            succeeded += 1
+            data = result.get('data') if isinstance(result.get('data'), dict) else {}
+            exec_ref = result.get('exec_id') or data.get('exec_id') or ''
+            # 把动作真实产出的回显打出来 —— 这是「真的执行了」的证据，
+            # exec_id 由执行器盖章，不是这里编的。
+            output = data.get('result', data.get('output'))
+            detail = f'exec: {exec_ref}' if exec_ref else 'ok'
+            if output not in (None, ''):
+                detail += f'，输出: {str(output)[:100]}'
+            print(f'      ✅ 重放成功 ({detail})')
         else:
-            # TODO: 实际重放执行
-            print(f'      (重放执行待实现)')
-    return 0
+            error = (result or {}).get('error') or {}
+            code = error.get('code') or (result or {}).get('status') or 'error'
+            message = error.get('message') or '执行未成功'
+            failures.append((label, f'{code}: {message}'))
+            print(f'      ❌ 重放失败: {message}')
+
+    if args.dry_run:
+        return 0
+
+    print()
+    print(f'📊 重放结果: 成功 {succeeded} / 失败 {len(failures)}')
+    for label, reason in failures:
+        print(f'   ❌ [{label}] {reason}')
+    return 0 if not failures else 1
 
 
 def _cmd_notify(args) -> int:
@@ -2421,23 +2628,39 @@ def _cmd_project_io(args) -> int:
 
 
 def _cmd_export(args) -> int:
-    """export 子命令：导出动作执行历史。"""
-    from vools.actus.export import export_history
+    """export 子命令：导出动作执行历史。
+
+    改前 `result is None and args.output` 直接打印「✅ 已导出到: <path>」并 exit 0，
+    但 result 为 None 恰恰意味着 **export_history 根本没写文件**（没有历史记录）。
+    实测文件不存在却报成功，脚本/CI 拿 exit 0 当成功，随后 FileNotFoundError。
+    现在：
+      * 写了文件 → export_history 返回写入路径，再核对文件确实存在才报 ✅；
+      * 无历史 + --output → stderr 报「未生成文件」并 exit 1；
+      * 历史文件损坏 → 报「历史文件损坏: <path>」并 exit 1（不再伪装成「暂无」）。
+    """
+    from vools.actus.export import export_history, RunHistoryCorruptError
     from vools.actus.indexer import _repo_root
     import os
 
     meta_dir = os.environ.get('ACTUS_META_DIR') or os.path.join(_repo_root(), '_meta')
-    result = export_history(meta_dir, args.output, args.format, args.limit)
+    try:
+        result = export_history(meta_dir, args.output, args.format, args.limit)
+    except RunHistoryCorruptError as exc:
+        print(f'❌ 历史文件损坏: {exc}', file=sys.stderr)
+        return 1
 
-    if result is None and args.output:
-        print(f'✅ 已导出到: {args.output}')
-        return 0
-    elif result:
+    if args.output:
+        if isinstance(result, str) and result and os.path.exists(result):
+            print(f'✅ 已导出到: {result}')
+            return 0
+        print(f'❌ 没有可导出的执行历史，未生成文件: {args.output}', file=sys.stderr)
+        return 1
+
+    if result:
         print(result)
         return 0
-    else:
-        print('📭 暂无执行历史')
-        return 0
+    print('📭 暂无执行历史')
+    return 0
 
 
 def _cmd_probe(args) -> int:

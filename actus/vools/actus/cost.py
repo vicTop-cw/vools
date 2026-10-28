@@ -3,6 +3,13 @@
 追踪每次云端 API 调用的成本，支持预算告警。
 预算告警复用 notify 模块（docs/31 阶段 4：成本账本落 _meta/costs/，
 复用 notify 模块做预算告警，先做最小版）。
+
+账本完整性（第 4x 轮审计修复）：`_meta/costs/<月>.jsonl` 是追加写的，历史行可能
+被外部改坏/写坏。改前 `get_cost_summary()` 用 `except Exception: continue` 把这类
+行**静默丢掉** —— 实测 3 行账本（1 合法 + 2 坏）只报 `total_usd=1.5, calls=1`，
+调用方完全看不出少算过。预算判断直接吃这个 total，于是「真超支也可能不告警」。
+现在跳过/降级的行都会计数并分类返回（skipped_* / incomplete_* / ledger_complete），
+total_usd / calls 的既有语义保持不变。
 """
 
 import json
@@ -12,6 +19,16 @@ from typing import Dict, List, Optional
 
 __all__ = ['record_cost', 'get_cost_summary', 'check_budget',
            'alert_budget_if_over', 'COSTS_DIR']
+
+# 账本行分类：
+#   skip_*       —— 这一行的成本**无法计入**（total_usd 里没有它，是"账本缺口"）
+#   incomplete_* —— 这一行**已按默认值计入**（total_usd 里有它，但字段缺失/被纠正）
+_SKIP_BAD_JSON = 'bad_json'                  # 整行不是合法 JSON
+_SKIP_NOT_OBJECT = 'not_object'              # JSON 合法但不是 object
+_SKIP_BAD_COST = 'bad_cost_usd'              # cost_usd 存在但不是数字
+_INCOMPLETE_MISSING_COST = 'missing_cost_usd'    # 缺 cost_usd → 按 0 计入
+_INCOMPLETE_MISSING_PROVIDER = 'missing_provider'  # 缺/空 provider → 归 unknown
+_INCOMPLETE_BAD_PROVIDER = 'bad_provider'    # provider 非字符串 → 归 unknown
 
 # 成本账本目录。优先走 ACTUS_REPO_ROOT 环境变量（Actus 仓库根，run_tests.ps1 与
 # 主程序都设它）；回退到相对本文件推导 —— 那个回退分支只在**vools 独立用**、
@@ -51,8 +68,40 @@ def record_cost(action_id: str, provider: str, cost_usd: float,
         f.write(json.dumps(entry, ensure_ascii=False) + '\n')
 
 
+def _is_number(value) -> bool:
+    """真数字（排除 bool —— `isinstance(True, int)` 为真，True 不是成本）。"""
+    return not isinstance(value, bool) and isinstance(value, (int, float))
+
+
+def _empty_summary(month: str) -> dict:
+    """空账本 / 账本不存在时的汇总（字段与有数据时完全同构）。"""
+    return {
+        'month': month,
+        'total_usd': 0,
+        'calls': 0,
+        'by_provider': {},
+        'skipped_lines': 0,
+        'skipped_reasons': {},
+        'incomplete_lines': 0,
+        'incomplete_reasons': {},
+        'ledger_complete': True,
+    }
+
+
 def get_cost_summary(month: str = None) -> dict:
-    """获取月度成本汇总。"""
+    """获取月度成本汇总。
+
+    既有字段语义不变（消费方如 `check_budget` 依赖）：
+      month / total_usd / calls / by_provider —— 只累加**可解析行**的真实 cost_usd。
+
+    新增完整性信号（均为增量，不影响上面四个键）：
+      skipped_lines / skipped_reasons      —— 成本无法计入的行数及分类
+      incomplete_lines / incomplete_reasons —— 已按默认值计入但字段有问题的行数及分类
+      ledger_complete                      —— 两类都为 0 时才为 True
+
+    为什么不抛异常：账本是运行时旁路数据，读失败不该打断业务调用；但"读不完整"
+    必须让调用方看得见 —— 改前它看不见（静默 continue）。
+    """
     _ensure_dir()
     if month is None:
         month = datetime.now().strftime('%Y-%m')
@@ -60,30 +109,78 @@ def get_cost_summary(month: str = None) -> dict:
     total = 0.0
     calls = 0
     by_provider = {}
+    skipped_reasons = {}
+    incomplete_reasons = {}
+
+    def _bump(bucket, key):
+        bucket[key] = bucket.get(key, 0) + 1
+
     if not os.path.exists(filepath):
-        return {'month': month, 'total_usd': 0, 'calls': 0, 'by_provider': {}}
+        return _empty_summary(month)
     with open(filepath, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
+        for raw_line in f:
+            line = raw_line.strip()
             if not line:
                 continue
             try:
                 entry = json.loads(line)
-                cost = entry.get('cost_usd', 0)
-                total += cost
-                calls += 1
-                provider = entry.get('provider', 'unknown')
-                if provider not in by_provider:
-                    by_provider[provider] = {'usd': 0, 'calls': 0}
-                by_provider[provider]['usd'] += cost
-                by_provider[provider]['calls'] += 1
-            except Exception:
+            except ValueError:          # JSONDecodeError 是 ValueError 子类
+                _bump(skipped_reasons, _SKIP_BAD_JSON)
                 continue
-    return {'month': month, 'total_usd': round(total, 6), 'calls': calls, 'by_provider': by_provider}
+            if not isinstance(entry, dict):
+                _bump(skipped_reasons, _SKIP_NOT_OBJECT)
+                continue
+
+            # ── cost_usd：非数字 = 无法计入（保持改前"不计入"的结果，但现在留痕）──
+            if 'cost_usd' not in entry:
+                _bump(incomplete_reasons, _INCOMPLETE_MISSING_COST)
+                cost = 0
+            else:
+                cost = entry['cost_usd']
+                if not _is_number(cost):
+                    _bump(skipped_reasons, _SKIP_BAD_COST)
+                    continue
+
+            # ── provider：缺失/空/非字符串 一律归 unknown（仍计入 total，不丢成本）──
+            if 'provider' not in entry or entry.get('provider') in (None, ''):
+                _bump(incomplete_reasons, _INCOMPLETE_MISSING_PROVIDER)
+                provider = 'unknown'
+            else:
+                provider = entry['provider']
+                if not isinstance(provider, str):
+                    _bump(incomplete_reasons, _INCOMPLETE_BAD_PROVIDER)
+                    provider = 'unknown'
+
+            total += float(cost)
+            calls += 1
+            if provider not in by_provider:
+                by_provider[provider] = {'usd': 0, 'calls': 0}
+            by_provider[provider]['usd'] += float(cost)
+            by_provider[provider]['calls'] += 1
+
+    skipped_lines = sum(skipped_reasons.values())
+    incomplete_lines = sum(incomplete_reasons.values())
+    return {
+        'month': month,
+        'total_usd': round(total, 6),
+        'calls': calls,
+        'by_provider': by_provider,
+        'skipped_lines': skipped_lines,
+        'skipped_reasons': dict(sorted(skipped_reasons.items())),
+        'incomplete_lines': incomplete_lines,
+        'incomplete_reasons': dict(sorted(incomplete_reasons.items())),
+        'ledger_complete': skipped_lines == 0 and incomplete_lines == 0,
+    }
 
 
 def check_budget(month_limit_usd: float = 10.0) -> dict:
-    """检查是否超出预算，返回状态。"""
+    """检查是否超出预算，返回状态。
+
+    预算判定数学**保持原样**（over_budget 仍只看已计入的 total_usd）。
+    只额外透传账本完整性：`ledger_complete=False` 表示 total 可能偏低 —— 由调用方
+    决定是否更保守（例如把已计入的 total 当上限、或提示人工核对），本函数不擅自
+    抬高/下调预算语义（缺口行的真实成本未知，凭空加成会制造假告警）。
+    """
     summary = get_cost_summary()
     total = summary['total_usd']
     over = total > month_limit_usd
@@ -93,6 +190,8 @@ def check_budget(month_limit_usd: float = 10.0) -> dict:
         'remaining_usd': round(max(0, month_limit_usd - total), 6),
         'over_budget': over,
         'usage_pct': round(total / month_limit_usd * 100, 2) if month_limit_usd > 0 else 0,
+        'ledger_complete': summary.get('ledger_complete', True),
+        'ledger_skipped_lines': summary.get('skipped_lines', 0),
     }
 
 
