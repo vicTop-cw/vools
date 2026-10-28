@@ -1882,74 +1882,73 @@ class MCPServer:
             return text_result(record, False)
 
         if name == 'actus_vault_set':
-            from vools.actus.vault import Vault
+            # 审计（第 30 轮）：写入口切到统一 resolver（默认写 v2）。
+            # `refused`/`conflict`/`error` 都经 text_result → is_failure_status 判失败。
+            from vools.actus.vault import write_secret
+            from vools.actus.paths import meta_dir as _paths_meta_dir
             key = args.get('key', '')
             value = args.get('value', '')
             scope = args.get('scope', 'global')
-            description = args.get('description', '')
-            # 审计修（`_meta` 手写 → paths.meta_dir()）：未设 ACTUS_REPO_ROOT 时
-            # 旧写法 `os.path.join('', '_meta')` 得到**相对路径**（跟 shell cwd 走），
-            # 且完全无视 ACTUS_META_DIR —— 设了它时 MCP 与 CLI 会落到两个位置
-            # （这边写、那边读不到 = 静默失败）。
-            from vools.actus.paths import meta_dir as _paths_meta_dir
-            meta_dir = _paths_meta_dir()
             try:
-                vault = Vault(meta_dir)
-                r = vault.set(key, value, scope, description)
+                r = write_secret(key, value, scope, meta_dir=_paths_meta_dir(),
+                                 allow_v1_write=bool(args.get('allow_v1_write', False)))
+                if r.get('status') == 'refused' and r.get('code') == 'vault2_unavailable':
+                    r = dict(r)
+                    r['hint'] = ('两条出路：① 配置 v2 凭据（VAULT_IDENTITY_ID / '
+                                 'VAULT_MACHINE_ID / VAULT_PIN）；'
+                                 '② 确需只写旧库 v1，传 allow_v1_write=true')
                 return text_result(r)
             except Exception as e:
                 return text_result({'status': 'failed', 'error': {'code': 'vault_error', 'message': str(e)}}, True)
 
         if name == 'actus_vault_get':
-            from vools.actus.vault import Vault
+            # 审计（第 30 轮）：读也走 resolver —— v2 优先、v1 回退，
+            # 双库值不同时返回 conflict（isError=True），**不静默挑一个**。
+            from vools.actus.vault import resolve_secret
+            from vools.actus.paths import meta_dir as _paths_meta_dir
             key = args.get('key', '')
             scope = args.get('scope', 'global')
-            # 审计修（`_meta` 手写 → paths.meta_dir()）：未设 ACTUS_REPO_ROOT 时
-            # 旧写法 `os.path.join('', '_meta')` 得到**相对路径**（跟 shell cwd 走），
-            # 且完全无视 ACTUS_META_DIR —— 设了它时 MCP 与 CLI 会落到两个位置
-            # （这边写、那边读不到 = 静默失败）。
-            from vools.actus.paths import meta_dir as _paths_meta_dir
-            meta_dir = _paths_meta_dir()
             try:
-                vault = Vault(meta_dir)
-                val = vault.get(key, scope)
-                if val is None:
-                    return text_result({'status': 'not_found', 'message': f'密钥不存在: {key}'}, True)
-                return text_result({'status': 'ok', 'key': key, 'scope': scope, 'value': val})
+                r = resolve_secret(key, scope, meta_dir=_paths_meta_dir())
+                status = r.get('status')
+                if status == 'ok':
+                    return text_result({'status': 'ok', 'key': key, 'scope': scope,
+                                        'value': r.get('value'),
+                                        'source': r.get('source'),
+                                        'warnings': r.get('warnings') or []})
+                if status == 'conflict':
+                    # conflict ∉ OPERATION_OK_STATUSES → isError=True
+                    return text_result(r)
+                if status == 'error':
+                    return text_result(r)
+                return text_result({'status': 'not_found', 'key': key,
+                                    'message': r.get('message') or ('密钥不存在: %s' % key),
+                                    'warnings': r.get('warnings') or []})
             except Exception as e:
                 return text_result({'status': 'failed', 'error': {'code': 'vault_error', 'message': str(e)}}, True)
 
         if name == 'actus_vault_list':
-            from vools.actus.vault import Vault
-            scope = args.get('scope')
-            # 审计修（`_meta` 手写 → paths.meta_dir()）：未设 ACTUS_REPO_ROOT 时
-            # 旧写法 `os.path.join('', '_meta')` 得到**相对路径**（跟 shell cwd 走），
-            # 且完全无视 ACTUS_META_DIR —— 设了它时 MCP 与 CLI 会落到两个位置
-            # （这边写、那边读不到 = 静默失败）。
+            # 审计（第 30 轮）：合并 v1 + v2，每条带 source / conflict
+            from vools.actus.vault import Vault, resolve_secret
             from vools.actus.paths import meta_dir as _paths_meta_dir
-            meta_dir = _paths_meta_dir()
+            scope = args.get('scope')
             try:
-                vault = Vault(meta_dir)
-                keys = vault.list(scope)
-                return text_result({'status': 'ok', 'keys': keys})
+                return text_result(_vault_list_merged(_paths_meta_dir(), scope,
+                                                      Vault, resolve_secret))
             except Exception as e:
                 return text_result({'status': 'failed', 'error': {'code': 'vault_error', 'message': str(e)}}, True)
 
         if name == 'actus_vault_delete':
-            from vools.actus.vault import Vault
+            # 审计（第 30 轮）：delete 的**来源选择**判断 ——
+            # 默认只删 v2（resolver 的写入口 + 优先读源，删它等于"让密钥消失"）；
+            # v1 是旧库、删除不可逆，必须显式 `include_v1=true` 才动。
+            from vools.actus.paths import meta_dir as _paths_meta_dir
             key = args.get('key', '')
             scope = args.get('scope', 'global')
-            # 审计修（`_meta` 手写 → paths.meta_dir()）：未设 ACTUS_REPO_ROOT 时
-            # 旧写法 `os.path.join('', '_meta')` 得到**相对路径**（跟 shell cwd 走），
-            # 且完全无视 ACTUS_META_DIR —— 设了它时 MCP 与 CLI 会落到两个位置
-            # （这边写、那边读不到 = 静默失败）。
-            from vools.actus.paths import meta_dir as _paths_meta_dir
-            meta_dir = _paths_meta_dir()
             try:
-                vault = Vault(meta_dir)
-                deleted = vault.delete(key, scope)
-                return text_result({'status': 'ok' if deleted else 'not_found',
-                                    'deleted': deleted, 'key': key})
+                return text_result(_vault_delete_merged(
+                    _paths_meta_dir(), key, scope,
+                    include_v1=bool(args.get('include_v1', False))))
             except Exception as e:
                 return text_result({'status': 'failed', 'error': {'code': 'vault_error', 'message': str(e)}}, True)
 
@@ -2340,6 +2339,82 @@ def serve() -> None:
 
 
 # ── 触发器处理器 ──
+
+def _v2_secret_names():
+    """列出 v2 里的密钥名 → (names, available, reason)。
+
+    借用 resolver 的私有 `_v2_session`：vault.py 目前没有公开的 list/delete helper
+    （本轮 vault.py 禁改）。已在汇报里提出：应把 list/delete 提升为 resolver 的公开 API。
+    """
+    try:
+        from vools.actus.vault import _v2_session
+        v2, token, reason = _v2_session()
+    except Exception as exc:                       # noqa: BLE001
+        return [], False, '%s: %s' % (type(exc).__name__, exc)
+    if v2 is None:
+        return [], False, reason
+    try:
+        res = v2.list_secrets(token)
+    except Exception as exc:                       # noqa: BLE001
+        return [], False, 'v2 列举异常（%s: %s）' % (type(exc).__name__, exc)
+    if res.get('status') != 'ok':
+        return [], False, str(res.get('message') or 'v2 列举失败')
+    return [s.get('name') for s in (res.get('secrets') or [])], True, None
+
+
+def _vault_list_merged(meta_dir, scope, Vault, resolve_secret):
+    """合并 v1 + v2 的密钥清单；每条带 source(v1/v2/v1+v2) 与 conflict 标记。"""
+    v1_names, v1_error = [], None
+    try:
+        v1_names = [row.get('key') for row in Vault(meta_dir).list(scope)]
+    except Exception as exc:                       # noqa: BLE001
+        v1_error = '%s: %s' % (type(exc).__name__, exc)
+    v2_names, v2_available, v2_reason = _v2_secret_names()
+    names = sorted(set(n for n in v1_names if n) | set(n for n in v2_names if n))
+    rows = []
+    for name in names:
+        r = resolve_secret(name, scope or 'global', meta_dir=meta_dir)
+        rows.append({'key': name,
+                     'scope': scope or 'global',
+                     'source': r.get('source') or ('v1' if name in v1_names else 'v2'),
+                     'conflict': r.get('status') == 'conflict',
+                     'in_v1': name in v1_names,
+                     'in_v2': name in v2_names})
+    return {'status': 'ok', 'keys': rows, 'count': len(rows),
+            'v2_available': v2_available, 'v2_reason': v2_reason,
+            'v1_error': v1_error}
+
+
+def _vault_delete_merged(meta_dir, key, scope, include_v1: bool = False):
+    """删除密钥：默认删 v2；include_v1=True 才删旧库 v1（破坏性，显式）。"""
+    from vools.actus.vault import Vault, _v2_session
+    removed, errors = [], []
+    v2, token, reason = _v2_session()
+    if v2 is None:
+        errors.append('v2 不可用：%s' % reason)
+    else:
+        try:
+            res = v2.delete_secret(token, key, caller='mcp.vault')
+            if res.get('status') == 'ok':
+                removed.append('v2')
+            elif '凭证不存在' not in str(res.get('message') or ''):
+                errors.append('v2 删除失败：%s' % res.get('message'))
+        except Exception as exc:                   # noqa: BLE001
+            errors.append('v2 删除异常（%s: %s）' % (type(exc).__name__, exc))
+    if include_v1:
+        try:
+            if Vault(meta_dir).delete(key, scope):
+                removed.append('v1')
+        except Exception as exc:                   # noqa: BLE001
+            errors.append('v1 删除异常（%s: %s）' % (type(exc).__name__, exc))
+    status = 'ok' if removed else ('failed' if errors else 'not_found')
+    payload = {'status': status, 'key': key, 'scope': scope,
+               'deleted': removed, 'errors': errors}
+    if not include_v1 and 'v1' not in removed:
+        payload['hint'] = ('默认只删 v2（权威来源）；旧库 v1 若也有副本，'
+                           '需显式传 include_v1=true（破坏性）')
+    return payload
+
 
 def _get_trigger_engine(meta_dir: str = ''):
     """获取或创建触发器引擎（进程级单例）。"""

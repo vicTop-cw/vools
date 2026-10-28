@@ -285,6 +285,10 @@ def _build_parser():
     p_vault_set.add_argument('value', help='密钥值')
     p_vault_set.add_argument('--scope', default='global', help='作用域')
     p_vault_set.add_argument('--desc', default='', help='密钥描述')
+    p_vault_set.add_argument('--allow-v1-write', dest='allow_v1_write',
+                             action='store_true',
+                             help='v2 不可用时仍写入旧库 v1（会提示"将来可能读不到"，'
+                                  '默认拒绝写入）')
 
     p_vault_get = vault_sub.add_parser('get', help='获取密钥')
     p_vault_get.add_argument('key', help='密钥名称')
@@ -296,6 +300,8 @@ def _build_parser():
     p_vault_delete = vault_sub.add_parser('delete', help='删除密钥')
     p_vault_delete.add_argument('key', help='密钥名称')
     p_vault_delete.add_argument('--scope', default='global', help='作用域')
+    p_vault_delete.add_argument('--all', action='store_true',
+                                help='同时删除旧库 v1 的副本（**破坏性**：默认只删 v2）')
 
     # runtimes 子命令
     sub.add_parser('runtimes', help='列出可用多语言运行时')
@@ -1230,47 +1236,162 @@ def _dispatch_loop(args) -> int:
 
 
 def _dispatch_vault(args) -> int:
-    """密钥保险库子命令分发。"""
-    from vools.actus.vault import Vault
+    """密钥保险库子命令分发。
+
+    审计（第 30 轮）：vault 的**写入口**从 v1 切到统一 resolver（`vault.write_secret`，
+    默认写 v2）；读/列/删同时感知 v1 与 v2 两个来源。理由：v1/v2 双库并存时
+    "CLI 写 v1、executor 读 v2"会造成"这边写、那边读不到"的静默失败。
+    """
     import os as _os
 
     # 审计修（`_meta` 手写 → paths.meta_dir()）：env 未设时旧写法得到相对的
     # `_meta`（跟着 shell cwd），且无视 ACTUS_META_DIR —— 保险库会落到意外位置。
     from vools.actus.paths import meta_dir as _meta_dir_path
     meta_dir = _meta_dir_path()
-    vault = Vault(meta_dir)
 
     if args.vault_command == 'set':
-        r = vault.set(args.key, args.value, args.scope, args.desc)
-        # 审计修（假成功）：改前是 `_out(r); return 0` —— 底层在未配置
-        # ACTUS_VAULT_KEY 时返回 `{'status':'refused'}`，CLI 却仍 exit 0
-        # （脚本据此以为已存盘）。统一走 `_out_result`（与 author/scaffold/workflow
-        # 同一判据：`refused` 不在 OPERATION_OK_STATUSES → failed → rc=1）。
+        from vools.actus.vault import write_secret
+        r = write_secret(args.key, args.value, args.scope, meta_dir=meta_dir,
+                         allow_v1_write=bool(getattr(args, 'allow_v1_write', False)))
+        if r.get('status') == 'refused' and r.get('code') == 'vault2_unavailable':
+            # 可行动消息（硬要求 2）：告诉用户两条出路
+            r = dict(r)
+            r['hint'] = ('两条出路：① 配置 v2 凭据（VAULT_IDENTITY_ID / '
+                         'VAULT_MACHINE_ID / VAULT_PIN，见 docs/vault-v1-v2-merge.md）；'
+                         '② 确需只写旧库 v1，显式加 --allow-v1-write')
+        # 统一走 _out_result：refused / conflict / error 都会映射成 failed → rc=1
         return _out_result(r)
-    elif args.vault_command == 'get':
-        val = vault.get(args.key, args.scope)
-        if val is None:
-            _out({'status': 'not_found', 'message': f'密钥不存在: {args.key}'})
+
+    if args.vault_command == 'get':
+        from vools.actus.vault import resolve_secret
+        r = resolve_secret(args.key, args.scope, meta_dir=meta_dir)
+        status = r.get('status')
+        if status == 'ok':
+            _out({'status': 'ok', 'key': args.key, 'scope': args.scope,
+                  'value': r.get('value'), 'source': r.get('source'),
+                  'warnings': r.get('warnings') or []})
+            return 0
+        if status == 'conflict':
+            # 双库值不同：不静默挑一个（硬要求 2）
+            _out(r)
             return 1
-        _out({'status': 'ok', 'key': args.key, 'scope': args.scope, 'value': val})
-        return 0
-    elif args.vault_command == 'list':
-        keys = vault.list(args.scope)
-        _out({'status': 'ok', 'keys': keys})
-        return 0
-    elif args.vault_command == 'delete':
-        deleted = vault.delete(args.key, args.scope)
-        # delete 也是写操作：临时密钥下底层会拒绝，不能把它说成"不存在"。
-        refusal = getattr(vault, 'last_refusal', None)
-        if refusal:
-            _out(refusal)
+        if status == 'error':
+            _out(r)
             return 1
-        _out({'status': 'ok' if deleted else 'not_found', 'deleted': deleted})
-        return 0 if deleted else 1
+        _out({'status': 'not_found', 'key': args.key,
+              'message': r.get('message') or ('密钥不存在: %s' % args.key),
+              'warnings': r.get('warnings') or []})
+        return 1
+
+    if args.vault_command == 'list':
+        from vools.actus.vault import Vault, resolve_secret
+        keys = _list_secrets_merged(meta_dir, args.scope, Vault, resolve_secret)
+        _out(keys)
+        return 0
+
+    if args.vault_command == 'delete':
+        # 只算/只打印一次（改前这里调了两遍 —— 会重复删除+重复输出）
+        return _out_result(_delete_secret_merged(
+            meta_dir, args.key, args.scope,
+            include_v1=bool(getattr(args, 'all', False))))
     else:
         _out({'status': 'failed', 'error': {'code': 'invalid_command',
                                             'message': 'vault 子命令: set/get/list/delete'}})
         return 2
+
+
+def _v2_list_names():
+    """列出 v2 里的密钥名。返回 (names, available, reason)。
+
+    ⚠️ 借用了 resolver 的私有 `_v2_session`：`vault.py` 目前**没有**公开的
+    list/delete 帮助函数（本轮 vault.py 禁改）。已在汇报里提出：应把
+    `list_secret_names()` / `delete_secret()` 提升为 resolver 的公开 API。
+    """
+    from vools.actus.vault import _v2_session
+    v2, token, reason = _v2_session()
+    if v2 is None:
+        return [], False, reason
+    try:
+        res = v2.list_secrets(token)
+    except Exception as exc:                       # noqa: BLE001
+        return [], False, 'v2 列举异常（%s: %s）' % (type(exc).__name__, exc)
+    if res.get('status') != 'ok':
+        return [], False, str(res.get('message') or 'v2 列举失败')
+    return [s.get('name') for s in (res.get('secrets') or [])], True, None
+
+
+def _list_secrets_merged(meta_dir, scope, Vault, resolve_secret) -> dict:
+    """合并 v1 + v2 的密钥清单。
+
+    每条带 `source`（v1 / v2 / v1+v2）与 `conflict`（两边同名但值不同）——
+    **不静默挑一个**：冲突时 source 标 `v1+v2`、conflict=true，由人确认。
+    """
+    v1_names = []
+    v1_error = None
+    try:
+        v1_names = [row.get('key') for row in Vault(meta_dir).list(scope)]
+    except Exception as exc:                       # noqa: BLE001
+        v1_error = 'v1 列举异常（%s: %s）' % (type(exc).__name__, exc)
+    v2_names, v2_available, v2_reason = _v2_list_names()
+    names = sorted(set(n for n in v1_names if n) | set(n for n in v2_names if n))
+    rows = []
+    for name in names:
+        r = resolve_secret(name, scope or 'global', meta_dir=meta_dir)
+        rows.append({
+            'key': name,
+            'scope': scope or 'global',
+            'source': r.get('source') or ('v1' if name in v1_names else 'v2'),
+            'conflict': r.get('status') == 'conflict',
+            'in_v1': name in v1_names,
+            'in_v2': name in v2_names,
+        })
+    return {'status': 'ok', 'keys': rows, 'count': len(rows),
+            'v2_available': v2_available, 'v2_reason': v2_reason,
+            'v1_error': v1_error}
+
+
+def _delete_secret_merged(meta_dir, key, scope, include_v1: bool = False) -> dict:
+    """删除密钥。**默认只删 v2（权威来源）**；v1 是旧库、删除不可逆，必须显式
+    `--all` 才动（判断理由：v2 是 resolver 的写入口与优先读源，删 v2 即"让密钥消失"；
+    而 v1 里往往还有历史副本，误删无法恢复，所以要显式）。
+    返回扁平 {status, deleted:[...], not_found, ...}。
+    """
+    from vools.actus.vault import Vault, _v2_session
+    removed = []
+    errors = []
+    v2, token, reason = _v2_session()
+    if v2 is None:
+        errors.append('v2 不可用：%s' % reason)
+    else:
+        try:
+            res = v2.delete_secret(token, key, caller='cli.vault')
+            if res.get('status') == 'ok':
+                removed.append('v2')
+            elif '凭证不存在' in str(res.get('message') or ''):
+                pass                                   # v2 里没有，不算错
+            else:
+                errors.append('v2 删除失败：%s' % res.get('message'))
+        except Exception as exc:                       # noqa: BLE001
+            errors.append('v2 删除异常（%s: %s）' % (type(exc).__name__, exc))
+    if include_v1:
+        try:
+            v1 = Vault(meta_dir)
+            if v1.delete(key, scope):
+                removed.append('v1')
+        except Exception as exc:                       # noqa: BLE001
+            errors.append('v1 删除异常（%s: %s）' % (type(exc).__name__, exc))
+    if removed:
+        status = 'ok'
+    elif errors:
+        status = 'failed'
+    else:
+        status = 'not_found'
+    payload = {'status': status, 'key': key, 'scope': scope,
+               'deleted': removed, 'deleted_v1': 'v1' in removed,
+               'errors': errors}
+    if not include_v1 and 'v1' not in removed:
+        payload['hint'] = '默认只删 v2（权威来源）；旧库 v1 若也有副本，请显式加 --all（破坏性）'
+    return payload
 
 
 def _dispatch_triggers(args) -> int:
