@@ -20,7 +20,7 @@ import socket
 import urllib.error
 import urllib.request
 
-from ..base import LLMResponse, LLMClient, ToolCall, llm_error_code
+from ..base import LLMResponse, LLMClient, ToolCall, llm_error_code, records_usage
 from ..registry import register_provider
 
 # API 版本头。Anthropic 用日期版本号，不跟随模型名。
@@ -174,6 +174,7 @@ class AnthropicClient(LLMClient):
             raw=payload,
         )
 
+    @records_usage          # 成功调用后 best-effort 记账（见 base.records_usage）
     def complete(self, messages, tools=None, temperature=0.0, max_tokens=None,
                  stream=False):
         """发起一次补全。失败编码进返回值，不抛异常。"""

@@ -27,6 +27,7 @@ _SKIP_BAD_JSON = 'bad_json'                  # 整行不是合法 JSON
 _SKIP_NOT_OBJECT = 'not_object'              # JSON 合法但不是 object
 _SKIP_BAD_COST = 'bad_cost_usd'              # cost_usd 存在但不是数字
 _INCOMPLETE_MISSING_COST = 'missing_cost_usd'    # 缺 cost_usd → 按 0 计入
+_INCOMPLETE_UNKNOWN_COST = 'unknown_cost'    # cost_usd=null → 成本未知（不计金额，记 tokens）
 _INCOMPLETE_MISSING_PROVIDER = 'missing_provider'  # 缺/空 provider → 归 unknown
 _INCOMPLETE_BAD_PROVIDER = 'bad_provider'    # provider 非字符串 → 归 unknown
 
@@ -48,9 +49,22 @@ def _ensure_dir():
     os.makedirs(COSTS_DIR, exist_ok=True)
 
 
-def record_cost(action_id: str, provider: str, cost_usd: float,
+def record_cost(action_id: str, provider: str, cost_usd: float = None,
                 tokens: int = 0, model: str = "", extra: dict = None):
-    """记录一次成本调用。"""
+    """记录一次成本调用。
+
+    参数:
+        action_id: 调用方标识（AI 层固定用 `ai.llm.complete`）。
+        provider: provider / 服务名。
+        cost_usd: 本次成本（美元）。**允许 None** —— 表示"这次调用的成本未知"
+            （例如没装价格表、模型不在表里）。写 null，绝不用 0 冒充：
+            0 的语义是"确认免费"（本地推理），与"不知道"是两件事。
+            `get_cost_summary()` 会把 null 行进 `incomplete_reasons['unknown_cost']`
+            并单独累计 tokens，不混进 total_usd。
+        tokens: 本次消耗 token 数（拿不到就 0）。
+        model: 模型名。
+        extra: 追加字段（如 prompt/completion 拆分、cost_source 来源标记）。
+    """
     _ensure_dir()
     today = datetime.now().strftime('%Y-%m')
     filepath = os.path.join(COSTS_DIR, f'{today}.jsonl')
@@ -80,10 +94,13 @@ def _empty_summary(month: str) -> dict:
         'total_usd': 0,
         'calls': 0,
         'by_provider': {},
+        'tokens_total': 0,
         'skipped_lines': 0,
         'skipped_reasons': {},
         'incomplete_lines': 0,
         'incomplete_reasons': {},
+        'calls_unknown_cost': 0,
+        'tokens_unknown_cost': 0,
         'ledger_complete': True,
     }
 
@@ -95,9 +112,16 @@ def get_cost_summary(month: str = None) -> dict:
       month / total_usd / calls / by_provider —— 只累加**可解析行**的真实 cost_usd。
 
     新增完整性信号（均为增量，不影响上面四个键）：
-      skipped_lines / skipped_reasons      —— 成本无法计入的行数及分类
-      incomplete_lines / incomplete_reasons —— 已按默认值计入但字段有问题的行数及分类
-      ledger_complete                      —— 两类都为 0 时才为 True
+      skipped_lines / skipped_reasons       —— 成本无法计入的行数及分类
+      incomplete_lines / incomplete_reasons  —— 已计入但字段缺失/降级/未知成本的行
+      calls_unknown_cost / tokens_unknown_cost —— cost_usd=null 的行（成本未知）
+      tokens_total                           —— 全部可用行的 token 合计（含未知成本行）
+      ledger_complete                        —— 两类异常都为 0 时才为 True
+
+    `cost_usd: null` 的处理（AI 层接线后新增的形态）：该行**计入 calls，不计入
+    total_usd**（成本未知 ≠ 成本为 0），进 `incomplete_reasons['unknown_cost']`，
+    并把它的 tokens 记进 `tokens_unknown_cost`。这样预算读数不会被"假 0"稀释，
+    同时"有调用但成本未知"这件事在返回体里可见。
 
     为什么不抛异常：账本是运行时旁路数据，读失败不该打断业务调用；但"读不完整"
     必须让调用方看得见 —— 改前它看不见（静默 continue）。
@@ -109,11 +133,23 @@ def get_cost_summary(month: str = None) -> dict:
     total = 0.0
     calls = 0
     by_provider = {}
+    tokens_total = 0
+    calls_unknown_cost = 0
+    tokens_unknown_cost = 0
     skipped_reasons = {}
     incomplete_reasons = {}
 
     def _bump(bucket, key):
         bucket[key] = bucket.get(key, 0) + 1
+
+    def _tokens_of(entry):
+        value = entry.get('tokens')
+        if isinstance(value, bool) or not isinstance(value, int):
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+        return value
 
     if not os.path.exists(filepath):
         return _empty_summary(month)
@@ -131,17 +167,25 @@ def get_cost_summary(month: str = None) -> dict:
                 _bump(skipped_reasons, _SKIP_NOT_OBJECT)
                 continue
 
-            # ── cost_usd：非数字 = 无法计入（保持改前"不计入"的结果，但现在留痕）──
+            # ── cost_usd：null=成本未知（计入 calls，不计金额）；非数字=无法计入 ──
             if 'cost_usd' not in entry:
                 _bump(incomplete_reasons, _INCOMPLETE_MISSING_COST)
-                cost = 0
+                cost = 0.0
+                unknown_cost = False
             else:
                 cost = entry['cost_usd']
-                if not _is_number(cost):
+                if cost is None:
+                    _bump(incomplete_reasons, _INCOMPLETE_UNKNOWN_COST)
+                    cost = 0.0
+                    unknown_cost = True
+                elif not _is_number(cost):
                     _bump(skipped_reasons, _SKIP_BAD_COST)
                     continue
+                else:
+                    cost = float(cost)
+                    unknown_cost = False
 
-            # ── provider：缺失/空/非字符串 一律归 unknown（仍计入 total，不丢成本）──
+            # ── provider：缺失/空/非字符串 一律归 unknown（仍计入，不丢成本）──
             if 'provider' not in entry or entry.get('provider') in (None, ''):
                 _bump(incomplete_reasons, _INCOMPLETE_MISSING_PROVIDER)
                 provider = 'unknown'
@@ -151,12 +195,19 @@ def get_cost_summary(month: str = None) -> dict:
                     _bump(incomplete_reasons, _INCOMPLETE_BAD_PROVIDER)
                     provider = 'unknown'
 
-            total += float(cost)
+            row_tokens = _tokens_of(entry)
+            tokens_total += row_tokens
+            total += cost
             calls += 1
+            if unknown_cost:
+                calls_unknown_cost += 1
+                tokens_unknown_cost += row_tokens
             if provider not in by_provider:
-                by_provider[provider] = {'usd': 0, 'calls': 0}
-            by_provider[provider]['usd'] += float(cost)
+                by_provider[provider] = {'usd': 0, 'calls': 0, 'calls_unknown_cost': 0}
+            by_provider[provider]['usd'] += cost
             by_provider[provider]['calls'] += 1
+            if unknown_cost:
+                by_provider[provider]['calls_unknown_cost'] += 1
 
     skipped_lines = sum(skipped_reasons.values())
     incomplete_lines = sum(incomplete_reasons.values())
@@ -165,10 +216,13 @@ def get_cost_summary(month: str = None) -> dict:
         'total_usd': round(total, 6),
         'calls': calls,
         'by_provider': by_provider,
+        'tokens_total': tokens_total,
         'skipped_lines': skipped_lines,
         'skipped_reasons': dict(sorted(skipped_reasons.items())),
         'incomplete_lines': incomplete_lines,
         'incomplete_reasons': dict(sorted(incomplete_reasons.items())),
+        'calls_unknown_cost': calls_unknown_cost,
+        'tokens_unknown_cost': tokens_unknown_cost,
         'ledger_complete': skipped_lines == 0 and incomplete_lines == 0,
     }
 
