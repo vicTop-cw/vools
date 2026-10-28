@@ -29,6 +29,9 @@ __all__ = ["FOCUS_POLICIES", "KIND_COLORS", "validate_spec",
 import os
 import re
 import threading
+import time          # 审计修复：tick() 用 time.monotonic() 做超时倒计时，
+                    # 但模块级从未 import time → 任何带 timeout_seconds 的弹窗
+                    # 第一次 tick 就 NameError（活不到自动确认/取消）。
 
 # 进程内弹窗互斥锁（模态语义本就是一次一个）
 _dialog_lock = threading.Lock()
