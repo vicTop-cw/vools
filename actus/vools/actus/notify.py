@@ -60,18 +60,6 @@ class NotifyMessage:
             self.timestamp = datetime.now().isoformat()
 
 
-@dataclass
-class NotifyRule:
-    """通知规则。"""
-    name: str
-    condition: str          # 条件表达式（如 "status == 'failed'"）
-    channel: NotifyChannel
-    template: str           # 消息模板
-    enabled: bool = True
-    cooldown: float = 0.0   # 冷却时间（秒）
-    _last_fired: float = 0.0
-
-
 # ── 通知发送器 ──────────────────────────────────────────────────────────────
 
 class ConsoleSender:
@@ -231,7 +219,6 @@ class NotificationManager:
             NotifyChannel.SYSTEM: SystemSender(),
             NotifyChannel.FILE: FileSender(),
         }
-        self._rules: List[NotifyRule] = []
         self._history: List[NotifyMessage] = []
         self._history_limit = 100
 
@@ -246,14 +233,6 @@ class NotificationManager:
             self._senders[channel] = FileSender(
                 path=kwargs.get("path", ""),
             )
-
-    def add_rule(self, rule: NotifyRule):
-        """添加通知规则。"""
-        self._rules.append(rule)
-
-    def remove_rule(self, name: str):
-        """移除通知规则。"""
-        self._rules = [r for r in self._rules if r.name != name]
 
     def notify(self, title: str, body: str,
                level: NotifyLevel = NotifyLevel.INFO,
@@ -305,36 +284,6 @@ class NotificationManager:
         return {'delivered': delivered, 'channel': channel.value,
                 'error': error, 'timestamp': msg.timestamp}
 
-    def check_rules(self, context: dict):
-        """检查规则并触发通知。"""
-        for rule in self._rules:
-            if not rule.enabled:
-                continue
-
-            # 冷却检查
-            if rule.cooldown > 0:
-                now = datetime.now().timestamp()
-                if now - rule._last_fired < rule.cooldown:
-                    continue
-
-            # 条件评估
-            if self._evaluate_condition(rule.condition, context):
-                msg = rule.template.format(**context)
-                level = NotifyLevel.INFO
-                if context.get("status") == "failed":
-                    level = NotifyLevel.ERROR
-                elif context.get("status") == "ok":
-                    level = NotifyLevel.SUCCESS
-
-                self.notify(
-                    title=f"规则: {rule.name}",
-                    body=msg,
-                    level=level,
-                    channel=rule.channel,
-                    metadata=context,
-                )
-                rule._last_fired = datetime.now().timestamp()
-
     def _evaluate_condition(self, condition: str, context: dict) -> bool:
         """评估条件表达式。
 
@@ -383,7 +332,10 @@ class NotificationManager:
             "total_sent": delivered,
             "total_failed": len(self._history) - delivered,
             "total_recorded": len(self._history),
-            "rules_count": len(self._rules),
+            # 规则特性已删除（第 10 轮审计：add_rule/check_rules 全仓零调用）。
+            # 兼容键：cli.py 的 `notify stats` 仍打印这一行（本轮 cli.py 禁改），
+            # 待该文件所有者删除打印行后，本键一并移除。
+            "rules_count": 0,
             "channels": [c.value for c in self._senders.keys()],
         }
 
@@ -405,7 +357,6 @@ __all__ = [
     'NotifyChannel',
     'NotifyLevel',
     'NotifyMessage',
-    'NotifyRule',
     'SystemSender',
     'WebhookSender',
     'get_notification_manager',

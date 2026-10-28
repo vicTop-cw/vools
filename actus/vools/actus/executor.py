@@ -74,8 +74,11 @@ def _meta_dirs(meta_dir=None, artifacts_dir=None):
     artifacts（临时仓库隔离的关键：测试写 tmp_path 不落真实仓库）。
     """
     from .indexer import _repo_root
+    from .paths import meta_dir as _paths_meta_dir
     root = _repo_root()
-    meta = meta_dir or os.path.join(root, '_meta')
+    # 审计修（`_meta` 手写 → paths.meta_dir()）：默认 meta 目录跟随
+    # ACTUS_META_DIR > repo_root()/_meta；显式传 meta_dir 时仍然以参数为准。
+    meta = meta_dir or _paths_meta_dir()
     if artifacts_dir is None:
         if meta_dir is not None:
             artifacts = os.path.join(os.path.dirname(os.path.abspath(meta_dir)), 'artifacts')
@@ -344,6 +347,9 @@ def execute(action_id: str, params: dict = None,
     meta_dir, artifacts_dir = _meta_dirs(meta_dir, artifacts_dir)
     exec_id = new_exec_id()
     _t_start = time.time()  # 使用量指标计时起点（docs/03 §4.1）
+
+    # 产物目录写入前先过安全策略（接线 check_file_access，此前零调用）
+    _check_artifacts_access(artifacts_dir)
 
     # ── 依赖检查（执行前）──
     action_obj = None
@@ -635,6 +641,10 @@ def execute(action_id: str, params: dict = None,
         # ── 可见性门禁（docs/41 §B1）：只判新增的 internal / gated 两级 ──
         _visibility_gate(action, action_id, exec_id)
 
+        # ── 安全策略门禁（第 10 轮接线：Scanner/SandboxEnhancer 此前产品零调用）──
+        # 低信任动作命中策略/危险内容 → permission_denied；其余只留痕，不拦截。
+        record['security'] = _security_gate(action, action_id)
+
         # ── trust 判定 ──
         # ACTUS_DEBUG 开发模式（true/1/yes/on）：audit 级动作自动放行，
         # 免去每次人工确认（git.ops 等 audit 动作在开发仓联调时不再卡 awaiting）。
@@ -898,6 +908,63 @@ def record_gate(action_id: str, visibility: str, exec_id: str,
         pass
 
 
+def _security_gate(action: Action, action_id: str) -> dict:
+    """执行前安全策略检查（第 10 轮接线）。
+
+    背景：`security.SecurityScanner.scan_action`（权限策略 + 敏感信息正则 +
+    危险命令模式）此前**产品零调用** —— 引擎执行路径从不做安全检查，
+    安全检查模块形同虚设。现在在执行前调用，并按 lead 裁决**按 trust 分级**：
+
+    - 低信任（`trust` ∈ sandbox / community）：命中即 `ActionError(permission_denied)`
+      拒绝执行（这两个信任级的用途就是被强校验）；
+    - audit / trusted：只把结论记进执行记录（`record['security']`），不拦截
+      —— 避免现有动作因为历史文本里的"疑似敏感信息"突然全红。
+
+    扫描器自身异常 → 记录 `scanned=False`，不因扫描器故障阻塞执行。
+    """
+    try:
+        from .security import get_security_scanner
+        scanner = get_security_scanner()
+        result = scanner.scan_action(action_id, action.meta,
+                                     action.raw or action.body or '')
+    except Exception as exc:  # noqa: BLE001 —— 安全模块故障不应让所有动作不可执行
+        return {'scanned': False, 'reason': '%s: %s' % (type(exc).__name__, exc)}
+
+    issues = [str(m) for m in (result.get('issues') or [])]
+    findings = result.get('sensitive_findings') or []
+    trust = str(action.meta.get('trust') or 'audit').strip().lower()
+    info = {'scanned': True, 'safe': bool(result.get('safe')),
+            'issues': issues[:5], 'sensitive_findings': len(findings)}
+    if trust in ('sandbox', 'community') and (issues or findings):
+        raise ActionError(
+            'permission_denied',
+            '安全策略拒绝执行 %s：%s' % (
+                action_id,
+                '; '.join((issues or ['检测到疑似敏感信息'])[:3])),
+            {'action_id': action_id, 'trust': trust,
+             'issues': issues[:5], 'sensitive_findings': len(findings)})
+    return info
+
+
+def _check_artifacts_access(artifacts_dir: str) -> None:
+    """产物目录写入前的策略检查（接线 `SandboxEnhancer.check_file_access`）。
+
+    审计修复：`check_file_access` 此前零调用 —— 策略里的 blocked_paths /
+    allowed_paths 从未影响任何写入。现在执行前先验产物目录。
+    """
+    try:
+        from .security import get_security_scanner
+        ok, issues = get_security_scanner().sandbox.check_file_access(
+            artifacts_dir, 'write')
+    except Exception:  # noqa: BLE001 —— 策略模块故障不阻塞（执行路径已有其他防护）
+        return
+    if not ok:
+        raise ActionError(
+            'permission_denied',
+            '产物目录不在安全策略允许范围：%s' % '; '.join(str(m) for m in issues[:3]),
+            {'path': artifacts_dir, 'issues': [str(m) for m in issues[:5]]})
+
+
 def _pending_ops(action: Action, params: dict) -> list:
     """从动作声明推断待执行操作明细（docs/07 §2 确认通道展示用）。"""
     ops = []
@@ -978,7 +1045,9 @@ def _apply_env_injections(action, params, exec_id, artifacts_dir,
     os.environ[f'{prefix}EXEC_ID'] = exec_id
     os.environ[f'{prefix}ACTION_PATH'] = action.path
     os.environ[f'{prefix}REPO_ROOT'] = _repo_root()
-    os.environ[f'{prefix}META_DIR'] = meta_dir or os.path.join(_repo_root(), '_meta')
+    # 同 `_meta_dirs`：默认 meta dir 跟随 ACTUS_META_DIR（显式参数优先）
+    from .paths import meta_dir as _paths_meta_dir
+    os.environ[f'{prefix}META_DIR'] = meta_dir or _paths_meta_dir()
 
     secrets_config = action.meta.get('secrets') or []
     if secrets_config:

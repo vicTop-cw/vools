@@ -251,6 +251,45 @@ class SelfDrive:
                 'accuracy': gate.get('accuracy', 0.0),
                 'reason': 'omega_gate', 'report': report}
 
+    # ── 执行后门禁（FIST 对齐：验收前两道闸门）──
+    def _post_execute_gates(self, node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """节点执行完、判定 done 之前的两道门禁。
+
+        1. `omega_strong.verify_gate`：带 `[omega:required]` 的节点必须有
+           **已通过的成果复验**（omega_result_verify）；
+        2. `omega_strong.check_gate`：带 `[gate:required]` 的节点必须有
+           **新鲜且通过**的外部检查记录（omega_check_record）。
+
+        审计修复：这两个门禁此前**从未被任何产品代码调用** —— 模块文档写着
+        "产出对已审核语料复验 → 通过才放行验收（verify_gate）"、`[gate:required]`
+        写着"须有新鲜且通过的 check 记录"，实际 `gate_enabled()` 只被 `check_gate`
+        引用，而 `check_gate` 只被测试调用 → **[gate:required] 是个空标记**。
+        现在在节点的验收点接线：默认（非 strong / enforce_pre_gate=False）零侵入
+        直接放行；strong 模式且节点带标记、记录不满足 → 节点判 failed 并给出原因。
+        门禁自身异常（账本损坏等）→ fail-closed（拒绝），绝不静默放行。
+        """
+        if not self.enforce_pre_gate:
+            return None
+        ledger = _omega_strong.get_ledger(
+            node['id'], meta_dir=self.meta_dir, max_rounds=self.max_rounds)
+        checks = (
+            ('omega_verify_gate', ledger.verify_gate),
+            ('omega_check_gate', ledger.check_gate),
+        )
+        for name, check in checks:
+            try:
+                if name == 'omega_check_gate':
+                    ok, why = check(node, node.get('updated_at'))
+                else:
+                    ok, why = check(node)
+            except Exception as exc:   # noqa: BLE001 —— 门禁异常必须 fail-closed
+                ok, why = False, '%s: 门禁执行失败（%s: %s）' % (
+                    name, type(exc).__name__, exc)
+            if not ok:
+                return {'passed': False, 'accuracy': 0.0,
+                        'reason': name, 'detail': why}
+        return None
+
     # ── 单节点执行 ──
     def _pre_execute_gate(self, node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """FIST 对齐的执行前门禁：强验证模式下，带 [omega:required] 的节点
@@ -308,6 +347,26 @@ class SelfDrive:
         node['omega'] = {k: v for k, v in gate.items() if k != 'report'}
         if gate.get('report'):
             node['omega']['report'] = gate['report']
+
+        # 验收前门禁：产出复验（verify_gate）+ 外部判据（check_gate）。
+        # 审计修复：此前从未接线，[gate:required] 是空标记 —— 见 _post_execute_gates。
+        post = self._post_execute_gates(node)
+        if post is not None:
+            node['omega'] = post
+            node['status'] = 'failed'
+            node['reason'] = post['reason']
+            runtime_ms = int((time.perf_counter() - t0) * 1000)
+            calllog.write_call_log(
+                'selfdrive.node', params={'node': node['id'],
+                                          'goal': node['goal']},
+                result={'status': node['status'], 'omega': node['omega']},
+                ok=False, runtime_ms=runtime_ms, caller='selfdrive',
+                ns=self.run_id)
+            self.log.append({'ts': _now_iso(), 'node': node['id'],
+                             'status': node['status'],
+                             'reason': node['reason'],
+                             'runtime_ms': runtime_ms})
+            return
 
         ok = result.get('status', 'ok') == 'ok' and gate['passed']
         node['status'] = 'done' if ok else 'failed'

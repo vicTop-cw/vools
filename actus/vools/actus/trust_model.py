@@ -608,12 +608,6 @@ def verify_action(fpath: str, key_name: str = "default") -> dict:
     return verifier.verify_file(fpath, key_name=key_name)
 
 
-def check_scope_permission(scope: str, permission: str) -> bool:
-    """便捷函数：检查 scope 是否拥有权限。"""
-    enforcer = ScopeEnforcer(scope)
-    return enforcer.check_permission(permission)
-
-
 def evaluate_trust(action_id: str, permissions: List[str] = None) -> dict:
     """便捷函数：评估动作信任级别。"""
     evaluator = TrustEvaluator()
@@ -626,7 +620,6 @@ __all__ = [
     'ScopeEnforcer',
     'SignatureVerifier',
     'TrustEvaluator',
-    'check_scope_permission',
     'evaluate_trust',
     'generate_keys',
     'sign_action',
