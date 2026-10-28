@@ -299,11 +299,6 @@ def test_run_ambiguous_branch_uses_candidates_helper(world, monkeypatch):
     assert error["details"]["candidates"] == ["myapp.dup.one", "myapp.dup.two"]
 
 
-@pytest.mark.xfail(strict=False, reason=(
-    "产品缺口（已上报）：CLI `_resolve_cli_target` 捕获 resolver 的 ActionError 后只保留 "
-    "code/message，**丢弃 details** → info/validate/preview 的 ambiguous 输出没有 "
-    "details.candidates，且 code 是 action_ambiguous（run 分支是 ambiguous）。"
-    "修复（保留 details、对齐 code）后本用例自动 xpass。"))
 def test_info_ambiguous_keeps_candidates_like_run(world):
     """退步了会怎样：info/validate/preview 的 ambiguous 错误不携带候选 —— 用户只看到
     "命中多个动作"，却不知道该用哪个 id；与 run 的 ambiguous 结构也不一致。
