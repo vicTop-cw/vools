@@ -69,7 +69,11 @@ class Pipeline:
 
     def __init__(self, action: Action, repo_root: Optional[str] = None):
         self.action = action
-        self.repo_root = repo_root or os.getcwd()
+        # 审计修（cwd vs repo_root）：author 的产物是**仓库级**的（动作文件就地修改、
+        # 索引写进 <repo>/_meta），默认根应跟随 paths.repo_root()（ACTUS_REPO_ROOT 优先）。
+        # 注意参数名 `repo_root` 与函数同名，导入时用别名避免遮蔽。
+        from .paths import repo_root as _paths_repo_root
+        self.repo_root = repo_root or _paths_repo_root()
         self.records: List[Dict] = []
         self._current_step: Optional[str] = None
         self._start_time: float = 0
@@ -260,7 +264,10 @@ def author_action(action_id: str, instruction: str,
             'message': 说明,
         }
     """
-    repo_root = repo_root or os.getcwd()
+    # 审计修：默认根跟随 paths.repo_root()（ACTUS_REPO_ROOT 优先），不跟 shell cwd。
+    # 局部变量与函数同名，导入用别名避免遮蔽。
+    from .paths import repo_root as _paths_repo_root
+    repo_root = repo_root or _paths_repo_root()
 
     # 定位动作文件
     file_path = _find_action_file(action_id, repo_root)
@@ -365,7 +372,10 @@ def publish_action(action_id: str, repo_root: Optional[str] = None,
             'message': 说明,
         }
     """
-    repo_root = repo_root or os.getcwd()
+    # 审计修：默认根跟随 paths.repo_root()（ACTUS_REPO_ROOT 优先），不跟 shell cwd。
+    # 局部变量与函数同名，导入用别名避免遮蔽。
+    from .paths import repo_root as _paths_repo_root
+    repo_root = repo_root or _paths_repo_root()
     file_path = _find_action_file(action_id, repo_root)
 
     if file_path is None:
