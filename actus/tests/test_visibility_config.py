@@ -103,19 +103,47 @@ def test_registry_str_fields(field, value):
 # 合法路径不回归
 # --------------------------------------------------------------------------
 def test_team_roundtrip():
-    orig = TeamConfig(name="t", members=[TeamMember(user_id="a", role="admin"),
-                                         TeamMember(user_id="b", role="viewer")])
-    back = TeamConfig.from_dict(orig.to_dict())
-    assert back.to_dict() == orig.to_dict()
+    """序列化契约：**显式非默认值**必须原样往返（不能两边同一实现自证）。
+
+    审计加固：原来只 `back.to_dict() == orig.to_dict()` —— 同一对
+    from_dict/to_dict 两边对称丢字段时仍然相等（变异证明：对称丢掉
+    require_signature 字段 → 本文件 30 passed）。现在显式构造非默认值并逐字段断言。
+    """
+    team = TeamConfig.from_dict({
+        "team": "t",
+        "members": [{"id": "a", "role": "admin"}, {"id": "b", "role": "viewer"}],
+        "require_signature": False,
+        "default_trust": "trusted",
+    })
+    serialized = team.to_dict()
+    assert serialized["require_signature"] is False, "to_dict 丢了 require_signature"
+    assert serialized["default_trust"] == "trusted", "to_dict 丢了 default_trust"
+    assert [m["id"] for m in serialized["members"]] == ["a", "b"]
+
+    back = TeamConfig.from_dict(serialized)
+    assert back.require_signature is False, "require_signature 在往返中丢失（对称丢字段会绿）"
+    assert back.default_trust == "trusted", "default_trust 在往返中丢失"
     assert back.is_member("a") and back.get_role("a") == "admin"
     assert back.is_admin("a") and not back.is_admin("b")
+    assert back.to_dict() == serialized
 
 
 def test_registry_roundtrip():
+    """序列化契约：git/branch/auth/priority 等非默认字段必须原样往返。
+
+    注意对外字段名是 `type`（to_dict/from_dict 的契约键），不是 dataclass 字段名
+    `registry_type` —— 这里把**精确字典**也断言出来，防止对外键被悄悄改名。
+    """
     orig = RegistryConfig(name="n", url="u", registry_type="git",
-                          branch="dev", auth="ssh", priority=5)
-    back = RegistryConfig.from_dict(orig.to_dict())
-    assert back.to_dict() == orig.to_dict()
+                          branch="dev", auth="ssh", priority=7)
+    serialized = orig.to_dict()
+    assert serialized == {"name": "n", "url": "u", "type": "git",
+                          "branch": "dev", "auth": "ssh", "priority": 7}
+
+    back = RegistryConfig.from_dict(serialized)
+    assert (back.name, back.url, back.registry_type, back.branch, back.auth,
+            back.priority) == ("n", "u", "git", "dev", "ssh", 7)
+    assert back.to_dict() == serialized
 
 
 def test_minimal_dicts_use_defaults():

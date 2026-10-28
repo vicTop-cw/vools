@@ -179,10 +179,19 @@ class TestExecutorFor:
             executor_for('bogus')
 
     def test_execute_returns_exec_result(self):
-        """三路 execute 对坏输入返回统一 ExecResult（不抛）"""
+        """三路 execute 对坏输入返回统一 ExecResult（不抛），且失败语义要具体。
+
+        审计加固：原来只断言 `isinstance(r, ExecResult)` —— 返回一个默认的
+        `ExecResult()`（status=ok、无 error）也会绿，等于坏输入被当成功。
+        现在断言具体失败契约：ok=False、status=error、error_kind=invalid、错误消息点名动作。
+        """
         ex = executor_for('executor')
         r = ex.execute(_FakeAction(aid='nonexistent.action'), ExecutionContext())
         assert isinstance(r, ExecResult)
+        assert r.ok is False, '坏输入不得返回成功 ExecResult: %r' % (r.to_dict(),)
+        assert r.status == 'error'
+        assert r.error_kind == 'invalid', r.to_dict()
+        assert 'nonexistent.action' in (r.error or ''), r.error
 
 
 class TestExecutorResultNormalization:

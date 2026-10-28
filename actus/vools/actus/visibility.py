@@ -740,23 +740,35 @@ class VisibilityEngine:
         return False, f"Unknown visibility level: {visibility}"
 
     def _find_action(self, action_id: str) -> Optional[dict]:
-        """在**私有动作索引**里查找动作。
+        """查找动作的可见性相关元数据（team / visibility / author）。
 
-        审计修复（文档与实现不符）：改前 docstring 写"在所有注册表中查找动作"，
-        但实现只查 `self._private_actions` —— team 级动作若没登记进私有索引，
-        `check_visibility(team)` 会恒返回 `No team associated with action`
-        （fail-closed，但功能不可用，且与承诺不符）。
+        **查找优先级（这里写死，别处不要再猜）**：
+          1. **私有动作索引**（`add_private_action` 登记的元数据）—— 显式登记，
+             可能携带动作文件里没有的字段（远端动作、仓级登记）；
+          2. 回退到**动作文件的 `#!cfg`**（本地动作的真实来源，`visibility set`
+             写的就是这里）。
+        两者都没有 → None（调用方 fail-closed）。
 
-        现状（诚实版）：team 级动作**必须**通过 `add_private_action(action_id,
-        {"team": <name>})` 登记到私有索引，才会被本引擎识别。真去遍历
-        RegistryManager 需要"每个注册表里都有一份动作元数据"，当前注册表只存
-        index.json/URL 配置、没有动作→团队映射，强行遍历只会制造更大的假象，
-        因此这里选择"改文档说清边界"，而不是假装支持全注册表查找。
+        审计修（本轮）：改前**只查私有索引**，于是 `visibility set --level team --team X`
+        把团队名写进 cfg 之后，`check_visibility(team)` 仍恒返回
+        `No team associated with action` —— 团队名落盘了却没有任何判定方能用，
+        等于这条可见性规则不存在。现在两种来源都认，优先级如上。
         """
-        # 先检查私有索引
-        if action_id in self._private_actions:
-            return self._private_actions[action_id]
-        return None
+        entry = self._private_actions.get(action_id)
+        if entry:
+            return entry
+        try:
+            import vools.actus as _actus
+            action = _actus.get_action(action_id)
+        except Exception:
+            return None
+        meta = getattr(action, 'meta', None) or {}
+        picked = {}
+        for key in ('team', 'visibility', 'author'):
+            value = meta.get(key)
+            if value:
+                picked[key] = value
+        return picked or None
 
     def can_install(self, action_id: str, visibility: str,
                     registry_name: str = "public", key: str = "",
@@ -989,14 +1001,58 @@ def get_visibility_engine(config_dir: str = None,
 _CFG_BLOCK_RE = re.compile(r"(```json\s*#!cfg\s*\n)(.*?)(```)", re.DOTALL)
 
 
-def write_action_visibility(action_path: str, level: str) -> Tuple[bool, str]:
-    """把动作 `#!cfg` 块里的 visibility 改成 level，返回 (ok, message)。
+def _set_cfg_scalar(block: str, key: str, value: str):
+    """在 cfg JSON 文本里设置/替换一个字符串标量，不动其它内容；失败返回 None。"""
+    pattern = re.compile(r'("%s"\s*:\s*)"[^"]*"' % re.escape(key))
+    if pattern.search(block):
+        return pattern.sub(lambda m: m.group(1) + '"%s"' % value, block, count=1)
+    brace = block.find('{')
+    if brace < 0:
+        return None
+    return (block[:brace + 1]
+            + '\n  "%s": "%s",' % (key, value)
+            + block[brace + 1:])
 
-    只动这一个标量：块里已有 "visibility" 就替换它的值，没有就插到块首。
+
+def _remove_cfg_scalar(block: str, key: str) -> str:
+    """从 cfg JSON 文本里删除一个字符串标量成员（连相邻逗号一起处理）。"""
+    escaped = re.escape(key)
+    for pattern in (r',\s*"%s"\s*:\s*"[^"]*"' % escaped,
+                    r'"%s"\s*:\s*"[^"]*"\s*,\s*' % escaped,
+                    r'"%s"\s*:\s*"[^"]*"' % escaped):
+        match = re.search(pattern, block)
+        if match:
+            return block[:match.start()] + block[match.end():]
+    return block
+
+
+def write_action_visibility(action_path: str, level: str,
+                            team: str = None) -> Tuple[bool, str]:
+    """把动作 `#!cfg` 块里的可见性写成 level（team 级同时写团队名）。
+
+    只动 `visibility` / `team` 两个标量，其余内容原样保留。
     **写完立刻重新解析整份动作文件**校验，不通过就把原文写回去并报错 ——
     宁可失败也不留一份解析不了的动作文件（本仓库的 scaffolder 曾整体覆盖过
     动作文件，这里不想重演那次事故）。
+
+    参数:
+        action_path: 动作文件路径。
+        level: public / unlisted / private / team。
+        team: `level == 'team'` 时**必填**的团队名。
+
+    规则（审计裁决：team 级不记团队名 = 规则无法被判定方使用）：
+      * `level='team'` 缺 team → 直接失败，不静默写一个"无团队的 team 级动作"；
+      * `level='team'` → cfg 里同时落 `"visibility"` 与 `"team"`；
+      * 切到 public/unlisted/private → **删掉 cfg 里残留的 `"team"` 键**
+        （否则旧团队名留着，将来切回 team 会用到错误的团队）。
     """
+    level = (level or '').strip().lower()
+    if level not in ('public', 'unlisted', 'private', 'team'):
+        return False, f'无效的可见性级别: {level!r}'
+    team = (team or '').strip() if team else ''
+    if level == 'team' and not team:
+        return False, 'team 级别必须提供团队名（否则这条可见性规则无法被判定方使用）'
+
     try:
         with open(action_path, 'r', encoding='utf-8') as handle:
             original = handle.read()
@@ -1008,16 +1064,15 @@ def write_action_visibility(action_path: str, level: str) -> Tuple[bool, str]:
         return False, '动作文件里找不到 ```json #!cfg``` 元数据块'
 
     block = match.group(2)
-    if re.search(r'"visibility"\s*:\s*"[^"]*"', block):
-        new_block = re.sub(r'("visibility"\s*:\s*)"[^"]*"',
-                           lambda m: m.group(1) + '"%s"' % level, block, count=1)
-    else:
-        brace = block.find('{')
-        if brace < 0:
+    new_block = _set_cfg_scalar(block, 'visibility', level)
+    if new_block is None:
+        return False, '#!cfg 块不是 JSON 对象'
+    if level == 'team':
+        new_block = _set_cfg_scalar(new_block, 'team', team)
+        if new_block is None:
             return False, '#!cfg 块不是 JSON 对象'
-        new_block = (block[:brace + 1]
-                     + '\n  "visibility": "%s",' % level
-                     + block[brace + 1:])
+    else:
+        new_block = _remove_cfg_scalar(new_block, 'team')
 
     updated = original[:match.start(2)] + new_block + original[match.end(2):]
     try:
@@ -1025,8 +1080,16 @@ def write_action_visibility(action_path: str, level: str) -> Tuple[bool, str]:
             handle.write(updated)
         from .model import parse_cfg_from_file
         parsed = parse_cfg_from_file(action_path)
-        if (parsed.meta.get('visibility') or '').strip().lower() != level:
-            raise ValueError('写回后 visibility 校验不一致')
+        written_level = (parsed.meta.get('visibility') or '').strip().lower()
+        if written_level != level:
+            raise ValueError('写回后 visibility 校验不一致（期望 %r，实得 %r）'
+                             % (level, written_level))
+        written_team = (parsed.meta.get('team') or '').strip()
+        if level == 'team' and written_team != team:
+            raise ValueError('写回后 team 校验不一致（期望 %r，实得 %r）'
+                             % (team, written_team))
+        if level != 'team' and written_team:
+            raise ValueError('切出 team 级别后 cfg 里仍残留 team 键: %r' % written_team)
     except Exception as exc:
         try:
             with open(action_path, 'w', encoding='utf-8') as handle:

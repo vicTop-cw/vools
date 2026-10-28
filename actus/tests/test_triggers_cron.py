@@ -111,9 +111,22 @@ def test_empty_item_rejected():
 
 
 def test_no_field_is_ever_empty():
-    """任何合法表达式解析出的字段都不能是空集合（空集合 = 永不触发）。"""
+    """任何合法表达式解析出的字段都不能是空集合（空集合 = 永不触发）。
+
+    审计加固：原来只 `assert f`（真值判断）—— 解析器把某字段解析成**错误但非空**
+    的集合（如把 1-5 解析成 1-6）也能过。现在对一条含范围/列表的真实表达式
+    断言**精确展开集合**，同时保留所有表达式非空守卫。
+    """
     for expr in ("* * * * *", "0 0 * * *", "0,30 9-17 * * 1-5",
                  "*/5 * * * *", "0 12 1,15 * *"):
         c = CronExpr(expr)
         for i, f in enumerate(c.fields):
             assert f, "字段 %d 为空: %r" % (i, expr)
+
+    # 精确展开：分钟列表 / 小时范围 / 日 / 月 / 星期范围（含端点）
+    c = CronExpr("0,30 9-17 * * 1-5")
+    assert c.fields[0] == {0, 30}, c.fields[0]
+    assert c.fields[1] == set(range(9, 18)), c.fields[1]
+    assert c.fields[2] == set(range(1, 32)), c.fields[2]
+    assert c.fields[3] == set(range(1, 13)), c.fields[3]
+    assert c.fields[4] == {1, 2, 3, 4, 5}, c.fields[4]

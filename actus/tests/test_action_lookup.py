@@ -67,27 +67,39 @@ def test_find_action_file_unknown_returns_none(tmp_path):
 
 
 def test_find_action_file_tolerates_bad_files(tmp_path):
-    """坏文件不能让查找整体失败（跳过即可）。"""
+    """坏文件不能让查找整体失败（跳过即可），且必须精确命中**正确**文件。
+
+    审计加固：原来只断言 `is not None` —— 查找器返回 `broken.actus.schema.md`
+    或任何垃圾路径也能过（变异证明：恒返回 "WRONG" 仍绿）。现在断言精确文件名。
+    """
     _write(tmp_path, "broken.actus.schema.md", "not a valid action at all")
     _write(tmp_path, "newfmt.actus.schema.md", NEW_FORMAT)
-    assert find_action_file("myapp.newfmt", str(tmp_path)) is not None
+    hit = find_action_file("myapp.newfmt", str(tmp_path))
+    assert hit is not None
+    assert hit.endswith("newfmt.actus.schema.md"), \
+        "应跳过坏文件并精确命中 newfmt，实得 %r" % (hit,)
 
 
 def test_dependency_lookup_delegates_and_finds_new_format(tmp_path):
-    """dependency 的查找必须委托给单一实现（三轨收口）。"""
+    """dependency 的查找必须委托给单一实现（三轨收口），且命中正确文件。"""
     from vools.actus.dependency import DependencyResolver
     _write(tmp_path, "newfmt.actus.schema.md", NEW_FORMAT)
     r = DependencyResolver(actions_root=str(tmp_path))
-    assert r._find_action_file("myapp.newfmt") is not None
+    hit = r._find_action_file("myapp.newfmt")
+    assert hit is not None
+    assert hit.endswith("newfmt.actus.schema.md"), \
+        "dependency 查找返回了错误的文件: %r" % (hit,)
 
 
 def test_seed_actions_resolvable_via_shared_helper():
-    """真实种子动作（全是新格式）必须能被共享查找找到。"""
+    """真实种子动作（全是新格式）必须能被共享查找找到，且是 calculator 自己。"""
     import os
     root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "vools", "actus", "actions")
     hit = find_action_file("actus.basics.calculator", root)
     assert hit is not None, "种子动作找不到 —— 三轨收口未生效"
+    assert hit.endswith("calculator.actus.schema.md"), \
+        "种子动作命中错误文件: %r" % (hit,)
 
 
 def test_no_string_search_identity_antipattern():

@@ -1604,7 +1604,7 @@ class MCPServer:
 # ── Visibility 处理函数 ──
 
 def _handle_visibility_get(args):
-    """查动作可见性：读**真实来源**（私有动作索引 → 动作文件 #!cfg）。"""
+    """查动作可见性：读**真实来源**（私有动作索引 → 动作文件 #!cfg），含团队名。"""
     from vools.actus.visibility import get_visibility_engine
     engine = get_visibility_engine()
     action_id = args.get('action_id', '')
@@ -1612,6 +1612,7 @@ def _handle_visibility_get(args):
     if priv:
         return text_result({'status': 'ok', 'action_id': action_id,
                             'visibility': priv.get('visibility', 'private'),
+                            'team': priv.get('team', ''),
                             'source': 'private_index'})
     try:
         import vools.actus as actuscore
@@ -1620,16 +1621,18 @@ def _handle_visibility_get(args):
         return text_result({'status': 'not_found',
                             'message': f'未找到动作: {action_id}'}, True)
     level = (action.meta.get('visibility') or 'public').strip().lower() or 'public'
+    team = (action.meta.get('team') or '').strip()
     return text_result({'status': 'ok', 'action_id': action_id,
-                        'visibility': level, 'source': 'action_file'})
+                        'visibility': level, 'team': team,
+                        'source': 'action_file'})
 
 def _handle_visibility_set(args):
     """设置动作可见性 —— **真写落盘**（复用 visibility.write_action_visibility）。
 
     改前这里只校验参数并把新级别原样回显，既不写动作文件也不写私有索引 ——
     `set` 返回成功、`get` 却读不到（假成功家族：与 export 假 ✅ / publish 假干跑同族）。
-    现在与 CLI `visibility set` 共用同一份实现（单一真源）：
-    定点改写动作 `#!cfg` 的 visibility 标量 + 写后重新解析校验 + 失败回滚。
+    现在与 CLI `visibility set` 共用同一份实现（单一真源）：定点改写动作
+    `#!cfg` 的 visibility（team 级同时写 team）标量 + 写后重新解析校验 + 失败回滚。
     """
     from vools.actus.visibility import write_action_visibility
     action_id = args.get('action_id', '')
@@ -1637,7 +1640,7 @@ def _handle_visibility_set(args):
     if visibility not in ('public', 'unlisted', 'private', 'team'):
         return text_result({'status': 'invalid',
                             'message': f'无效的可见性级别: {visibility}'}, True)
-    team = args.get('team', '')
+    team = (args.get('team') or '').strip()
     if visibility == 'team' and not team:
         return text_result({'status': 'invalid',
                             'message': 'team 级别需要指定 team 参数'}, True)
@@ -1656,7 +1659,8 @@ def _handle_visibility_set(args):
             'code': 'action_not_found',
             'message': f'找不到动作文件: {action_id}'}}, True)
 
-    ok, message = write_action_visibility(action_path, visibility)
+    ok, message = write_action_visibility(
+        action_path, visibility, team=(team if visibility == 'team' else None))
     if not ok:
         return text_result({'status': 'failed', 'error': {
             'code': 'internal',
