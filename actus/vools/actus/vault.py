@@ -26,7 +26,9 @@ __all__ = ['Vault', 'default_meta_dir', 'set_key', 'get_key', 'delete_key',
            'resolve_secret', 'write_secret', 'resolve_vault_refs',
            'resolver_status',
            # 合并清单 / 删除（第 12 轮收尾：CLI/MCP 不再依赖私有 _v2_session）
-           'list_secret_names', 'delete_secret']
+           'list_secret_names', 'delete_secret',
+           # 显式迁移 legacy 行（第 15 轮：读路径不迁移，迁移只能显式触发）
+           'migrate_legacy_secrets']
 
 import hashlib
 import hmac
@@ -1164,3 +1166,75 @@ def delete_secret(name: str, scope: str = 'global', meta_dir: Optional[str] = No
         payload['hint'] = ('默认只删 v2（权威来源）；旧库 v1 若也有副本，'
                            '请显式 include_v1=True（破坏性）')
     return payload
+
+
+# ── 显式迁移 legacy 行（第 15 轮：读路径绝不迁移，迁移只能显式触发）────────
+def _legacy_secret_names(vault, token) -> list:
+    """只读列出当前身份下 legacy 行（`key_salt IS NULL`）的名字。"""
+    session = (getattr(vault, '_sessions', None) or {}).get(token) or {}
+    identity_id = session.get('identity_id')
+    if not identity_id:
+        return []
+    with vault._db() as conn:
+        return [row[0] for row in conn.execute(
+            "SELECT name FROM secrets WHERE identity_id=? AND key_salt IS NULL",
+            (identity_id,)).fetchall()]
+
+
+def migrate_legacy_secrets(dry_run: bool = False, meta_dir: Optional[str] = None,
+                           scope: str = 'global') -> dict:
+    """**显式**把 v2 legacy 行（key_salt 为空）迁移为行级加密。
+
+    `dry_run=True`：只读会话 + COUNT 查询，**不写 db、不写 audit.log**，返回
+    `checked`（待迁移条数）供先看后迁；`dry_run=False` 才真正迁移（写 db）。
+
+    返回（扁平，CLI `--json` 与 MCP 共用）：
+        {status, checked, migrated, failed, failed_names[], dry_run, scope}
+        status: ok | partial（有失败）| refused（无 v2 凭据）| param_invalid
+
+    失败条目不静默：`failed_names` + `failed_details`。
+    """
+    scope = scope or 'global'
+    base = {'status': 'ok', 'checked': 0, 'migrated': 0, 'failed': 0,
+            'failed_names': [], 'dry_run': bool(dry_run), 'scope': scope}
+    if scope not in ('global', 'project'):
+        return dict(base, status='param_invalid',
+                    message='scope 只能是 global 或 project')
+    if dry_run:
+        vault, token, reason = _v2_readonly_session()
+        if reason:
+            return dict(base, status='refused', code='vault2_unavailable',
+                        message='v2 不可用：%s' % reason,
+                        hint=('配置 VAULT_IDENTITY_ID / VAULT_MACHINE_ID / '
+                              'VAULT_PIN 后重试；dry-run 同样需要凭据（只读，'
+                              '不写 db/audit）'))
+        names = _legacy_secret_names(vault, token)
+        return dict(base, status='ok', checked=len(names), legacy_names=names)
+    v2, token, reason = _v2_session()
+    if reason:
+        return dict(base, status='refused', code='vault2_unavailable',
+                    message='v2 不可用：%s' % reason,
+                    hint=('配置 VAULT_IDENTITY_ID / VAULT_MACHINE_ID / '
+                          'VAULT_PIN 后重试；dry-run 同样需要凭据（只读，'
+                          '不写 db/audit）'))
+    try:
+        result = v2.migrate_legacy_rows(token)
+    except Exception as exc:  # noqa: BLE001
+        return dict(base, status='error', code='vault_migrate_failed',
+                    message='迁移异常（%s: %s）' % (type(exc).__name__, exc))
+    if result.get('status') != 'ok':
+        return dict(base, status='error',
+                    message=result.get('message') or '迁移失败')
+    failed_details = result.get('failed') or []
+    failed_names = [item.get('name') for item in failed_details if item.get('name')]
+    out = dict(base,
+               checked=result.get('checked', 0),
+               migrated=result.get('migrated', 0),
+               failed=len(failed_details),
+               failed_names=failed_names,
+               failed_details=failed_details)
+    if out['failed'] > 0:
+        out['status'] = 'partial'
+        out['message'] = ('%d 条迁移失败（见 failed_names），其余已迁移'
+                          % out['failed'])
+    return out

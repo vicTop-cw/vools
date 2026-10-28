@@ -303,6 +303,16 @@ def _build_parser():
     p_vault_delete.add_argument('--all', action='store_true',
                                 help='同时删除旧库 v1 的副本（**破坏性**：默认只删 v2）')
 
+    p_vault_migrate = vault_sub.add_parser(
+        'migrate', help='迁移旧格式（legacy）vault 密钥行到行级加密')
+    p_vault_migrate.add_argument('--scope', default='global',
+                                 choices=['global', 'project'],
+                                 help='作用域（v2 按身份迁移；--scope 仅兼容保留）')
+    p_vault_migrate.add_argument('--dry-run', dest='dry_run', action='store_true',
+                                 help='只统计待迁移条数，**不写任何数据/审计**（先看后迁）')
+    p_vault_migrate.add_argument('--all', action='store_true',
+                                 help='迁移当前身份全部 legacy 行（默认即全部；保留兼容）')
+
     # runtimes 子命令
     sub.add_parser('runtimes', help='列出可用多语言运行时')
 
@@ -1287,6 +1297,19 @@ def _dispatch_vault(args) -> int:
         keys = _list_secrets_merged(meta_dir, args.scope)
         _out(keys)
         return 0
+
+    if args.vault_command == 'migrate':
+        from vools.actus.vault import migrate_legacy_secrets
+        r = migrate_legacy_secrets(
+            dry_run=bool(getattr(args, 'dry_run', False)),
+            meta_dir=meta_dir,
+            scope=getattr(args, 'scope', 'global'))
+        if r.get('status') == 'refused':
+            # hint 由 vault.migrate_legacy_secrets 统一给出（可行动、不误导：
+            # dry-run 也需要凭据，只是不写 db/audit）
+            pass
+        # 统一走 _out_result：partial/refused/error 都映射为非 0
+        return _out_result(r)
 
     if args.vault_command == 'delete':
         # 只算/只打印一次（改前这里调了两遍 —— 会重复删除+重复输出）
