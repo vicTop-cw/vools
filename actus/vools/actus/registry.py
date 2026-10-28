@@ -72,7 +72,18 @@ class ActionRegistry:
 
     # ── 索引构建 ──
 
-    def build_from_directory(self, repo_dir: str) -> dict:
+    def write_index(self, index: dict, repo_dir: str) -> str:
+        """把索引字典落盘到 `<repo_dir>/.actus.registry.json`，返回写入路径。
+
+        从 `build_from_directory` 里抽出来做单一真源：需要「先构建、成功后才落盘」
+        的调用方（publish 要先签名，签名失败不能留下半成品）可以把构建与写盘拆开。
+        """
+        registry_path = os.path.join(repo_dir, ".actus.registry.json")
+        with open(registry_path, "w", encoding="utf-8") as f:
+            json.dump(index, f, ensure_ascii=False, indent=2)
+        return registry_path
+
+    def build_from_directory(self, repo_dir: str, write: bool = True) -> dict:
         """从本地仓库目录构建索引。
 
         扫描 repo_dir/actions/ 下所有 .actus.md 文件，
@@ -80,9 +91,13 @@ class ActionRegistry:
 
         参数:
             repo_dir: 仓库根目录。
+            write: 是否把索引**落盘**到 `<repo_dir>/.actus.registry.json`。
+                   默认 True（保持既有调用方行为）；传 False 时只在内存里构建，
+                   一个字节都不写 —— `publish --dry-run` 这类预检路径必须传 False，
+                   否则「干跑」会在校验阶段就改掉仓库状态（假 dry-run）。
 
         返回:
-            索引字典（已写入 .actus.registry.json）。
+            索引字典（write=True 时已写入 .actus.registry.json）。
         """
         actions_dir = os.path.join(repo_dir, "actions")
         if not os.path.isdir(actions_dir):
@@ -101,10 +116,9 @@ class ActionRegistry:
         index = self._empty_index(repo_dir)
         index["actions"] = [e.to_dict() for e in entries]
 
-        # 写入注册表文件
-        registry_path = os.path.join(repo_dir, ".actus.registry.json")
-        with open(registry_path, "w", encoding="utf-8") as f:
-            json.dump(index, f, ensure_ascii=False, indent=2)
+        # 写入注册表文件（write=False 时跳过：预检/干跑不该改仓库状态）
+        if write:
+            self.write_index(index, repo_dir)
 
         # 缓存到内存
         for entry in entries:
@@ -143,11 +157,19 @@ class ActionRegistry:
         return index
 
     def load_from_repo(self, repo_dir: str) -> dict:
-        """从仓库目录加载索引（优先 .actus.registry.json，否则实时构建）。"""
+        """从仓库目录加载索引（优先 .actus.registry.json，否则实时构建）。
+
+        实时构建时**不落盘**（write=False）：本方法是**读**语义，不该因为
+        「仓库里还没有索引文件」就顺手创建 `.actus.registry.json`。
+        改前 `actus search`（纯只读命令）跑完会在用户仓库里留下这个文件 ——
+        与 `publish --dry-run` 假干跑同族（界面是查询，实际改了仓库状态）。
+        需要持久化的调用方仍然显式走 `build_from_directory(write=True)`
+        （`registry build` / `publish` / installer 都是这样）。
+        """
         registry_path = os.path.join(repo_dir, ".actus.registry.json")
         if os.path.isfile(registry_path):
             return self.load_from_file(registry_path)
-        return self.build_from_directory(repo_dir)
+        return self.build_from_directory(repo_dir, write=False)
 
     # ── 搜索与查询 ──
 

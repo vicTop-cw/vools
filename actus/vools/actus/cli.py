@@ -1792,8 +1792,11 @@ def _cmd_publish(args) -> int:
     repo_dir = os.getcwd()
     reg = ActionRegistry()
 
-    # 构建索引
-    index = reg.build_from_directory(repo_dir)
+    # 构建索引：**只在内存构建，不落盘**（write=False）。
+    # 改前这里直接 `build_from_directory(repo_dir)`，而该方法内部顺手把
+    # .actus.registry.json 写盘 —— 于是 `--dry-run` 的「不实际发布」是假的：
+    # 干跑照样创建/改写了仓库里的索引文件（实测删掉后跑 dry-run，文件又出现）。
+    index = reg.build_from_directory(repo_dir, write=False)
 
     if args.dry_run:
         print('🔍 干跑模式（不实际发布）:')
@@ -1813,6 +1816,7 @@ def _cmd_publish(args) -> int:
             if any('Private key not found' in reason for _a, reason in failures):
                 print('   提示：先运行 `actus keygen --name %s` 生成签名密钥'
                       % getattr(args, 'key', 'default'), file=sys.stderr)
+            # 失败路径：索引从来没落过盘，不会留下半成品文件
             return 1
         if signed:
             print(f'✍️  已签名 {len(signed)} 个动作:')
@@ -1825,7 +1829,9 @@ def _cmd_publish(args) -> int:
         else:
             print('ℹ️  仓库里没有可签名的动作')
 
-    print(f'✅ 注册表索引已生成: {os.path.join(repo_dir, ".actus.registry.json")}')
+    # 所有可能失败的步骤都过了，才真正落盘（失败不留半成品）
+    registry_path = reg.write_index(index, repo_dir)
+    print(f'✅ 注册表索引已生成: {registry_path}')
     print(f'   动作数: {len(index.get("actions", []))}')
     print()
     print('📋 发布步骤:')
