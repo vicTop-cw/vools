@@ -211,12 +211,20 @@ class EvolutionEngine:
         """
         try:
             from .model import parse_cfg_from_file
-            from .validate import validate_action
+            from .validate import validate_action, split_validation
             action = parse_cfg_from_file(action_path)
             errs = validate_action(action)
-            if not errs:
-                return {"valid": True, "message": "Schema valid", "errors": []}
-            return {"valid": False, "message": "Schema invalid", "errors": list(errs)}
+            # `runtime:` 是环境提示（裸仓库缺 contracts / 没装 jsonschema），
+            # 不是动作缺陷 → 不判 invalid，但要透传到结果里（warnings，不丢）。
+            real_errors, runtime_notes = split_validation(errs)
+            if not real_errors:
+                result = {"valid": True, "message": "Schema valid", "errors": []}
+                if runtime_notes:
+                    result["warnings"] = runtime_notes
+                return result
+            return {"valid": False, "message": "Schema invalid",
+                    "errors": list(real_errors),
+                    **({"warnings": runtime_notes} if runtime_notes else {})}
         except Exception as e:
             return {"valid": False, "message": str(e), "errors": [str(e)]}
 

@@ -21,7 +21,7 @@ from typing import Callable, Dict, List, Optional
 
 from .errors import ActionError
 from .model import Action, parse_cfg_from_file
-from .validate import validate_action
+from .validate import validate_action, split_validation
 from .constants import is_action_file
 
 # 修改留痕行的前缀。`author_action` 每次只保留**最新一条**，改前是纯追加，
@@ -73,6 +73,8 @@ class Pipeline:
         self.records: List[Dict] = []
         self._current_step: Optional[str] = None
         self._start_time: float = 0
+        # `runtime:` 环境提示（不是动作错误）—— 收集后在 run() 返回值里透传
+        self.runtime_notes: List[str] = []
 
     def _begin(self, step: str):
         self._current_step = step
@@ -129,8 +131,16 @@ class Pipeline:
             errs = validate_schema_md(self.action)
         else:
             errs = validate_action(self.action)
-        if errs:
-            self._end(False, f'校验失败: {"; ".join(errs)}')
+        # `runtime:` 是环境提示（裸仓库缺 contracts / 没装 jsonschema），不是动作
+        # 缺陷 —— 只让**真实错误**把该步判红；提示收进 runtime_notes，由 run()
+        # 汇总返回（CLI/MCP 输出可见，不丢）。
+        real_errors, runtime_notes = split_validation(errs)
+        if runtime_notes:
+            self.runtime_notes.extend(runtime_notes)
+        if real_errors:
+            self._end(False, '校验失败: %s' % '; '.join(real_errors))
+        elif runtime_notes:
+            self._end(True, 'schema 与语义校验通过（%d 条环境提示）' % len(runtime_notes))
         else:
             self._end(True, 'schema 与语义校验全部通过')
 
@@ -190,12 +200,16 @@ class Pipeline:
         valid = all(r['ok'] for r in self.records)
         total_ms = sum(r['duration_ms'] for r in self.records)
 
-        return {
+        result = {
             'action_id': aid,
             'valid': valid,
             'steps': self.records,
             'total_ms': round(total_ms, 1),
         }
+        if self.runtime_notes:
+            # 环境提示照常返回（不丢、不过滤），但**不影响 valid**
+            result['runtime_notes'] = list(self.runtime_notes)
+        return result
 
 
 def run_pipeline(action_path: str, repo_root: Optional[str] = None,

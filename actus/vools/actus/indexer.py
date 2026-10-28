@@ -18,6 +18,7 @@ from .model import parse_cfg_from_file, Action
 from .validate import (
     validate_action, validate_graph, analyze_graph,
     resolve_test_binding, governance_notices,
+    split_validation,
 )
 from .paths import repo_root
 from .constants import is_testish_id, is_action_file, ACTION_SUFFIXES
@@ -225,8 +226,14 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
     if validate:
         for aid, action in actions.items():
             errs = validate_action(action)
-            if errs:
-                action.meta['_validation_errors'] = errs
+            # `runtime:` 是**环境提示**（裸仓库缺 contracts、没装 jsonschema…），
+            # 不是动作缺陷：分开存，索引 status 只由真实错误决定。
+            # 提示本身不丢 → `_runtime_notes`，由 build_index 透传到 brief.warnings。
+            real_errors, runtime_notes = split_validation(errs)
+            if real_errors:
+                action.meta['_validation_errors'] = real_errors
+            if runtime_notes:
+                action.meta['_runtime_notes'] = runtime_notes
 
     scan_actions.problems = problems  # type: ignore[attr-defined]
     scan_actions._changed = changed_files  # type: ignore[attr-defined]
@@ -239,23 +246,35 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
     扫描默认走全部动作根（用户项目 + 包内种子，见 _action_roots）；
     显式传 actions_dir 时只扫该目录（测试/单仓场景）。
 
-    依赖图存在环时：索引照常落盘，所有动作标记 invalid 并附错误
+    依赖图存在环时：索引照常落盘，受影响动作标记 invalid 并附错误
     （docs/05 §5.1：不合规动作从 MCP tools 下架，不得静默执行）。
+
+    审计修复（假绿灯）：改前这里 `scan_actions(validate=False)` 之后**从未真正
+    校验**，`entries[x]['status']` 恒为 'valid' —— 实测一个缺 `name`、entry tag
+    不存在、trust 无测试绑定的动作（4 条真实错误）在索引里照样 status='valid'，
+    `actus validate`（无 id 走 index）恒 rc=0。docstring 写的"全量校验"没有落地。
+    现在每个动作校验一次，**真实错误**决定 status，`runtime:` 环境提示只进
+    brief['warnings']（不丢、不影响 status）。
     """
     meta = meta_dir or os.path.join(_repo_root(), '_meta')
     actions = scan_actions(actions_dir, validate=False)
 
+    # 每动作校验一次（`runtime:` 提示与真实错误分开，见 validate.split_validation）
+    validation = {}
+    for aid, action in actions.items():
+        validation[aid] = split_validation(validate_action(action))
+
     # 依赖图按节点分析：只标记真正受坏边/环影响的动作（属主 + 其下游锥），
     # 不再「一条坏依赖连坐整个动作市场」（历史上 validate_graph 首错即抛后
     # 把全部 entries 标 invalid，导致上百个无关动作从 MCP / LLM 目录下架）。
-    valid_actions = {aid: a for aid, a in actions.items()
-                     if not validate_action(a)}
+    valid_actions = {aid: a for aid, a in actions.items() if not validation[aid][0]}
     graph_issues = analyze_graph(valid_actions)
 
     entries = {}
     problems = dict(getattr(scan_actions, 'problems', {}))
     for aid, action in actions.items():
-        errs = list(action.meta.get('_validation_errors') or [])
+        real_errors, runtime_notes = validation.get(aid, ([], []))
+        errs = list(real_errors)
         issue = graph_issues.get(aid)
         if issue is not None:
             errs.append(f"dependency graph: {issue['message']}")
@@ -263,6 +282,10 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
         brief['status'] = 'invalid' if errs else 'valid'
         if errs:
             brief['errors'] = errs
+        if runtime_notes:
+            # 环境提示照常进索引（不丢），但**不影响 status**；只在非空时加键，
+            # 保持正常仓库下 brief 形状与改前一致。
+            brief['warnings'] = runtime_notes
 
         # ── 资产化治理标注（docs/47 §7，future_plan §3 落地）────────
         # 1) 测试味 id 不进资产池（kind=demo/alias/template 豁免）：
