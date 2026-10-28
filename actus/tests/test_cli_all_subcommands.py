@@ -36,12 +36,13 @@
 ``HOME`` / ``USERPROFILE`` 全部指向 tmp —— 命令的读写都被圈在 tmp 里。原型阶段实测：
 跑完全表后仓库 ``_meta/`` 与 ``actions/`` 零变更。
 
-已知缺陷（如实记账，不掩盖）
-----------------------------
-``reg`` / ``team`` / ``private`` / ``visibility`` 四个顶层命令（及其子命令）在 parser 里
-声明了，但 ``_dispatch`` 里**没有对应分支** → 静默 ``return 2``、零输出。本文件不把它们
-塞进 SKIP_EXECUTE（那就是掩盖），而是执行并断言「静默失联的顶层命令 ⊆ KNOWN_UNWIRED」：
-记录现状，同时保证将来若**新**冒出未接线的命令立刻变红。已单独汇报给统帅。
+静默失联护栏（曾经救过一次，现在是「零容忍」）
+----------------------------------------------
+``reg`` / ``team`` / ``private`` / ``visibility`` 四族曾在 parser 里声明、``_dispatch``
+里却没有分支 → 静默 ``return 2``、零输出。本文件没有把它们塞进 SKIP_EXECUTE（那是掩盖），
+而是执行并断言「静默失联的顶层命令 ⊆ KNOWN_UNWIRED」。cmd-engine 已把这四条真正接线，
+因此 ``KNOWN_UNWIRED`` 现在**清空为空集** —— 该断言等价于「不允许任何命令静默失联」，
+将来任一条（含这四条）退回静默都会立刻变红（名单保留但为空，见常量处注释）。
 
 py3.6 兼容：只用标准库，% 格式化，不用 f-string。
 """
@@ -81,9 +82,16 @@ _CRASH_MARKERS = (
     "ModuleNotFoundError",
 )
 
-# parser 里声明了、但 _dispatch 没有接线的已知命令（静默 rc=2、零输出）。
-# 实测来源：跑全部命令的最小参数后，输出为空且 rc==2 的那批。
-KNOWN_UNWIRED = frozenset(["reg", "team", "private", "visibility"])
+# parser 里声明了、但 _dispatch 没接线的命令（静默 rc=2、零输出）——**当前为空集**。
+#
+# 历史：`reg` / `team` / `private` / `visibility` 四族（14 条路径）曾长期静默失联，
+# 当时这份名单是 {reg, team, private, visibility}。某轮 cmd-engine 把它们真正接线
+# （cli.py 里已有 `args.command == 'reg'` 等分支）后，名单必须清空 —— 否则
+# 「静默集合 ⊆ 名单」在名单过期后恒真，将来这几条命令再退回静默也不会红，
+# 护栏就退化成「免罪名单」。
+# 现在它是空集，下面「静默失联集合 ⊆ KNOWN_UNWIRED」的断言等价于
+# **不允许任何命令静默失联**；将来若再有命令（包括这四条）漏接线，测试立刻失败。
+KNOWN_UNWIRED = frozenset()
 
 # 危险路径：只跑 --help。键是命令路径前缀（tuple），值是「为什么不执行」的理由。
 # 前缀匹配：("omega", "batch") 只挡该子命令；("mcp",) 挡整条命令。
@@ -320,7 +328,7 @@ def test_minimal_invocation_does_not_crash(path, required):
          cannot import name …）—— 这是两个 P0 在输出里的真实形态，
          只看 exit code 抓不到（main() 把异常吞成 exit 1 的 JSON 错误）；
       3. 不许静默无输出（rc=2 + 空输出 = parser 声明了但 dispatch 没接线的签名），
-         已知未接线名单（KNOWN_UNWIRED）除外。
+         唯一豁免是 KNOWN_UNWIRED —— 而它现在是**空集**，等于零豁免。
     """
     label = " ".join(path)
     rc, out, err = _invoke(list(path) + list(required))
@@ -334,13 +342,23 @@ def test_minimal_invocation_does_not_crash(path, required):
 
     if _is_silent_fall_through(rc, text):
         assert path[0] in KNOWN_UNWIRED, (
-            "%s 静默无输出且 rc=2（parser 声明了但 _dispatch 没接线），"
-            "且不在已知未接线名单 %r 里 —— 新出现的未接线命令"
-            % (label, sorted(KNOWN_UNWIRED)))
+            "%s 静默无输出且 rc=2（parser 声明了但 _dispatch 没接线）；"
+            "KNOWN_UNWIRED 当前为空集（零容忍），任何命令都不许静默失联"
+            % label)
 
 
 def test_no_new_silently_unwired_commands():
-    """已知未接线命令 ⊆ KNOWN_UNWIRED；将来修好后集合自动缩小，仍是子集。"""
+    """不允许任何命令静默失联（KNOWN_UNWIRED 已清空，这条断言不再有豁免）。
+
+    cmd-engine 把历史上静默的 4 条命令真正接线后，名单清空；此后
+    「静默失联集合 ⊆ KNOWN_UNWIRED(空集)」等价于「静默失联集合必须为空」。
+    同时断言名单保持为空 —— 防止有人把过期名字加回去，让护栏再次退化成免罪名单。
+    """
+    # 名单必须为空：重新加回历史豁免项 = 把护栏变回免罪名单（断言会恒真）。
+    assert KNOWN_UNWIRED == frozenset(), (
+        "KNOWN_UNWIRED 必须保持空集（历史那 4 条命令已接线）；"
+        "重新加回豁免项会让这条护栏恒真: %r" % (sorted(KNOWN_UNWIRED),))
+
     silent = set()
     for path, required in _EXEC_CASES:
         rc, out, err = _invoke(list(path) + list(required))
@@ -349,8 +367,8 @@ def test_no_new_silently_unwired_commands():
 
     unexpected = silent - set(KNOWN_UNWIRED)
     assert not unexpected, (
-        "这些命令 parser 里有、实际却静默失联（rc=2 零输出），且不在已知名单: %r；"
-        "已知未接线: %r" % (sorted(unexpected), sorted(KNOWN_UNWIRED)))
+        "这些命令 parser 里有、实际却静默失联（rc=2 零输出）—— 不允许任何命令"
+        "静默失联（KNOWN_UNWIRED 为空集）: %r" % (sorted(unexpected),))
 
 
 # ---------------------------------------------------------------------------
