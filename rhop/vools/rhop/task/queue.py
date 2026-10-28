@@ -24,7 +24,8 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from .config import TaskConfig
-from .errors import DagValidationError, ExecDenied, PayloadError, RhopTaskError, SecretError
+from .errors import (DagValidationError, ExecDenied, PayloadError, RhopTaskError,
+                     SecretError, StoreError)
 from .exec import ExecPolicy, HANDLERS, run_payload
 from .models import (
     DEFINITION_FIELDS,
@@ -33,7 +34,6 @@ from .models import (
     iso_add_seconds,
     utcnow_iso,
 )
-from .store import create_store
 
 log = logging.getLogger("vools.rhop.task.queue")
 
@@ -705,7 +705,9 @@ class TaskQueue(object):
             return None
         ttl = max(1.0, float(self.config.queue.get("lock_ttl_sec") or 900))
         interval = float(self.config.queue.get("renew_interval_sec") or (ttl / 2.0))
-        interval = max(0.5, min(interval, ttl))
+        # BUG-367：配置层已拒绝 > ttl/2 的值；这里仍取 ttl/2 作为硬上界，
+        # 避免运行期被人为改小 ttl 后，续期与租约同拍被 clean_stale_locks 抢先回收。
+        interval = max(0.5, min(interval, ttl / 2.0))
         stop = threading.Event()
 
         def _loop():
@@ -755,6 +757,11 @@ class TaskQueue(object):
 
         self.store.set_state(record.task_name, TaskState.RUNNING, now=now,
                              start_time=now, worker_id=wid)
+        # BUG-365：进入 RUNNING 本身就是一次版本推进，领取快照的 version 已经过期；
+        # 收尾写回要拿「执行期最新版本」做条件，否则每次成功都会被误判成迟到终态。
+        _running = self.store.get_task(record.task_name)
+        if _running is not None:
+            record.version = _running.version
 
         try:
             payload = self.decrypt_payload(record)
@@ -829,6 +836,31 @@ class TaskQueue(object):
         """显式拉一次对端同步包（A 端查状态前调用，保证看到最新）。"""
         return self._sync("pull")
 
+    def _discard_reason(self, record: TaskRecord, worker_id: str) -> Optional[str]:
+        """终态写回前的最小所有权门控（BUG-365）。
+
+        执行期间任务可能被人为改写（``requeue`` / ``reset_failed`` force 改状态、
+        其他 worker 回收后重领）。此时仍按「领取时的快照」写终态，轻则把自己的
+        结果覆盖到运维意图上，重则因 RUNNING→COMPLETED 已不合法抛 ``StoreError``，
+        而 ``run_resident`` 一旦被异常打断，整侧消费就停摆。
+
+        返回 None 表示可以写；否则返回丢弃原因（写日志 + 结构化返回，不抛异常）。
+        """
+        latest = self.store.get_task(record.task_name)
+        if latest is None:
+            return "任务已不存在"
+        if latest.state != TaskState.RUNNING:
+            return "任务在执行期间已变为 %s（结果作废，不覆盖运维意图）" % latest.state
+        if latest.worker_id and latest.worker_id != worker_id:
+            return "任务已被 %s 重新领取（迟到终态作废）" % latest.worker_id
+        return None
+
+    def _discard_result(self, record: TaskRecord, worker_id: str,
+                        reason: str) -> Dict[str, Any]:
+        self.log.warning("任务 %s 终态写回被丢弃：%s", record.task_name, reason)
+        return {"action": "discarded", "task_name": record.task_name,
+                "worker_id": worker_id, "reason": reason}
+
     def _finish_success(self, record: TaskRecord, outcome: Dict[str, Any],
                         worker_id: str) -> Dict[str, Any]:
         """成功：写 COMPLETED + 结果（可加密）。
@@ -836,8 +868,14 @@ class TaskQueue(object):
         BUG-329: 若任务在执行期间被 cancel，终态应是 CANCELLED 而非
         COMPLETED——取消标记只在领取期被读一次，执行期间与收尾时都不再看它，
         导致 cancel RUNNING 任务后命令跑完被记为 COMPLETED，取消语义不完整。
+
+        BUG-365: 收尾写回必须认「持有者 + 版本」。任务在执行期间被 force 改写
+        （运维 requeue / 回收重领）时，结果作废并返回 ``discarded``，不抛异常。
         """
         now = utcnow_iso()
+        reason = self._discard_reason(record, worker_id)
+        if reason:
+            return self._discard_result(record, worker_id, reason)
         # BUG-329: 收尾前检查 cancel_requested。record 对象在领取时创建，
         # cancel 请求是在执行期间通过 set_cancel_requested 落库的，
         # record.cancel_requested 可能仍是 False——必须从库重新读取最新值。
@@ -866,9 +904,17 @@ class TaskQueue(object):
             "finished_at": now,
             "worker_id": worker_id,
         }
-        self.store.set_state(record.task_name, TaskState.COMPLETED, now=now, end_time=now,
-                             last_err=None, back_info=self.encode_result(info),
-                             worker_id=worker_id)
+        # BUG-365：带版本条件写回——执行期间被 force 改写的任务，迟到的完成态作废。
+        try:
+            written = self.store.set_state(
+                record.task_name, TaskState.COMPLETED, now=now, end_time=now,
+                last_err=None, back_info=self.encode_result(info),
+                worker_id=worker_id, expect_version=record.version)
+        except StoreError as exc:
+            return self._discard_result(record, worker_id, "终态写回失败：%s" % exc)
+        if not written:
+            return self._discard_result(record, worker_id,
+                                        "版本已被并发推进（期望 v%s）" % record.version)
         self.log.info("任务 %s 完成（channel=%s, name=%s）",
                       record.task_name, info["channel"], info["name"])
         return {"action": "completed", "task_name": record.task_name,
@@ -883,6 +929,10 @@ class TaskQueue(object):
         RETRY_PENDING/FAILED——取消优先级高于重试策略。
         """
         now = utcnow_iso()
+        # BUG-365：终态写回前先做所有权门控（同 _finish_success）。
+        reason = self._discard_reason(record, worker_id)
+        if reason:
+            return self._discard_result(record, worker_id, reason)
         # BUG-329: 收尾前检查 cancel_requested。record 对象在领取时创建，
         # cancel 请求是在执行期间通过 set_cancel_requested 落库的，
         # record.cancel_requested 可能仍是 False——必须从库重新读取最新值。
@@ -901,8 +951,11 @@ class TaskQueue(object):
                           record.task_name)
             return {"action": "cancelled", "task_name": record.task_name,
                     "worker_id": worker_id}
-        attempts = int(record.retry_count) + 1
-        will_retry = bool(retryable) and int(record.retry_count) < int(record.max_retries)
+        # BUG-366：重试计数一律以库里最新值为准。领取快照 record.retry_count 是执行前的值，
+        # 执行期间的 requeue/回收可能已把计数推进，用快照会让「第 N 次」永远停在同一格。
+        base_retry = int(latest.retry_count) if latest is not None else int(record.retry_count)
+        attempts = base_retry + 1
+        will_retry = bool(retryable) and base_retry < int(record.max_retries)
         state = TaskState.RETRY_PENDING if will_retry else TaskState.FAILED
         scheduled = None
         if will_retry:
@@ -915,10 +968,18 @@ class TaskQueue(object):
             "finished_at": now,
             "worker_id": worker_id,
         }
-        self.store.set_state(record.task_name, state, now=now, end_time=now,
-                             last_err=message, back_info=self.encode_result(info),
-                             retry_count=attempts, scheduled_at=scheduled,
-                             worker_id=None, lock_time=None)
+        # BUG-365：带版本条件写回（失败态同样不能覆盖执行期间的人为改写）。
+        try:
+            written = self.store.set_state(
+                record.task_name, state, now=now, end_time=now,
+                last_err=message, back_info=self.encode_result(info),
+                retry_count=attempts, scheduled_at=scheduled,
+                worker_id=None, lock_time=None, expect_version=record.version)
+        except StoreError as exc:
+            return self._discard_result(record, worker_id, "失败态写回失败：%s" % exc)
+        if not written:
+            return self._discard_result(record, worker_id,
+                                        "版本已被并发推进（期望 v%s）" % record.version)
         action = "retried" if will_retry else "failed"
         self.log.warning("任务 %s %s：%s（第 %d/%d 次）",
                          record.task_name, action, message, attempts, record.max_retries)
@@ -988,7 +1049,8 @@ class TaskQueue(object):
         sleep_sec = float(interval if interval is not None else self.config.poll_interval())
         wait = max(sleep_sec * 0.05, 0.01)
         stats = {"iterations": 0, "completed": 0, "failed": 0, "retried": 0,
-                 "cancelled": 0, "idle": 0, "worker_id": wid, "reason": None}
+                 "cancelled": 0, "discarded": 0, "errors": 0, "idle": 0,
+                 "worker_id": wid, "reason": None}
 
         while True:
             stats["iterations"] += 1
@@ -1001,7 +1063,18 @@ class TaskQueue(object):
             if should_stop is not None and should_stop():
                 stats["reason"] = "should-stop"
                 break
-            result = self.run_once(wid)
+            # BUG-365：单任务的库层异常不能打死常驻循环。此前一次 StoreError
+            # （例如执行期间任务被 force 改写导致终态非法迁移）会直接冒出 while，
+            # 整侧 B 消费停摆，而调用方通常没有重启逻辑。
+            try:
+                result = self.run_once(wid)
+            except RhopTaskError as exc:
+                stats["errors"] += 1
+                self.log.warning("常驻循环吞掉单轮异常继续（第 %d 次）：%s",
+                                 stats["errors"], exc)
+                stats["last_error"] = str(exc)
+                time.sleep(wait)
+                continue
             action = result.get("action")
             if action == "stop":
                 stats["reason"] = result.get("reason") or "stop"

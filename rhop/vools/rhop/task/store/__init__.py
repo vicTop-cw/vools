@@ -26,7 +26,7 @@
 from __future__ import absolute_import
 
 import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from ..errors import StoreUnavailable
 from .base import TaskStore, resolve_path_template, require_shared_root
@@ -36,8 +36,8 @@ from .pg_store import PgTaskStore
 #: 默认存储后端（单一共享库：双方读写同一份任务状态）
 DEFAULT_STORE_KIND = "sqlite-shared"
 
-#: kind -> factory
-_REGISTRY = {}  # type: Dict[str, Callable[[dict, dict], TaskStore]]
+#: kind -> factory（真注解，替代老式 ``# type:`` 注释：ruff/pyright 都能识别）
+_REGISTRY: Dict[str, Callable[[dict, dict], TaskStore]] = {}
 
 
 def register_store(kind: str, factory: Optional[Callable[[dict, dict], TaskStore]] = None):

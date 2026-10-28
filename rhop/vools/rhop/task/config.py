@@ -32,7 +32,7 @@ from __future__ import absolute_import
 
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from ..config import RhopConfig, _key_from_cfg
 from ..crypto import ENV_RHOP_KEY, RhopCrypto, load_key
@@ -67,6 +67,11 @@ DEFAULT_QUEUE = {
     "encrypt_result": True,
     "result_max_bytes": 65536,
     "lock_ttl_sec": 900,
+    # 租约续期（BUG-289 引入，BUG-367 收口为受管键）：默认关闭 ⇒ 零回归。
+    # renew_interval_sec=0 表示自动（= lock_ttl_sec/2）；显式值必须 ≤ lock_ttl_sec/2，
+    # 否则续期与租约同拍，边际上仍可能被 clean_stale_locks 抢先回收。
+    "renew_lock": False,
+    "renew_interval_sec": 0,
     # 大载荷文件通道（默认关闭 ⇒ 零回归）：开启后，结果超过 max_bytes 时把完整结果落文件，
     # 信封里只回 file_ref（路径 + sha256 + 字节数），B 端按引用读回。
     # dir 需双方共享（缺省 <base_dir>/rhop-files，且会校验落点必须落在 base_dir/shared 之内）；
@@ -214,6 +219,22 @@ class TaskConfig(object):
                 "心跳读数的 age 含最多约 1s 的截断误差（历史缺陷 BUG-282：秒精度时该误差会顶到 0.999s，"
                 "阈值小于 1s 会把刚写完心跳的 B 判成 stale）。请把阈值调到 interval_sec + 1s 以上。"
                 % (stale, interval))
+
+        # 续期间隔校验（BUG-367 收口）：renew_interval_sec 曾是「不在 DEFAULT_QUEUE、不校验、
+        # 实现层静默 min(interval, ttl)」的野键——请求 100000 会被悄悄压成 ttl，与判死阈值同拍，
+        # 边际上仍可能被 clean_stale_locks 抢先回收。现在显式受管并拒绝越界值。
+        lock_ttl = float(self.queue.get("lock_ttl_sec") or 900.0)
+        renew_interval = float(self.queue.get("renew_interval_sec") or 0.0)
+        if lock_ttl <= 0:
+            raise SecretError("lock_ttl_sec 必须为正数，收到 %s" % lock_ttl)
+        if renew_interval < 0:
+            raise SecretError("renew_interval_sec 不能为负，收到 %s" % renew_interval)
+        if self.queue.get("renew_lock") and renew_interval > lock_ttl / 2.0:
+            raise SecretError(
+                "续期间隔过大：renew_interval_sec=%s 必须 ≤ lock_ttl_sec/2=%s"
+                "（缺陷 BUG-367：续期与租约同拍时，续期线程还没刷到，clean_stale_locks 就可能"
+                "把仍活着执行的任务判死回收，导致重复执行）。0 表示自动取 lock_ttl_sec/2。"
+                % (renew_interval, lock_ttl / 2.0))
 
         exec_raw = resolved.get("exec") or {}
         if not isinstance(exec_raw, dict):

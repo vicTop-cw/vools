@@ -27,7 +27,7 @@ from ..models import (
     iso_add_seconds,
     utcnow_iso,
 )
-from .base import TaskStore
+from .base import LEASE_RECLAIM_LAST_ERR, TaskStore
 
 #: 表名/列名安全校验
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -41,6 +41,10 @@ _MUTABLE_FIELDS = (
     "last_err", "tags", "queue", "owner", "team", "group_name", "extra_desc",
 )
 
+#: 显式列清单。禁止 SELECT *：psycopg2 元组按物理列序返回，一旦旧表的物理列序
+#: 与 TASK_COLUMNS 不同（历史 ALTER / 不同建表版本），dict(zip(...)) 会静默错位。
+_SELECT_COLS = ", ".join(TASK_COLUMNS)
+
 #: 允许被列表排序的列
 _ORDER_COLUMNS = {
     "priority": "priority DESC, task_id ASC",
@@ -49,6 +53,52 @@ _ORDER_COLUMNS = {
     "name": "task_name ASC",
     "updated": "updated_at DESC",
 }
+
+#: 当前 PG schema 版本。列集/语义发生**不兼容**变化时 +1：
+#: 启动时与元数据表比对，落后即补列（迁移），领先则拒绝启动（代码比库旧）。
+#: PG 没有 SQLite 的 ``PRAGMA user_version``，只能用专用元数据表承载。
+_SCHEMA_VERSION = 1
+
+#: 迁移时跳过的身份列（任何版本的表都存在；补齐反而引入 UNIQUE/序列冲突）
+_MIGRATION_SKIP = ("task_id", "task_name")
+
+#: 列定义单一来源：CREATE TABLE 与「旧表补列」迁移都从这里生成，避免两处漂移。
+#: 顺序必须与 models.TASK_COLUMNS 一致（有测试自校）。
+_COLUMN_DDL = (
+    ("task_id", "SERIAL PRIMARY KEY"),
+    ("task_name", "TEXT NOT NULL UNIQUE"),
+    ("task_type", "TEXT NOT NULL DEFAULT 'CLI'"),
+    ("value", "TEXT"),
+    ("deps", "TEXT NOT NULL DEFAULT '[]'"),
+    ("state", "TEXT NOT NULL DEFAULT 'PENDING' "
+              + "CHECK (state IN ('PENDING','LOCKED','RUNNING','COMPLETED',"
+              "'FAILED','RETRY_PENDING','CANCELLED'))"),
+    ("priority", "INTEGER NOT NULL DEFAULT 0"),
+    ("timeout_min", "DOUBLE PRECISION NOT NULL DEFAULT 60"),
+    ("retry_delay_min", "DOUBLE PRECISION NOT NULL DEFAULT 5"),
+    ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("max_retries", "INTEGER NOT NULL DEFAULT 3"),
+    ("scheduled_at", "TEXT"),
+    ("worker_id", "TEXT"),
+    ("lock_time", "TEXT"),
+    ("expire_time", "TEXT"),
+    ("start_time", "TEXT"),
+    ("end_time", "TEXT"),
+    ("cancel_requested", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("version", "INTEGER NOT NULL DEFAULT 1"),
+    ("payload_enc", "TEXT"),
+    ("payload_sha", "TEXT"),
+    ("back_info", "TEXT"),
+    ("last_err", "TEXT"),
+    ("tags", "TEXT NOT NULL DEFAULT '[]'"),
+    ("queue", "TEXT NOT NULL DEFAULT ''"),
+    ("owner", "TEXT NOT NULL DEFAULT ''"),
+    ("team", "TEXT NOT NULL DEFAULT ''"),
+    ("group_name", "TEXT NOT NULL DEFAULT ''"),
+    ("extra_desc", "TEXT"),
+    ("created_at", "TEXT NOT NULL"),
+    ("updated_at", "TEXT NOT NULL"),
+)
 
 
 def _validate_identifier(name: str, what: str) -> str:
@@ -135,56 +185,31 @@ class PgTaskStore(TaskStore):
         return conn
 
     def init_schema(self) -> None:
-        """建表 + 建索引（幂等）。"""
-        sql = self.schema_sql()
+        """建表 + 建索引 + 幂等补列（旧库自愈，BUG-362）。"""
         try:
             with self._conn.cursor() as cur:
-                cur.execute(sql)
+                cur.execute(self.schema_sql())
+                for stmt in self.migration_sql():
+                    cur.execute(stmt)
+                for stmt in self.schema_version_sql():
+                    cur.execute(stmt)
             self._conn.commit()
         except Exception as exc:
             self._conn.rollback()
             raise StoreError("初始化 PostgreSQL 表 %s 失败: %s" % (self.table, exc))
 
     def schema_sql(self) -> str:
-        """建表 + 建索引 SQL（表名动态，标识符已校验）。"""
+        """建表 + 建索引 SQL（列定义来自 _COLUMN_DDL，表名动态且已校验）。"""
         table = self.table
         ip = "idx_%s" % table
-        return """
+        cols = ",\n".join(
+            "            %-17s %s" % (name, ddl) for name, ddl in _COLUMN_DDL)
+        head = """
         CREATE TABLE IF NOT EXISTS {table} (
-            task_id           SERIAL PRIMARY KEY,
-            task_name         TEXT NOT NULL UNIQUE,
-            task_type         TEXT NOT NULL DEFAULT 'CLI',
-            value             TEXT,
-            deps              TEXT NOT NULL DEFAULT '[]',
-            state             TEXT NOT NULL DEFAULT 'PENDING'
-                              CHECK (state IN ('PENDING','LOCKED','RUNNING','COMPLETED',
-                                                'FAILED','RETRY_PENDING','CANCELLED')),
-            priority          INTEGER NOT NULL DEFAULT 0,
-            timeout_min       DOUBLE PRECISION NOT NULL DEFAULT 60,
-            retry_delay_min   DOUBLE PRECISION NOT NULL DEFAULT 5,
-            retry_count       INTEGER NOT NULL DEFAULT 0,
-            max_retries       INTEGER NOT NULL DEFAULT 3,
-            scheduled_at      TEXT,
-            worker_id         TEXT,
-            lock_time         TEXT,
-            expire_time       TEXT,
-            start_time        TEXT,
-            end_time          TEXT,
-            cancel_requested  BOOLEAN NOT NULL DEFAULT FALSE,
-            version           INTEGER NOT NULL DEFAULT 1,
-            payload_enc       TEXT,
-            payload_sha       TEXT,
-            back_info         TEXT,
-            last_err          TEXT,
-            tags              TEXT NOT NULL DEFAULT '[]',
-            queue             TEXT NOT NULL DEFAULT '',
-            owner             TEXT NOT NULL DEFAULT '',
-            team              TEXT NOT NULL DEFAULT '',
-            group_name        TEXT NOT NULL DEFAULT '',
-            extra_desc        TEXT,
-            created_at        TEXT NOT NULL,
-            updated_at        TEXT NOT NULL
+%s
         );
+""" % cols
+        indexes = """
         CREATE INDEX IF NOT EXISTS {ip}_state       ON {table}(state);
         CREATE INDEX IF NOT EXISTS {ip}_priority    ON {table}(priority);
         CREATE INDEX IF NOT EXISTS {ip}_lock_time   ON {table}(lock_time);
@@ -192,7 +217,48 @@ class PgTaskStore(TaskStore):
         CREATE INDEX IF NOT EXISTS {ip}_worker      ON {table}(worker_id);
         CREATE INDEX IF NOT EXISTS {ip}_type        ON {table}(task_type);
         CREATE INDEX IF NOT EXISTS {ip}_queue       ON {table}(queue);
-        """.format(table=table, ip=ip)
+        """
+        return (head + indexes).format(table=table, ip=ip)
+
+    def migration_sql(self) -> List[str]:
+        """旧表自愈（BUG-362）：对每列发一条幂等 ADD COLUMN IF NOT EXISTS。
+
+        ``CREATE TABLE IF NOT EXISTS`` 不会给既有表补列，TASK_COLUMNS 演进后
+        老库会缺列（INSERT 响亮失败）或列序漂移。这里在启动时按 _COLUMN_DDL
+        逐列补齐；NOT NULL 且无 DEFAULT 的列补 ``DEFAULT ''``，否则非空表加列会失败。
+        """
+        out = []
+        for name, ddl in _COLUMN_DDL:
+            if name in _MIGRATION_SKIP:
+                continue  # 身份列不迁移：SERIAL 主键无法 ADD COLUMN；task_name 有 UNIQUE 且是逻辑主键
+            frag = ddl
+            if "NOT NULL" in frag and "DEFAULT" not in frag:
+                frag += " DEFAULT ''"
+            out.append("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s" % (
+                self.table, name, frag))
+        return out
+
+    def _meta_table(self) -> str:
+        """版本元数据表名（与业务表同前缀，便于清理时成对处理）。
+
+        标识符由配置的表名派生，后者在 config 层已校验（``^[A-Za-z_][A-Za-z0-9_]*$``）。
+        """
+        return "%s_schema_meta" % self.table
+
+    def schema_version_sql(self) -> List[str]:
+        """schema 版本标记：建元数据表 + 首启写入版本 + 落后时推进。
+
+        三句都幂等：重复启动不新增行、不回退版本；版本推进只在
+        ``version < _SCHEMA_VERSION`` 时发生（升级方向单向）。
+        """
+        meta = self._meta_table()
+        return [
+            "CREATE TABLE IF NOT EXISTS %s (version INTEGER NOT NULL)" % meta,
+            "INSERT INTO %s (version) SELECT %d "
+            "WHERE NOT EXISTS (SELECT 1 FROM %s)" % (meta, _SCHEMA_VERSION, meta),
+            "UPDATE %s SET version = %d WHERE version < %d"
+            % (meta, _SCHEMA_VERSION, _SCHEMA_VERSION),
+        ]
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -202,6 +268,9 @@ class PgTaskStore(TaskStore):
             "dbname": self.dbname,
             "table": self.table,
             "user": self.user,
+            "columns": len(_COLUMN_DDL),
+            "schema_version": _SCHEMA_VERSION,
+            "meta_table": self._meta_table(),
         }
 
     # ------------------------------------------------------------------
@@ -260,7 +329,8 @@ class PgTaskStore(TaskStore):
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
-                    "SELECT * FROM %s WHERE task_name = %%s" % self.table, (task_name,))
+                    "SELECT %s FROM %s WHERE task_name = %%s" % (_SELECT_COLS, self.table),
+                    (task_name,))
                 row = cur.fetchone()
                 if row is None:
                     raise TaskNotFound("任务不存在: %s" % task_name)
@@ -332,9 +402,10 @@ class PgTaskStore(TaskStore):
                 done = set(r[0] for r in cur.fetchall())
                 # 查可领取任务
                 cur.execute(
-                    "SELECT * FROM %s WHERE state IN (%%s, %%s) AND cancel_requested = FALSE "
+                    "SELECT %s FROM %s WHERE state IN (%%s, %%s) AND cancel_requested = FALSE "
                     "AND (scheduled_at IS NULL OR scheduled_at <= %%s) "
-                    "ORDER BY priority DESC, task_id ASC LIMIT %%s" % self.table,
+                    "ORDER BY priority DESC, task_id ASC LIMIT %%s"
+                    % (_SELECT_COLS, self.table),
                     (TaskState.PENDING, TaskState.RETRY_PENDING, now_iso, self.claim_scan_limit))
                 rows = cur.fetchall()
                 for row in rows:
@@ -344,11 +415,13 @@ class PgTaskStore(TaskStore):
                     row_ttl = max(ttl, float(rec.timeout_min or 0) * 60.0)
                     row_expire = iso_add_seconds(now_iso, row_ttl)
                     # 原子领取：带状态守卫的 UPDATE
-                    cur.execute(
+                    update_sql = (
                         "UPDATE %s SET state = %%s, worker_id = %%s, lock_time = %%s, "
                         "expire_time = %%s, version = version + 1, updated_at = %%s "
-                        "WHERE task_id = %%s AND state IN (%%s, %%s) AND cancel_requested = FALSE "
-                        "RETURNING *" % self.table,
+                        "WHERE task_id = %%s AND state IN (%%s, %%s) "
+                        "AND cancel_requested = FALSE RETURNING " + _SELECT_COLS) % self.table
+                    cur.execute(
+                        update_sql,
                         (TaskState.LOCKED, worker_id, now_iso, row_expire, now_iso,
                          rec.task_id, TaskState.PENDING, TaskState.RETRY_PENDING))
                     result = cur.fetchone()
@@ -368,20 +441,40 @@ class PgTaskStore(TaskStore):
 
     def clean_stale_locks(self, now: Optional[str] = None,
                           lock_timeout_sec: Optional[float] = None) -> int:
-        """回收失效锁（LOCKED→PENDING，RUNNING→RETRY_PENDING）。"""
+        """回收失效锁（LOCKED→PENDING，RUNNING→RETRY_PENDING / FAILED）。
+
+        语义与 sqlite 后端逐字一致（契约见 ``base.TaskStore.clean_stale_locks``）：
+        ``RUNNING`` 回收计入重试预算（BUG-366，毒任务最终 MUST 落 FAILED），
+        ``LOCKED`` 回收只回 PENDING、不计数。
+        """
         now_iso = now or utcnow_iso()
         timeout = abs(float(lock_timeout_sec if lock_timeout_sec is not None else self.lock_ttl_sec))
         cutoff = iso_add_seconds(now_iso, -timeout)
         try:
             with self._conn.cursor() as cur:
+                # PostgreSQL 的 SET 子句同样按「更新前的行值」求值，四个 CASE 互不干扰。
                 cur.execute(
-                    "UPDATE %s SET state = CASE WHEN state = %%s THEN %%s ELSE %%s END, "
+                    "UPDATE %s SET "
+                    "state = CASE "
+                    "  WHEN state = %%s THEN %%s "
+                    "  WHEN retry_count < max_retries THEN %%s "
+                    "  ELSE %%s END, "
+                    "retry_count = retry_count + CASE WHEN state = %%s THEN 1 ELSE 0 END, "
+                    "last_err = CASE WHEN state = %%s THEN %%s ELSE last_err END, "
+                    "end_time = CASE WHEN state = %%s THEN %%s ELSE end_time END, "
                     "lock_time = NULL, worker_id = NULL, updated_at = %%s, version = version + 1 "
                     "WHERE state IN (%%s, %%s) AND ("
                     "  (expire_time IS NOT NULL AND expire_time < %%s) OR "
-                    "  (expire_time IS NULL AND lock_time IS NOT NULL AND lock_time < %%s))" % self.table,
-                    (TaskState.LOCKED, TaskState.PENDING, TaskState.RETRY_PENDING,
-                     now_iso, TaskState.LOCKED, TaskState.RUNNING, now_iso, cutoff))
+                    "  (expire_time IS NULL AND lock_time IS NOT NULL AND lock_time < %%s))"
+                    % self.table,
+                    (TaskState.LOCKED, TaskState.PENDING,
+                     TaskState.RETRY_PENDING, TaskState.FAILED,
+                     TaskState.RUNNING,
+                     TaskState.RUNNING, LEASE_RECLAIM_LAST_ERR,
+                     TaskState.RUNNING, now_iso,
+                     now_iso,
+                     TaskState.LOCKED, TaskState.RUNNING,
+                     now_iso, cutoff))
                 result = cur.rowcount
             self._conn.commit()
             return result
@@ -425,7 +518,8 @@ class PgTaskStore(TaskStore):
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
-                    "SELECT * FROM %s WHERE task_name = %%s" % self.table, (rec.task_name,))
+                    "SELECT %s FROM %s WHERE task_name = %%s" % (_SELECT_COLS, self.table),
+                    (rec.task_name,))
                 row = cur.fetchone()
                 if row is None:
                     data = rec.to_row()
@@ -469,7 +563,8 @@ class PgTaskStore(TaskStore):
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
-                    "SELECT * FROM %s WHERE task_name = %%s" % self.table, (task_name,))
+                    "SELECT %s FROM %s WHERE task_name = %%s" % (_SELECT_COLS, self.table),
+                    (task_name,))
                 row = cur.fetchone()
                 if row is None:
                     return "missing"
@@ -506,7 +601,8 @@ class PgTaskStore(TaskStore):
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
-                    "SELECT * FROM %s WHERE task_name = %%s" % self.table, (task_name,))
+                    "SELECT %s FROM %s WHERE task_name = %%s" % (_SELECT_COLS, self.table),
+                    (task_name,))
                 row = cur.fetchone()
             if row is None:
                 return None
@@ -519,7 +615,7 @@ class PgTaskStore(TaskStore):
         """列出任务（可按状态过滤）。"""
         order_sql = _ORDER_COLUMNS.get(str(order or "priority"), _ORDER_COLUMNS["priority"])
         params: List[Any] = []
-        sql = "SELECT * FROM %s" % self.table
+        sql = "SELECT %s FROM %s" % (_SELECT_COLS, self.table)
         if state:
             sql += " WHERE state = %s"
             params.append(TaskState.normalize(state))

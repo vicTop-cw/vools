@@ -29,7 +29,7 @@ import time
 from typing import Any, Callable, Dict, Optional
 
 from .errors import HeartbeatError
-from .models import parse_iso, utcnow, utcnow_iso
+from .models import parse_iso, utcnow
 
 log = logging.getLogger("vools.rhop.task.heartbeat")
 
