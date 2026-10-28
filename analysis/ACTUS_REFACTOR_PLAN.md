@@ -15,6 +15,21 @@ AIGC:
 > 范围：① `actus run` 及子命令的目标/入参多形态解析；② 动作规范性扩展（无源码动作、任意语言入口、link/demo/template 等动作类型）
 > 依据代码：`engine/actus/__main__.py`、`vools/actus/{indexer,executor,scattered,runtimes}.py`、`vools/bridges/vools/bridge/md/runner.py`、`contracts/action.schema.json`、`docs/03-动作规范.md`、`docs/DEVELOPMENT_STANDARDS.md`
 
+> **实现状态（核实于 2026-10-29）** —— 上方「规划稿（暂不实施）」**已过时**，实际已实施 ~86%：
+> **28 条中 24 条已实现**；部分 3 条；未实现 1 条。
+> 已实现（24）：任意语言入口（`known_languages`/`is_routable` 路由）、
+> 四种新 kind 的执行语义（link/demo/template/bundle/doc，见 `executor.py`）、
+> `by_name` / `by_md5` / `by_kind` 反向索引（`build_index`）、`brief` 增加 `name`/`kind`/`md5`/`platform`、
+> verify 校验面扩展（入口语言白名单、无源码动作入口豁免）、`actus run` 多形态 target 解析（resolver）、文档同步等。
+> **部分（3）**：
+> ① 非 `run` 子命令尚未全部接 resolver（仅 `run` 已接）；
+> ② `languages` 字段：索引条目未落该字段（审计实测 `brief 含 languages: False`）；
+> ③ link/alias target 静态校验：`validate.py` 无 target 存在性检查（审计实测 `MISS 校验: link/alias target 存在性`）。
+> **未实现（1）**：md5 一致性校验 —— 索引面已落 `md5`/`by_md5`，但**校验面**没有一致性告警
+> （审计实测 `MISS 校验: md5 一致性告警`）。
+> 核实方法（**可复跑**）：`cd actus && python tools/audit/plan_audit_actus.py`
+> （脚本自建临时 `ACTUS_META_DIR`，不污染仓库）。
+
 ---
 
 ## 一、目标与范围
@@ -22,6 +37,9 @@ AIGC:
 ### 1.1 目标 A：多形态目标与入参
 
 `actus run <target> <jsonexpr>` 中的 `<target>` 需支持以下全部形态，其它子命令按需对齐：
+
+> **实现状态（2026-10-29）**：**部分** —— `actus run` 已接入 resolver 并支持全部形态；
+> 其它子命令（`validate`/`info`/`preview` 等）**尚未**全部改用 resolver。
 
 | 形态 | 示例 | 现状 |
 |---|---|---|
@@ -142,6 +160,10 @@ AIGC:
 
 并新增反向索引：`by_name`（小写归一，多值）、`by_md5`（单值）、`by_kind`（分组计数）。
 
+> **实现状态（2026-10-29）**：`by_name` / `by_md5` / `by_kind` 已落盘；
+> 条目中的 `name` / `kind` / `md5` / `platform` 已进 `brief`；
+> **`languages` 字段未落**（审计实测 `brief 含 languages: False`）→ 该条判 **部分**。
+
 ### 3.6 校验面扩展（verify 前置门槛）
 
 | 规则 | 说明 |
@@ -151,6 +173,13 @@ AIGC:
 | link/alias 的 target 存在性校验 | target 必须能解析到已注册动作（本地或索引） |
 | 无源码动作的入口豁免 | kind ≠ exec 时不要求 entry |
 | 指纹一致性校验 | md5 与实际内容不符时告警（不阻断） |
+
+> **实现状态（2026-10-29，逐行核实）**：
+> ✅ 入口语言白名单校验（`validate.check_block_languages`）；✅ 无源码动作入口豁免；
+> ⚠️ kind 合法性校验：审计脚本未找到独立的 `check_kind`（`kind` 的取值校验在 schema/其他路径完成）→ **部分**；
+> ⚠️ link/alias target 存在性校验：`validate.py` **无** target 检查 → **部分**；
+> ❌ 指纹（md5）一致性校验：**未实现**（索引有 md5，校验面没有告警）。
+> 复跑：`cd actus && python tools/audit/plan_audit_actus.py`（可复跑，秒级）。
 
 ---
 

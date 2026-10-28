@@ -4,6 +4,12 @@
 
 本计划旨在系统性分析 vools 与 funcy、toolz、returns 三个相关库之间的功能差异，识别缺失功能，并制定分阶段实施计划。
 
+> **实现状态（核实于 2026-10-29）**：31 条中 **28 条已实现（~90%）**；部分 1 条、未实现 1 条。
+> 已实现：`Result` 类型、集合/序列/字典/函数组合/错误处理/响应式等核心能力（逐项见 §7 的「实际状态」表）。
+> 部分 / 未实现的具体条目：以 `actus/tools/audit/plan_audit_core.py` 的 MISS 输出为准；其中**属本计划（核心库）**的是 `conj`、`count_by（对比表）`，其余 MISS（`vicDate`、`look_upon.py`、`setup.py`、`requirements.txt`、`spark/init.py`）属 IMPLEMENTATION_PLAN 的 D 类路径。
+> 核实方法（**可复跑**）：`python actus/tools/audit/plan_audit_core.py`（根 = 仓库 `vools/`，秒级完成）。
+> 测试证据（可复跑）：`tests/functional/` + `tests/curried/` + 11 个相关回归文件 → 实测 **506 passed**。
+
 ---
 
 ## 1. 功能对比分析
@@ -292,6 +298,10 @@ def ignore(fn):
 
 ## 4. 实施计划时间表
 
+> **注（2026-10-29）**：本章是 **2026-10-16 的计划历史记录**，不要按此排期推进；
+> 实际进度以文档头「实现状态」块与 §7「实际状态」表为准。
+
+
 ### 4.1 第一阶段：核心功能实现（2周）
 
 | 任务 | 预估工时 | 责任人 | 依赖 |
@@ -340,6 +350,10 @@ def ignore(fn):
 ---
 
 ## 5. 资源需求评估
+
+> **注（2026-10-29）**：本章为**历史资源评估**，实际未按此投人（功能已由单人+AI 实施）；
+> 保留原文仅作决策留痕，请勿据此排期。
+
 
 ### 5.1 人力需求
 
@@ -401,6 +415,10 @@ def ignore(fn):
 
 ## 7. 输出物清单
 
+> **注（2026-10-29）**：下方原表是**计划时的状态（2026-10-16）**，其中「待开发/待编写/待更新」
+> 已全部过时 —— 这 5 个代码文件均已实现并通过测试。**实际状态见紧随原表之后的「实际状态」表**。
+> 原文一字未改，保留为历史记录。
+
 | 输出物 | 状态 | 交付时间 |
 |--------|------|----------|
 | `vools/functional/result.py` | 待开发 | 第1周 |
@@ -411,6 +429,35 @@ def ignore(fn):
 | 单元测试套件 | 待开发 | 同步 |
 | API 文档 | 待编写 | 第5周 |
 | 功能对比矩阵更新 | 待更新 | 第5周 |
+
+**实际状态（核实于 2026-10-29）**
+
+| 输出物 | 实际状态 | 证据（文件 / 行数 / 测试） |
+|--------|----------|-----------------------------|
+| `vools/functional/result.py` | ✅ 已实现 | 文件存在，314 行；`tests/functional/` 下有 Result 相关回归用例 |
+| `vools/curried/collection.py`（增强） | ✅ 已实现 | 文件存在，930 行；`tests/curried/` 覆盖 |
+| `vools/curried/iteration.py`（增强） | ✅ 已实现 | 文件存在，355 行 |
+| `vools/curried/composition.py`（增强） | ✅ 已实现 | 文件存在，255 行 |
+| `vools/decorators/control.py`（增强） | ✅ 已实现 | 文件存在，600 行；`tests/test_decorators_control_validation_regression.py` |
+| 单元测试套件 | ✅ 已实现 | 上述范围实测 **506 passed**（命令见下） |
+| API 文档 | ⚠️ 未单独产出 | 各模块有 docstring；本计划未产出独立 API 文档（**交付物，不计入 31 条功能条目**） |
+| 功能对比矩阵更新 | ⚠️ 未单独拆分 | §1 对比矩阵仍在本文档内（历史快照）（**交付物，不计入 31 条功能条目**） |
+
+**复跑命令（核实文件与测试）**
+```bash
+# 文件存在性 + 行数
+wc -l vools/functional/result.py vools/curried/{collection,iteration,composition}.py vools/decorators/control.py
+# 测试证据（仓库根）
+python -m pytest -q tests/functional tests/curried tests/test_collection_hygiene.py \
+  tests/test_curried_contract_audit.py tests/test_decorators_control_validation_regression.py \
+  tests/test_extend_result_shell_special_methods_regression.py \
+  tests/test_functional_box_dir_hasattr_regression.py tests/test_functional_box_indexing_regression.py \
+  tests/test_functional_box_run_unpack_messages_regression.py \
+  tests/test_functional_handler_roundtrip_regression.py \
+  tests/test_functional_result_maybe_validation_regression.py \
+  tests/test_result_unwrap_error_regression.py
+# → 506 passed
+```
 
 ---
 
