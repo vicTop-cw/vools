@@ -29,14 +29,40 @@ PROBE_PLAN.md §4.7 规划了 `analyze_actions(actions_dir, probe_report)`，§9
   判据，读该条目的 `extra["verdicts"]` 即可（**需要改 `intent.py`，不在本次
   作用域，需求已写进汇报**）。
 
-**`ready` 的语义边界（诚实标注，见 `READY_SCOPE_DEPS_ONLY`）**
-------------------------------------------------------------
-`verdict=ready` 只代表「声明的 deps 都满足 + 动作文件可解析」，**不保证**入口块
-的语言/指令被当前引擎支持 —— 后者只能在执行期确定。实测反例：`actus.basics.calculator`
-依赖全满足、`verdict=ready`，但 `actus run` 报「未知指令: devtools」。
-本模块**不做**块语言/指令的静态校验：支持面随引擎实现漂移，静态校验极易把能跑的
-动作误判 blocked（假阴性）；改为把限定符 `ready_scope="deps_only"` 随结果与每个
-verdict 一起下发，让消费方按"必要非充分条件"使用。
+三档判定：`ready` / `degraded` / `blocked`
+------------------------------------------
+* `ready`    —— deps 满足 **且** 入口块指令通过引擎白名单（见下「能静态判什么」）；
+* `degraded` —— deps 满足，但**入口块用了引擎不认识的指令** → 执行期必失败。
+  **刻意不等于 blocked**：依赖是满足的、动作本身存在，只是当前跑不起来；
+  做成 blocked 会让用户以为"工具坏了/动作没装"，属于假阴性误杀。
+* `blocked`  —— deps 不满足 / 文件解析失败 / 依赖成环 / 引用了不存在的动作。
+
+实测触发 `degraded` 的真实例子：`actus.basics.calculator`（以及 image_viewer /
+text_editor / todo_list 三个 webview2 种子）的入口块写了
+`webview2 #!run tag=main ... devtools=false`，而桥接层白名单里没有 `devtools`
+→ `actus run` 报「未知指令: devtools」。
+
+**能静态判什么、不能判什么（本轮调研结论）**
+-------------------------------------------
+能（且**与运行期判定等价**，不是近似）：
+* **指令**：`vools.bridge.md.directives.BLOCK_DIRECTIVE_KEYS` 是模块级**静态常量**
+  白名单；`validate_directives()` 正是 `run_block()` 在语言分派**之前**调用的同一个
+  函数（`bridges/vools/bridge/md/runner.py:488`）。本模块直接复用它 → 判据同源。
+* **作用范围**：只校验「执行期真的会跑到的块」—— 声明了 `entry` 时是 tag 含该值的块
+  （executor 传 `only=[action.entry]`）；没有 `entry` 时是**所有块**（executor 不过滤），
+  且 `run_block` 的指令校验在 `skip` 判定之前，连 skip 块也会报错。
+
+不能（**刻意不做**，避免假阴性）：
+* **语言可路由性**：只能问 `known_languages()`，要 import `vools.bridge.md.runner`
+  （实测冷导入 ~300-500ms），而 actus 的 `validate.py` 已经对每个块用
+  `is_routable()` 校验语言 —— 在 probe 里重复一遍性价比极低；
+* **编译器/运行时是否真的可用**、运行期参数是否有效：只有执行期能确定。
+
+判错的代价不对称，所以纪律是：**取不到校验器 / 校验抛异常 → 一律不判 degraded**
+（只记 `entry_block.checked=False` 与错误文本），宁可漏判也不误杀。
+
+`ready_scope="deps_and_entry_directives"` 随结果与每个 verdict 一起下发，
+让消费方知道 ready 覆盖到哪一步（仍不含语言可路由性/运行期可用性）。
 
 依赖语法（不另立一套）
 ----------------------
@@ -57,6 +83,8 @@ verdict 一起下发，让消费方按"必要非充分条件"使用。
 * **探测不到 = blocked**，绝不因为"没查到问题"就默认 ready；
 * 报告无法判定的依赖类型（npm / mcp / cs_build）同样判 blocked，并在
   `unverifiable` 里点名「为什么无法判定」，不做静默放行；
+* `degraded` **不参与** IntentRouter 的 ready 门禁（它只挡 blocked）：动作依赖满足、
+  只是静态可判地跑不起来，仍可被推荐 —— 但报告里带着可查的原因。
 * `deps` 字段缺失 **或值为 null** → 不计为"依赖满足"，而是单独列进 `undeclared`
   并在每个动作的 verdict 里带 `deps_declared: false`（**明确信号，不静默当 ready**）；
   `null` 与「键缺失」语义相同、标签不同（`<deps:null>` vs `<deps>`），
@@ -120,10 +148,24 @@ _UNVERIFIABLE_REASONS = {
     "cs_build": "探测报告未覆盖 C# 构建产物（cs_*）",
 }
 
+# 三档判定：
+#   ready    = deps 满足 **且** 入口块指令通过引擎白名单（静态可判）
+#   degraded = deps 满足，但入口块用了引擎**不认识**的指令 → 执行期必失败
+#              （**不等于 blocked**：依赖是满足的，只是这个动作当前跑不起来；
+#               故意不做成 blocked，避免"以为工具坏了"的假阴性）
+#   blocked  = deps 不满足 / 文件解析失败 / 依赖成环 / 引用不存在的动作
+VERDICT_READY = "ready"
+VERDICT_DEGRADED = "degraded"
+VERDICT_BLOCKED = "blocked"
+
 # `verdict=ready` 的语义范围（随结果下发，防止消费方过度解读）。
-# "deps_only" = 只保证「声明的 deps 都满足 + 动作文件可解析」，
-# **不保证**入口块语言/指令被当前引擎支持 —— 那只能执行期确定。
-READY_SCOPE_DEPS_ONLY = "deps_only"
+# "deps_and_entry_directives" = deps 都满足 + 动作文件可解析 + **入口块指令**
+# 通过引擎的 `BLOCK_DIRECTIVE_KEYS` 白名单。
+# **仍不保证**：语言可路由性（validate.py 的 is_routable 已逐块覆盖）、
+# 编译器/运行时真的装了、运行期参数是否有效 —— 那些只能执行期确定。
+READY_SCOPE_DEPS_AND_ENTRY_DIRECTIVES = "deps_and_entry_directives"
+# 兼容旧名（外部可能 import 过；语义已被上面的新常量取代）
+READY_SCOPE_DEPS_ONLY = "deps_and_entry_directives"
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +242,8 @@ def _scan_actions_with_deps(actions_dir: str = None) -> dict:
                     #   list    = 作者明确写了列表（含 []，是有效信息：我没依赖）
                     #   invalid = 键在但类型不对    → 交给 invalid_deps_field 信号
                     "deps_field": "missing",
+                    "entry": "",
+                    "blocks": [],
                     "parse_error": None,
                 }
                 try:
@@ -207,6 +251,10 @@ def _scan_actions_with_deps(actions_dir: str = None) -> dict:
                     action = parse_cfg_from_file(full)
                     meta = action.meta or {}
                     entry["id"] = meta.get("id") or rel
+                    # 入口块信息：只读解析结果（parse_cfg_from_file 本来就要跑，
+                    # 不额外 IO）。用于下一步「入口块指令是否被引擎认识」的静态判定。
+                    entry["entry"] = (meta.get("entry") or "")
+                    entry["blocks"] = list(getattr(action, "blocks", None) or [])
                     if "deps" in meta:
                         raw_deps = meta.get("deps")
                         if raw_deps is None:
@@ -497,6 +545,77 @@ def _dep_kind(dep):
     return "unknown", name
 
 
+def _entry_check_targets(entry):
+    """选出执行期**会被跑到**的块（入口块语义，与 executor 的 only=[entry] 对齐）。
+
+    * 动作声明了 `entry`：只跑 tag 里含该值的块（executor 传 `only=[action.entry]`）；
+    * 没声明 entry：executor 不传 only → **所有块**都会跑，因此所有块都要校验
+      （注意 run_block 的指令校验发生在 skip 判定**之前**，连 skip 块也会报错）。
+    """
+    blocks = entry.get("blocks") or []
+    wanted = (entry.get("entry") or "").strip()
+    if wanted:
+        return [b for b in blocks if wanted in (b.get("tag") or [])]
+    return list(blocks)
+
+
+def _check_entry_block_directives(entry):
+    """用引擎自己的指令白名单校验「会被执行到的块」，返回 (degraded_reasons, info)。
+
+    **为什么只做指令、不做语言**（本轮调研结论）：
+      * 指令白名单 `vools.bridge.md.directives.BLOCK_DIRECTIVE_KEYS` 是**模块级静态
+        常量**，而 `validate_directives()` 正是 `run_block()` 在语言分派**之前**
+        调用的同一个函数（bridge/md/runner.py:488）→ 静态判定与运行期判定**等价**，
+        不是近似；
+      * 语言可路由性只能问 `known_languages()`，它要 import
+        `vools.bridge.md.runner`（实测 ~297ms），而 actus 的 `validate.py` 已经
+        对每个块用 `is_routable()` 校验过语言 —— 在 probe 里重复一遍性价比极低。
+    宁可漏判也不误判：取不到校验器时**不判定**（`checked=False`），绝不猜。
+    """
+    targets = _entry_check_targets(entry)
+    info = {
+        "checked": False,
+        "entry": entry.get("entry") or "",
+        "blocks": [],
+    }
+    if not targets:
+        return [], info
+
+    try:
+        from vools.bridge.md.directives import validate_directives
+    except Exception as exc:            # 校验器不可用 → 不判定（不猜）
+        info["error"] = "%s: %s" % (type(exc).__name__, exc)
+        return [], info
+
+    reasons = []
+    for block in targets:
+        language = (block.get("language") or "").lower()
+        directives = block.get("directives") or {}
+        try:
+            errors = validate_directives(directives, language)
+        except Exception as exc:        # 单个块校验炸了 → 记信号但不判 degraded
+            info["blocks"].append({
+                "index": block.get("index"), "language": language,
+                "ok": None, "error": "%s: %s" % (type(exc).__name__, exc),
+            })
+            continue
+        info["blocks"].append({
+            "index": block.get("index"), "language": language,
+            "ok": not errors, "errors": errors,
+        })
+        for message in errors:
+            reasons.append({
+                "kind": "entry_block_unsupported",
+                "dep": "<entry-block>",
+                "status": "degraded",
+                "reason": "块 index=%s（language=%s）的指令不被引擎支持：%s"
+                          "（执行期会在 run_block 的指令校验处直接失败）"
+                          % (block.get("index"), language or "?", message),
+            })
+    info["checked"] = True
+    return reasons, info
+
+
 def _check_simple_dep(kind, name, caps):
     """非 action 依赖：返回 (status, reason)。status ∈ ok / missing / unverifiable。"""
     if kind == "builtin":
@@ -530,10 +649,12 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
 
     返回 dict:
         total / ready / blocked / missing_deps  ← §4.7 契约字段
-        **ready_scope**: 恒为 `"deps_only"` —— `verdict=ready` 的语义限定符
+        **ready_scope**: `"deps_and_entry_directives"` —— `verdict=ready` 的语义限定符
+        degraded:      入口块指令不被引擎支持的动作数（**不计入 blocked**）
         verdicts:      {action_id: {verdict, ready_scope, deps, missing_deps,
-                                    blocked_reasons, deps_declared, deps_field,
-                                    path, parse_error}}
+                                    blocked_reasons, degraded_reasons, entry_block,
+                                    deps_declared, deps_field, path, parse_error}}
+                       verdict ∈ {"ready", "degraded", "blocked"}
         undeclared:    [action_id ...]   没声明 deps 的动作（键缺失或值为 null；明确信号）
         parse_failed:  [action_id ...]   连文件都解析不了的动作
         unverifiable:  {action_id: [dep ...]}  报告无法判定的依赖
@@ -567,8 +688,8 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
         verdicts[entry["id"]] = {
             "verdict": "pending",
             # 逐动作也带一份语义限定符：消费方只拿到 verdicts 时同样不会被
-            # `ready` 误导（值同 results["ready_scope"]，当前恒为 deps_only）。
-            "ready_scope": READY_SCOPE_DEPS_ONLY,
+            # `ready` 误导（值同 results["ready_scope"]）。
+            "ready_scope": READY_SCOPE_DEPS_AND_ENTRY_DIRECTIVES,
             "deps": [],
             "missing_deps": [],
             "blocked_reasons": [],
@@ -577,6 +698,8 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
             "path": entry["path"],
             "parse_error": entry["parse_error"],
         }
+
+    entries_by_id = {entry["id"]: entry for entry in entries}
 
     # ── 第一轮：文件解析失败 / 非 action 依赖 ──
     action_deps = {}
@@ -706,18 +829,36 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
                 if label not in record["missing_deps"]:
                     record["missing_deps"].append(label)
 
+    # ── 第三轮：degraded（deps 满足，但入口块指令不被引擎支持）──
+    # 只用引擎自己的白名单判定「会被执行到的块」，判错的代价是"把能跑的动作说成
+    # 跑不了"，所以：取不到校验器/校验抛异常的块一律**不判** degraded，
+    # 只把 checked/error 记进 verdict 供排障。degraded **不进** blocked 计数，
+    # 也不参与 IntentRouter 的门禁（它只挡 blocked）。
+    for ident, record in verdicts.items():
+        if record["verdict"] != VERDICT_READY:
+            continue
+        entry = entries_by_id.get(ident)
+        if entry is None:
+            continue
+        reasons, info = _check_entry_block_directives(entry)
+        record["entry_block"] = info
+        if reasons:
+            record["verdict"] = VERDICT_DEGRADED
+            record["degraded_reasons"] = reasons
+
     # ── 汇总 ──
     # ready_scope 是**语义限定符**，随结果与每个 verdict 一起下发给消费方：
-    #   "deps_only" = verdict=ready 只代表「声明的 deps 都满足 + 动作文件可解析」，
-    #   **不保证**入口块的语言/指令被当前引擎支持（那取决于执行期，例如
-    #   `webview2 ... devtools` 这类指令在运行前无法判定）。
-    # 为什么不做完整校验：块语言/指令的支持面随引擎实现漂移，静态校验极易
-    # 假阴性（把能跑的动作误判 blocked）；诚实标注比过度承诺更可靠。
+    #   "deps_and_entry_directives" = verdict=ready 代表「declared deps 都满足 +
+    #   动作文件可解析 + 入口块指令通过引擎白名单」。**仍不保证**语言可路由性
+    #   （validate.py 的 is_routable 已逐块覆盖）、编译器真的装了、运行期有效。
+    # 实测会落到 degraded 的例子：`actus.basics.calculator` 等 4 个 webview2 动作
+    #   的入口块写了引擎未实现的 `devtools` 指令 → `actus run` 报「未知指令: devtools」。
     results = {
         "total": len(entries),
         "ready": 0,
+        "degraded": 0,
         "blocked": 0,
-        "ready_scope": READY_SCOPE_DEPS_ONLY,
+        "ready_scope": READY_SCOPE_DEPS_AND_ENTRY_DIRECTIVES,
         "missing_deps": {},
         "verdicts": verdicts,
         "undeclared": [],
@@ -730,8 +871,11 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
         "exists": scan["exists"],
     }
     for ident, record in verdicts.items():
-        if record["verdict"] == "ready":
+        verdict = record["verdict"]
+        if verdict == VERDICT_READY:
             results["ready"] += 1
+        elif verdict == VERDICT_DEGRADED:
+            results["degraded"] += 1
         else:
             results["blocked"] += 1
         if record["missing_deps"]:
