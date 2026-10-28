@@ -7,6 +7,8 @@
 import os
 import sys
 import time
+import warnings
+
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -33,6 +35,69 @@ PG_SPEC = {
 #: Unique table name per test session
 _SESSION_TABLE = "rhop_test_pg_%d" % int(time.time())
 
+#: 本会话**创建过**的表名（精确跟踪，用于会话结束回收）。
+#: 刻意不用 ``DROP TABLE rhop_%`` 通配：那会误删别的测试/别人的表（并发跑时尤其危险）。
+_SESSION_TABLES = set()
+
+
+def _track_table(table):
+    """登记本会话创建的表名（回收时只按这份精确清单删）。"""
+    if table:
+        _SESSION_TABLES.add(table)
+    return table
+
+
+def _drop_session_tables():
+    """回收本会话创建的表 + 各自的 ``_schema_meta``。
+
+    best-effort：连不上库 / 单张表删失败都**不抛异常**，但会用 ``warnings`` 留信号
+    （静默失败会让残留表问题重新变成幽灵）。
+    返回已成功 DROP 的表名列表。
+    """
+    names = sorted(_SESSION_TABLES)
+    if not names:
+        return []
+    dropped, failed = [], []
+    conn = None
+    try:
+        import psycopg2
+        conn = psycopg2.connect(host=PG_SPEC["host"], port=PG_SPEC["port"],
+                                user=PG_SPEC["user"], password=PG_SPEC["password"],
+                                dbname=PG_SPEC["dbname"], connect_timeout=3)
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            for table in names:
+                for name in (table, table + "_schema_meta"):
+                    try:
+                        cur.execute('DROP TABLE IF EXISTS "%s" CASCADE' % name)
+                        dropped.append(name)
+                    except Exception as exc:  # noqa: BLE001 - 单表失败不拖垮其余
+                        failed.append("%s: %s" % (name, str(exc).splitlines()[0][:120]))
+    except Exception as exc:  # noqa: BLE001
+        warnings.warn("pg 会话表回收跳过（连接不可用）: %s" % exc, stacklevel=2)
+        return []
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    if failed:
+        warnings.warn("pg 会话表回收部分失败: %r" % (failed,), stacklevel=2)
+    _SESSION_TABLES.clear()
+    return dropped
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _reclaim_session_tables():
+    """会话结束回收本会话创建的表（**只**本会话登记的精确表名）。
+
+    只在 pg 放行（探活通过）时执行；PG 不可达时一个连接都不建，非 pg 用例不受影响。
+    """
+    yield
+    if _PG_ALLOWED:
+        _drop_session_tables()
+
 
 #: 放行判定交给共享探针（多次「真实查询」探活 + 平台/opt-in 策略）。
 #: 为什么不再用「单次 connect」：Windows→WSL 的 localhost 转发是抖动的，
@@ -48,7 +113,7 @@ pytestmark = pytest.mark.skipif(not _PG_ALLOWED, reason=_PG_SKIP_REASON)
 
 def _pg_store(table=None, **overrides):
     """创建一个 PostgreSQL 测试 store（自动清理旧表 + 旧 type）。"""
-    table = table or _SESSION_TABLE
+    table = _track_table(table or _SESSION_TABLE)
     spec = dict(PG_SPEC)
     spec["table"] = table
     spec.update(overrides)
@@ -360,7 +425,7 @@ class TestPgTaskQueueIntegration:
         from vools.rhop.task.config import TaskConfig
         from vools.rhop.task.queue import TaskQueue
 
-        table = "rhop_test_pg_itest"
+        table = _track_table("rhop_test_pg_itest")   # 会话结束统一回收（含 _schema_meta）
         # 清理
         try:
             cfg = TaskConfig.from_dict({
@@ -412,6 +477,7 @@ class TestABSharedDatabase:
     TABLE = "rhop_test_ab_shared"
 
     def _pair(self, table):
+        _track_table(table)          # 会话结束统一回收（含 _schema_meta）
         spec = dict(PG_SPEC, table=table)
         a = create_store(spec, {"name": "A", "role": "A", "base_dir": "."})
         a.init_schema()
@@ -489,3 +555,43 @@ class TestABSharedDatabase:
         first = b.claim_next("worker-B")
         assert first is not None
         assert a.claim_next("worker-A") is None, "LOCKED 任务被另一个实例重复领取"
+
+# ---------------------------------------------------------------------------
+# 会话级表回收（残留表根因修复的回归）
+# ---------------------------------------------------------------------------
+
+def test_session_tables_are_tracked_and_reclaimed():
+    """本会话创建的表（含 `_schema_meta`）能被**精确**回收。
+
+    回归：此前 `_SESSION_TABLE` 只建不删 —— 每跑一次 pg 用例就在库里留一张表 +
+    一张 `_schema_meta`，人工清理治不了本。
+    """
+    store = _pg_store()
+    store.close()
+    table = _SESSION_TABLE
+    assert table in _SESSION_TABLES, "创建过的表必须登记进 _SESSION_TABLES"
+
+    dropped = _drop_session_tables()
+    expected = {table, table + "_schema_meta"}
+    assert expected <= set(dropped), (
+        "登记表与其 _schema_meta 都应被 DROP: %r" % (dropped,))
+
+    import psycopg2
+    conn = psycopg2.connect(host=PG_SPEC["host"], port=PG_SPEC["port"],
+                            user=PG_SPEC["user"], password=PG_SPEC["password"],
+                            dbname=PG_SPEC["dbname"], connect_timeout=3)
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            for name in sorted(expected):
+                cur.execute("SELECT to_regclass(%s)", (name,))
+                assert cur.fetchone()[0] is None, "表仍残留: %s" % name
+    finally:
+        conn.close()
+    assert _SESSION_TABLES == set(), "回收后登记表应清空"
+
+
+def test_session_tables_reclaim_without_registry_is_noop():
+    """没有登记表时回收是 no-op（不建连接、不报错、不吞异常）。"""
+    _SESSION_TABLES.clear()
+    assert _drop_session_tables() == []
