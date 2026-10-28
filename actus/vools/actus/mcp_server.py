@@ -740,6 +740,18 @@ class MCPServer:
                                  'auto_install': {'type': 'boolean',
                                                   'description': '是否自动安装缺失依赖（默认 false）'},
                              }}},
+            {'name': 'actus_vault_rotate_seed',
+             'description': ('轮换身份的 seed_key（**破坏性**）：重加密全部 secrets 与'
+                             ' rotated_backups、更新 seed_key 信封、清 used_codes、'
+                             '**失效该身份所有会话**，并让 recovery_key 失效。'
+                             '必须显式传 confirm=true（缺省只报 param_invalid，不执行）。'
+                             '成功后返回 rotated_secrets / rotated_backups / seed_fingerprint /'
+                             ' sessions_invalidated / warnings；recovery_key_invalidated=true 时'
+                             ' **仍是成功**（isError=false），只需提醒用户重新生成恢复密钥。'),
+             'inputSchema': {'type': 'object', 'required': ['confirm'],
+                             'properties': {
+                                 'confirm': {'type': 'boolean',
+                                             'description': '必须为 true 才执行（破坏性操作的显式确认）'}}}},
             {'name': 'actus_runtimes',
              'description': '列出所有可用的多语言运行时（python/shell/node/go/rust/ruby/php）',
              'inputSchema': {'type': 'object', 'properties': {}}},
@@ -1999,6 +2011,21 @@ class MCPServer:
                 return text_result({'status': 'failed', 'error': {
                     'code': 'vault_error', 'message': str(e)}}, True)
 
+        if name == 'actus_vault_rotate_seed':
+            # 破坏性操作：confirm 必须为 true（required 里已声明，这里再校验取值）
+            if args.get('confirm') is not True:
+                return text_result({'status': 'failed', 'error': {
+                    'code': 'confirmation_required',
+                    'message': ('轮换 seed_key 是破坏性操作（会失效所有会话与 recovery_key），'
+                                '必须显式传 confirm=true')}}, True)
+            from vools.actus.vault import rotate_seed_key_v2
+            try:
+                r = rotate_seed_key_v2(caller='mcp.vault')
+            except Exception as e:
+                return text_result({'status': 'failed', 'error': {
+                    'code': 'rotate_failed', 'message': str(e)}}, True)
+            # warnings 全程留在返回体里（尤其 recovery_key_invalidated），不静默
+            return text_result(r)
         if name == 'actus_runtimes':
             from vools.actus.runtimes import get_available_runtimes
             try:
