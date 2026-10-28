@@ -140,9 +140,13 @@ def ledger_corrupt() -> bool:
 _load_ledger_state: Dict[str, Any] = {'corrupt': False, 'path': None}
 
 
-def load_ledger(task_id: str, meta_dir: Optional[str] = None) -> Dict[str, Any]:
-    """读账本。缺失 → 空账本；**损坏 → 备份为 `.corrupt-<ts>` + 返回带 corrupt 标记的
-    空账本（写侧会拒绝覆盖，绝不静默清空历史）**。
+def load_ledger(task_id: str, meta_dir: Optional[str] = None,
+                repair: bool = False) -> Dict[str, Any]:
+    """读账本。缺失 → 空账本；损坏 → 返回带 corrupt 标记的空账本。
+
+    `repair=False`（默认，第 14 轮审计修复）：**只读**，不把损坏账本改名备份
+    （旧实现 `load_` 会在读路径 `os.replace` 改用户数据目录，只读 FS 直接失败）。
+    写路径调用方（`_append`/`_update_status`）显式传 `repair=True` 保留备份语义。
 
     审计修复（P2 静默清空）：改前 `except Exception` 直接返回空账本 —— 损坏文件
     被当成"没有记录"，下一次 `_append` 落盘就把原历史（可能是 approved 语料/
@@ -168,15 +172,19 @@ def load_ledger(task_id: str, meta_dir: Optional[str] = None) -> Dict[str, Any]:
         if not isinstance(data, dict):
             raise ValueError('账本顶层不是对象: %s' % type(data).__name__)
     except (OSError, ValueError) as exc:
-        backup = '%s.corrupt-%d' % (path, int(time.time()))
-        try:
-            os.replace(path, backup)
-        except OSError:
-            backup = None
+        backup = None
+        if repair:
+            backup = '%s.corrupt-%d' % (path, int(time.time()))
+            try:
+                os.replace(path, backup)
+            except OSError:
+                backup = None
         _load_ledger_state.update({'corrupt': True, 'path': path})
         broken = dict(empty)
         broken.update({'corrupt': True, 'corrupt_backup': backup,
-                       'corrupt_reason': '%s: %s' % (type(exc).__name__, exc)})
+                       'corrupt_reason': '%s: %s%s' % (
+                           type(exc).__name__, exc,
+                           '' if repair else '（repair=False：未自动备份，只读返回）')})
         return broken
     data.setdefault('task_id', tid)
     data.setdefault('records', [])
@@ -367,8 +375,8 @@ class OmegaStrong:
         self.max_rounds = omega_norm_max_rounds(max_rounds)
 
     # ── 账本原语 ──
-    def _load(self) -> Dict[str, Any]:
-        return load_ledger(self.task_id, self.meta_dir)
+    def _load(self, repair: bool = False) -> Dict[str, Any]:
+        return load_ledger(self.task_id, self.meta_dir, repair=repair)
 
     def _save(self, data: Dict[str, Any]) -> str:
         return _save_ledger(data, self.meta_dir)
@@ -396,7 +404,7 @@ class OmegaStrong:
     def _append(self, rec: Dict[str, Any]) -> None:
         # 读改写整段加锁：防并发丢更新（两个进程各自 load→append→save 会互相覆盖）
         with _ledger_lock(_ledger_path(self.task_id, self.meta_dir)):
-            data = self._load()
+            data = self._load(repair=True)      # 写路径保留损坏备份语义
             data['max_rounds'] = self.max_rounds
             # 同 id 覆盖（upsert 语义）
             data['records'] = [r for r in data['records']
@@ -406,7 +414,7 @@ class OmegaStrong:
     def _update_status(self, rec_id: str, status: str,
                        content: Optional[str] = None) -> None:
         with _ledger_lock(_ledger_path(self.task_id, self.meta_dir)):
-            data = self._load()
+            data = self._load(repair=True)      # 写路径保留损坏备份语义
             for r in data['records']:
                 if r.get('id') == rec_id:
                     r['status'] = status
@@ -575,8 +583,9 @@ class OmegaStrong:
         return out
 
     # ── 外部命令判据（[gate:required]） ──
-    def check_record(self, check: dict) -> Dict[str, Any]:
-        """记录一次外部命令检查结果。
+    def record_check(self, check: dict) -> Dict[str, Any]:
+        """**写账本**：记录一次外部命令检查结果（`check_` 前缀易误认为只读，
+        第 14 轮改名 `record_check`；旧名 `check_record` 保留为 deprecated 别名）。
 
         审计修复（P2 假通过）：改前门禁状态由调用方传入的 `check['ok']` 直接决定 ——
         实测 `check_record({'ok': True})` 就能记成 `passed` 并让 `check_gate` 放行，
@@ -611,6 +620,10 @@ class OmegaStrong:
              int((time.perf_counter() - t0) * 1000), self.task_id)
         return {'ok': True, 'check_id': cid, 'task_id': self.task_id,
                 'round': rnd, 'status': eff, 'exit_code': exit_code, 'cmd': cmd}
+
+    def check_record(self, check: dict) -> Dict[str, Any]:
+        """Deprecated 别名（第 14 轮）：语义是**写账本**，请用 `record_check`。"""
+        return self.record_check(check)
 
     # ── 门禁 ──
     def execute_gate(self, task: Any = None) -> Tuple[bool, str]:

@@ -205,10 +205,28 @@ def _download_url(url: str, allow_hosts: List[str] = None) -> str:
     return local_path
 
 
+def _known_index() -> dict:
+    """只读取索引：存在 → 直接读；缺失/为空 → 内存扫描（不写缓存/不建索引）。"""
+    from .indexer import load_index, scan_actions
+    index = load_index(build=False)
+    if index.get('actions'):
+        return index
+    scanned = scan_actions(validate=False, write_cache=False)
+    return {'actions': {aid: action.brief() for aid, action in scanned.items()}}
+
+
+def _known_action_ids() -> dict:
+    return _known_index().get('actions') or {}
+
+
 def resolve_target(target: str, allow_hosts: List[str] = None,
                    expect_digest: Optional[str] = None,
                    expect_signature_key: Optional[str] = None) -> ResolvedTarget:
-    """解析目标字符串为 ResolvedTarget（ACTUS_REFACTOR_PLAN.md §3.1 优先级链）。
+    """⚠️ **本函数可能写盘**：action_id / md5 分支不建索引（缺失时内存扫描，
+    write_cache=False）；**URL 分支会 `_download_url` 下载到磁盘**（远程动作源
+    解析固有行为，白名单/指纹/签名由调用方负责）。
+
+    解析目标字符串为 ResolvedTarget（ACTUS_REFACTOR_PLAN.md §3.1 优先级链）。
 
     Args:
         target: CLI 传入的 <target> 字符串
@@ -248,20 +266,19 @@ def resolve_target(target: str, allow_hosts: List[str] = None,
     if _is_action_id(raw):
         result.source = 'id'
         result.action_id = raw
-        # 验证 id 是否存在于索引
-        index = load_index()
-        if raw not in (index.get('actions') or {}):
+        # 验证 id 是否存在（只读：索引缺失时内存扫描，不落盘）
+        known = _known_action_ids()
+        if raw not in known:
             raise ActionError(
                 'action_not_found',
                 f'动作 id 不存在: {raw}',
-                {'source': 'id', 'known': sorted((index.get('actions') or {}).keys())[:20]},
+                {'source': 'id', 'known': sorted(known.keys())[:20]},
             )
         return result
 
     # 优先级 3: 32 位 hex 指纹
     if _is_hex32(raw):
-        index = load_index()
-        aid = _lookup_by_md5(raw, index)
+        aid = _lookup_by_md5(raw, _known_index())
         if aid:
             result.source = 'md5'
             result.action_id = aid

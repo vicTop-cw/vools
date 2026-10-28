@@ -646,7 +646,8 @@ def _v2_read_secret(name: str):
     if reason:
         return 'unavailable', None, reason
     try:
-        result = v2.get_secret(token, name, caller='vault.resolver')
+        result = v2.get_secret(token, name, caller='vault.resolver',
+                               read_only=True)
     except Exception as exc:  # noqa: BLE001
         return 'unavailable', None, 'v2 读取异常（%s: %s）' % (type(exc).__name__, exc)
     if result.get('status') == 'ok':
@@ -660,7 +661,8 @@ def _v2_read_secret(name: str):
         if reason:
             return 'unavailable', None, reason
         try:
-            result = v2.get_secret(token, name, caller='vault.resolver')
+            result = v2.get_secret(token, name, caller='vault.resolver',
+                                   read_only=True)
         except Exception as exc:  # noqa: BLE001
             return 'unavailable', None, 'v2 读取异常（%s: %s）' % (type(exc).__name__, exc)
         if result.get('status') == 'ok':

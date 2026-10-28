@@ -123,7 +123,9 @@ def get_cost_summary(month: str = None) -> dict:
     为什么不抛异常：账本是运行时旁路数据，读失败不该打断业务调用；但"读不完整"
     必须让调用方看得见 —— 改前它看不见（静默 continue）。
     """
-    _ensure_dir()
+    # 第 14 轮审计：`get_cost_summary` 是只读汇总，不再 `_ensure_dir()`（旧实现
+    # 会在只读 FS 上因 mkdir 失败）；目录不存在时下面 os.path.exists 直接返回
+    # 空汇总；目录创建只在写路径（record_cost）发生。
     if month is None:
         month = datetime.now().strftime('%Y-%m')
     filepath = os.path.join(COSTS_DIR, f'{month}.jsonl')

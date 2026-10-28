@@ -999,7 +999,18 @@ class Vault2:
         return True, sess
 
     # ── get_secret ──
-    def get_secret(self, token: str, name: str, caller: str = None) -> dict:
+    def get_secret(self, token: str, name: str, caller: str = None,
+                   read_only: bool = False) -> dict:
+        """读取解密一个密钥。
+
+        第 14 轮审计修复（D 类「名实不符的只读」）：本函数名字是 get，但此前：
+          * 每次读都 `_audit(...)` → **追加 audit.log**（读也写盘）；
+          * 读到 legacy 行（`key_salt IS NULL`）会 `UPDATE secrets ...` **懒迁移**，
+            等于"读密钥"改了权威数据 —— 只读文件系统上直接失败。
+        现在 `read_only=True` 时：**不写 audit.log、不做懒迁移**，返回值里带
+        `legacy: true` 让上层自行决定（显式迁移走 `migrate_legacy_rows()` 或写路径）。
+        默认 `read_only=False` 完全保持旧行为（审计 + 懒迁移），兼容既有调用方。
+        """
         ok, sess = self._verify_token(token)
         if not ok:
             return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
@@ -1015,16 +1026,18 @@ class Vault2:
                 (identity_id, name),
             ).fetchone()
             if not row:
-                self._audit("get", identity_id, sess["machine_id"], target=name,
-                           success=False, reason="not_found", caller=caller)
+                if not read_only:
+                    self._audit("get", identity_id, sess["machine_id"], target=name,
+                                success=False, reason="not_found", caller=caller)
                 return {"status": "error", "message": "凭证不存在"}
 
             (value_enc, stype, level, expires, meta_json,
              cipher_alg, key_salt_hex, key_iters, key_dklen) = row
 
             if expires and int(time.time()) > expires:
-                self._audit("get", identity_id, sess["machine_id"], target=name,
-                           success=False, reason="expired", caller=caller)
+                if not read_only:
+                    self._audit("get", identity_id, sess["machine_id"], target=name,
+                                success=False, reason="expired", caller=caller)
                 return {"status": "error", "message": "凭证已过期"}
 
             # ── 密钥派生：向后兼容 + 懒迁移 ──
@@ -1044,12 +1057,15 @@ class Vault2:
                 backend = _make_backend(effective_alg, row_key)
                 value = backend.decrypt(value_enc)
             except Exception as e:
-                self._audit("get", identity_id, sess["machine_id"], target=name,
-                           success=False, reason=f"decrypt_error: {e}", caller=caller)
+                if not read_only:
+                    self._audit("get", identity_id, sess["machine_id"], target=name,
+                                success=False, reason=f"decrypt_error: {e}", caller=caller)
                 return {"status": "error", "message": "凭证解密失败（密钥错误？）"}
 
-            # 懒迁移：旧格式读取成功后自动升级为行级加密
-            if is_legacy:
+            # 懒迁移：旧格式读取成功后自动升级为行级加密。
+            # read_only=True 时**绝不迁移**（只把 legacy 标记回给上层，由显式
+            # migrate_legacy_rows()/写路径决定）——"读"不能改权威数据。
+            if is_legacy and not read_only:
                 try:
                     new_salt = secrets.token_bytes(16)
                     new_row_key = _derive_row_key(master_key, new_salt)
@@ -1067,11 +1083,40 @@ class Vault2:
                     pass
 
             metadata = json.loads(meta_json) if meta_json else {}
-            self._audit("get", identity_id, sess["machine_id"], target=name,
-                       success=True, caller=caller)
+            if not read_only:
+                self._audit("get", identity_id, sess["machine_id"], target=name,
+                            success=True, caller=caller)
             return {"status": "ok", "name": name, "value": value,
                     "type": stype, "security_level": level,
-                    "expires_at": expires, "metadata": metadata}
+                    "expires_at": expires, "metadata": metadata,
+                    # 第 14 轮：读路径不再自动迁移旧行，把标记透出给上层
+                    "legacy": bool(is_legacy)}
+
+    def migrate_legacy_rows(self, token: str) -> dict:
+        """显式迁移该身份下的 legacy 行（key_salt 为空 → 行级加密）。
+
+        返回 {'status','checked','migrated','failed'}。
+        只在**显式**操作/写路径调用；读路径（read_only=True）绝不自动迁移。
+        """
+        ok, sess = self._verify_token(token)
+        if not ok:
+            return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
+        identity_id = sess["identity_id"]
+        with self._db() as conn:
+            rows = [r[0] for r in conn.execute(
+                "SELECT name FROM secrets WHERE identity_id=? AND key_salt IS NULL",
+                (identity_id,)).fetchall()]
+        migrated, failed = 0, []
+        for name in rows:
+            result = self.get_secret(token, name, caller="vault.migrate",
+                                     read_only=False)
+            if result.get("status") == "ok":
+                migrated += 1
+            else:
+                failed.append({"name": name,
+                               "reason": result.get("message")})
+        return {"status": "ok", "checked": len(rows),
+                "migrated": migrated, "failed": failed}
 
     # ── set_secret ──
     def set_secret(self, token: str, name: str, value: str, secret_type: str = "api_key",
@@ -1368,7 +1413,8 @@ class Vault2:
                 "backup_id": bid, "rotated_at": rotated_at}
 
     # ── resolve_vault_refs ──
-    def resolve_vault_refs(self, token: str, secrets_config: List[dict]) -> dict:
+    def resolve_vault_refs(self, token: str, secrets_config: List[dict],
+                           read_only: bool = False) -> dict:
         """解析 vault:// 引用，批量读取凭证并返回 env → value 映射。
 
         secrets_config 格式（与动作 cfg 中 secrets 声明兼容）：
@@ -1399,7 +1445,8 @@ class Vault2:
                 continue
 
             secret_name = key_ref[len("vault://"):]
-            result = self.get_secret(token, secret_name, caller="vault.resolve")
+            result = self.get_secret(token, secret_name, caller="vault.resolve",
+                                     read_only=read_only)
             if result["status"] == "ok":
                 resolved[env_name] = result["value"]
             elif default is not None:
@@ -1692,8 +1739,9 @@ def auth(identity_id: str, machine_id: str, pin: str, hardware_token: str = None
     return _get_vault2().auth(identity_id, machine_id, pin, hardware_token)
 
 
-def get_secret(token: str, name: str, caller: str = None) -> dict:
-    return _get_vault2().get_secret(token, name, caller)
+def get_secret(token: str, name: str, caller: str = None,
+               read_only: bool = False) -> dict:
+    return _get_vault2().get_secret(token, name, caller, read_only=read_only)
 
 
 def set_secret(token: str, name: str, value: str, secret_type: str = "api_key",
@@ -1741,8 +1789,19 @@ def cleanup_rotated_backups() -> dict:
     return _get_vault2().cleanup_rotated_backups()
 
 
-def resolve_vault_refs(token: str, secrets_config: List[dict]) -> dict:
-    return _get_vault2().resolve_vault_refs(token, secrets_config)
+def resolve_vault_refs(token: str, secrets_config: List[dict],
+                       read_only: bool = False) -> dict:
+    return _get_vault2().resolve_vault_refs(token, secrets_config,
+                                            read_only=read_only)
+
+
+def migrate_legacy_rows(token: str) -> dict:
+    """**显式**迁移 legacy 行（key_salt 为空）→ 行级加密。
+
+    第 14 轮：读路径（get_secret(read_only=True)）不再顺手迁移；需要迁移时
+    由调用方/运维显式触发本函数（或走会把 read_only=False 的写入口）。
+    """
+    return _get_vault2().migrate_legacy_rows(token)
 
 
 def anomaly_check(token: str, window_seconds: int = 3600) -> dict:
