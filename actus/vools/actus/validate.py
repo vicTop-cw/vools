@@ -19,7 +19,9 @@ __all__ = ['validate_action', 'validate_graph', 'analyze_graph', 'check_entry_bl
            # 资产化治理（future_plan §3 修订落地）
            'check_platform', 'check_id_namespace', 'check_usage_executable',
            'check_self_contained', 'check_trust_tests', 'resolve_test_binding',
-           'check_secrets_hardcode', 'check_omega_gate', 'governance_notices']
+           'check_secrets_hardcode', 'check_omega_gate', 'governance_notices',
+           # 校验结果分类（runtime: 提示 ≠ 动作错误）
+           'RUNTIME_NOTE_PREFIX', 'split_validation', 'is_valid']
 
 import json
 import os
@@ -27,6 +29,49 @@ import re
 import sys
 from typing import Dict, List, Tuple
 from .paths import repo_root
+
+# ── 校验结果的两类条目（口径，lead 裁决）────────────────────────────────
+#
+# validate_action() 的返回列表里有两种性质完全不同的条目：
+#   * **真实错误**     动作本身不合规（缺必填字段 / id 命名错 / schema 不匹配…）
+#   * **运行时提示**   以 `runtime:` 开头：**环境**问题（裸仓库缺 contracts/
+#                      action.schema.json、没装 jsonschema、语言路由表导入失败…）
+#
+# 后者不是"这个动作有缺陷"，不能把动作判成 invalid —— 否则在裸仓库/客户机上
+# 所有动作一律红，把配置问题伪装成动作问题（与上一轮 `_SchemaUnavailable`
+# 的立论一致）。但**也不能过滤掉**：过滤掉等于重新造一个假绿灯，用户看不到
+# "schema 级校验被跳过了"。所以：条目照常返回，只把 valid 的判据分成两类。
+#
+# 使用方式（输出侧必须仍然展示 runtime 提示）：
+#   real, notes = split_validation(errors)
+#   ok = is_valid(errors)            # 只看 real
+#   for note in notes: print('⚠️', note, file=sys.stderr)
+RUNTIME_NOTE_PREFIX = 'runtime:'
+
+
+def split_validation(errors) -> Tuple[List[str], List[str]]:
+    """把校验结果拆成 (真实错误, 运行时提示)。
+
+    Args:
+        errors: validate_action() 的返回值（或任意字符串列表）。
+
+    Returns:
+        (real_errors, runtime_notes)。runtime_notes 是**环境提示**，
+        不表示动作不合规，输出侧应展示但不影响 valid/退出码。
+    """
+    real_errors: List[str] = []
+    runtime_notes: List[str] = []
+    for entry in errors or []:
+        if str(entry).startswith(RUNTIME_NOTE_PREFIX):
+            runtime_notes.append(entry)
+        else:
+            real_errors.append(entry)
+    return real_errors, runtime_notes
+
+
+def is_valid(errors) -> bool:
+    """动作是否**真的**通过校验：只看真实错误，忽略 `runtime:` 环境提示。"""
+    return not split_validation(errors)[0]
 
 from .errors import ActionError
 from .model import Action, parse_cfg_from_file

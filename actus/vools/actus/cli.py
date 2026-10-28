@@ -1624,8 +1624,8 @@ def _cmd_private(args) -> int:
 _CFG_BLOCK_RE = re.compile(r"(```json\s*#!cfg\s*\n)(.*?)(```)", re.DOTALL)
 
 
-def _write_action_visibility(action_path: str, level: str):
-    """把动作 `#!cfg` 块里的 visibility 改成 level，返回 (ok, message)。
+def _write_action_visibility(action_path: str, level: str, team: str = None):
+    """把动作 `#!cfg` 块里的 visibility（team 级含团队名）改成 level。
 
     **实现已抽到 `visibility.write_action_visibility`（单一真源）**：MCP 的
     `actus_visibility_set` 也要真写落盘，两处必须共用同一份逻辑（审计发现
@@ -1633,7 +1633,7 @@ def _write_action_visibility(action_path: str, level: str):
     兼容既有调用方/测试的 `cli._write_action_visibility`。
     """
     from vools.actus.visibility import write_action_visibility
-    return write_action_visibility(action_path, level)
+    return write_action_visibility(action_path, level, team=team)
 
 
 def _cmd_visibility(args) -> int:
@@ -1662,7 +1662,8 @@ def _cmd_visibility(args) -> int:
             print(f'❌ 无法读取动作 {args.action_id}: {exc}', file=sys.stderr)
             return 1
         level = (action.meta.get('visibility') or 'public').strip().lower()
-        print(f'👁️  {args.action_id}: {level}')
+        team = (action.meta.get('team') or '').strip()
+        print(f'👁️  {args.action_id}: {level}' + (f'（团队: {team}）' if team else ''))
         return 0
 
     if command == 'set':
@@ -1688,13 +1689,15 @@ def _cmd_visibility(args) -> int:
             return 1
 
         old_level = (action.meta.get('visibility') or 'public').strip().lower()
-        ok, message = _write_action_visibility(action_path, level)
+        # team 级必须把团队名一起落进 #!cfg（否则规则无法被 check_visibility 判定）
+        ok, message = _write_action_visibility(
+            action_path, level, team=(args.team if level == 'team' else None))
         if not ok:
             print(f'❌ 设置可见性失败: {message}', file=sys.stderr)
             return 1
         print(f'✅ 可见性已更新: {args.action_id} {old_level} → {level}')
         if level == 'team':
-            print(f'   团队: {args.team}')
+            print(f'   团队: {args.team}（已写入 #!cfg）')
         return 0
 
     print(f'❌ 未知的 visibility 子命令: {command}', file=sys.stderr)

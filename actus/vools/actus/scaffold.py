@@ -342,11 +342,14 @@ def scaffold_action(
                 f.write(
                     f'"""{aid} 的回归用例（scaffold 自动生成，真断言）。\n\n'
                     f'任一坏掉都会红：动作文件被删/改名、id 被覆盖成别的动作、\n'
-                    f'validate_action 报错（文件被改坏 / schema 不合规）。\n'
+                    f'validate_action 报真实错误（文件被改坏 / schema 不合规）。\n'
+                    f'注意：`runtime:` 开头的是环境提示（裸仓库缺 contracts、没装\n'
+                    f'jsonschema 等），**不算**动作失败 —— 否则裸仓库里新生成的用例\n'
+                    f'自己就会红（假红），而动作其实没毛病。\n'
                     f'"""\n\n'
                     f'import os\n\n'
                     f'from vools.actus.model import parse_cfg_from_file\n'
-                    f'from vools.actus.validate import validate_action\n\n'
+                    f'from vools.actus.validate import split_validation, validate_action\n\n'
                     f'ACTION_FILE = os.path.normpath(os.path.join(\n'
                     f'    os.path.dirname(os.path.abspath(__file__)), "{rel_to_action}"))\n\n\n'
                     f'def test_{aid.replace(".", "_")}_runs():\n'
@@ -356,19 +359,27 @@ def scaffold_action(
                     f'    action = parse_cfg_from_file(ACTION_FILE)\n'
                     f'    assert action.meta.get("id") == "{aid}", (\n'
                     f'        "动作 id 漂移（文件被覆盖成别的动作？）: %r" % (action.meta.get("id"),))\n'
-                    f'    errors = validate_action(action)\n'
-                    f'    assert errors == [], "动作校验失败: %s" % errors\n'
+                    f'    real_errors, runtime_notes = split_validation(validate_action(action))\n'
+                    f'    assert real_errors == [], "动作校验失败: %s" % real_errors\n'
                 )
 
     # 5) 首次校验
+    # 注意：`runtime_notes` 只在**非空**时才加进 validation —— 正常仓库下返回体
+    # 形状与改前完全一致（{"valid", "errors"}），避免破坏按精确 dict 比较的调用方/测试。
     validation = {'valid': False, 'errors': []}
     try:
         from .model import parse_cfg_from_file
-        from .validate import validate_action
+        from .validate import split_validation, validate_action
         action = parse_cfg_from_file(file_path)
         errs = validate_action(action)
-        validation['valid'] = len(errs) == 0
+        # valid 只看**真实错误**；`runtime:` 是环境提示（缺 contracts/schema、
+        # 没装 jsonschema），照常存进 runtime_notes 供 CLI/MCP/--json 展示，
+        # 但不会把动作判成 invalid（改前 len(errs)==0 在裸仓库里恒 False）。
+        real_errors, runtime_notes = split_validation(errs)
+        validation['valid'] = not real_errors
         validation['errors'] = errs
+        if runtime_notes:
+            validation['runtime_notes'] = runtime_notes
     except Exception as e:
         validation['errors'] = [str(e)]
 
