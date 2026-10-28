@@ -15,6 +15,10 @@ __all__ = ['execute', 'preview', 'new_exec_id']
 import json
 import os
 import secrets
+import shutil
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone, timedelta
@@ -954,22 +958,76 @@ def _env_restore(snap: dict) -> None:
             os.environ[key] = value
 
 
-def _run_md_in_env(action: 'Action', params: dict, exec_id: str,
-                   artifacts_dir: str, force: bool, sandboxed: bool, meta_dir):
-    """在**当前线程**完成「env 注入 → run_md → env 还原」，全程持 PROCESS_STATE_LOCK。
+def _apply_env_injections(action, params, exec_id, artifacts_dir,
+                          sandboxed, meta_dir):
+    """在**当前线程已持 PROCESS_STATE_LOCK** 的前提下，把执行期 env 注入父进程环境，
+    返回 build_dir。调用方负责 `_env_restore()`（原样回写）。
 
-    返回 (report, build_dir)。
-
-    为什么把注入/还原整个搬到这里（而不是留在 `_run_blocks`）：超时路径下本函数
-    跑在 **worker 线程**里，此时调用方已提前返回。若仍由外层做 `_env_restore`，
-    就会与还在跑的 worker 互相踩（worker 正用着注入的 ACTUS_PARAMS / secrets）。
-    **锁与 env 的持有者必须是真正跑 run_md 的那个线程** —— 这是超时路径能安全
-    提前返回的前提。
+    拆出来是为了让两条路径共用同一份注入逻辑（单一真源）：
+      * 同步直调：注入 → run_md → 还原，都在本进程；
+      * 子进程隔离：注入 → **拷贝 env** → 立刻还原 → 交给 Popen(env=...)，
+        父进程环境一个键都不留。
     """
-    from vools.bridge.md import run_md
     from . import sandbox as sbx
     from . import vault as vault_mod
     from .indexer import _repo_root
+
+    _sanitize_path_env()
+    prefix = action.env_prefix
+    os.environ[f'{prefix}PARAMS'] = json.dumps(params, ensure_ascii=False)
+    os.environ[f'{prefix}EXEC_ID'] = exec_id
+    os.environ[f'{prefix}ACTION_PATH'] = action.path
+    os.environ[f'{prefix}REPO_ROOT'] = _repo_root()
+    os.environ[f'{prefix}META_DIR'] = meta_dir or os.path.join(_repo_root(), '_meta')
+
+    secrets_config = action.meta.get('secrets') or []
+    if secrets_config:
+        try:
+            resolved_secrets = vault_mod.resolve_secrets(secrets_config, meta_dir=meta_dir or '')
+            for env_name, env_value in resolved_secrets.items():
+                if env_value:
+                    os.environ[env_name] = env_value
+        except Exception:
+            pass
+
+    try:
+        vault_refs = [
+            s for s in secrets_config
+            if str(s.get('key', s.get('env', ''))).startswith('vault://')
+        ]
+        if vault_refs:
+            from . import vault2 as vault2_mod
+            identity_id = os.environ.get('VAULT_IDENTITY_ID')
+            machine_id = os.environ.get('VAULT_MACHINE_ID')
+            pin = os.environ.get('VAULT_PIN')
+            if identity_id and machine_id and pin:
+                auth_result = vault2_mod.auth(identity_id, machine_id, pin)
+                if auth_result.get('status') == 'ok':
+                    token = auth_result['session_token']
+                    resolve_result = vault2_mod.resolve_vault_refs(token, vault_refs)
+                    if resolve_result.get('status') == 'ok':
+                        for env_name, env_value in resolve_result.get('resolved', {}).items():
+                            if env_value:
+                                os.environ[env_name] = env_value
+    except Exception:
+        pass
+
+    if sandboxed:
+        build_dir = sbx.prepare(artifacts_dir, exec_id)
+        os.environ.update(sbx.sandbox_env(build_dir))
+    else:
+        build_dir = os.path.join(artifacts_dir, action.id,
+                                 action.meta.get('version', '0.0.0'), exec_id)
+    return build_dir
+
+
+def _run_md_in_env(action: 'Action', params: dict, exec_id: str,
+                   artifacts_dir: str, force: bool, sandboxed: bool, meta_dir):
+    """同步路径（未配置 resources.timeout_ms）：本进程内 注入 → run_md → 还原。
+
+    **零行为变化**：与改前的执行方式逐字一致，一个子进程都不起。
+    """
+    from vools.bridge.md import run_md
 
     # 见模块顶部 PROCESS_STATE_LOCK：持锁完成「注入 → 子进程启动」，避免并行节点互相覆盖。
     PROCESS_STATE_LOCK.acquire()
@@ -983,77 +1041,13 @@ def _run_md_in_env(action: 'Action', params: dict, exec_id: str,
     # tests/test_env_isolation.py 与 Find_BUG/actus_2026q3/repro_env_01.py。
     env_before = _env_snapshot()
     try:
-        _sanitize_path_env()
-        # docs/46 #5：context.env_prefix 允许动作自定义注入前缀（默认 ACTUS_）。
-        # 前缀只影响引擎注入的 ACTUS_PARAMS / ACTUS_EXEC_ID 等保留变量名；
-        # 动作自身若依赖默认前缀，不配置 context 字段即可，行为不变。
-        prefix = action.env_prefix
-        # 参数注入：写入临时环境文件，vools config env 携带 <prefix>PARAMS
-        os.environ[f'{prefix}PARAMS'] = json.dumps(params, ensure_ascii=False)
-        os.environ[f'{prefix}EXEC_ID'] = exec_id
-        # 动作自身路径：docs/41 §A1 的内嵌 Sigma 规约块要读回**同一份文件**才能复跑
-        # 规约门禁。没有它，动作只能把规约正文再抄一份进 python 块，抄的那份与
-        # ```sigma 块会各自漂移，"校验过规约"就变成了"校验过副本"。
-        os.environ[f'{prefix}ACTION_PATH'] = action.path
-        # 引擎定位环境：动作代码（如 loop_prompt 的会话留痕）经此解析引擎状态目录，
-        # 测试经 meta_dir 覆盖即可整体隔离，不污染真实仓库。
-        os.environ[f'{prefix}REPO_ROOT'] = _repo_root()
-        os.environ[f'{prefix}META_DIR'] = meta_dir or os.path.join(_repo_root(), '_meta')
-
-        # secrets 自动注入（docs/10 §D2）：解析动作的 secrets 字段，注入环境变量
-        secrets_config = action.meta.get('secrets') or []
-        if secrets_config:
-            try:
-                resolved_secrets = vault_mod.resolve_secrets(secrets_config, meta_dir=meta_dir or '')
-                for env_name, env_value in resolved_secrets.items():
-                    if env_value:  # 只注入非空值，避免覆盖已有环境变量
-                        os.environ[env_name] = env_value
-            except Exception:
-                # secrets 注入失败不阻断执行，动作代码自行处理缺失密钥
-                pass
-
-        # Phase 4：vault:// 前缀自动解析（docs/10 §D3）。密钥值形如
-        # `vault://<key>` 时，经 vault2 认证后用 resolve_vault_refs 换回明文。
-        # 与 secrets 注入同源：失败不阻断执行，动作代码自行处理缺失密钥。
-        try:
-            vault_refs = [
-                s for s in secrets_config
-                if str(s.get('key', s.get('env', ''))).startswith('vault://')
-            ]
-            if vault_refs:
-                from . import vault2 as vault2_mod
-                identity_id = os.environ.get('VAULT_IDENTITY_ID')
-                machine_id = os.environ.get('VAULT_MACHINE_ID')
-                pin = os.environ.get('VAULT_PIN')
-                if identity_id and machine_id and pin:
-                    auth_result = vault2_mod.auth(identity_id, machine_id, pin)
-                    if auth_result.get('status') == 'ok':
-                        token = auth_result['session_token']
-                        resolve_result = vault2_mod.resolve_vault_refs(token, vault_refs)
-                        if resolve_result.get('status') == 'ok':
-                            for env_name, env_value in resolve_result.get('resolved', {}).items():
-                                if env_value:
-                                    os.environ[env_name] = env_value
-        except Exception:
-            # vault:// 解析失败不阻断执行
-            pass
-
-        if sandboxed:
-            # docs/07 §5：沙箱动作强制落入 jail 根，环境变量指示边界
-            build_dir = sbx.prepare(artifacts_dir, exec_id)
-            os.environ.update(sbx.sandbox_env(build_dir))
-        else:
-            # build_dir 落 artifacts/<action_id>/<version>/<exec_id>/（docs/08 §6）。
-            # 每个 exec 独立目录：避免并发同动作时 vools manifest 原子 rename
-            # 在 Windows 上互踩（PermissionError 竞态），同时满足 docs/08 §4 并发语义。
-            build_dir = os.path.join(artifacts_dir, action.id,
-                                     action.meta.get('version', '0.0.0'), exec_id)
-
+        build_dir = _apply_env_injections(action, params, exec_id, artifacts_dir,
+                                          sandboxed, meta_dir)
         report = run_md(
             action.path,
             only=[action.entry] if action.entry else None,
             # E4：md 层缓存**刻意恒绕过**（force or True）。动作执行承诺"每次真跑"，
-            # 若让块缓存命中，会把上一轮的 stdout/产物当成这次结果返回（与假成功同族）。
+            # 让块缓存命中会把上一轮的 stdout/产物当成这次结果返回（与假成功同族）。
             # 这个参数因此恒为 True；execute(force=...) 的 force 只用于"忽略缺依赖"。
             force=force or True,
             build_dir=build_dir,
@@ -1065,50 +1059,132 @@ def _run_md_in_env(action: 'Action', params: dict, exec_id: str,
     return report, build_dir
 
 
+# 子进程引导脚本：只 import 桥接层（**不 import executor**，避免父包副作用），
+# 读 task.json → run_md → 把结果子集写 result.json。参数全部走文件，不经 shell。
+_CHILD_BOOTSTRAP = r"""
+import json, os, sys
+with open(sys.argv[1], "r", encoding="utf-8") as _fh:
+    _task = json.load(_fh)
+from vools.bridge.md import run_md
+_report = run_md(_task["path"], only=_task.get("only") or None,
+                 force=True, build_dir=_task["build_dir"])
+_keep = ("index", "language", "tag", "status", "duration_ms", "exit_code",
+         "stdout", "stderr", "artifacts", "output_file")
+with open(_task["result"], "w", encoding="utf-8") as _fh:
+    json.dump({"blocks": [{k: b.get(k) for k in _keep}
+                          for b in _report.get("blocks", [])],
+               "child_pid": os.getpid()}, _fh, ensure_ascii=False, default=str)
+"""
+
+
+def _build_child_env(action, params, exec_id, artifacts_dir, sandboxed, meta_dir):
+    """构造**子进程专用**的 env 副本 + build_dir；父进程环境全程不被污染。
+
+    做法：持锁 → 按现有逻辑注入 → `dict(os.environ)` 拷贝 → 立刻 `_env_restore`
+    回写父环境 → 释放锁。拷贝出的副本交给 `Popen(env=...)`，于是"注入"这件事
+    只发生在子进程身上，父进程（以及同进程的其它线程）看不到任何中间态。
+    """
+    PROCESS_STATE_LOCK.acquire()
+    env_before = _env_snapshot()
+    try:
+        build_dir = _apply_env_injections(action, params, exec_id, artifacts_dir,
+                                          sandboxed, meta_dir)
+        child_env = dict(os.environ)
+    finally:
+        _env_restore(env_before)
+        PROCESS_STATE_LOCK.release()
+    return child_env, build_dir
+
+
+def _run_md_in_child(action, params, exec_id, artifacts_dir, force, sandboxed, meta_dir):
+    """把 run_md 放进**独立子进程**执行；超时 → `kill_tree` 杀整棵树 → 立刻返回。
+
+    返回 (report, build_dir, deferred)；deferred 恒为 False —— 这次是**真杀**：
+    子进程整个没了，env / 全局锁 / stdout 天然干净，不存在"回执说超时、后台还在跑"。
+    """
+    from ._proc import kill_tree
+
+    timeout_ms = action.timeout_ms
+    child_env, build_dir = _build_child_env(action, params, exec_id, artifacts_dir,
+                                            sandboxed, meta_dir)
+    work_dir = tempfile.mkdtemp(prefix='actus-exec-')
+    task_path = os.path.join(work_dir, 'task.json')
+    result_path = os.path.join(work_dir, 'result.json')
+    with open(task_path, 'w', encoding='utf-8') as fh:
+        json.dump({
+            'path': action.path,
+            'only': [action.entry] if action.entry else None,
+            'build_dir': build_dir,
+            'result': result_path,
+        }, fh, ensure_ascii=False)
+
+    proc = subprocess.Popen(
+        [sys.executable, '-c', _CHILD_BOOTSTRAP, task_path],
+        cwd=os.getcwd(),          # 子进程沿用同一 cwd：动作里的相对路径语义不变
+        env=child_env,            # 注入只作用于子进程，父进程零污染
+    )
+    timed_out = False
+    try:
+        proc.wait(timeout=timeout_ms / 1000.0)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        # 真上限：杀整棵进程树（psutil 递归 kill，含孙进程），不是只杀直接子进程
+        kill_tree(proc)
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            pass
+
+    if timed_out:
+        report = {'status': 'timeout', 'blocks': [{
+            'index': 0, 'language': 'python', 'tag': [action.entry],
+            'status': 'timeout', 'duration_ms': timeout_ms,
+            'exit_code': proc.returncode, 'stdout': '',
+            'stderr': (f'execution exceeded {timeout_ms}ms (resources.timeout_ms)；'
+                       f'已杀整棵进程树（pid={proc.pid}, rc={proc.returncode}）'),
+        }]}
+    else:
+        payload = None
+        if os.path.exists(result_path):
+            try:
+                with open(result_path, 'r', encoding='utf-8') as fh:
+                    payload = json.load(fh)
+            except Exception:
+                payload = None
+        if not isinstance(payload, dict) or not isinstance(payload.get('blocks'), list):
+            # 子进程崩溃（段错误 / OOM / 被外部杀掉）→ 没有结果文件。
+            # 归类 block_failed（不是 internal：这不是引擎写错，是执行体崩了）。
+            report = {'status': 'failed', 'blocks': [{
+                'index': 0, 'language': 'python', 'tag': [action.entry],
+                'status': 'failed', 'duration_ms': None,
+                'exit_code': proc.returncode, 'stdout': '',
+                'stderr': f'child_crashed: 子进程未回传结果（exit={proc.returncode}）',
+            }]}
+        else:
+            report = {'blocks': payload['blocks']}
+
+    shutil.rmtree(work_dir, ignore_errors=True)
+    return report, build_dir, False
+
+
 def _run_blocks(action: Action, params: dict, exec_id: str,
                 artifacts_dir: str, force: bool = False,
                 sandboxed: bool = False, meta_dir: str = None) -> dict:
     """经 vools.bridge.md 逐块执行动作正文，汇总为结构化出参。"""
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
-    from . import sandbox as sbx        # 沙箱清理仍在**本函数**里做（注入在 worker 内）
+    from . import sandbox as sbx        # 沙箱清理仍在**本函数**里做（注入在子进程/本进程内）
 
-    deferred = False
     timeout_ms = action.timeout_ms
+    deferred = False
     if not timeout_ms or timeout_ms <= 0:
-        # 未配置超时：零开销、零行为变化（与改前一致）
+        # 未配置超时：**同步直调，零行为变化**（不起子进程、不加启动开销）
         report, build_dir = _run_md_in_env(action, params, exec_id, artifacts_dir,
                                            force, sandboxed, meta_dir)
     else:
-        # 配置了 resources.timeout_ms：把「注入 → run_md → 还原」整体放进 worker。
-        # **不能用 `with ThreadPoolExecutor(...)`**：它的 __exit__ 是
-        # shutdown(wait=True) → 会把"到点返回"重新变回"等 worker 跑完"
-        # （实测 timeout=0.2s 的块 sleep 6s 时墙钟 7.59s，且期间 worker 一直占着
-        #  PROCESS_STATE_LOCK，其它执行全被阻塞）。这里显式 shutdown(wait=False)。
-        pool = ThreadPoolExecutor(max_workers=1)
-        try:
-            fut = pool.submit(_run_md_in_env, action, params, exec_id,
-                              artifacts_dir, force, sandboxed, meta_dir)
-            try:
-                report, build_dir = fut.result(timeout=timeout_ms / 1000.0)
-            except FutureTimeout:
-                # Python 线程无法强杀：worker 会继续跑，由它自己还原 env / 放锁；
-                # 在它结束前，动作的副作用可能仍在发生 —— 回执必须如实标注，
-                # **不许**假装已经停掉（真超时只能靠子进程化 + kill_tree，见 docs/46）。
-                deferred = True
-                report = {
-                    'status': 'timeout',
-                    'blocks': [{
-                        'index': 0, 'language': 'python', 'tag': [action.entry],
-                        'status': 'timeout', 'duration_ms': timeout_ms,
-                        'exit_code': None, 'stdout': '',
-                        'stderr': (f'execution exceeded {timeout_ms}ms '
-                                   f'(resources.timeout_ms)；worker 仍在后台运行，'
-                                   f'副作用可能仍在发生（timeout_deferred）'),
-                    }],
-                }
-                build_dir = None
-        finally:
-            pool.shutdown(wait=False)
+        # 配置了 resources.timeout_ms：**放进独立子进程**跑，超时 kill_tree 杀整棵树。
+        # 这样超时是**真上限**：父进程立刻返回，且 env / 全局锁 / stdout 天然干净
+        # （子进程有自己的环境与 fd）。deferred 恒为 False —— 不存在后台残留。
+        report, build_dir, deferred = _run_md_in_child(
+            action, params, exec_id, artifacts_dir, force, sandboxed, meta_dir)
 
     blocks = []
     all_ok = True
@@ -1148,6 +1224,10 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
 
     if not all_ok:
         err_blocks = [b for b in blocks if b['status'] in ('failed', 'error', 'timeout')]
+        # 子进程方案下超时是**真上限**（进程已被 kill_tree 杀掉），所以这里显式给
+        # timeout_deferred=False：字段保留（消费方可能读它），含义从"后台仍在跑"
+        # 变成"确认已经停掉"。只有线程方案才会有 True 的情形，本路径不再出现。
+        killed = any(b['status'] == 'timeout' for b in err_blocks)
         if sandboxed:
             # docs/07 §5 的「执行完即回收」原本只挂在成功分支，于是反复失败的动作按次
             # 累积 jail 目录（BUG-0012）。owner 裁决默认删：失败现场已经随下面的
@@ -1157,8 +1237,9 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
         # 缺陷，但"调用方看不到它跑了"是（副作用可能已发生，重试会重复）。
         # failed_blocks 保留失败子集，兼容只读该字段的既有消费方。
         details = {'blocks': blocks, 'failed_blocks': err_blocks}
-        if deferred:
-            details['timeout_deferred'] = True
+        if killed:
+            details['timeout_deferred'] = False
+            details['child_killed'] = True
         failed = {'status': 'failed', 'data': data, 'error': {
             # E3：用户代码失败用 block_failed（details 带 exit_code/status），
             # `internal` 只留给引擎自身异常（execute() 末尾的兜底分支）。
@@ -1166,8 +1247,9 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
             'message': f"块执行失败: block[{err_blocks[0]['index']}] {err_blocks[0]['status']}",
             'details': details,
         }}
-        if deferred:
-            failed['timeout_deferred'] = True
+        if killed:
+            failed['timeout_deferred'] = False
+            failed['child_killed'] = True
         if stdout_truncated:
             failed['stdout_truncated'] = True
         return failed
