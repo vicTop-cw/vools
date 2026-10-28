@@ -27,6 +27,7 @@ __all__ = [
 
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
+import re
 from vools.core.dataclass_compat import dataclass, field
 
 # 错误归一化闭集（docs/03 §3.4）：
@@ -66,6 +67,15 @@ class ExecResult:
     artifacts 形状兼容双来源：
       - executor/scattered：dict 列表（{name,path,hash,block}，docs/03 §7.2）
       - adapter：字符串路径（adapter.AdapterResult.artifact_path）
+
+    status 判据表（三条执行路径**统一**，审计第 13 轮定稿）：
+      | status  | 含义                                                         |
+      |---------|--------------------------------------------------------------|
+      | ok      | 真的执行了、且成功                                            |
+      | error   | 执行了但失败 / 没执行也无法确认（error_kind 区分类别）         |
+      | skipped | **本次没有执行**（dry_run 预览、awaiting_confirmation 待确认） |
+
+    `timeout_deferred=True` = 墙钟到点先返回、后台线程可能仍在跑（结果未知）。
     """
     status: str = 'ok'                # ok / error / skipped
     data: Any = None                  # JSON 出参（入口块 stdout 优先解析）
@@ -73,6 +83,9 @@ class ExecResult:
     error_kind: str = ''              # ERROR_KINDS 闭集内取值
     duration_ms: int = 0              # 执行耗时
     artifacts: List[Any] = field(default_factory=list)  # dict 或 str 混合（见 docstring）
+    # 墙钟闸门到点返回时为 True：**结果未知**，worker 可能仍在后台跑（线程杀不掉）。
+    # 消费方看到它就不能把这次执行当成"成功/失败已定"。
+    timeout_deferred: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -82,6 +95,7 @@ class ExecResult:
             'error_kind': self.error_kind,
             'duration_ms': self.duration_ms,
             'artifacts': list(self.artifacts),
+            'timeout_deferred': self.timeout_deferred,
         }
 
     @property
@@ -99,6 +113,41 @@ class ActionExecutor(Protocol):
     def execute(self, action, ctx: ExecutionContext) -> ExecResult:
         """执行动作，返回统一出参。"""
         ...
+
+
+def _run_with_deadline(fn, timeout_ms: int):
+    """按 `ctx.timeout_ms` 给执行加**墙钟闸门**，返回 (value, deferred)。
+
+    审计第 13 轮（契约谎言）：`ExecutionContext.timeout_ms` 此前**从未被读取** ——
+    传 300ms 跑 2s 的动作照样跑满（实测 3.50s）。现在真正生效，但必须诚实：
+    Python 线程无法强杀，到点只能"先返回 + 标注 worker 可能仍在跑"。
+
+    **不能用 `with ThreadPoolExecutor(...)`**：`__exit__` 是 shutdown(wait=True)，
+    会把"到点返回"重新变回"等 worker 跑完"（executor / mcp_server 都踩过）。
+    """
+    if not timeout_ms or timeout_ms <= 0:
+        return fn(), False
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='actus-iface')
+    try:
+        fut = pool.submit(fn)
+        try:
+            return fut.result(timeout=timeout_ms / 1000.0), False
+        except FutureTimeout:
+            return None, True
+    finally:
+        pool.shutdown(wait=False)
+
+
+def _deferred_result(timeout_ms: int) -> ExecResult:
+    """超时到点返回的统一回执：结果未知 + 明确标注 worker 可能仍在跑。"""
+    return ExecResult(
+        status='error',
+        error=('执行超过 %sms 已返回：进程内线程无法强杀，worker 可能仍在后台运行'
+               '（副作用可能继续发生），本次结果未知' % timeout_ms),
+        error_kind='timeout',
+        timeout_deferred=True,
+    )
 
 
 def result_from_adapter(adapter_result) -> ExecResult:
@@ -134,18 +183,37 @@ def result_from_exception(exc: Exception) -> ExecResult:
     return ExecResult(status='error', error=message, error_kind=kind)
 
 
+# 只认「明确的 HTTP 状态行」里的 401/429 —— 单独出现的数字 401 可能只是业务数据
+# （审计实测：`processed 401 records, then failed` 曾被判成 auth）。
+_HTTP_STATUS_RE = re.compile(
+    r'(?i)\b(?:http(?:/\d(?:\.\d)?)?(?:\s+status)?'
+    r'|status(?:\s+code)?)\s*[:=]?\s*(401|429)\b')
+
+
 def _classify_error(stderr: str, returncode: int) -> str:
-    """从 stderr/returncode 推断 error_kind（兜底 runtime）。"""
-    s = (stderr or '').lower()
-    if 'auth' in s or 'unauthorized' in s or '401' in s or returncode == 401:
+    """从 stderr/returncode 推断 error_kind（兜底 runtime）。
+
+    审计第 13 轮：改前是**裸子串匹配** —— `"connection to sqlite db closed"` 判成
+    unreachable、`"processed 401 records"` 判成 auth，会把普通逻辑失败导流到
+    "网络/认证"分支（消费方据此重试/告警全错）。现在只认进程级信号。
+    """
+    text = stderr or ''
+    lower = text.lower()
+    m = _HTTP_STATUS_RE.search(text)
+    http_code = m.group(1) if m else ''
+    if (returncode in (401, 403) or http_code == '401'
+            or 'unauthorized' in lower or 'authentication failed' in lower):
         return 'auth'
-    if 'quota' in s or 'rate limit' in s or '429' in s or returncode == 429:
+    if (returncode == 429 or http_code == '429'
+            or 'rate limit' in lower or 'quota exceeded' in lower):
         return 'quota'
-    if 'timeout' in s or 'timed out' in s:
+    if 'timed out' in lower or 'timeout' in lower:
         return 'timeout'
-    if 'unreachable' in s or 'connection' in s or 'refused' in s:
+    if ('connection refused' in lower or 'unreachable' in lower
+            or 'no route to host' in lower or 'name or service not known' in lower
+            or 'temporary failure in name resolution' in lower):
         return 'unreachable'
-    if 'permission' in s or 'denied' in s:
+    if 'permission denied' in lower or 'access is denied' in lower:
         return 'resource'
     return 'runtime'
 
@@ -201,6 +269,9 @@ def _classify_exception(exc: Exception) -> str:
     """
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
+    # 适配器不可用（命令没装 / URL 不通）属于"环境不可达"，不是 runtime 故障
+    if 'adapterunavailable' in name or '适配器不可用' in msg:
+        return 'unreachable'
     if 'actionerror' in name:
         code = getattr(exc, 'code', '') or ''
         mapped = _map_error_code(code)
@@ -260,11 +331,16 @@ class _ExecutorIface:
                     status='error', data=prev,
                     error=str(err.get('message') if isinstance(err, dict) else err) or 'preview 失败',
                     error_kind=_map_error_code(str(err.get('code') if isinstance(err, dict) else '')) or 'runtime')
-            return ExecResult(status='ok', data=prev)
+            # 统一判据（见 ExecResult docstring）：dry_run = **本次没有执行** → skipped
+            return ExecResult(status='skipped', data=prev)
         try:
-            raw = _executor_mod.execute(action.id, ctx.params or {})
+            raw, deferred = _run_with_deadline(
+                lambda: _executor_mod.execute(action.id, ctx.params or {}),
+                ctx.timeout_ms)
         except Exception as exc:  # noqa: BLE001 —— 统一出参契约：异常归一
             return result_from_exception(exc)
+        if deferred:
+            return _deferred_result(ctx.timeout_ms)
         # 引擎原生 execute 返回 docs/03 §7.2 结构化出参：
         #   {'status': 'ok'|'failed'|'awaiting_confirmation'|'cancelled',
         #    'data': ..., 'error': None | {'code','message','details'}, 'artifacts': [...]}
@@ -291,7 +367,12 @@ class _ExecutorIface:
                 error_kind='' if ok else (_map_error_code(err_code) or 'runtime'),
                 artifacts=list(raw.get('artifacts') or []),
             )
-        return ExecResult(status='ok', data=raw)
+        # 非结构化返回（None/str/…）：无法确认"真的执行了"，绝不能记 ok
+        return ExecResult(
+            status='error', data=None,
+            error=('executor 返回了非结构化结果（%s）：无法确认是否真的执行成功'
+                   % type(raw).__name__),
+            error_kind='invalid')
 
 
 class _AdapterIface:
@@ -346,7 +427,10 @@ class _AdapterIface:
                 # 审计（第 25 轮）：内联 spec 也要在执行前做可用性探测，
                 # 否则命令没装要等运行期才炸、且不给安装提示。
                 registry.ensure_available(spec.id, spec, adapter)
-                raw = adapter.run(ctx.params or {})
+                raw, deferred = _run_with_deadline(
+                    lambda: adapter.run(ctx.params or {}), ctx.timeout_ms)
+                if deferred:
+                    return _deferred_result(ctx.timeout_ms)
             except Exception as exc:  # noqa: BLE001 —— 统一出参契约：异常归一
                 return result_from_exception(exc)
             return result_from_adapter(raw)
@@ -362,9 +446,12 @@ class _AdapterIface:
                 error_kind='invalid')
 
         try:
-            raw = run_adapter(adapter_id, ctx.params or {})
+            raw, deferred = _run_with_deadline(
+                lambda: run_adapter(adapter_id, ctx.params or {}), ctx.timeout_ms)
         except Exception as exc:  # noqa: BLE001 —— 统一出参契约：异常归一
             return result_from_exception(exc)
+        if deferred:
+            return _deferred_result(ctx.timeout_ms)
 
         # 适配器不存在时，错误信息列出已注册适配器与放置目录（P2-6）
         if not getattr(raw, 'success', False) and '适配器不存在' in (getattr(raw, 'stderr', '') or ''):
@@ -406,10 +493,14 @@ class _ScatteredIface:
             except Exception as exc:  # noqa: BLE001 —— 统一出参契约：异常归一
                 return result_from_exception(exc)
         try:
-            raw = _scattered.run_scattered(action.path, ctx.params or {},
-                                            confirmed=not ctx.dry_run)
+            raw, deferred = _run_with_deadline(
+                lambda: _scattered.run_scattered(action.path, ctx.params or {},
+                                                 confirmed=not ctx.dry_run),
+                ctx.timeout_ms)
         except Exception as exc:  # noqa: BLE001 —— 统一出参契约：异常归一
             return result_from_exception(exc)
+        if deferred:
+            return _deferred_result(ctx.timeout_ms)
         if isinstance(raw, dict):
             ok = raw.get('status') == 'ok'
             err = raw.get('error') or {}
@@ -422,4 +513,8 @@ class _ScatteredIface:
                 error_kind='' if ok else (_map_error_code(err_code) or 'runtime'),
                 artifacts=list(raw.get('artifacts') or []),
             )
-        return ExecResult(status='ok', data=raw)
+        return ExecResult(
+            status='error', data=None,
+            error=('scattered 返回了非结构化结果（%s）：无法确认是否真的执行成功'
+                   % type(raw).__name__),
+            error_kind='invalid')

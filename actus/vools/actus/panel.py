@@ -21,6 +21,7 @@ __all__ = ['run_panel', 'PanelApp']
 
 import json
 import os
+import queue
 import sys
 import threading
 import tkinter as tk
@@ -60,6 +61,9 @@ class PanelApp:
     """主窗口：动作网格 + 详情 + 输出区。"""
 
     def __init__(self):
+        # 审计第 13 轮：工作线程**不许直接碰 Tk**（`root.after` 也是 Tk 调用，
+        # 非主线程调用是未定义行为）。所有 UI 更新统一走队列 + 主线程泵。
+        self._results = queue.Queue()
         self.root = tk.Tk()
         self.root.title('Actus 快捷面板')
         self.root.geometry('780x520')
@@ -173,30 +177,45 @@ class PanelApp:
                 return
 
         self._log(f'▶ {aid} 执行中…')
-        threading.Thread(target=self._execute_bg, args=(aid,), daemon=True).start()
+        # 已经过人类确认（audit 分支）→ 直接 confirmed=True 后台执行，
+        # 避免旧逻辑"先跑一遍拿 awaiting_confirmation、再在 UI 线程重跑一遍"。
+        threading.Thread(target=self._execute_bg, args=(aid, trust == 'audit'),
+                         daemon=True).start()
 
-    def _execute_bg(self, aid: str):
+    def _execute_bg(self, aid: str, confirmed: bool = False):
+        """后台执行：**工作线程内不碰任何 Tk 对象**，只把结果放进队列。"""
         # 薄壳原则：执行全权委托 actuscore，面板不实现任何执行语义
-        def work():
-            import vools.actus as actuscore
-            r = actuscore.execute(aid, {}, confirmed=False)
-            self.root.after(0, lambda: self._on_result(aid, r))
-
         try:
             engine_path = os.path.join(_REPO_ROOT, 'engine')
             if engine_path not in sys.path:        # 幂等：重复执行不再堆积重复项
                 sys.path.insert(0, engine_path)
-            work()
+            import vools.actus as actuscore
+            r = actuscore.execute(aid, {}, confirmed=confirmed)
+            self._results.put(('result', aid, r))
         except Exception as e:  # noqa: BLE001
-            self.root.after(0, lambda: self._log(f'❌ {aid}: {e}'))
+            self._results.put(('error', aid, str(e)))
+
+    def _pump(self):
+        """主线程泵：把工作线程的结果搬到 UI（**唯一**允许碰 Tk 的地方之一）。"""
+        try:
+            while True:
+                kind, aid, payload = self._results.get_nowait()
+                if kind == 'error':
+                    self._log(f'❌ {aid}: {payload}')
+                else:
+                    self._on_result(aid, payload)
+        except queue.Empty:
+            pass
+        self.root.after(100, self._pump)
 
     def _on_result(self, aid: str, r: dict):
         status = r.get('status')
         if status == 'awaiting_confirmation':
-            # 面板内确认后重跑（confirmed=True 闭环）
-            import vools.actus as actuscore
-            r2 = actuscore.execute(aid, {}, confirmed=True)
-            self._on_result(aid, r2)
+            # 面板内确认后重跑（confirmed=True 闭环）。**必须丢回后台线程**：
+            # 改前在 UI 线程同步 execute —— 长动作会把界面冻住（与"委托后台"矛盾）。
+            self._log(f'⏳ {aid}: 待确认 → 后台重跑（confirmed=True）')
+            threading.Thread(target=self._execute_bg, args=(aid, True),
+                             daemon=True).start()
             return
         icon = '✅' if status == 'ok' else '❌'
         data = json.dumps(r.get('data'), ensure_ascii=False, indent=2) if r.get('data') else ''
@@ -212,6 +231,7 @@ class PanelApp:
         self.output.configure(state='disabled')
 
     def run(self):
+        self.root.after(100, self._pump)      # 主线程泵：所有结果搬运都在主线程
         self.root.mainloop()
 
 
