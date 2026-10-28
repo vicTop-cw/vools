@@ -1721,7 +1721,11 @@ def _cmd_registry(args) -> int:
     reg = ActionRegistry()
 
     if args.registry_command == 'build':
-        repo_dir = os.getcwd()
+        # 审计修（cwd vs repo_root）：索引是**仓库级产物**，默认位置必须跟仓库走，
+        # 不跟 shell 走 —— 否则 `ACTUS_REPO_ROOT=<tmp> actus registry build`
+        # 会在当前 shell 目录写索引（测试/嵌入式场景完全无法隔离）。
+        from vools.actus.paths import repo_root as _repo_root_path
+        repo_dir = _repo_root_path()
         index = reg.build_from_directory(repo_dir)
         output = args.output or os.path.join(repo_dir, '.actus.registry.json')
         print(f'✅ 注册表索引已构建: {output}')
@@ -1729,7 +1733,10 @@ def _cmd_registry(args) -> int:
         return 0
 
     elif args.registry_command == 'validate':
-        index_path = args.index or os.path.join(os.getcwd(), '.actus.registry.json')
+        # 审计修（本轮主诉）：默认索引路径原本用 os.getcwd()，`ACTUS_REPO_ROOT=<tmp>`
+        # 时仍然去看当前 shell 目录（实测报 cwd 下的 .actus.registry.json 不存在）。
+        from vools.actus.paths import repo_root as _repo_root_path
+        index_path = args.index or os.path.join(_repo_root_path(), '.actus.registry.json')
         if not os.path.isfile(index_path):
             print(f'❌ 索引文件不存在: {index_path}')
             return 1
@@ -1777,7 +1784,8 @@ def _cmd_registry(args) -> int:
         return 0
 
     elif args.registry_command == 'info':
-        index_path = args.index or os.path.join(os.getcwd(), '.actus.registry.json')
+        from vools.actus.paths import repo_root as _repo_root_path
+        index_path = args.index or os.path.join(_repo_root_path(), '.actus.registry.json')
         if not os.path.isfile(index_path):
             print(f'❌ 索引文件不存在: {index_path}')
             return 1
@@ -1891,7 +1899,12 @@ def _cmd_publish(args) -> int:
     """
     from vools.actus.registry import ActionRegistry
 
-    repo_dir = os.getcwd()
+    # 审计修：publish 是**仓库级**操作（扫描仓库 actions/、写仓库索引），
+    # 默认目录跟随 paths.repo_root()，不跟 shell 的 cwd 走。
+    # 归一成绝对路径：ACTUS_REPO_ROOT 允许是相对路径，后面的 relpath/index 计算
+    # 需要绝对基准。
+    from vools.actus.paths import repo_root as _repo_root_path
+    repo_dir = os.path.abspath(_repo_root_path())
     reg = ActionRegistry()
 
     # 构建索引：**只在内存构建，不落盘**（write=False）。
@@ -1951,7 +1964,9 @@ def _cmd_search(args) -> int:
     reg = ActionRegistry()
 
     if args.source == 'local':
-        reg.load_from_repo(os.getcwd())
+        # 审计修：`--source local` 指的是**本仓库**，默认根跟随 repo_root()。
+        from vools.actus.paths import repo_root as _repo_root_path
+        reg.load_from_repo(_repo_root_path())
     elif args.source == 'installed':
         # 加载所有已安装仓库
         from vools.actus.installer import ActionInstaller

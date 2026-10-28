@@ -86,7 +86,11 @@ class AuditLogger:
 
     def __init__(self, log_dir: str = None):
         if log_dir is None:
-            log_dir = os.path.join(os.getcwd(), "_meta", "audit")
+            # 审计修（cwd vs paths / `_meta` 硬编码）：审计日志属于**运行时数据**，
+            # 默认位置应跟随 paths.meta_dir()（ACTUS_META_DIR > repo_root()/_meta），
+            # 而不是 shell cwd 下手写的 `_meta`。
+            from .paths import meta_dir as _meta_dir
+            log_dir = os.path.join(_meta_dir(), "audit")
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._events: List[AuditEvent] = []

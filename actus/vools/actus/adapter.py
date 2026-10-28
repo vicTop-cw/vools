@@ -537,7 +537,10 @@ class AdapterRegistry:
 
     def __init__(self, adapters_dir: str = None):
         if adapters_dir is None:
-            adapters_dir = os.path.join(os.getcwd(), "actions", "adapters")
+            # 审计修（cwd vs repo_root）：`actions/adapters` 是**仓库级**目录，
+            # 默认值应跟随 paths.repo_root()（ACTUS_REPO_ROOT 优先），不跟 shell cwd。
+            from .paths import repo_root as _repo_root_path
+            adapters_dir = os.path.join(_repo_root_path(), "actions", "adapters")
         self.adapters_dir = Path(adapters_dir)
         self._adapters: Dict[str, AdapterSpec] = {}
 
