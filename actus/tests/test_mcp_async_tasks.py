@@ -27,9 +27,9 @@ monkeypatch 的假 handler + 很小的 grace/timeout 控制，全文件 < 10s，
 
 import io
 import json
+import threading
 import os
 import sys
-import threading
 import time
 
 import pytest
@@ -49,17 +49,6 @@ def _payload(raw):
     """MCP result → (isError, 解析后的业务 payload)。"""
     assert isinstance(raw, dict) and "content" in raw and "isError" in raw, raw
     return raw["isError"], json.loads(raw["content"][0]["text"])
-
-
-@pytest.fixture(autouse=True)
-def _clean_task_table():
-    """每个用例前后清空进程内任务表（它是全局状态，跨用例会互相污染）。"""
-    with mcp_server._TASKS_LOCK:
-        mcp_server._TASKS.clear()
-    yield
-    time.sleep(0.02)
-    with mcp_server._TASKS_LOCK:
-        mcp_server._TASKS.clear()
 
 
 @pytest.fixture
@@ -307,13 +296,29 @@ def test_timeout_marks_worker_may_still_run_and_keeps_late_result(server, monkey
     `timed_out=True`；worker 迟到结束后再轮询仍是 timeout，且迟到结果挂
     `late_result`（不覆盖超时结论）。
 
-    注意：假 handler 故意 sleep 1.0s（远大于 timeout 0.05s）—— 机器慢/负载高时
-    worker 若在第一次轮询前就结束，快照会是 ok，测不到 timeout 路径（曾实际 flake）。
+    注意：假 handler 阻塞在 `threading.Event` 上（不是真实 sleep）—— 超时轮询后
+    由测试显式 `release.set()` 放行，worker 结束时机确定，机器快慢都不会 flake。
     """
     monkeypatch.setattr(mcp_server, "_TASK_GRACE_SEC", 0.01)
     monkeypatch.setattr(mcp_server, "_TASK_TIMEOUT_SEC", 0.05)
     _patch_action_tools(monkeypatch)
-    _patch_handler(monkeypatch, {"slow_tool": 1.0})
+    # 不用真实 sleep：worker 阻塞在 Event 上，超时轮询后由测试显式放行，
+    # 迟到结果到达时机确定（机器快慢都不会 flake）。
+    release = threading.Event()
+    real_call = mcp_server.MCPServer._call_tool
+
+    def blocking_call(self, params):
+        name = (params or {}).get("name", "")
+        if name == "slow_tool":
+            release.wait(timeout=5.0)
+            return mcp_server.text_result({
+                "status": "ok",
+                "data": {"tool": name, "done": True,
+                         "arguments": params.get("arguments")},
+            })
+        return real_call(self, params)
+
+    monkeypatch.setattr(mcp_server.MCPServer, "_call_tool", blocking_call)
 
     is_error, handle_payload = _payload(
         server._call_tool_async({"name": "slow_tool", "arguments": {}}))
@@ -326,10 +331,15 @@ def test_timeout_marks_worker_may_still_run_and_keeps_late_result(server, monkey
     assert snap["timed_out"] is True
     assert snap["timeout_sec"] == 0.05
 
-    # 等 worker 真正结束（迟到），再轮询：超时结论不能被迟到结果改写
-    time.sleep(1.2)
-    later = _poll(server, task_id)
-    assert later["status"] == "timeout", later
+    # 放行 worker（迟到结束），再轮询：超时结论不能被迟到结果改写
+    release.set()
+    later = None
+    for _ in range(400):                 # 只等迟到结果落表，不做固定秒数 sleep
+        later = _poll(server, task_id)
+        if later.get("late_result") is not None:
+            break
+        time.sleep(0.005)
+    assert later is not None and later["status"] == "timeout", later
     assert later.get("late_result") is not None, "迟到结果应挂在 late_result，而不是覆盖状态"
 
 

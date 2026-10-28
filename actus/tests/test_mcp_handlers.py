@@ -183,21 +183,71 @@ def test_arguments_must_be_json_object(world):
 # 2) 总括门禁：所有声明 required 的工具，空参数都必须 param_invalid
 # ---------------------------------------------------------------------------
 
+# 显式登记表 = 「静态 MCP 工具」中声明 required 的集合（契约本身）。
+# 注意：由仓库动作动态生成的工具（如 actus_generated_* / actus_test_foo）**不在**
+# 登记表里 —— 它们随 actions/ 内容出现/消失，本用例的 world 是空 actions。
+_REQUIRED_TOOLS_BASELINE = frozenset([
+    'actus_author',
+    'actus_confirm',
+    'actus_dep_tree',
+    'actus_deps',
+    'actus_evolve',
+    'actus_evolve_compare',
+    'actus_evolve_history',
+    'actus_evolve_repair',
+    'actus_evolve_rollback',
+    'actus_execute',
+    'actus_highlight',
+    'actus_info',
+    'actus_preview',
+    'actus_private_add',
+    'actus_private_remove',
+    'actus_project_add_module',
+    'actus_project_remove_module',
+    'actus_publish',
+    'actus_registry_add',
+    'actus_registry_remove',
+    'actus_run_code',
+    'actus_scaffold',
+    'actus_team_add_member',
+    'actus_team_create',
+    'actus_team_remove_member',
+    'actus_triggers_add',
+    'actus_triggers_remove',
+    'actus_vault_delete',
+    'actus_vault_get',
+    'actus_vault_rotate_seed',
+    'actus_vault_set',
+    'actus_visibility_get',
+    'actus_visibility_set',
+    'actus_webhook_register',
+    'actus_webhook_unregister',
+    'actus_workflow_run',
+    'actus_workflow_status',
+])
+
+
 def test_all_tools_with_required_params_reject_empty_args(world):
     """退步了会怎样（审计探针 B 的对应）：派发层整体坏掉（如 `_call_tool`/handler
     全改抛异常）或统一校验被移除时，逐 handler 的用例可能恰好没覆盖到 ——
     这条遍历 **tools/list 中所有声明 required 的工具**，空参数调用必须统一
     param_invalid 且点名缺失参数；任何例外都会红。
 
-    断言：required 工具数 >= 35（当前 35；数量下降说明 schema 被删减），
-    每个都返回 param_invalid + details.missing == 声明 required。
+    断言：声明 required 的工具集合 == `_REQUIRED_TOOLS_BASELINE`（**显式登记表**，
+    不用魔法数字：新增/删除 required 工具必须同步改登记表，登记表本身就是契约）；
+    每个工具返回 param_invalid + details.missing == 声明 required。
     """
     tools = _tools(world)
     required_tools = {name: (t.get("inputSchema") or {}).get("required") or []
                       for name, t in tools.items()
                       if (t.get("inputSchema") or {}).get("required")}
-    assert len(required_tools) >= 35, \
-        "声明了 required 的工具只有 %d 个（schema 是否被删减？）" % len(required_tools)
+    declared = set(required_tools)
+    missing_from_schema = sorted(_REQUIRED_TOOLS_BASELINE - declared)
+    unexpectedly_required = sorted(declared - _REQUIRED_TOOLS_BASELINE)
+    assert not missing_from_schema and not unexpectedly_required, (
+        "required 工具集合与显式登记表不一致：schema 里消失=%r，多出=%r —— "
+        "请同步更新 _REQUIRED_TOOLS_BASELINE（不要只改数字）"
+        % (missing_from_schema, unexpectedly_required))
 
     failures = []
     for name, required in required_tools.items():

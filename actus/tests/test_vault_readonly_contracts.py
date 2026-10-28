@@ -521,3 +521,70 @@ def test_cli_vault_migrate_partial_when_some_rows_fail(world):
             "SELECT name, key_salt FROM secrets WHERE name LIKE 'legacy-%'").fetchall())
     assert salts.get("legacy-good"), "好行没有真正迁移（key_salt 仍为空）"
     assert salts.get("legacy-bad") is None, "坏行不应被假装迁移"
+
+
+# ===========================================================================
+# ⑩ 入口层零写（#12）：MCP `vault get` / MCP `tools/list` 冷启动
+# ===========================================================================
+
+def _tree_snapshot(root):
+    """目录快照：相对路径 → (mtime_ns, size, sha256)。"""
+    rows = {}
+    for dirpath, _dirnames, filenames in os.walk(str(root)):
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            rel = os.path.relpath(full, str(root)).replace(os.sep, "/")
+            stat = os.stat(full)
+            digest = hashlib.sha256(open(full, "rb").read()).hexdigest()
+            rows[rel] = (stat.st_mtime_ns, stat.st_size, digest)
+    return rows
+
+
+def test_mcp_vault_get_is_zero_write(world):
+    """退步了会怎样：MCP `actus_vault_get` 走 auth 会话（`_v2_session`）—— AI 客户端
+    每读一次密钥，vault2.db 的 `last_auth_at`/`used_codes` 就被改一次；只读副本、
+    备份校验、并发读全被污染（CLI 修了但 MCP 入口没修，是典型"入口层漏修"）。
+
+    断言：MCP 调用返回真实 value；vault2 目录（db + audit）的 sha256+mtime+size
+    逐字节不变。
+    """
+    _setup_v2(world)
+    from vools.actus import mcp_server
+
+    server = mcp_server.MCPServer()
+    before = _tree_snapshot(world.v2dir)
+
+    raw = server._call_tool({"name": "actus_vault_get",
+                             "arguments": {"key": "db_pw"}})
+
+    assert raw["isError"] is False, raw
+    payload = json.loads(raw["content"][0]["text"])
+    assert payload.get("status") == "ok", payload
+    assert payload.get("value") == "s3cr3t!", payload
+    assert _tree_snapshot(world.v2dir) == before, "MCP vault get 写改了 vault2 目录"
+
+
+def test_mcp_tools_list_cold_start_is_zero_write(world, monkeypatch):
+    """退步了会怎样（第 14 轮审计同类）：`tools/list` 是只读 RPC，冷启动（索引缺失）
+    时却调 `build_index()` → 落盘 `_meta/actions.index.json` + `actions.mtimes.json`；
+    MCP 客户端一连接就改了用户仓库，只读 FS 直接失败。
+
+    断言：冷启动（无索引）`_list_tools()` 返回非空工具表；仓库目录快照不变，
+    且没有生成 actions.index.json。
+    """
+    repo = world.root / "repo"
+    (repo / "actions").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("ACTUS_REPO_ROOT", str(repo))
+    from vools.actus import mcp_server
+
+    server = mcp_server.MCPServer()
+    before = _tree_snapshot(repo)
+
+    tools = server._list_tools()
+
+    names = {tool["name"] for tool in tools}
+    assert "actus_vault_get" in names and "actus_vault_set" in names, sorted(names)[:5]
+    assert not (repo / "_meta" / "actions.index.json").exists(), \
+        "tools/list 冷启动建了索引（只读 RPC 写盘）"
+    assert _tree_snapshot(repo) == before

@@ -78,5 +78,61 @@ def advance_totp_window(monkeypatch):
         clock.now += float(n) * 60.0
         return clock.now
 
+    def advance_seconds(n=1):
+        """秒级推进（TTL / used_codes 清理边界用；TOTP 窗口按 60s 粒度自动跟随）。"""
+        clock.now += float(n)
+        return clock.now
+
     advance.clock = clock
+    advance.seconds = advance_seconds
     return advance
+
+
+# ---------------------------------------------------------------------------
+# 进程级单例重置（第 18 轮审计 #2/#6：顺序依赖 / xdist 随机红）
+#
+# `vault2._vault2_singleton`、`security._scanner`、`eventbus._bus`、`mcp_server._TASKS`
+# 都是**进程级单例**。此前没有统一重置，测试顺序一变 / xdist 并发就会随机红，
+# 而且会掩盖"单例状态未清理"的真实产品缺陷。
+# 只在测试侧重置，不改产品代码；每个用例前后各重置一次，保证顺序无关。
+# ---------------------------------------------------------------------------
+
+def _reset_process_globals():
+    """重置进程级单例（测试卫生；任何失败都不应阻断其它清理）。"""
+    try:
+        from vools.actus import eventbus as _eventbus
+        _eventbus._bus = _eventbus.EventBus()
+    except Exception:                      # noqa: BLE001 —— 导入/构造失败不阻断
+        pass
+    try:
+        from vools.actus import mcp_server as _mcp
+        try:
+            _mcp._detach_event_forwarding()
+        except Exception:                  # noqa: BLE001
+            pass
+        lock = getattr(_mcp, "_TASKS_LOCK", None)
+        if lock is not None:
+            with lock:
+                _mcp._TASKS.clear()
+        else:                              # pragma: no cover
+            _mcp._TASKS.clear()
+    except Exception:                      # noqa: BLE001
+        pass
+    try:
+        from vools.actus import vault2 as _vault2
+        _vault2._vault2_singleton = None
+    except Exception:                      # noqa: BLE001
+        pass
+    try:
+        from vools.actus import security as _security
+        _security._scanner = None
+    except Exception:                      # noqa: BLE001
+        pass
+
+
+@pytest.fixture(autouse=True)
+def reset_globals():
+    """用例前后重置进程级单例（顺序无关；xdist 下也不会互相污染）。"""
+    _reset_process_globals()
+    yield
+    _reset_process_globals()

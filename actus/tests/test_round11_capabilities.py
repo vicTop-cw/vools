@@ -372,8 +372,8 @@ def test_mcp_server_subscriptions_do_not_accumulate(world):
       * close 回到基线；重复 close 幂等。
     """
     bus = get_event_bus()
-    # 清掉可能遗留的 MCP 转发订阅，再测「相对增量」；不要求全局绝对为 0。
-    mcp_server._detach_event_forwarding()
+    # conftest 的 reset_globals autouse 已重置 eventbus._bus，基线确定干净；
+    # 这里仍用相对增量断言，避免依赖具体订阅数。
     before = bus.subscriber_count()
 
     first = mcp_server.MCPServer(stdout=io.BytesIO())
