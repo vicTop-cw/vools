@@ -595,6 +595,24 @@ class Vault2:
         return (ENVELOPE_PREFIX + _FernetBackend(kek).encrypt(seed_hex),
                 PROTECTION_FILE, None)
 
+    def _reencrypt_seed_envelope(self, identity_id: str, seed_hex: str,
+                                 protection: Optional[str],
+                                 key_meta: Optional[str], stored_old: str) -> str:
+        """把新 seed 用**现有 KEK** 重新封装成信封（不写 keyring / 不换 KEK）。
+
+        为什么不调 `_encrypt_seed_hex`：那个会为 keyring 模式**生成新 KEK 并写 keyring
+        条目** —— 那是 DB 事务之外的写，一旦 DB 提交失败就出现"keyring 换了、DB 还是旧
+        seed"，旧 seed 再也解不开（不可逆）。轮换只换 seed，KEK 保持原样 ⇒ **全程 DB 内，
+        可单事务回滚**。KEK 轮换是另一件事（需要跨 store 的两阶段提交），不在本轮。
+        """
+        if self.key_protection == PROTECTION_KEYRING:
+            kek = self._kek_for(identity_id, key_meta)
+        elif self.key_protection == PROTECTION_PASSPHRASE:
+            kek = self._kek_for(identity_id, key_meta)
+        else:
+            kek = self._file_key()
+        return ENVELOPE_PREFIX + _FernetBackend(kek).encrypt(seed_hex)
+
     def _decode_seed_hex(self, identity_id: str, stored: str,
                          protection: Optional[str], key_meta: Optional[str]) -> str:
         """把库里的 seed_key 字段解回 hex 明文（仅在内存中使用）。"""
@@ -1290,6 +1308,161 @@ class Vault2:
         for row_id, new_value in updates:
             conn.execute("UPDATE secrets SET value=? WHERE id=?", (new_value, row_id))
 
+    # ── seed_key 轮换（第 16 轮；P0 修复后才安全）──────────────────────
+
+    def _apply_seed_rotation(self, conn, identity_id: str, new_envelope: str,
+                             secret_updates, backup_updates) -> None:
+        """轮换的**写阶段**（单独成方法：便于注入失败测试事务回滚）。
+
+        调用方保证在 `with self._db()` 里执行 —— 本方法抛错时，`_db()` 不会 commit，
+        close 即回滚，磁盘保持轮换前状态。
+        """
+        for sid, new_enc in secret_updates:
+            conn.execute("UPDATE secrets SET value=? WHERE id=?", (new_enc, sid))
+        for bid, new_enc in backup_updates:
+            conn.execute("UPDATE rotated_backups SET value=? WHERE id=?", (new_enc, bid))
+        conn.execute(
+            "UPDATE identities SET seed_key=?, recovery_key_hash=NULL WHERE id=?",
+            (new_envelope, identity_id))
+        # 旧 TOTP 随 seed 失效；留着只会在极小概率下与新码撞上而误判"重放"
+        conn.execute("DELETE FROM used_codes WHERE identity_id=?", (identity_id,))
+
+    def rotate_seed_key(self, token: str, caller: str = None) -> dict:
+        """轮换身份的 `seed_key`：换新 seed + 用新 master 重加密**所有**相关密文。
+
+        为什么值得做：`master_key` 不含 PIN ⇒ `seed_key` 是**唯一的密码学根**。轮换
+        缩短"泄漏快照"的有效期，并让历史 TOTP 全部失效。它**不能**追溯保护已经被
+        拷走的密文（这点必须写清，别给人错误的安全感）。
+
+        覆盖范围（**一个事务，失败全回滚**）：
+          1. `secrets.value` —— row_key 由 master 派生（master 由 seed 派生）；
+          2. `rotated_backups.value` —— 由 `_derive_backup_key(seed)` 派生，**也依赖 seed**
+             （这是最容易漏的一条：不迁的话 seed 换了、旧备份就再也解不开）；
+          3. `identities.seed_key` —— 用**现有 KEK** 重新封装（不写 keyring，见
+             `_reencrypt_seed_envelope` 的注释）；
+          4. `used_codes` —— 清掉该身份的记录（旧 TOTP 随 seed 失效；留着只会在
+             极小概率下与新码撞上而误判"重放"）；
+          5. `identities.recovery_key_hash` —— 它是 `HMAC(recovery_key, seed_hex)`，
+             seed 一变就**必然失效**；且我们没有 recovery_key 无法重算 ⇒ 置 NULL 并
+             在返回值里明确 warning（**不静默**，用户需重新生成恢复密钥）。
+
+        失败语义（lead 裁决）：**任一条解不开就中止**，绝不"跳过坏的继续" ——
+        轮换是重大操作，半途状态比失败更糟。
+        """
+        ok, sess = self._verify_token(token)
+        if not ok:
+            return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
+        identity_id = sess["identity_id"]
+        master_old = sess["master_key"]
+
+        # ── 读阶段（零写）：先把需要改的东西全部算出来并逐条验证 ──
+        with self._db() as conn:
+            row = conn.execute(
+                "SELECT seed_key, key_protection, key_meta, key_salt, recovery_key_hash "
+                "FROM identities WHERE id=?", (identity_id,)).fetchone()
+        if not row:
+            return {"status": "error", "message": "身份不存在"}
+        stored_old, protection, key_meta, key_salt_hex, recovery_hash_old = row
+        if not key_salt_hex:
+            return {"status": "error", "code": "rotate_unsupported",
+                    "message": ("该身份是旧格式（无 key_salt，master 由 PIN 派生），"
+                                "轮换需要 PIN 且与本轮设计不兼容；请重新注册身份以启用轮换")}
+
+        try:
+            seed_hex_old = self._decode_seed_hex(identity_id, stored_old, protection, key_meta)
+        except Exception as exc:                       # noqa: BLE001
+            return {"status": "error", "code": "seed_unreadable",
+                    "message": "无法解开当前 seed_key：%s" % exc}
+
+        new_seed_hex = generate_seed_key(32).hex()
+        new_master = derive_master_key_stable(new_seed_hex, bytes.fromhex(key_salt_hex))
+        backup_key_old = self._derive_backup_key(bytes.fromhex(seed_hex_old))
+        backup_key_new = self._derive_backup_key(bytes.fromhex(new_seed_hex))
+        new_envelope = self._reencrypt_seed_envelope(
+            identity_id, new_seed_hex, protection, key_meta, stored_old)
+
+        secret_updates = []
+        backup_updates = []
+        try:
+            # ① secrets：master_old → master_new（保留每行自己的 salt/alg/迭代参数）
+            with self._db() as conn:
+                cursor = conn.execute(
+                    "SELECT id, name, value, cipher_alg, key_salt, key_iters, key_dklen "
+                    "FROM secrets WHERE identity_id=?", (identity_id,))
+                while True:
+                    chunk = cursor.fetchmany(200)      # 分页：备份/密钥多时不吃满内存
+                    if not chunk:
+                        break
+                    for (sid, name, enc, alg, rsalt, iters, dklen) in chunk:
+                        iters = iters or DEFAULT_ROW_ITERS
+                        dklen = dklen or DEFAULT_ROW_DKLEN
+                        alg = alg or DEFAULT_CIPHER_ALG
+
+                        def _rk(master):
+                            return (_derive_row_key(master, bytes.fromhex(rsalt), iters, dklen)
+                                    if rsalt else master)
+
+                        old_plain = _make_backend(alg, _rk(master_old)).decrypt(enc)
+                        new_enc = _make_backend(alg, _rk(new_master)).encrypt(old_plain)
+                        if _make_backend(alg, _rk(new_master)).decrypt(new_enc) != old_plain:
+                            raise ValueError("重加密回读不一致: %s" % name)
+                        secret_updates.append((sid, new_enc))
+            # ② rotated_backups：backup_key_old → backup_key_new
+            with self._db() as conn:
+                cursor = conn.execute(
+                    "SELECT id, original_name, value FROM rotated_backups WHERE identity_id=?",
+                    (identity_id,))
+                while True:
+                    chunk = cursor.fetchmany(200)
+                    if not chunk:
+                        break
+                    for (bid, bname, enc) in chunk:
+                        old_plain = _FernetBackend(backup_key_old).decrypt(enc)
+                        new_enc = _FernetBackend(backup_key_new).encrypt(old_plain)
+                        if _FernetBackend(backup_key_new).decrypt(new_enc) != old_plain:
+                            raise ValueError("备份重加密回读不一致: %s" % bname)
+                        backup_updates.append((bid, new_enc))
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_seed_key", identity_id, success=False,
+                        reason="%s: %s" % (type(exc).__name__, exc), caller=caller)
+            return {"status": "error", "code": "rotate_failed",
+                    "message": ("轮换中止（磁盘未改动，旧 seed 与全部密文保持原样）：%s: %s"
+                                % (type(exc).__name__, exc))}
+
+        # ── 写阶段（零写直到这里；单事务，抛错即整体回滚）──
+        try:
+            with self._db() as conn:
+                self._apply_seed_rotation(conn, identity_id, new_envelope,
+                                          secret_updates, backup_updates)
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_seed_key", identity_id, success=False,
+                        reason="write_phase: %s" % exc, caller=caller)
+            return {"status": "error", "code": "rotate_write_failed",
+                    "message": "轮换写阶段失败（事务已回滚）：%s: %s" % (type(exc).__name__, exc)}
+
+        # ── 提交后：旧会话的 master_key 已过期，必须失效 ──
+        stale = [t for t, s in self._sessions.items() if s.get("identity_id") == identity_id]
+        for t in stale:
+            self._sessions.pop(t, None)
+
+        warnings = []
+        if recovery_hash_old:
+            warnings.append("恢复密钥已失效（recovery_key_hash 绑定旧 seed，无法在新 seed 下重算）"
+                            "—— 请尽快重新生成恢复密钥")
+        self._audit("rotate_seed_key", identity_id, success=True,
+                    target="secrets=%d backups=%d" % (len(secret_updates), len(backup_updates)),
+                    caller=caller)
+        return {"status": "ok",
+                "identity_id": identity_id,
+                "rotated_secrets": len(secret_updates),
+                "rotated_backups": len(backup_updates),
+                "seed_fingerprint": hashlib.sha256(new_seed_hex.encode('utf-8')).hexdigest()[:12],
+                "sessions_invalidated": len(stale),
+                "recovery_key_invalidated": bool(recovery_hash_old),
+                "warnings": warnings,
+                "note": ("KEK 未轮换（轮换只换 seed，复用现有 KEK 以保证单事务原子性）；"
+                         "已被拷走的旧密文不受保护 —— 轮换只缩短泄漏快照的有效期")}
+
     def migrate_master_derivation(self, identity_id: str = None) -> dict:
         """迁移某身份（或全部身份）的 secrets 到**稳定派生**（master 不掺时间）。
 
@@ -1947,6 +2120,10 @@ def recover(identity_id: str, recovery_key: str, new_pin: str) -> dict:
 
 def delete_secret(token: str, name: str, caller: str = None) -> dict:
     return _get_vault2().delete_secret(token, name, caller)
+
+
+def rotate_seed_key(token: str, caller: str = None) -> dict:
+    return _get_vault2().rotate_seed_key(token, caller)
 
 
 def rotate_secret(token: str, name: str, new_value: str = None, caller: str = None) -> dict:
