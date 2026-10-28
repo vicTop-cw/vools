@@ -1,5 +1,14 @@
 # vools 项目实现计划
 
+> **实现状态（核实于 2026-10-29）**：18 条中 **11 条已实现（~61%）**；部分 5 条；未实现 0 条。
+> **另有 3 条「计划中的路径」已过时（D 类）** —— 功能其实存在，但文件位置/形式变了，
+> 详见 §1.1/§2.1（datetime）、§2.4（look_upon）、§5.1（setup.py/requirements.txt）处的
+> 【路径已过时】标注。**按旧路径去改会白跑**。
+> 核实方法（**可复跑**）：`python actus/tools/audit/plan_audit_core.py`
+> （含 D 类文件存在性检查：`vools/look_upon.py`、`setup.py`、`requirements.txt` 均报 MISS，
+> `vools/datetime/utils.py`、`vools/datetime/vdate_class.py`、`pyproject.toml` 均 OK）。
+
+
 ## 1. 项目分析
 
 通过分析 `<work_dir>\dataquest\source\pys` 目录下的文件（占位符：替换为实际数据源目录），发现以下需要实现的组件：
@@ -9,6 +18,12 @@
 - **myDates.py**: 包含日期范围函数（get_recently_months, get_recently_weeks, get_recently_days, get_dates）
 - **daterange.py**: 包含 get_date_range 函数
 - **vicDate**: 需要实现的日期类
+
+> **【路径已过时 · 核实于 2026-10-29】** 计划中的 `vools/datetime/{mydate,mydates,range,dates_format}.py`
+> 已不是最终形态：**日期能力统一实现在 `vools/datetime/utils.py`**
+> （审计实测：`get_recently_days` → `utils.py:392`、`get_dates` → `:427`、`get_date_range` → `:530`），
+> 日期类 `VDate` 在 `vools/datetime/vdate_class.py:41`。
+> 另：计划中的类名 `vicDate` 在仓库中**不存在**（实际实现为 `VDate`）。
 
 ### 1.2 缺失的 Spark UDF 函数
 - 各种日期处理 UDF
@@ -31,6 +46,10 @@
 ### 2.1 日期相关组件整合
 
 **目标**: 将所有日期相关组件组织到 `datetime` 模块中
+
+> **【路径已过时 · 2026-10-29】** 下方步骤里新建的 `mydate.py` / `mydates.py` / `range.py`
+> **没有按此拆分**：这些能力最终合并进 `vools/datetime/utils.py`（+ `vdate_class.py` 放类）。
+> 若按下方旧路径重建文件，会与现状重复/冲突 —— 请以 `utils.py` 为真源。
 
 **实施步骤**:
 1. **更新 `vools/datetime/__init__.py`**:
@@ -94,6 +113,11 @@
 3. **更新 `vools/look_upon.py`**:
    - 使用配置系统获取数据库凭证
    - 使用配置系统获取文件路径
+
+> **【路径已过时 · 核实于 2026-10-29】** 仓库根**没有** `vools/look_upon.py`；
+> 同名文件只存在于**另一个子包** `pyk/vools/pyk/look_upon.py`（`pyk/` 是独立子项目，不属于 `vools` 包）。
+> 本计划的 look_upon 改造应落到 `pyk/` 侧；`vools` 包的 DB/配置能力实际在
+> `vools/db/postgresql.py`（`PostgreSQLConnection`）与 `vools/config.py` / `vools/config.template.py`。
 
 ### 2.5 函数重载实现
 
@@ -188,6 +212,10 @@
 - 更新 setup.py
 - 更新 pyproject.toml
 - 更新 requirements.txt
+
+> **【路径已过时 · 核实于 2026-10-29】** 上方三条里 **`setup.py` 与 `requirements.txt` 已不存在**（原文保留为历史记录）；
+> 打包与依赖声明已统一由 **`pyproject.toml`** 承担（审计实测：前两者 MISS，`pyproject.toml` OK）。
+> 因此本条实际只剩「更新 pyproject.toml」一项待做 —— **不要**再去创建 setup.py / requirements.txt。
 
 ### 5.2 文档准备
 - 更新 README.md
