@@ -41,6 +41,7 @@ py3.6 兼容：只用标准库，% 格式化，不用 f-string。
 import io
 import json
 import os
+import pathlib
 import sys
 import contextlib
 
@@ -162,6 +163,23 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setenv("ACTUS_CONFIG_DIR", str(config))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+
+    # `validate` 的契约 schema 查找跟随 ACTUS_REPO_ROOT，且在 **import 时**解析一次
+    # （paths.py 统一后的行为，commit 5f0509d）。本 fixture 把 repo_root 指向 tmp 后，
+    # schema 路径会落到 tmp 里不存在的文件 → 动作校验恒报 "schema: [Errno 2] ..."，
+    # replay 会因此失败（不是产品 bug，是测试环境缺契约文件）。
+    # 这里复制真实 schema 进 tmp，并把已解析的路径打桩到这份副本：隔离 + 稳定。
+    _schema_src = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "contracts", "action.schema.json")
+    if os.path.isfile(_schema_src):
+        contracts = repo / "contracts"
+        contracts.mkdir()
+        (contracts / "action.schema.json").write_bytes(
+            pathlib.Path(_schema_src).read_bytes())
+        import vools.actus.validate as _validate_mod
+        monkeypatch.setattr(_validate_mod, "_SCHEMA_PATH",
+                            str(contracts / "action.schema.json"), raising=False)
 
     class World(object):
         pass

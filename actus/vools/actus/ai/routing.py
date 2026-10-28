@@ -4,7 +4,10 @@
 """
 
 __all__ = [
-    'RankedCandidate', 'layarank_by_complexity',
+    'RankedCandidate', 'layarank_by_complexity', 'last_layarank_error',
+    'LAYARANK_ERR_CALL', 'LAYARANK_ERR_TIMEOUT', 'LAYARANK_ERR_LLM',
+    'LAYARANK_ERR_EMPTY', 'LAYARANK_ERR_BAD_JSON', 'LAYARANK_ERR_NOT_LIST',
+    'LAYARANK_ERR_BAD_ITEM',
     'cost_performance_score', 'sort_by_cost_perf', 'PROVIDER_COST_PERF',
     'FallbackChain', 'FallbackEntry',
     'retry_with_fallback', 'compute_fallback_chain',
@@ -22,8 +25,62 @@ class RankedCandidate(object):
     action_id: str; tool_name: str; base_confidence: float
     laya_boost: float; final_confidence: float; reason: str
 
-def layarank_by_complexity(client, intent, candidates, timeout_sec=3.0):
-    if not candidates or not intent.strip(): return []
+# Laya 重排序最近一次失败/降级的分型原因（'' = 正常）。
+# 改前 `except Exception: return []` 把三种完全不同的情况混成同一个空列表：
+#   ① LLM 调用崩了  ② LLM 超时  ③ LLM 正常返回「不需要调整」
+# 调用方无法区分 → 排序静默退化成不排序，排障时零信号（与 probe 侧已修的
+# 「静默吞异常」同一族）。现在：返回仍兼容（默认仍是 list），但另给分型原因。
+_LAST_LAYARANK_ERROR = ''
+
+# 分型常量（写进 last_layarank_error()，便于调用方按类型分支）
+LAYARANK_ERR_CALL = 'call_error'        # client.complete 抛异常
+LAYARANK_ERR_TIMEOUT = 'timeout'        # 超过 timeout_sec
+LAYARANK_ERR_LLM = 'llm_error'          # 响应本身是失败（auth/quota/unreachable…）
+LAYARANK_ERR_EMPTY = 'empty_response'   # 响应成功但内容为空
+LAYARANK_ERR_BAD_JSON = 'bad_json'      # 内容不是合法 JSON
+LAYARANK_ERR_NOT_LIST = 'not_a_list'    # JSON 合法但不是数组
+LAYARANK_ERR_BAD_ITEM = 'bad_item'      # 数组里逐项的 adjustment 不是数字
+
+
+def last_layarank_error():
+    """最近一次 `layarank_by_complexity()` 的失败/降级分型。
+
+    Returns:
+        str: '' 表示正常（真的拿到排序结果，或输入为空无需调用）；
+        否则是 LAYARANK_ERR_* 之一，带简短上下文，如
+        `'call_error:TimeoutError: timed out'`、`'llm_error:quota'`。
+
+    为什么需要：改前调用方只看到 `[]`，无法分辨「LLM 说不用调整」与
+    「LLM 挂了」——前者可以继续，后者必须降级告警。
+    """
+    return _LAST_LAYARANK_ERROR
+
+
+def layarank_by_complexity(client, intent, candidates, timeout_sec=3.0,
+                           with_error=False):
+    """用 LLM 评估候选复杂度并给出置信度调整。
+
+    Args:
+        with_error: False（默认，向后兼容）返回 list；True 返回
+            `(adjustments, error)`，`error` 为 '' 或 LAYARANK_ERR_* 分型串。
+            无论哪种形态，最近一次原因都可通过 `last_layarank_error()` 读取。
+
+    Returns:
+        List[RankedCandidate] 或 (List[RankedCandidate], str)。
+    """
+    adjustments, error = _layarank_impl(client, intent, candidates, timeout_sec)
+    if with_error:
+        return adjustments, error
+    return adjustments
+
+
+def _layarank_impl(client, intent, candidates, timeout_sec):
+    """内部实现，恒返回 (adjustments, error)。"""
+    global _LAST_LAYARANK_ERROR
+    if not candidates or not intent.strip():
+        # 输入为空不是错误：没有候选就没有可调整的对象
+        _LAST_LAYARANK_ERROR = ''
+        return [], ''
     brief = [{"action_id": e.action_id, "tool_name": e.tool_name,
               "description": (e.description or "")[:200]} for e in candidates]
     prompt = ("你是 Actus 路由复杂度评估器。用户意图：%s\n候选：%s\n"
@@ -34,35 +91,68 @@ def layarank_by_complexity(client, intent, candidates, timeout_sec=3.0):
     start = time.time()
     try:
         resp = client.complete([Message(role="user", content=prompt)], temperature=0.3, max_tokens=500)
-    except Exception: return []
-    if time.time() - start > timeout_sec: return []
-    if resp is None or resp.failed: return []
-    return _parse_laya_response(resp.content, candidates)
+    except Exception as exc:
+        _LAST_LAYARANK_ERROR = '%s:%s: %s' % (
+            LAYARANK_ERR_CALL, type(exc).__name__, str(exc)[:120])
+        return [], _LAST_LAYARANK_ERROR
+    elapsed = time.time() - start
+    if elapsed > timeout_sec:
+        _LAST_LAYARANK_ERROR = '%s(%.2fs > %.2fs)' % (
+            LAYARANK_ERR_TIMEOUT, elapsed, timeout_sec)
+        return [], _LAST_LAYARANK_ERROR
+    if resp is None:
+        _LAST_LAYARANK_ERROR = '%s:no-response' % LAYARANK_ERR_LLM
+        return [], _LAST_LAYARANK_ERROR
+    if resp.failed:
+        kind = ''
+        try:
+            kind = (resp.raw or {}).get('error_kind', '') or ''
+        except AttributeError:
+            kind = ''
+        _LAST_LAYARANK_ERROR = '%s:%s' % (LAYARANK_ERR_LLM, kind or 'failed')
+        return [], _LAST_LAYARANK_ERROR
+    result, error = _parse_laya_response(resp.content, candidates)
+    _LAST_LAYARANK_ERROR = error
+    return result, error
+
 
 def _parse_laya_response(text, candidates):
+    """解析 LLM 返回；返回 (adjustments, error)。"""
     raw = str(text or "").strip()
-    if not raw: return []
+    if not raw:
+        return [], LAYARANK_ERR_EMPTY
     if raw.startswith("```"):
         parts = raw.split("```")
         raw = parts[1] if len(parts) > 1 else raw[3:]
         if raw.lower().startswith("json"): raw = raw[4:]
         raw = raw.strip().strip("`").strip()
     try: items = json.loads(raw)
-    except ValueError: return []
-    if not isinstance(items, list): return []
+    except ValueError as exc:
+        return [], '%s: %s' % (LAYARANK_ERR_BAD_JSON, str(exc)[:80])
+    if not isinstance(items, list):
+        return [], '%s: %s' % (LAYARANK_ERR_NOT_LIST, type(items).__name__)
     aids = {e.action_id for e in candidates}; result = []
+    bad_items = 0
     for item in items:
         if not isinstance(item, dict): continue
         aid = str(item.get("action_id") or "")
         if aid not in aids: continue
-        adj = max(-0.3, min(0.3, float(item.get("adjustment", 0.0))))
+        try:
+            adj = float(item.get("adjustment", 0.0))
+        except (TypeError, ValueError):
+            bad_items += 1
+            continue
+        adj = max(-0.3, min(0.3, adj))
         entry = next((e for e in candidates if e.action_id == aid), None)
         if entry is None: continue
         result.append(RankedCandidate(action_id=aid, tool_name=entry.tool_name,
             base_confidence=0.5, laya_boost=adj,
             final_confidence=max(0.0, min(1.0, 0.5+adj)),
             reason=str(item.get("reason",""))[:200]))
-    return result
+    if bad_items:
+        return result, '%s: %d item(s) 的 adjustment 不是数字（已跳过）' % (
+            LAYARANK_ERR_BAD_ITEM, bad_items)
+    return result, ''
 
 PROVIDER_COST_PERF = {
     "openai": {"gpt-4o": {"price_per_1k": 0.005, "rank": 9},

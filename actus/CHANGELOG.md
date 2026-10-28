@@ -91,7 +91,9 @@
   导致 `actus probe | grep` 把整份输出判成 binary。→ 所有取值经 `_clean()` 去控制字符、折叠空白。
 - **KPI 曾是自欺欺人**：`elapsed_ms` 在四个维度采集器**之前**计算，实测 wall 13.66s 却上报 8714ms
   （**少报 4.95s**）。现 `elapsed_ms` = 总墙钟，并拆成
-  `probers_ms / dimensions_ms / assemble_ms / cache_write_ms` **四段加和恒等于 elapsed_ms**，
+  `probers_ms / dimensions_ms / assemble_ms / cache_write_ms` 四段，**四段加和 ≈ elapsed_ms**
+  （三次实测差 `+0.0 / +0.1 / +0.2 ms`：四段各自独立 `time.time()` 计时并四舍五入到 0.1ms，
+  段间空隙不计入，故严格说是"≈"而不是"恒等于"——这里按可验算的口径写），
   不留黑箱；同时修掉四维度重复采集（`dimensions_ms` 6551ms → 0）。
 - **外部命令探测的超时不生效（Windows 特有，影响面不止 WSL）**：`subprocess.run(timeout=...)`
   在 Windows 上**不是真上限** —— CPython 超时后是 `kill()` + **再调一次没有 timeout 的
