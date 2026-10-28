@@ -1059,27 +1059,31 @@ def _apply_env_injections(action, params, exec_id, artifacts_dir,
         except Exception:
             pass
 
-    try:
-        vault_refs = [
-            s for s in secrets_config
-            if str(s.get('key', s.get('env', ''))).startswith('vault://')
-        ]
-        if vault_refs:
-            from . import vault2 as vault2_mod
-            identity_id = os.environ.get('VAULT_IDENTITY_ID')
-            machine_id = os.environ.get('VAULT_MACHINE_ID')
-            pin = os.environ.get('VAULT_PIN')
-            if identity_id and machine_id and pin:
-                auth_result = vault2_mod.auth(identity_id, machine_id, pin)
-                if auth_result.get('status') == 'ok':
-                    token = auth_result['session_token']
-                    resolve_result = vault2_mod.resolve_vault_refs(token, vault_refs)
-                    if resolve_result.get('status') == 'ok':
-                        for env_name, env_value in resolve_result.get('resolved', {}).items():
-                            if env_value:
-                                os.environ[env_name] = env_value
-    except Exception:
-        pass
+    # ── vault:// 引用：统一 secret resolver（第 12 轮：v2 优先 / v1 兼容读）──
+    # 旧实现分两段：v1 `resolve_secrets`（不认 vault://）+ 仅当 VAULT_* 凭据齐全时
+    # 直接调 vault2；且整段包在 `except: pass` 里 —— 凭据缺失/库切换时 vault:// 引用
+    # 静默不解析。现在统一走 resolver：v2 优先、回退 v1；**冲突/读取失败显式拒绝执行**
+    # （不静默挑一个值，也不静默跳过）。
+    vault_refs = [
+        s for s in secrets_config
+        if str(s.get('key', s.get('env', ''))).startswith('vault://')
+    ]
+    if vault_refs:
+        resolved = vault_mod.resolve_vault_refs(vault_refs, meta_dir=meta_dir or '')
+        if resolved.get('status') == 'conflict':
+            raise ActionError(
+                'vault_secret_conflict',
+                '密钥冲突，拒绝执行：%s（请人工确认保留 v1 还是 v2 的值）'
+                % resolved.get('message'),
+                {'conflicts': resolved.get('conflicts') or []})
+        if resolved.get('status') == 'error':
+            raise ActionError(
+                'vault_read_failed',
+                '密钥读取失败，拒绝执行：%s' % resolved.get('message'),
+                {'errors': resolved.get('errors') or []})
+        for env_name, env_value in (resolved.get('resolved') or {}).items():
+            if env_value:
+                os.environ[env_name] = env_value
 
     if sandboxed:
         build_dir = sbx.prepare(artifacts_dir, exec_id)
@@ -1403,7 +1407,21 @@ def _register_artifacts(meta_dir: str, action: Action, exec_id: str,
 
 
 def preview(action_id: str, params: dict = None, actions_dir: str = None) -> dict:
-    """干跑（docs/06 §3）：展示将执行的块/指令/依赖/trust，不执行任何代码。"""
+    """干跑（docs/06 §3）：展示将执行的块/指令/依赖/trust，不执行任何代码。
+
+    审计（第 29 轮 ⑪）：本函数只接受**动作 id 字符串**。同族 API 里
+    `validate_action(action)` 收的是 Action 对象，曾有调用方把 Action 传进来，
+    改前会在 indexer 深处炸成 `TypeError: unhashable type: 'Action'` —— 报错点
+    离调用处很远、看不出是参数用错。现在提前给出可读错误。
+    """
+    if not isinstance(action_id, str):
+        from .errors import ActionError
+        raise ActionError(
+            'param_invalid',
+            'preview 需要动作 id 字符串（如 actus.basics.calculator），收到 %s；'
+            '若要校验已解析的 Action 对象，请用 validate_action(action)'
+            % type(action_id).__name__,
+            {'received_type': type(action_id).__name__})
     from .indexer import get_action
     params = params or {}
     action = (_get_validated(action_id) if not actions_dir
