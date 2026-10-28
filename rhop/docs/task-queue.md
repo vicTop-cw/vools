@@ -1,7 +1,7 @@
 # rhop 通用任务队列（A 提交加密 JSON 指令 → B 解密执行）
 
 > **模块路径**：`vools.rhop.task`（存储抽象 `vools.rhop.task.store`，密文工具 `vools.rhop.secret`）
-> **状态**：已实现并验证（2026-10-28，`rhop/tests` 604 passed / 40 skipped）
+> **状态**：已实现并验证（2026-10-28，`rhop/tests` 604 passed / 45 skipped）
 > **参照**：表结构与流转对齐 `vools.pyk.look_upon`；**去掉了 P0..P3 跳板角色**，改为配置驱动的方向 A/B/C。
 
 ---
@@ -545,20 +545,30 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 
 ```bash
 cd rhop && python -m pytest -q
-        # 604 passed（644 collected；40 skipped：40 条全部来自 test_pg_store.py
-        #   ——Windows 侧连不上 PG，见下）
+        # 604 passed（649 collected；45 skipped：40 条 test_pg_store.py +
+        #   5 条 test_pg_store_concurrency.py —— Windows 侧默认跳过 PG 用例，见下）
 ```
 
-> 全量 644 条**包含** `test_pg_store.py` 的 40 条（PostgreSQL 后端）与
+> 全量 649 条**包含** `test_pg_store.py` 的 40 条（PostgreSQL 后端）、
+> `test_pg_store_concurrency.py` 的 5 条（并发启动，BUG-368）、
 > `test_pg_store_schema_migration.py` 的 12 条、`test_pg_store_explicit_columns.py` 的 7 条。
 > **PG 只监听 WSL 的回环**（`listen_addresses = 'localhost'`，绑定 WSL 内 127.0.0.1）：
-> WSL2 的 localhost 转发不转发 loopback 绑定，因此 **Windows 侧 `127.0.0.1:5432` 是
-> `Connection refused`**，这 40 条在 Windows 上按 `skip` 处理（不是失败）。
-> 要真正跑它们，在 WSL 里执行（实测 **40/40 通过**）：
+> WSL2 的 localhost 转发不转发 loopback 绑定，因此 **Windows 侧 `127.0.0.1:5432` 通常
+> `Connection refused`**。
+>
+> **放行策略（2026-10-28 修订，修掉「探活一次就放行」的假红）**：由
+> `tests/_pg_probe.py` 统一判定 —— ① **Windows 默认跳过** PG 用例（那里通常没有本地 PG，
+> 只有抖动转发）；Linux/WSL/CI 容器默认运行；② 放行前**连续 3 次真实查询探活**（间隔 200ms，
+> `SELECT 1` + 临时表建/插/查），**全部成功**才跑，任一次失败即跳过；③ `RHOP_PG_TESTS=1`
+> 强制参与探活、`RHOP_PG_TESTS=0` 强制关闭。**放行之后用例里的真实失败仍是 failure**，
+> 探针不吞任何用例异常。
+>
+> 要真正跑它们，在 WSL 里执行（实测 **45/45 通过**：40 + 5）：
 >
 > ```bash
 > wsl -d Ubuntu-22.04 -- bash -lc \
->   "cd /mnt/e/IDEProjects/AI/vools/rhop && python3 -m pytest -q tests/test_pg_store.py"
+>   "cd /mnt/e/IDEProjects/AI/vools/rhop && python3 -m pytest -q \
+>      tests/test_pg_store.py tests/test_pg_store_concurrency.py"
 > ```
 >
 > ⚠️ 早先写的「Windows 侧通过 `127.0.0.1:5432` 可达、默认命令不再需要排除它」是**错的**
@@ -580,7 +590,8 @@ cd rhop && python -m pytest -q
 | `test_task_resilience.py` | 10 | 常驻健壮性回归：**BUG-365**（执行期间被 requeue → 收尾写终态不抛 `StoreError`，返回 `discarded`；单轮 `StoreError` 不打死常驻循环）、**BUG-366**（RUNNING 租约回收 `retry_count+1` 并写 `last_err`，耗尽 `max_retries` 落 `FAILED`；对照面：LOCKED 回收只回 `PENDING`、不扣重试）、**BUG-367**（`renew_interval_sec` 受管 + 越界拒绝） |
 | `test_pg_store.py` | 40 | PostgreSQL 后端契约对齐 + PG 特有行为（临时表自建自删；**Windows 侧默认 skip，WSL 内 40/40 通过**） |
 | `test_pg_store_explicit_columns.py` | 7 | PG 显式列写入/读回（不依赖 `SELECT *` 的列序） |
-| `test_pg_store_schema_migration.py` | 12 | PG 旧库自愈（BUG-362）：31 列逐条幂等 `ADD COLUMN IF NOT EXISTS`、身份列（task_id/task_name）跳过、NOT NULL 列补 `DEFAULT ''`、补列类型与建表同源、失败回滚、schema 版本元数据表（只前向推进）、`init_schema` 语句顺序 |
+| `test_pg_store_schema_migration.py` | 12 | PG 旧库自愈（BUG-362）：31 列逐条幂等 `ADD COLUMN IF NOT EXISTS`、身份列（task_id/task_name）跳过、NOT NULL 列补 `DEFAULT ''`、补列类型与建表同源、失败回滚、schema 版本元数据表（只前向推进）、`init_schema` 语句顺序（**含 BUG-368 的 `SET LOCAL lock_timeout` + advisory lock 前缀**） |
+| `test_pg_store_concurrency.py` | 5 | PG 并发启动不再死锁（**BUG-368**）：4 会话同时 `init_schema` 零失败、等锁超时给出可读 `StoreError`、迁移锁按表隔离（A 表不阻塞 B 表）、单进程重复 init 幂等、默认锁超时为正 |
 | `test_html_fernet.py` | 15 | 页面结构/离线自包含/无跳板角色选项、JS↔Python 双向密文互通、派生密钥一致、错密钥失败、页面密文直接喂给 `TaskConfig` 与 `secret` CLI |
 
 任务队列之外的 15 个测试文件合计 151 条：`test_actions.py` 19、`test_mirror.py` 15、`test_endpoint.py` 16、
