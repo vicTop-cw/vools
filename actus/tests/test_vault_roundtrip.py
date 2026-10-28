@@ -14,6 +14,7 @@ import os
 import pytest
 
 from vools.actus.vault import Vault
+from vools.actus.vault2 import Vault2
 
 MASTER = "test-master-key"
 
@@ -88,3 +89,51 @@ def test_scope_isolation(vault):
     vault.set("probe.key", "proj-v", scope="project")
     assert vault.get("probe.key", scope="global") == "global-v"
     assert vault.get("probe.key", scope="project") == "proj-v"
+
+
+# ---------------------------------------------------------------------------
+# 显式目录（不依赖环境变量）—— 防止"跨测试环境泄漏"再次发生
+# ---------------------------------------------------------------------------
+
+def test_vault2_explicit_dir_roundtrip(tmp_path, monkeypatch):
+    """退步了会怎样（第 19 轮 `~/.actus` 污染根因）：只靠环境变量隔离的测试，在
+    teardown 把 `ACTUS_VAULT2_DIR` 恢复成"未设置"后，其它测试构造 `Vault2()` 会走
+    默认目录 `~/.actus/vault2` 建库。
+
+    断言：**显式删掉 `ACTUS_VAULT2_DIR`** 后，`Vault2(vault_dir=<tmp>)` 的 register/
+    auth/set/get 全部成功，且库文件落在传入的 tmp 目录（不依赖环境、不碰真实 HOME）。
+    """
+    monkeypatch.delenv("ACTUS_VAULT2_DIR", raising=False)
+    vault = Vault2(vault_dir=str(tmp_path / "explicit-v2"))
+
+    registered = vault.register("explicit", "123456", security_level="L1")
+    assert registered["status"] == "ok", registered
+    auth = vault.auth(registered["identity_id"], registered["machine_id"], "123456")
+    assert auth["status"] == "ok", auth
+    assert vault.set_secret(auth["session_token"], "k", "V")["status"] == "ok"
+
+    got = vault.get_secret(auth["session_token"], "k")
+    assert got["status"] == "ok" and got["value"] == "V", got
+    assert os.path.isfile(str(tmp_path / "explicit-v2" / "vault2.db"))
+
+
+def test_session_dirs_are_pinned_away_from_real_home():
+    """退步了会怎样（3 次污染的历史）：session 级 fixture 失效（被删/降成 function
+    scope），后续测试又会在"未设置环境变量"的瞬间用默认 `~/.actus`。
+
+    断言：`HOME`/`ACTUS_VAULT2_DIR`/`ACTUS_META_DIR` 都指向本次 pytest 的 tmp
+    会话目录，且**不是**真实用户主目录（`~` 展开值）。
+    """
+    required = ("HOME", "USERPROFILE", "ACTUS_META_DIR", "ACTUS_VAULT2_DIR")
+    # ACTUS_INSTALLED_DIR 有意不强制钉（默认由 HOME 推导）；若外部设置了则也必须落 tmp
+    optional = ("ACTUS_INSTALLED_DIR",)
+    for name in required + optional:
+        value = os.environ.get(name)
+        if name in optional and not value:
+            continue
+        assert value, "session fixture 没有钉住 %s" % name
+        normalized = os.path.normcase(os.path.abspath(value))
+        assert "pytest-" in normalized or "session-isolation" in normalized, (
+            "%s 没有指向 pytest 临时目录: %r" % (name, value))
+        assert normalized != os.path.normcase(os.path.abspath(
+            os.path.expanduser("~/.actus"))), "%s 仍可能落到 ~/.actus" % name
