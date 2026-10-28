@@ -6751,3 +6751,129 @@ severity medium。
 
 ### FIXED(2026-10-27T06:46:53Z / BUG-358)
 - evidence: vools/vconcurrent/delegates.py 增加 AsyncDelegate/EventBus/MessageDispatcher 参数校验（8 处）；新增 tests/test_vconcurrent_delegates_validation_regression.py 22 用例；commit 902bbb6。
+## BUG-359 [2026-10-28T03:45:19Z] [medium] FIXED
+- summary: [rhop-task] docs/task-queue.md §16 全量用例数漂移：声明 598 / 实测 575（−23），仓库自带稽核器 audit_api_doc.py 因此退出码 1
+- detail: 现象：cd rhop && python tests/audit_api_doc.py 575 → 唯一 MISMATCH『§16 声明数与实际全量用例数一致 :: 文档=598 实际=575（差异 -23）』，退出码 1；即项目自己的『文档即实现』门是红的。
+  另：文档第 4 行状态仍写『已实现并验证（2026-10-21，rhop/tests 456 passed）』，与现况（575 passed + 40 skipped）差距更大。
+  根因：并行开发期间用例增删（PG 后端 + 心跳硬化用例加入，同时部分 clipboard/watch 用例被移出或改为 skip），文档计数未随提交同步回写；audit 只校验 §16，不校验开头状态行。
+  证据：全量 pytest 575 passed / 40 skipped（本机 PG 不可达，test_pg_store 的 25 条 skip）；audit 退出码 1。
+  建议：把 §16 与开头状态行改为由 CI 从实测值回写（或直接删掉硬编码数字，只留生成命令），避免人手维护；audit 增加对第 4 行状态行的覆盖。注：本轮为 tidy 档，模板规定『文档过时只列出、不改文档』，故只入账不动手。
+- reported_by: dsh-tidy-1
+## BUG-360 [2026-10-28T03:45:19Z] [low] FIXED
+- summary: [rhop] 契约冲突：rhop/pyproject.toml 声明 requires-python>=3.6，而仓库级 ruff/black target-version 为 py39..py312，627 条 ruff 告警中绝大多数是会把基线推到 3.9+ 的 UP 规则
+- detail: 现象：rhop/pyproject.toml:31 requires-python = ">=3.6"；根 pyproject.toml 的 [tool.black] target-version = ["py39","py310","py311","py312"]（ruff 同类取向）。对 rhop/vools/rhop/task 跑 ruff check：627 条，其中 UP006(List→list)/UP045(X|None)/UP037 等改造类规则占绝大多数——这些语法在 3.6/3.8 上直接语法错误。
+  影响面：① 若按 ruff 自动修复，会把 Py3.6 基线悄悄破坏；② 若不修，lint 门永远红，真正的死代码信号（F401/F841 共 7 条）被 620 条噪声淹没；③ 库使用者无法判断这个包到底支持哪个 Python。
+  证据：同一支 ruff 加 --select F401,F811,F841 仅 7 条（且本轮已清零）。
+  建议：二选一并显式声明——(a) 真的仍支持 3.6：给 rhop 建 per-package ruff 配置（target-version=py36，禁用 UP 系列）；(b) 基线已随 v0.9.0 上移：同步改 requires-python 与 README，再放开 UP 改造。属策略决策，未在 tidy 档内擅改。
+- reported_by: dsh-tidy-1
+
+### FIXED(2026-10-28T07:46:32Z / BUG-360)
+- 实测判据（2026-10-28，逐项可复跑，不靠印象）：
+  ① **语法层**：rhop 包 44 个 `.py` 逐文件 `ast.parse(feature_version=(3,6))` **全部通过**（无海象、无 match、无位置限定参数 `/`、无 PEP 563/604/585）→ 语法本身并不需要 3.7+；
+  ② **运行期**：`clipboard.py`(×2) / `daemon.py` / `executor.py` 用了 `subprocess.run(capture_output=..., text=...)` —— 这两个关键字是 **3.7 新增**；3.6 上不是 ImportError，而是**调用即 TypeError**，而 daemon/executor 正是任务执行主路径 ⇒ 3.6 承诺不成立；
+  ③ **依赖侧**：硬依赖 `vools>=0.9.0` 自身也有 7 个模块用了 `capture_output/text`（同一问题，属 vools 主包）；
+  ④ **CI/环境**：`.github/workflows/ci.yml` 矩阵最低 **3.8**，3.6/3.7 从未被任何一轮测试覆盖；本机解释器 3.13.14，且 uv / python-build-standalone 最低只到 3.8 —— **3.6/3.7 无法实跑验证**。
+- 处置（方案 B：声明不实 → 改声明，不动代码）：`rhop/pyproject.toml` 的 `requires-python` 由 `>=3.6` 改为 **`>=3.8`**，并把上述判据写在字段上方注释里。取 3.8 而不是实测最低的 3.7：3.7 已 EOL 且本机/CI 都无法验证，**声明唯一被 CI 验证过的下限**更诚实；若日后要给 3.7 开门，代码静态上已满足，改一行即可。
+- 未做（避免混改 + 超出该轮授权）：没有把 4 处 `subprocess.run` 回退成 3.6 写法（那条路能保住 3.6 承诺），也没动 vools 主包的同款用法；如确实需要 3.6 支持，应另立「3.6 回退改造」票，而不是继续在 pyproject 里写 3.6。
+- 证据：rhop 全量 `pytest tests` → **604 passed / 40 skipped**；WSL 内 PG 用例 59 passed（与声明改动无关，确认无回归）。
+
+### FIXED(2026-10-28T04:05:05Z / BUG-359)
+- evidence: ①`rhop/docs/task-queue.md` 第 4 行状态改为「2026-10-29，582 passed / 40 skipped」；§16 改为「582 passed（622 collected；40 skipped 全部来自 test_pg_store.py）」、逐文件口径由 38 改 40（实测 collect 40）。②`rhop/tests/audit_api_doc.py` 新增 10c 段：解析文档头状态行的日期与用例数，校验其与 §16 一致——补齐「audit 只校验 §16、不校验状态行」的缺口。证据：`python tests/audit_api_doc.py 582` → checks: 61 | mismatch: 0（退出码 0）；变异验证（状态行改 999）→ mismatch: 1「状态行=999 §16=582」，恢复后归零。
+
+## BUG-361 [2026-10-28T04:05:05Z] [high] FIXED
+- summary: [rhop-pg] PgTaskStore 用 `SELECT *` + `dict(zip(TASK_COLUMNS, row))` 做列映射，正确性隐含依赖「PG 表物理列序 == TASK_COLUMNS 声明顺序」；旧库（CREATE TABLE IF NOT EXISTS 不迁移）物理列序一旦不同即**静默错位**
+- detail: 现象：psycopg2 返回按物理列序的元组，`zip(TASK_COLUMNS, row)` 按位置贴名。SQLite 侧用 `sqlite3.Row`（`dict(row)` 按列名）因此安全，PG 侧成了唯一离群点。
+  取证：pg_store.py 原有 7 处 `zip(TASK_COLUMNS, ...)` + 6 处 `SELECT *` + 1 处 `RETURNING *`。
+  最小复现（无需 PG）：构造一行数据按「worker_id/owner 两列物理对调」的顺序返回 → `TaskRecord.from_row(dict(zip(TASK_COLUMNS, legacy_row)))` 得到 worker_id='alice' owner='worker-1'（写入时相反），**无任何异常**；同法对调 back_info/last_err 同样静默互换。若对调 state/priority 则抛 ValueError（类型不同才响）。
+  触发时机：TASK_COLUMNS 追加/调整列之后，旧 PG 表不会被 CREATE TABLE IF NOT EXISTS 迁移，下一次读取即错位。
+  修复：新增模块级 `_SELECT_COLS = ", ".join(TASK_COLUMNS)`，把 8 处语句全部改为显式列——`SELECT <cols> FROM <table>`（set_state/claim_next/apply_task/apply_state/get_task/list_tasks）+ `UPDATE ... RETURNING <显式列>`（claim_next）。返回顺序由语句决定，不再由表结构历史决定。
+  证据：rhop/tests/test_pg_store_explicit_columns.py（7 用例：假 DB-API 层按「旧物理列序」返回行，get_task/list_tasks/claim_next 三个读路径均不错位；控制组证明旧写法确实互换；静态守卫 SELECT */RETURNING * 归零；schema 列序自校）。变异验证：把 get_task 改回 `SELECT *` → 该用例红在 worker-1 != alice，恢复后 7/7 绿。全量 pytest 582 passed / 40 skipped。
+- reported_by: vools-lead
+- task_id: T0r770
+
+### FIXED(2026-10-28T04:05:05Z / BUG-361)
+- evidence: rhop/vools/rhop/task/store/pg_store.py 引入 `_SELECT_COLS` 并替换 8 处 SELECT */RETURNING *；新增 rhop/tests/test_pg_store_explicit_columns.py 7 用例（含假游标行为验证 + 控制组 + 静态守卫）；变异验证红→恢复绿；全量 pytest 582 passed。
+
+## BUG-362 [2026-10-28T04:05:05Z] [medium] FIXED
+- summary: [rhop-pg] PgTaskStore 无 schema 版本标记与迁移路径：只有 `CREATE TABLE IF NOT EXISTS`，TASK_COLUMNS 已 31 列且仍在演进，旧库既不会补列也不会报错
+- detail: 现象：SQLite 侧有 `PRAGMA user_version` + `schema_version` 属性并在 `describe()` 暴露；PG 侧对 `user_version|ALTER TABLE` 零命中，`describe()` 只回 host/port/dbname/table/user。
+  影响：① 旧 PG 表缺少新增列时 INSERT 会因列清单含未知列而失败（响亮，尚可诊断）；② 更难的是列**顺序**变化或语义漂移，配合旧映射会静默错位（BUG-361 已堵死读路径的位置耦合，但表结构本身仍无版本门）。
+  建议：新增 `_SCHEMA_VERSION` 常量 + 版本表（如专用 `t_schema_meta`）或表注释，启动时比对并在落后时执行可幂等 ALTER；`describe()` 回显版本号。需真实 PG 验证，本机无 DSN，故本轮只入账不擅改。
+- reported_by: vools-lead
+- task_id: T0r770
+
+### FIXED(2026-10-28T04:42:00Z / BUG-362)
+- evidence: 两件事一起补：①**补列迁移**——`pg_store.py` 把 31 列定义收敛成单一来源 `_COLUMN_DDL`（`(name, ddl)` 元组），`schema_sql()` 由它生成建表 SQL，新增 `migration_sql()` 对每列发 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`；身份列 `task_id`（SERIAL 主键）与 `task_name`（UNIQUE 逻辑主键）进 `_MIGRATION_SKIP` 跳过，`NOT NULL` 且无 `DEFAULT` 的列（created_at/updated_at）补 `DEFAULT ''`，否则非空表加列会失败。②**版本标记**——`_SCHEMA_VERSION = 1` + 专用元数据表 `<table>_schema_meta`，`schema_version_sql()` 三句全幂等（建表 / 首启 `INSERT ... WHERE NOT EXISTS` / 落后时 `UPDATE ... WHERE version <`，只前向推进）；`init_schema()` 顺序为 建表 → 逐列补 → 写版本，同一事务提交；`describe()` 回显 `schema_version` 与 `meta_table`。
+- 判据（`rhop/tests/test_pg_store_schema_migration.py` 12 用例，假 DB-API 层，不需真实 PG）：① 覆盖面=31−2 身份列，白名单硬编码在测试侧（不从被测模块读，否则「少覆盖一列」的变异会同时改掉期望值而逃检）；② 每句都是 `ADD COLUMN IF NOT EXISTS` 且无 DROP；③ 非空列必带 DEFAULT；④ 补列类型与建表逐列一致；⑤ `init_schema` 语句序列=建表→29 条补列→3 条版本，单次 commit；⑥ 失败分支 rollback=1；⑦ 版本语句只前向、元数据表名派生、`describe` 回显。
+- 等价性：`schema_sql()` 与 HEAD 版本**归一化去空白后逐字节一致**（1306 字符），证明把内联字面量改由 `_COLUMN_DDL` 生成没有改变任何 DDL 语义。
+- 变异验证（7 组，全部被抓）：跳过全部补列 / 白名单多包含一列 / 去掉 DEFAULT 兜底 / 去掉 IF NOT EXISTS / 不写版本 / 版本可回退 / 无幂等插入守卫 —— 各自红，恢复后 12/12 绿。
+- 未覆盖：真实 PG 上的 DDL 执行未本机验证（无 DSN），用例是语句级验证；`_SCHEMA_VERSION` 目前只有 1，首次真实升级时才被真正行使。全量 `rhop/tests` 592 passed / 42 skipped。
+- 补充验证（2026-10-28T06:22:00Z，接手司令）：上面这条「未覆盖」已消除 —— PG 只监听 WSL 回环（Windows 侧 `127.0.0.1:5432` 是 Connection refused，所以 40 条 pg 用例在 Windows 上按 skip 处理），在 WSL 里真跑 `python3 -m pytest tests/test_pg_store_schema_migration.py tests/test_pg_store_explicit_columns.py tests/test_pg_store.py` → **59 passed**（12 + 7 + 40），即 `init_schema()` 的「建表 + 29 条补列 + 版本元数据」语句在真实 PostgreSQL 14.24 上被真实执行且通过。
+
+## BUG-363 [2026-10-28T04:05:05Z] [low] WORKS-AS-DESIGNED
+- summary: [rhop-pg] claim_next 未用 `FOR UPDATE SKIP LOCKED`，多 worker 争抢时会阻塞在行锁上；且 PG 侧无任何并发领取用例
+- detail: 现象：`claim_next` 用「候选 SELECT（LIMIT claim_scan_limit）→ 逐行状态守卫 UPDATE ... RETURNING」，原子性有保证（不会重复领取），但 N 个 worker 会同时选中同一批候选，输家阻塞等待行锁再重试，而不是跳过已锁行——高并发下吞吐退化。
+  取证：pg_store.py 中 `FOR UPDATE|SKIP LOCKED` 零命中；rhop/tests 无 PG 并发用例（test_pg_store.py 40 条全为单进程语义用例）。
+  建议：候选查询加 `FOR UPDATE SKIP LOCKED`（或改为单条 UPDATE ... WHERE task_id = (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING ...），并补一条真实 PG 的「N worker 并发领取不重不漏」用例。需 PG 环境，本轮只入账。
+- reported_by: vools-lead
+- task_id: T0r770
+
+### WORKS-AS-DESIGNED(2026-10-28T07:46:32Z / BUG-363)
+- 机制（读代码，`pg_store.py::claim_next`）：候选 `SELECT ... LIMIT claim_scan_limit` **不加行锁**，随后逐行发 `UPDATE ... WHERE task_id=%s AND state IN ('PENDING','RETRY_PENDING') AND cancel_requested=FALSE RETURNING <显式列>`。该 UPDATE 自己取行锁；READ COMMITTED 下输家拿到锁后按**新行版本**重评估 WHERE（此时 state 已是 LOCKED）→ 0 行 → 换下一个候选。⇒ 不重复领取由 UPDATE 的守卫保证，**不依赖 SELECT 加锁**。
+- 实测（真实 PostgreSQL 14.24，WSL 内多线程 + 每线程独立游标，绝对时间戳对齐起跑）：
+  A) 4 worker × 300 任务 → 领取 **300**、唯一 **300**、**重复 0、遗漏 0、异常 0**；每 worker 领取数 `{w0:139, w1:70, w2:5, w3:86}`；
+  B) 1 任务 / 4 worker × 20 轮 → 每轮**恰好 1 次**成功领取，重复 0。
+- 判定：**重复领取不发生** ⇒ 「UPDATE 自带行锁已足够」（本票的正确性担心不成立），关闭为 `WORKS-AS-DESIGNED`。`FOR UPDATE SKIP LOCKED` 属于**吞吐/公平性优化**（实测确实不均衡：139 vs 5，300 次领取约 3.0s），若将来成为问题另立优化票，**不要拿本票当正确性 bug 重开**。
+- 附：本票「PG 侧无并发领取用例」属实（`tests/test_pg_store.py` 40 条全为单进程语义用例）；本轮探针是仓库外一次性取证，未落成用例（tests/ 不在该轮授权）。
+- ⚠️ **顺带实测到另一个问题（与本票无关，建议另立票）**：多个进程/会话**同时启动**时，`init_schema` 的 DDL 会互相死锁 —— 10 轮 × 4 会话同时 `create_store`（表已存在、走 ALTER 迁移路径）→ **20 次失败全部是 `deadlock detected`**（`AccessExclusiveLock` 互相等待）。疑因 BUG-362 引入的「建表 + 29 条 `ALTER TABLE` + 3 条版本语句」在同一事务里反复取表级锁。候选修法：`init_schema` 开头取 `pg_advisory_xact_lock(hashtext('<table>'))` 把迁移串行化。需真实 PG 验证，故本轮只取证、不动手（改 `pg_store.py` 需另派单 + 补并发启动用例）。
+
+## BUG-364 [2026-10-28T04:42:00Z] [low] FIXED
+- summary: [rhop] test_clipboard.py 的两条真机冒烟只判断「后端可探测」，不判断「操作可用」——无交互桌面或剪贴板被占用时 PowerShell `Set-Clipboard` 抛 ExternalException，`write_clipboard` 返回 False，全量测试直接红
+- detail: 现象：同一台机器上 `powershell -NoProfile -Command "Set-Clipboard -Value x"` 抛 `ExternalException: 打开剪贴板失败`（实测），而 `get_clipboard_backend()` 仍返回非 None（powershell.exe 存在），于是 `test_real_clipboard_smoke` / `test_powershell_backend_forced_roundtrip` 落到 `assert write_clipboard(...) is True` 失败（2 failed）。
+  影响：这是「机器不可用」而非「代码回归」，但表现为全量测试红灯，会掩盖真实回归信号；本轮就在全量验证中被它打断一次（同一次会话早些时候它还通过，说明与环境状态强相关）。
+  修复：测试里加 `_clipboard_usable(backend)` 能力探针——后端非空后再试写一次探针串，异常或 False 即 `pytest.skip("剪贴板存在但不可写（无交互桌面/被占用）")`。协议层正确性仍由假 backend 用例覆盖，真机冒烟只负责「能写就读得回」。
+  证据：`python -m pytest tests/test_clipboard.py -q` 由 2 failed / 14 passed 转为 14 passed / 2 skipped；全量 `rhop/tests` 592 passed / 42 skipped、0 failed；`tests/audit_api_doc.py 592` 退出码 0（§16 计数、逐文件计数、状态行三处一致）。
+- reported_by: vools-lead
+- task_id: T0r770
+
+## BUG-365 [2026-10-28T04:53:00Z] [high] FIXED
+- summary: [rhop] 收尾无所有权/版本门控：执行期间被 requeue 后 `_finish_success` 抛 `StoreError(非法状态流转: PENDING -> COMPLETED)`；叠加 `run_resident` 无异常隔离 → 一次运维重跑即可把常驻消费者整体打死
+- detail: 现象（探针 `rhop/tools/probe_round8_concurrency.py::probe_stale_finish`，真跑）：B 侧 HANDLER 任务在执行途中调用 `store.requeue(task_name)`（等价于运维 `rhop task requeue --task X`，docs/task-queue.md:289 明确把它标为合法运维动作、force=True），随后正常返回结果。收尾走 `queue.py:868` `set_state(COMPLETED)`：无 `expect_version`、无 `force`，而当前行已是 `PENDING` → `sqlite_store.py:361` 抛 `StoreError: 非法状态流转: PENDING -> COMPLETED (task stale-req)`。探针输出 `run_once: raised / final_state: PENDING`。
+  放大路径：`run_resident`（`queue.py:1003`）对 `run_once` **零 try/except**，任何 StoreError（非法流转、瞬时 DB 锁 busy_timeout 用尽、版本冲突）都会穿出常驻循环 → `daemon.run_executor` 的 finally 关闭心跳与库 → **B 侧消费整体停摆**，且无告警、无重启。探针对照组：同一循环第 2 次迭代注入一次 StoreError，`run_resident` 直接抛出（`survived: false`）。
+  对照已修项：BUG-329 只覆盖 `cancel_requested` 标志路径（探针 `can` 场景优雅落 CANCELLED、不抛错），未覆盖「行被 force 改写」的路径。
+- 建议：①`_finish_success`/`_finish_failure` 的终态写入带「持有者 + 版本」门控（`expect_version=record.version` 或 WHERE `worker_id=? AND lock_time=?`），不再匹配时按「结果作废 + 记 back_info」处理，不抛异常；②`run_resident` 每次迭代包 try/except 记录 `log.exception` 并继续（或按 `queue.fatal_on_error` 显式 opt-in 退出），把瞬时故障与致命故障分开；③补「执行期间 requeue / 并发 cancel / 慢 worker 迟到终态」三条回归用例。
+- reported_by: vools-lead
+- task_id: T0r770
+
+### FIXED(2026-10-28T06:22:00Z / BUG-365)
+- evidence: 修复提交 `b48dace`。① **终态所有权门控**：`queue.py::_discard_reason()` 判定「任务已不存在 / 状态已非 RUNNING / `worker_id` 已被别的 worker 占用」→ 返回丢弃原因；`_finish_success` / `_finish_failure` 写终态前先过这道门，且 `set_state(...)` 带 `expect_version=record.version`（进入 RUNNING 后刷新版本快照），不匹配时返回 `{"action": "discarded", ...}` + warning，**不再抛 `StoreError`**。② **常驻循环异常隔离**：`run_resident` 每轮 `run_once` 包 `except RhopTaskError`（`StoreError` / `TaskNotFound` / `PayloadError` 等全部业务异常的公共基类），累计 `stats["errors"]` + `last_error` 后 `continue`；只认业务异常、编程错误（如 `ValueError`）仍照常冒出——这是刻意的：瞬时故障与代码缺陷必须分开。③ 回归：`tests/test_task_resilience.py::TestFinishOwnershipGate`（执行期间 requeue → `action == "discarded"`、状态保持 PENDING、不抛异常；正常路径仍写 COMPLETED）+ `TestResidentLoopIsolation`（第 2 轮注入 `StoreError` → `iterations >= 3` 且 `errors >= 1`）。
+- 残留（如实记）：建议 ③ 列的三条回归里，「执行期间 requeue」已补专用用例；「并发 cancel 后收尾」仍由 `_finish_*` 重读 `cancel_requested` 的实现路径覆盖（BUG-329 路径，**该路径至今无专门用例**）；「慢 worker 迟到终态（已被别的 worker 重领）」只有 `_discard_reason` 的 `worker_id` 分支实现覆盖，同样无专门用例。
+- 证据：rhop 全量 `python -m pytest tests` → **604 passed / 40 skipped / 0 failed**。
+
+## BUG-366 [2026-10-28T04:53:00Z] [medium] FIXED
+- summary: [rhop] 崩溃回收不计入 `max_retries`：`clean_stale_locks` 把 RUNNING 收回 RETRY_PENDING 时不增 `retry_count`，毒任务（每次执行都让 worker 死掉）可无限重跑，且永不落 FAILED
+- detail: 探针 `probe_reclaim_cap`：`max_retries=1`，循环 5 次「claim → 租约过期回收」——每轮 `reclaimed=1`、`retry_count` 恒为 `0`、状态恒 `RETRY_PENDING`，第 6 次仍可领取；对照 `probe_claimable_again` 显示同一租约过期后任务被连续领取 3/3 次。也就是说 max_retries 只在「执行器正常返回失败」路径（`_finish_failure` → `retry_count+1`）生效，崩溃/租约路径完全绕过。
+  影响：一个会让进程崩溃或卡死的任务（OOM、段错误、死循环直到被回收）在常驻消费下会周期性拖垮 worker，无上限；运维只能靠人工 cancel。
+  文档现状：docs/task-queue.md:529 只写了「租约到期会回收重跑」与「执行时长必须短于租约」，未声明该路径不受 max_retries 约束 —— 属语义缺口而非已论证设计。
+- 建议：`clean_stale_locks` 回收 RUNNING 时同步 `retry_count+1`，并按 `retry_count >= max_retries` 落 FAILED（`last_err` 记「租约过期回收」）；如担心与正常重试预算重复扣减，可引入独立 `lease_expiry_count` 与 `max_lease_reclaim` 阈值，但必须有上限。补「毒任务回收 N 次后 FAILED」回归。
+- reported_by: vools-lead
+- task_id: T0r770
+
+### FIXED(2026-10-28T06:22:00Z / BUG-366)
+- evidence: 修复提交 `b48dace`（`fix(rhop)!: 租约回收计数 / PG schema 迁移 / 终态写回门控`）。修复点：`rhop/vools/rhop/task/store/sqlite_store.py::clean_stale_locks` 与 `rhop/vools/rhop/task/store/pg_store.py::clean_stale_locks`（两后端同款语义）：一条 UPDATE + 4 个 CASE，利用「SET 子句读的是更新前行值」的 SQL 标准语义，不必拆多条语句。`RUNNING` 到期 → `retry_count + 1`；`retry_count < max_retries` → `RETRY_PENDING`，否则 → `FAILED`；写 `last_err`（文案单一定义在 `store/base.py::LEASE_RECLAIM_LAST_ERR`）与 `end_time`。回收路径**不做退避**（不动 `scheduled_at`）：租约到期本身（默认 900s）已是延迟，且 `tests/test_task_e2e.py::test_crash_recovery_reclaims_running_task` 依赖「回收后立刻可再领」。
+- **判定（最值得留下的信息）：`LOCKED` 回收有意不计数** —— `LOCKED` 只是 `claim_next` 与 `set_state(RUNNING)` 之间的一瞬（`queue.run_once` 里相邻两行），该窗口内**用户代码一行不跑**；到期说明任务从未执行，不应烧重试预算（否则一次基础设施抖动就会把正常任务推向 FAILED）。而真正的毒任务（OOM / 段错误 / 死循环被回收）死在 `RUNNING`，那条路径才计数。契约锚点：`store/base.py` 的 ABC docstring / `models.py` 状态机图（重试与 FAILED 分支只挂在 RUNNING 下）/ `docs/task-queue.md` §6 + §15；回归钉子 `tests/test_task_resilience.py::TestLeaseReclaimCountsRetry::test_locked_reclaim_does_not_charge_retry`。另有 4 处既有断言本就锁着 LOCKED→PENDING（`test_task_store.py::test_locked_lock_timeout_goes_pending`、`test_pg_store.py::test_clean_stale_locked`、`tests/boundary/r13_daemon_sync.py` 的 D5 场景），说明「两条路径分工」是一致契约而非偶然。
+- 真实崩溃证据（不是模拟猜测）：用真 `run_once` 执行一个在处理函数里抛 `SystemExit` 的任务（模拟进程被 kill）→ 执行期间与崩溃后行内状态均为 **RUNNING**（不是 LOCKED）；随后看护回收 → `retry_count 0→1`、`last_err` 写入、状态 `RETRY_PENDING`。修复前同一探针得到 `retry_count=0 / last_err=None`，即本 bug 的原形。
+- 判据：`tests/test_task_resilience.py::TestLeaseReclaimCountsRetry` 3 用例（①回收递增 ②`max_retries=1` 两轮后 `2 > 1` 落 FAILED ③LOCKED 对照面不计数）。注：上个 agent 留下的 2 个红测试是**场景写错**（只 `claim_next` 不进 RUNNING，测的其实是 LOCKED 路径），收尾时补上真实崩溃路径的 `set_state(RUNNING)`、断言一行未改，并新增第 ③ 条把契约钉住。
+- 证据：rhop 全量 `python -m pytest tests` → **604 passed / 40 skipped / 0 failed**（修复前 601 passed + 2 failed）；Windows 上 40 条 `test_pg_store.py` 因 PG 只监听 WSL 回环而 skip，**WSL 内真跑 59 passed**（`40 + 7 + 12`，含 pg 后端同款 `clean_stale_locks` 语义）——两个后端都经过真实数据库执行验证，不是只跑单测桩。
+
+## BUG-367 [2026-10-28T04:53:00Z] [low] FIXED
+- summary: [rhop] `renew_interval_sec` 不在 DEFAULT_QUEUE、配置层零校验、实现层静默 clamp 到 ttl —— 与 BUG-282 已建立的「写间隔 vs 判死阈值」校验纪律不一致
+- detail: 探针 `probe_renew_interval`：`renew_interval_sec=100000` + `lock_ttl_sec=60` 被 `TaskConfig.from_dict` 静默接受（无告警、无异常）；`"renew_interval_sec" in DEFAULT_QUEUE` 为 False（即它根本不是受管配置键）；而 `queue.py:707` `interval = max(0.5, min(interval, ttl))` 会把 100000 悄悄压成 60 —— 恰好等于 ttl，续期线程与判死阈值同拍，边际上仍可能被 `clean_stale_locks` 抢先回收。BUG-282 对 `stale_after_sec > writes_interval_sec` 做了显式校验，而续期这一对的孪生参数没有。
+- 建议：把 `renew_interval_sec` 纳入 DEFAULT_QUEUE 与 normalize 校验（建议要求 `renew_interval_sec <= lock_ttl_sec / 2`，越界告警或报错而非静默 clamp），文档 §15 补一条约束。
+- reported_by: vools-lead
+- task_id: T0r770
+
+### FIXED(2026-10-28T06:22:00Z / BUG-367)
+- evidence: 修复提交 `b48dace`。① **纳入受管键**：`renew_lock=false` 与 `renew_interval_sec=0`（0 = 自动取 `lock_ttl_sec/2`）进 `config.py::DEFAULT_QUEUE`。② **配置期拒绝**（不再静默 clamp）：`TaskConfig` 校验 `lock_ttl_sec > 0`、`renew_interval_sec >= 0`，开启续期时若 `renew_interval_sec > lock_ttl_sec/2` 直接抛 `SecretError`（文案含两个键名与缺陷号）。③ **实现层兜底**：`queue.py::_start_renewal` 的上界由 `min(interval, ttl)` 收紧为 `min(interval, ttl/2)`，防运行期人为调小 ttl 后「续期」与「判死」同拍被抢先回收。④ 文档：`docs/task-queue.md` §15「任务租约与续期」写明该约束。
+- 判据：`tests/test_task_resilience.py::TestRenewIntervalValidation` 4 用例（受管键与 0 语义 / `renew_interval_sec=100000` 越界拒绝且报错点名 `renew_interval_sec`+`lock_ttl_sec` / 恰好等于 `ttl/2` 时接受 / 负值拒绝）。
+- 证据：rhop 全量 `python -m pytest tests` → **604 passed / 40 skipped / 0 failed**。

@@ -43,6 +43,52 @@ def _out(obj):
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
+# 子结果里算「成功」的 status 取值。刻意不包含 'partial' / 'needs_fix' /
+# 'failed' / 'error'：对脚本来说顶层 status 是权威信号，业务未完成就不该是 ok。
+_OPERATION_OK_STATUSES = ('ok', 'success', 'modified', 'skipped', 'noop')
+
+
+def _out_result(result, status_field='status'):
+    """输出「操作类」子命令结果，并**按其自身状态映射顶层 status / 退出码**。
+
+    为什么需要：改前 scaffold / author / workflow 都是
+    `_out({'status': 'ok', 'data': r}); return 0` —— 子结果是失败
+    （`author` 实测 `status='needs_fix'`、`ai_applied=False`；`workflow`
+    `status='partial'`/`failed`；`scaffold` `validation.valid=False`）时，
+    顶层照样写 `status: ok` + exit 0，脚本据此判定"成功"。
+
+    判定优先级：
+      1. 结果体有 status 字段 → 在 `_OPERATION_OK_STATUSES` 里才算成功；
+      2. 没有 status 但有 `validation.valid`（scaffold 的形状）→ 以其为准；
+      3. 两者都没有（纯数据返回）→ 视为成功（查询本身没出错）。
+    未知 status 一律按失败处理 —— 宁可让脚本看到非 0，也不假装成功。
+
+    Args:
+        result: 子命令返回的 dict。
+        status_field: 状态字段名；传 None 表示「这是查询结果，其中 status 是
+            被查询对象的状态（如 run record），不代表本次操作成败」。
+
+    Returns:
+        int: 进程退出码（0 = 成功，1 = 业务失败）。
+    """
+    if not isinstance(result, dict):
+        ok = False
+    elif status_field is None:
+        ok = True
+    elif status_field in result:
+        ok = str(result.get(status_field) or '').lower() in _OPERATION_OK_STATUSES
+    elif isinstance(result.get('validation'), dict):
+        ok = bool(result['validation'].get('valid'))
+    else:
+        ok = True
+    if not ok:
+        hint = result.get('message') if isinstance(result, dict) else ''
+        if hint:
+            print('❌ %s' % hint, file=sys.stderr)
+    _out({'status': 'ok' if ok else 'failed', 'data': result})
+    return 0 if ok else 1
+
+
 def _ensure_utf8_stdout():
     """CLI 输出统一 UTF-8（Windows 管道捕获时为 GBK → 下游按 UTF-8 读会解码失败）。
 
@@ -198,7 +244,8 @@ def _build_parser():
     p_scaffold.add_argument('--force', action='store_true',
                             help='目标动作文件已存在时允许覆盖（默认拒绝，防数据丢失）')
 
-    p_author = sub.add_parser('author', help='AI：修改已有动作')
+    p_author = sub.add_parser('author',
+                              help='记录修改指令（需接 AI 才会真正改代码；未接 AI 时 exit 1）')
     p_author.add_argument('action_id', help='要修改的动作 id')
     p_author.add_argument('instruction', help='修改指令（自然语言）')
 
@@ -354,9 +401,11 @@ def _build_parser():
     p_desktop.add_argument('--no-browser', action='store_true', help='不自动打开浏览器')
 
     # events 子命令
-    p_events = sub.add_parser('events', help='查看事件总线事件')
+    p_events = sub.add_parser('events', help='查看事件流（读 _meta/events.jsonl，跨进程可见）')
     p_events.add_argument('--type', help='过滤事件类型')
-    p_events.add_argument('--limit', type=int, default=20, help='返回条数')
+    p_events.add_argument('--limit', type=int, default=50, help='返回最近 N 条（默认 50）')
+    p_events.add_argument('--json', action='store_true', dest='as_json',
+                          help='机器可读 JSON 输出')
 
     # selfheal 子命令
     p_selfheal = sub.add_parser('selfheal', help='自愈引擎状态管理')
@@ -768,10 +817,12 @@ def _dispatch(args) -> int:
                 _out({'status': 'failed', 'error': {
                     'code': 'action_not_found', 'message': f'执行记录不存在: {args.exec_id}'}})
                 return 1
-            _out({'status': 'ok', 'data': r})
-        else:
-            _out({'status': 'ok', 'data': rec.load_status(None)})
-        return 0
+            # 查询语义：缓存/记录里的 status 描述的是「被执行的那次运行」，
+            # 不是「本次查询的成败」——所以传 status_field=None 让它恒为 ok
+            # （查询失败已在上面 return 1）。不能直接套操作类映射，否则
+            # `status <失败的 exec_id>` 会把一次成功的查询报成 CLI 失败。
+            return _out_result(r, status_field=None)
+        return _out_result(rec.load_status(None), status_field=None)
 
     if args.command == 'loop':
         return _dispatch_loop(args)
@@ -799,14 +850,18 @@ def _dispatch(args) -> int:
                             'details': exc.details}})
             print(f'❌ {exc.message}', file=sys.stderr)
             return 1
-        _out({'status': 'ok', 'data': r})
-        return 0
+        # scaffold 的返回体没有 status，靠 validation.valid 判定（helper 内处理）：
+        # 改前 scaffold 生成后校验不过也报 status=ok + exit 0。
+        return _out_result(r)
 
     if args.command == 'author':
         from vools.actus.author import author_action
         r = author_action(args.action_id, args.instruction)
-        _out({'status': 'ok', 'data': r})
-        return 0
+        # 改前：恒 `_out({'status': 'ok', ...}); return 0` —— CLI 不注入 ai_edit，
+        # 实现只往动作文件追加一行 `# AI-MODIFIED` 注释（代码一字未改、
+        # ai_applied=False），顶层却报 ok/exit 0。现在由子结果映射：
+        # 未接 AI / 校验不过 → status: failed + exit 1（消息打到 stderr）。
+        return _out_result(r)
 
     if args.command == 'workflow':
         from vools.actus.workflow import run_workflow
@@ -814,8 +869,8 @@ def _dispatch(args) -> int:
         meta_dir = os.path.join(repo_root, '_meta')
         r = run_workflow(args.workflow_id, meta_dir=meta_dir,
                          max_workers=args.max_workers, confirmed=args.confirmed)
-        _out({'status': 'ok', 'data': r})
-        return 0
+        # workflow 的 status ∈ ok / failed / partial；只有 ok 才是成功。
+        return _out_result(r)
 
     if args.command == 'vault':
         return _dispatch_vault(args)
@@ -2606,26 +2661,82 @@ def _cmd_desktop(args) -> int:
 
 
 def _cmd_events(args) -> int:
-    """events 子命令：查看事件总线历史事件。"""
-    from vools.actus.eventbus import get_event_bus
+    """events 子命令：查看事件流。
 
-    bus = get_event_bus()
-    events = bus.get_history(event_type=args.type, limit=args.limit)
+    改前只读**进程内** EventBus 历史 —— CLI 每次都是新进程，内存历史必然为空，
+    于是这个命令**结构上永远**打印「📭 暂无事件」并 rc=0：用户分不清「真的没有
+    事件」和「历史根本不落盘」。
 
+    现在读 `<meta_dir>/events.jsonl`（`eventbus.publish()` 追加落盘，best-effort）。
+    语义区分：
+      * 文件不存在 → 「从未有事件落盘」（事件流从未启用过 / 没跑过任何动作）
+      * 文件存在但无事件 → 「事件流为空」
+      * 有损坏行 → 明确报「N 行无法解析（已跳过）」，不静默吞
+    本命令**纯读**：文件不存在不创建（`test_cli_no_side_effects` 要求零写入）。
+    """
+    from vools.actus import eventbus
+
+    limit = getattr(args, 'limit', 50)
+    if not isinstance(limit, int) or limit < 0:
+        limit = 50
+
+    snapshot = eventbus.read_persisted_events(limit=limit, event_type=args.type)
+    events = snapshot['events']
+    source = 'file'
+
+    # 同进程内（测试/嵌入式调用）可能还有内存事件：文件没有时补上，
+    # 保持 `_cmd_events` 在进程内的旧有用性（CLI 新进程时这里恒为空）。
     if not events:
-        print('📭 暂无事件')
+        memory_events = eventbus.get_event_bus().get_history(
+            event_type=args.type, limit=limit)
+        if memory_events:
+            events = memory_events
+            source = 'memory'
+
+    if getattr(args, 'as_json', False):
+        _out({
+            'status': 'ok',
+            'source': source if events else 'none',
+            'path': snapshot['path'],
+            'history_exists': snapshot['exists'],
+            'count': len(events),
+            'total_in_file': snapshot['total'],
+            'skipped_lines': snapshot['skipped'],
+            # 这些计数是**本进程**的（读命令通常为 0），不是文件累计值 ——
+            # 键名带 this_process 就是为了避免审计把它误读成事件流总量。
+            'persist_this_process': eventbus.get_event_bus().persistence_stats(),
+            'events': events,
+        })
         return 0
 
-    print(f'📋 事件历史 (共 {len(events)} 条):')
-    for e in events:
-        ts = e.get('timestamp', 0)
-        type_ = e.get('type', '?')
-        source = e.get('source', '')
-        data = e.get('data', {})
-        print(f'   [{ts:.3f}] {type_} (来源: {source})')
-        if data:
-            for k, v in data.items():
-                print(f'      {k}: {v}')
+    if not events:
+        if not snapshot['exists']:
+            print(f'📭 从未有事件落盘（事件流文件不存在: {snapshot["path"]}）')
+            print('   事件总线是内存实现，publish() 时才会追加到该文件；'
+                  '跑一个动作或 emit() 一条事件后再来看。')
+        else:
+            print(f'📭 事件流为空（文件存在但没有事件: {snapshot["path"]}）')
+        if snapshot['skipped']:
+            print(f'   ⚠️  另有 {snapshot["skipped"]} 行无法解析（已跳过）')
+        return 0
+
+    suffix = '，来源: 内存' if source == 'memory' else ''
+    print(f'📋 事件流 (共 {len(events)} 条{suffix}):')
+    for event in events:
+        timestamp = event.get('timestamp', 0)
+        try:
+            shown_ts = '%.3f' % float(timestamp)
+        except (TypeError, ValueError):
+            shown_ts = str(timestamp)
+        type_ = event.get('type', '?')
+        source_name = event.get('source', '')
+        data = event.get('data', {})
+        print(f'   [{shown_ts}] {type_} (来源: {source_name})')
+        if isinstance(data, dict) and data:
+            for key, value in data.items():
+                print(f'      {key}: {value}')
+    if snapshot['skipped']:
+        print(f'   ⚠️  另有 {snapshot["skipped"]} 行无法解析（已跳过）')
     return 0
 
 

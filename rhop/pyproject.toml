@@ -11,10 +11,18 @@ authors = [
 description = "vools-rhop - 双方对等镜像任务中继协议（密钥抽象 + 传输 + A/B/C 三角 + 通用任务队列：A 加密 JSON 指令 → B 解密执行，SQLite 管理依赖与状态）"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.6"
+# Python 下限：**实测**（2026-10-28，BUG-360 收口；原先写 >=3.6 是假声明）
+#   · 语法层：全包 44 个文件按 3.6 语法逐文件 `ast.parse(feature_version=(3,6))` 全部通过；
+#   · 运行期：clipboard.py(×2) / daemon.py / executor.py 用了
+#     `subprocess.run(capture_output=..., text=...)` —— 这两个关键字是 **3.7** 新增，
+#     3.6 上不是 ImportError 而是**调用即 TypeError**，而 daemon/executor 正是任务执行主路径；
+#   · CI 矩阵最低 3.8（.github/workflows/ci.yml），3.6/3.7 从未被任何一轮测试覆盖。
+# 因此声明 3.8 = **唯一被 CI 真实验证过的下限**（它已覆盖实测所需的 3.7）。
+requires-python = ">=3.8"
 dependencies = [
     "cryptography>=3.4",
-    # envelope.py 在导入期就用 attr.s（Py3.6 基线不引入 dataclasses），此前漏声明
+    # envelope.py 在导入期就用 attr.s（历史 3.6 基线的兼容选择，现行下限见上）；
+    # 此前漏声明，3.7+ 上其实用不到这个回退，但保留以兼容更老环境自担风险
     "attrs>=17.0",
     # **vools 主包是硬依赖，此前漏声明** —— 装完必然 ImportError：
     #   · envelope.py:17 / task/models.py:261 → vools.core.dataclass_compat
