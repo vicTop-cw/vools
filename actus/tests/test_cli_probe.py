@@ -14,8 +14,6 @@ import json
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
 _ai_local_bootstrap.install()
@@ -45,18 +43,31 @@ def test_parser_registers_probe_subcommand():
 
 
 def test_probe_json_output(capsys):
-    """--json 输出必须是完整 ProbeReport（含四个维度 + items + summary）。"""
+    """--json 输出必须是完整 ProbeReport（含四个维度 + items + summary）。
+
+    审计加固：原来只断言 `isinstance(items, list)` 与 `total_items > 0`，
+    probe 只返回 1 条、或 items 全是空壳/维度被换成 `{"stub": 1}` 也能过。
+    现在断言具体契约：四个维度非空 dict、每条 item 有 name/category、
+    summary 的总数与 items/分类计数自洽、report_source 明确。
+    """
     rc, out = _run(['probe', '--json', '--force-refresh'], capsys)
     assert rc == 0
     data = json.loads(out)
     assert 'timestamp' in data
-    assert 'platform' in data
-    assert 'permissions' in data
-    assert 'environment' in data
-    assert 'resources' in data
-    assert isinstance(data['items'], list)
-    assert 'summary' in data
-    assert data['summary']['total_items'] > 0
+    for dim in ('platform', 'permissions', 'environment', 'resources'):
+        assert isinstance(data[dim], dict) and data[dim], '%s 维度为空' % dim
+    items = data['items']
+    assert items, 'probe 报告 items 不能为空'
+    assert all(item.get('name') for item in items), '存在没有 name 的 item'
+    assert all(item.get('category') for item in items), '存在没有 category 的 item'
+    assert isinstance(data.get('report_source'), str) and data['report_source']
+    summary = data['summary']
+    assert summary['total_items'] == len(items), \
+        'summary.total_items 与实际 items 数不一致: %r vs %d' % (
+            summary.get('total_items'), len(items))
+    by_category = summary.get('by_category') or {}
+    assert by_category, 'summary.by_category 为空'
+    assert sum(entry['total'] for entry in by_category.values()) == len(items)
 
 
 def test_probe_human_readable_output(capsys):

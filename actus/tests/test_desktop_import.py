@@ -14,12 +14,9 @@ vools.actus 后（独立成包 + 引擎根按包位置推导两次改动）：
 """
 
 import argparse
-import io
 import os
 import sys
 from unittest import mock
-
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
@@ -59,15 +56,26 @@ def test_desktop_start_importable_when_deps_present():
         _purge_desktop()
 
 
-def test_cmd_desktop_blames_fastapi_not_desktop(capsys):
-    """fastapi 真缺席时，提示的 ImportError 根因必须是 fastapi，不能再是 'desktop'。"""
-    pytest.importorskip('vools.actus')
+def test_cmd_desktop_blames_fastapi_not_desktop(monkeypatch, capsys):
+    """fastapi 缺席时，提示的 ImportError 根因必须是 fastapi，不能再是 'desktop'。
+
+    审计加固：原来用 `import fastapi` 探测环境，装了 fastapi 就 skip ——
+    本机与常规 CI 都装（全量 4 个 skip 里就有它），于是「依赖缺席」这条路径
+    **永远不执行**。现在改为对该测试**局部**拦截 fastapi/uvicorn/jinja2 的 import，
+    在装了依赖的机器上也能真实复现缺席分支。
+    """
+    import builtins
+
     _purge_desktop()
-    try:
-        import fastapi  # noqa: F401
-        pytest.skip('fastapi 已安装，无法在此环境复现缺席分支')
-    except ImportError:
-        pass
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        root = name.split('.')[0]
+        if root in ('fastapi', 'uvicorn', 'jinja2'):
+            raise ImportError("No module named %r" % root)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', guarded_import)
     rc = cli._cmd_desktop(_args())
     assert rc == 1
     out = capsys.readouterr().out

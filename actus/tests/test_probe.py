@@ -194,11 +194,16 @@ def test_cache_roundtrip_keeps_all_dimensions(tmp_path, monkeypatch):
     # 走缓存路径重建
     cached = probe(force_refresh=False, max_age=999999)
     got = cached.to_dict()
-    assert got["platform"], '缓存命中后 platform 维度丢了'
-    assert got["permissions"], '缓存命中后 permissions 维度丢了'
-    assert got["environment"], '缓存命中后 environment 维度丢了'
-    assert got["resources"], '缓存命中后 resources 维度丢了'
-    assert len(got["items"]) == len(fresh["items"])
+    # 具体维度必须与真探测完全一致（不是"非空"就行：被换成 {"stub": 1} 也会非空）
+    assert got["platform"] == fresh["platform"], '缓存命中后 platform 维度内容变了'
+    assert got["permissions"] == fresh["permissions"], '缓存命中后 permissions 维度内容变了'
+    assert got["environment"] == fresh["environment"], '缓存命中后 environment 维度内容变了'
+    assert got["resources"] == fresh["resources"], '缓存命中后 resources 维度内容变了'
+    # 条目不是"数量相同"就行：名称序列必须与真探测一致（数量相同但内容全错也算失败）
+    assert [item["name"] for item in got["items"]] == \
+        [item["name"] for item in fresh["items"]], '缓存命中后 items 名称/顺序变了'
+    assert got["report_source"] == "cache", "缓存命中必须标记 report_source=cache"
+    assert fresh["report_source"] == "probe"
 
 
 def test_cache_force_refresh_bypasses(tmp_path, monkeypatch):
