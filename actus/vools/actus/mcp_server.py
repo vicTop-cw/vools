@@ -252,6 +252,13 @@ class MCPServer:
                 result = self._complete(params)
             else:
                 return self._err(msg_id, -32601, f'Method not found: {method}')
+        except ValueError as e:
+            # 产品层的参数校验用 ValueError（如非法团队名、非法 registry priority、
+            # 非法入参 JSON…）。语义是「调用方传错了参数」→ JSON-RPC 的
+            # -32602 Invalid params，而不是 -32603 internal error（改前一律收敛成
+            # internal，AI 客户端会以为服务端坏了、甚至去重试同样的错误参数）。
+            return self._err(msg_id, -32602, str(e),
+                             {'type': 'ValueError', 'code': 'param_invalid'})
         except Exception as e:  # noqa: BLE001 —— 协议层收敛为 internal error
             return self._err(msg_id, -32603, str(e),
                              {'type': type(e).__name__})
@@ -1597,20 +1604,36 @@ class MCPServer:
 # ── Visibility 处理函数 ──
 
 def _handle_visibility_get(args):
+    """查动作可见性：读**真实来源**（私有动作索引 → 动作文件 #!cfg）。"""
     from vools.actus.visibility import get_visibility_engine
     engine = get_visibility_engine()
     action_id = args.get('action_id', '')
     priv = engine.get_private_action(action_id)
     if priv:
-        return text_result(engine.get_action_permissions(
-            action_id, priv.get('visibility', 'private')))
-    return text_result({'status': 'not_found',
-                        'message': f'未找到动作: {action_id}'}, True)
+        return text_result({'status': 'ok', 'action_id': action_id,
+                            'visibility': priv.get('visibility', 'private'),
+                            'source': 'private_index'})
+    try:
+        import vools.actus as actuscore
+        action = actuscore.get_action(action_id)
+    except Exception:
+        return text_result({'status': 'not_found',
+                            'message': f'未找到动作: {action_id}'}, True)
+    level = (action.meta.get('visibility') or 'public').strip().lower() or 'public'
+    return text_result({'status': 'ok', 'action_id': action_id,
+                        'visibility': level, 'source': 'action_file'})
 
 def _handle_visibility_set(args):
-    from vools.actus.visibility import VISIBILITY_PUBLIC, VISIBILITY_UNLISTED, VISIBILITY_PRIVATE, VISIBILITY_TEAM
+    """设置动作可见性 —— **真写落盘**（复用 visibility.write_action_visibility）。
+
+    改前这里只校验参数并把新级别原样回显，既不写动作文件也不写私有索引 ——
+    `set` 返回成功、`get` 却读不到（假成功家族：与 export 假 ✅ / publish 假干跑同族）。
+    现在与 CLI `visibility set` 共用同一份实现（单一真源）：
+    定点改写动作 `#!cfg` 的 visibility 标量 + 写后重新解析校验 + 失败回滚。
+    """
+    from vools.actus.visibility import write_action_visibility
     action_id = args.get('action_id', '')
-    visibility = args.get('visibility', '')
+    visibility = (args.get('visibility') or '').strip().lower()
     if visibility not in ('public', 'unlisted', 'private', 'team'):
         return text_result({'status': 'invalid',
                             'message': f'无效的可见性级别: {visibility}'}, True)
@@ -1618,8 +1641,30 @@ def _handle_visibility_set(args):
     if visibility == 'team' and not team:
         return text_result({'status': 'invalid',
                             'message': 'team 级别需要指定 team 参数'}, True)
+
+    try:
+        import vools.actus as actuscore
+        action = actuscore.get_action(action_id)
+    except Exception as exc:
+        return text_result({'status': 'not_found', 'error': {
+            'code': 'action_not_found',
+            'message': f'无法解析动作 {action_id}: {exc}'}}, True)
+
+    action_path = getattr(action, 'path', '') or ''
+    if not action_path or not os.path.isfile(action_path):
+        return text_result({'status': 'failed', 'error': {
+            'code': 'action_not_found',
+            'message': f'找不到动作文件: {action_id}'}}, True)
+
+    ok, message = write_action_visibility(action_path, visibility)
+    if not ok:
+        return text_result({'status': 'failed', 'error': {
+            'code': 'internal',
+            'message': f'写入可见性失败: {message}'}}, True)
+
     return text_result({'status': 'ok', 'action_id': action_id,
-                        'visibility': visibility, 'team': team})
+                        'visibility': visibility, 'team': team,
+                        'path': action_path.replace(os.sep, '/')})
 
 def _handle_registry_add(args):
     from vools.actus.visibility import RegistryConfig, get_visibility_engine

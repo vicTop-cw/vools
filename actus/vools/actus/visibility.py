@@ -980,6 +980,63 @@ def get_visibility_engine(config_dir: str = None,
     return VisibilityEngine(config_dir=config_dir, current_user=current_user)
 
 
+# ── 动作可见性「真写」实现（CLI 与 MCP 的唯一真源）──
+# 动作的可见性只存在于动作文件的 ```json #!cfg``` 块里（executor/installer/quality
+# 都读 `action.meta['visibility']`），引擎本身不存这个级别 —— 所以「设置可见性」
+# 必须定点改写动作文件。这段逻辑最初写在 cli.py 的 `_write_action_visibility()`，
+# 审计发现 MCP 的 `actus_visibility_set` 只校验+回显、**不落盘**（假成功：
+# set 报成功、get 读不到）。把实现移到这里，CLI 与 MCP 共用同一份，避免两套分叉。
+_CFG_BLOCK_RE = re.compile(r"(```json\s*#!cfg\s*\n)(.*?)(```)", re.DOTALL)
+
+
+def write_action_visibility(action_path: str, level: str) -> Tuple[bool, str]:
+    """把动作 `#!cfg` 块里的 visibility 改成 level，返回 (ok, message)。
+
+    只动这一个标量：块里已有 "visibility" 就替换它的值，没有就插到块首。
+    **写完立刻重新解析整份动作文件**校验，不通过就把原文写回去并报错 ——
+    宁可失败也不留一份解析不了的动作文件（本仓库的 scaffolder 曾整体覆盖过
+    动作文件，这里不想重演那次事故）。
+    """
+    try:
+        with open(action_path, 'r', encoding='utf-8') as handle:
+            original = handle.read()
+    except OSError as exc:
+        return False, f'读取动作文件失败: {exc}'
+
+    match = _CFG_BLOCK_RE.search(original)
+    if match is None:
+        return False, '动作文件里找不到 ```json #!cfg``` 元数据块'
+
+    block = match.group(2)
+    if re.search(r'"visibility"\s*:\s*"[^"]*"', block):
+        new_block = re.sub(r'("visibility"\s*:\s*)"[^"]*"',
+                           lambda m: m.group(1) + '"%s"' % level, block, count=1)
+    else:
+        brace = block.find('{')
+        if brace < 0:
+            return False, '#!cfg 块不是 JSON 对象'
+        new_block = (block[:brace + 1]
+                     + '\n  "visibility": "%s",' % level
+                     + block[brace + 1:])
+
+    updated = original[:match.start(2)] + new_block + original[match.end(2):]
+    try:
+        with open(action_path, 'w', encoding='utf-8') as handle:
+            handle.write(updated)
+        from .model import parse_cfg_from_file
+        parsed = parse_cfg_from_file(action_path)
+        if (parsed.meta.get('visibility') or '').strip().lower() != level:
+            raise ValueError('写回后 visibility 校验不一致')
+    except Exception as exc:
+        try:
+            with open(action_path, 'w', encoding='utf-8') as handle:
+                handle.write(original)          # 回滚到原文
+        except OSError:
+            pass
+        return False, f'{type(exc).__name__}: {exc}（已回滚原文件）'
+    return True, ''
+
+
 __all__ = [
     'ALL_VISIBILITIES',
     'AUTH_REQUIRED',
@@ -1007,4 +1064,5 @@ __all__ = [
     'is_internal_path',
     'list_private_actions',
     'revoke_gated_key',
+    'write_action_visibility',
 ]

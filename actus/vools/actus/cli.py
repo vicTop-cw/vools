@@ -45,7 +45,7 @@ def _out(obj):
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
-def _out_result(result, status_field='status'):
+def _out_result(result, status_field='status', warnings=None):
     """输出「操作类」子命令结果，并**按其自身状态映射顶层 status / 退出码**。
 
     为什么需要：改前 scaffold / author / workflow 都是
@@ -65,6 +65,8 @@ def _out_result(result, status_field='status'):
         result: 子命令返回的 dict。
         status_field: 状态字段名；传 None 表示「这是查询结果，其中 status 是
             被查询对象的状态（如 run record），不代表本次操作成败」。
+        warnings: 非失败类提示（如 `runtime:` 环境提示）。**照常输出**，
+            不过滤：`--json` 顶层 `warnings` 字段可见；人类模式由调用方打 stderr。
 
     Returns:
         int: 进程退出码（0 = 成功，1 = 业务失败）。
@@ -83,7 +85,10 @@ def _out_result(result, status_field='status'):
         hint = result.get('message') if isinstance(result, dict) else ''
         if hint:
             print('❌ %s' % hint, file=sys.stderr)
-    _out({'status': 'ok' if ok else 'failed', 'data': result})
+    payload = {'status': 'ok' if ok else 'failed', 'data': result}
+    if warnings:
+        payload['warnings'] = list(warnings)
+    _out(payload)
     return 0 if ok else 1
 
 
@@ -131,6 +136,13 @@ def main(argv=None) -> int:
 
     try:
         return _dispatch(args)
+    except ValueError as e:
+        # 产品层的参数校验用 ValueError（如非法团队名、非法入参 JSON、
+        # 非整数 limit/priority…）。语义是「用户传错了参数」，不是引擎内部错误 ——
+        # 改前会落到下面的 `except Exception`，code 变成 internal，用户以为引擎坏了。
+        _out({'status': 'failed', 'error': {
+            'code': 'param_invalid', 'message': str(e)}})
+        return 1
     except Exception as e:
         _out({'status': 'failed', 'error': {
             'code': getattr(e, 'code', 'internal'), 'message': str(e)}})
@@ -364,6 +376,8 @@ def _build_parser():
     p_uninstall = sub.add_parser('uninstall', help='卸载已安装的动作仓库')
     p_uninstall.add_argument('--url', help='仓库 URL')
     p_uninstall.add_argument('--name', help='安装名称')
+    p_uninstall.add_argument('--force', action='store_true',
+                             help='允许删除不在安装清单里的目录（默认拒绝，防误删）')
 
     # publish 子命令
     p_publish = sub.add_parser('publish', help='生成注册表索引并打印发布步骤')
@@ -706,6 +720,11 @@ def _dispatch(args) -> int:
         return 0
 
     if args.command == 'validate':
+        # 校验结果分两类（lead 裁决）：真实错误才影响 valid/退出码；
+        # `runtime:` 开头是**环境提示**（裸仓库缺 contracts、没装 jsonschema…），
+        # 必须展示但不判失败 —— 否则在裸仓库里所有动作一律红，
+        # 把"配置问题"伪装成"动作问题"（也不能过滤掉，那是假绿灯）。
+        from vools.actus.validate import split_validation
         if not args.action_id:
             idx = build_index()
             bad = {aid: a.get('errors') for aid, a in idx['actions'].items()
@@ -714,9 +733,15 @@ def _dispatch(args) -> int:
             return 0 if not bad else 1
         action = actuscore.get_action(args.action_id)
         errs = actuscore.validate_action(action)
-        _out({'status': 'ok' if not errs else 'failed',
-              'data': {'id': args.action_id, 'errors': errs}})
-        return 0 if not errs else 1
+        real_errors, runtime_notes = split_validation(errs)
+        for note in runtime_notes:
+            print('⚠️  %s' % note, file=sys.stderr)
+        payload_data = {'id': args.action_id, 'errors': errs}
+        if runtime_notes:
+            # 只在真有环境提示时加字段：正常仓库下返回体形状与改前一致
+            payload_data['warnings'] = runtime_notes
+        _out({'status': 'ok' if not real_errors else 'failed', 'data': payload_data})
+        return 0 if not real_errors else 1
 
     if args.command == 'info':
         action = actuscore.get_action(args.action_id)
@@ -852,7 +877,13 @@ def _dispatch(args) -> int:
             return 1
         # scaffold 的返回体没有 status，靠 validation.valid 判定（helper 内处理）：
         # 改前 scaffold 生成后校验不过也报 status=ok + exit 0。
-        return _out_result(r)
+        # `runtime:` 环境提示（裸仓库缺 contracts、没装 jsonschema…）不算失败，
+        # 但**必须展示**：stderr 一行一条 + `--json` 顶层 warnings（不过滤）。
+        _validation = (r or {}).get('validation') or {}
+        _notes = _validation.get('runtime_notes') or []
+        for _note in _notes:
+            print('⚠️  %s' % _note, file=sys.stderr)
+        return _out_result(r, warnings=_notes)
 
     if args.command == 'author':
         from vools.actus.author import author_action
@@ -1596,49 +1627,13 @@ _CFG_BLOCK_RE = re.compile(r"(```json\s*#!cfg\s*\n)(.*?)(```)", re.DOTALL)
 def _write_action_visibility(action_path: str, level: str):
     """把动作 `#!cfg` 块里的 visibility 改成 level，返回 (ok, message)。
 
-    只动这一个标量：块里已有 "visibility" 就替换它的值，没有就插到块首。
-    **写完立刻重新解析整份动作文件**校验，不通过就把原文写回去并报错 ——
-    宁可失败也不留一份解析不了的动作文件（本仓库的 scaffolder 曾整体覆盖过
-    动作文件，这里不想重演那次事故）。
+    **实现已抽到 `visibility.write_action_visibility`（单一真源）**：MCP 的
+    `actus_visibility_set` 也要真写落盘，两处必须共用同一份逻辑（审计发现
+    MCP 侧此前只校验+回显、不落盘 = 假成功）。这里保留同名薄包装，
+    兼容既有调用方/测试的 `cli._write_action_visibility`。
     """
-    try:
-        with open(action_path, 'r', encoding='utf-8') as handle:
-            original = handle.read()
-    except OSError as exc:
-        return False, f'读取动作文件失败: {exc}'
-
-    match = _CFG_BLOCK_RE.search(original)
-    if match is None:
-        return False, '动作文件里找不到 ```json #!cfg``` 元数据块'
-
-    block = match.group(2)
-    if re.search(r'"visibility"\s*:\s*"[^"]*"', block):
-        new_block = re.sub(r'("visibility"\s*:\s*)"[^"]*"',
-                           lambda m: m.group(1) + '"%s"' % level, block, count=1)
-    else:
-        brace = block.find('{')
-        if brace < 0:
-            return False, '#!cfg 块不是 JSON 对象'
-        new_block = (block[:brace + 1]
-                     + '\n  "visibility": "%s",' % level
-                     + block[brace + 1:])
-
-    updated = original[:match.start(2)] + new_block + original[match.end(2):]
-    try:
-        with open(action_path, 'w', encoding='utf-8') as handle:
-            handle.write(updated)
-        from vools.actus.model import parse_cfg_from_file
-        parsed = parse_cfg_from_file(action_path)
-        if (parsed.meta.get('visibility') or '').strip().lower() != level:
-            raise ValueError('写回后 visibility 校验不一致')
-    except Exception as exc:
-        try:
-            with open(action_path, 'w', encoding='utf-8') as handle:
-                handle.write(original)          # 回滚到原文
-        except OSError:
-            pass
-        return False, f'{type(exc).__name__}: {exc}（已回滚原文件）'
-    return True, ''
+    from vools.actus.visibility import write_action_visibility
+    return write_action_visibility(action_path, level)
 
 
 def _cmd_visibility(args) -> int:
@@ -1790,11 +1785,16 @@ def _cmd_install(args) -> int:
 
 
 def _cmd_uninstall(args) -> int:
-    """uninstall 子命令：卸载已安装的动作仓库。"""
+    """uninstall 子命令：卸载已安装的动作仓库。
+
+    默认只删安装清单里记录过的目录；`--force` 才允许删非清单目录
+    （installer.uninstall 的契约，审计修的 P1：名字传错会删掉任意子目录）。
+    """
     from vools.actus.installer import ActionInstaller
 
     installer = ActionInstaller()
-    result = installer.uninstall(repo_url=args.url, name=args.name)
+    result = installer.uninstall(repo_url=args.url, name=args.name,
+                                 force=getattr(args, 'force', False))
 
     if result.get('status') == 'ok':
         print(f'✅ 已卸载: {result.get("removed")}')
