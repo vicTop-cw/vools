@@ -1589,8 +1589,12 @@ class MCPServer:
             params = args.get('params', {}) or {}
             max_workers = int(args.get('max_workers', 4))
             confirmed = bool(args.get('confirmed', True))
-            root = os.environ.get('ACTUS_REPO_ROOT', '')
-            meta_dir = os.path.join(root, '_meta')
+            # 审计修（`_meta` 手写 → paths.meta_dir()）：未设 ACTUS_REPO_ROOT 时
+            # 旧写法 `os.path.join('', '_meta')` 得到**相对路径**（跟 shell cwd 走），
+            # 且完全无视 ACTUS_META_DIR —— 设了它时 MCP 与 CLI 会落到两个位置
+            # （这边写、那边读不到 = 静默失败）。
+            from vools.actus.paths import meta_dir as _paths_meta_dir
+            meta_dir = _paths_meta_dir()
             try:
                 r = run_workflow(wf_id, meta_dir=meta_dir,
                                  max_workers=max_workers, confirmed=confirmed)
@@ -1602,8 +1606,12 @@ class MCPServer:
 
         if name == 'actus_workflow_status':
             wf_id = args.get('workflow_id', '')
-            root = os.environ.get('ACTUS_REPO_ROOT', '')
-            meta_dir = os.path.join(root, '_meta')
+            # 审计修（`_meta` 手写 → paths.meta_dir()）：未设 ACTUS_REPO_ROOT 时
+            # 旧写法 `os.path.join('', '_meta')` 得到**相对路径**（跟 shell cwd 走），
+            # 且完全无视 ACTUS_META_DIR —— 设了它时 MCP 与 CLI 会落到两个位置
+            # （这边写、那边读不到 = 静默失败）。
+            from vools.actus.paths import meta_dir as _paths_meta_dir
+            meta_dir = _paths_meta_dir()
             wf_path = os.path.join(meta_dir, 'workflows', f'{wf_id}.json')
             if not os.path.isfile(wf_path):
                 return text_result({'status': 'not_found',
@@ -1619,8 +1627,12 @@ class MCPServer:
             value = args.get('value', '')
             scope = args.get('scope', 'global')
             description = args.get('description', '')
-            root = os.environ.get('ACTUS_REPO_ROOT', '')
-            meta_dir = os.path.join(root, '_meta')
+            # 审计修（`_meta` 手写 → paths.meta_dir()）：未设 ACTUS_REPO_ROOT 时
+            # 旧写法 `os.path.join('', '_meta')` 得到**相对路径**（跟 shell cwd 走），
+            # 且完全无视 ACTUS_META_DIR —— 设了它时 MCP 与 CLI 会落到两个位置
+            # （这边写、那边读不到 = 静默失败）。
+            from vools.actus.paths import meta_dir as _paths_meta_dir
+            meta_dir = _paths_meta_dir()
             try:
                 vault = Vault(meta_dir)
                 r = vault.set(key, value, scope, description)
@@ -1632,8 +1644,12 @@ class MCPServer:
             from vools.actus.vault import Vault
             key = args.get('key', '')
             scope = args.get('scope', 'global')
-            root = os.environ.get('ACTUS_REPO_ROOT', '')
-            meta_dir = os.path.join(root, '_meta')
+            # 审计修（`_meta` 手写 → paths.meta_dir()）：未设 ACTUS_REPO_ROOT 时
+            # 旧写法 `os.path.join('', '_meta')` 得到**相对路径**（跟 shell cwd 走），
+            # 且完全无视 ACTUS_META_DIR —— 设了它时 MCP 与 CLI 会落到两个位置
+            # （这边写、那边读不到 = 静默失败）。
+            from vools.actus.paths import meta_dir as _paths_meta_dir
+            meta_dir = _paths_meta_dir()
             try:
                 vault = Vault(meta_dir)
                 val = vault.get(key, scope)
@@ -1646,8 +1662,12 @@ class MCPServer:
         if name == 'actus_vault_list':
             from vools.actus.vault import Vault
             scope = args.get('scope')
-            root = os.environ.get('ACTUS_REPO_ROOT', '')
-            meta_dir = os.path.join(root, '_meta')
+            # 审计修（`_meta` 手写 → paths.meta_dir()）：未设 ACTUS_REPO_ROOT 时
+            # 旧写法 `os.path.join('', '_meta')` 得到**相对路径**（跟 shell cwd 走），
+            # 且完全无视 ACTUS_META_DIR —— 设了它时 MCP 与 CLI 会落到两个位置
+            # （这边写、那边读不到 = 静默失败）。
+            from vools.actus.paths import meta_dir as _paths_meta_dir
+            meta_dir = _paths_meta_dir()
             try:
                 vault = Vault(meta_dir)
                 keys = vault.list(scope)
@@ -1659,8 +1679,12 @@ class MCPServer:
             from vools.actus.vault import Vault
             key = args.get('key', '')
             scope = args.get('scope', 'global')
-            root = os.environ.get('ACTUS_REPO_ROOT', '')
-            meta_dir = os.path.join(root, '_meta')
+            # 审计修（`_meta` 手写 → paths.meta_dir()）：未设 ACTUS_REPO_ROOT 时
+            # 旧写法 `os.path.join('', '_meta')` 得到**相对路径**（跟 shell cwd 走），
+            # 且完全无视 ACTUS_META_DIR —— 设了它时 MCP 与 CLI 会落到两个位置
+            # （这边写、那边读不到 = 静默失败）。
+            from vools.actus.paths import meta_dir as _paths_meta_dir
+            meta_dir = _paths_meta_dir()
             try:
                 vault = Vault(meta_dir)
                 deleted = vault.delete(key, scope)
@@ -2061,8 +2085,9 @@ def _get_trigger_engine(meta_dir: str = ''):
     """获取或创建触发器引擎（进程级单例）。"""
     import vools.actus as _a
     if not hasattr(_a, '_trigger_engine'):
-        root = os.environ.get('ACTUS_REPO_ROOT', '')
-        md = meta_dir or os.path.join(root, '_meta')
+        # 审计修：显式传入的 meta_dir 仍然优先；否则跟随 paths.meta_dir()
+        from vools.actus.paths import meta_dir as _paths_meta_dir
+        md = meta_dir or _paths_meta_dir()
 
         def _executor(trigger, event=None):
             """触发器回调：执行关联动作。"""
@@ -2137,8 +2162,8 @@ def _handle_triggers_status():
 
 def _save_trigger_registry(engine):
     """持久化触发器注册表到磁盘。"""
-    root = os.environ.get('ACTUS_REPO_ROOT', '')
-    meta_dir = os.path.join(root, '_meta')
+    from vools.actus.paths import meta_dir as _paths_meta_dir
+    meta_dir = _paths_meta_dir()
     registry_path = os.path.join(meta_dir, 'triggers.json')
 
     data = {}
