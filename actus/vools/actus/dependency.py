@@ -19,7 +19,8 @@ from vools.core.dataclass_compat import dataclass, field
 from enum import Enum
 from collections import deque
 
-from ._proc import run_cmd_safe as _run_cmd_safe  # noqa: F401  (进程树安全 subprocess)
+from ._proc import run_cmd_safe as _run_cmd_safe
+from .paths import repo_root  # noqa: F401  (进程树安全 subprocess)
 from .constants import is_action_file
 
 
@@ -130,10 +131,8 @@ class DependencyResolver:
         cwd_actions = os.path.join(os.getcwd(), "actions")
         if os.path.isdir(cwd_actions):
             return cwd_actions
-        # 最后尝试从文件位置推导
-        current = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(os.path.dirname(current))
-        actions = os.path.join(project_root, "actions")
+        # 最后尝试从文件位置推导（真源：paths.repo_root()；前两级 CWD 优先语义不变）
+        actions = os.path.join(repo_root(), "actions")
         if os.path.isdir(actions):
             return actions
         return cwd_actions

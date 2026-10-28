@@ -68,18 +68,81 @@ def _resolve_schema_path() -> str:
     return candidates[0]
 
 
+# 兼容保留：import 时的解析快照。外部/测试仍可 monkeypatch 这个模块属性
+# （tests/test_silent_import_bugs.py、tests/test_cli_behavior_contracts.py 都在 patch 它），
+# 被改成非快照值时优先于惰性解析。
 _SCHEMA_PATH = _resolve_schema_path()
+_SCHEMA_PATH_SNAPSHOT = _SCHEMA_PATH
 
+# 惰性解析缓存：键 = (ACTUS_REPO_ROOT, cwd)。二者任一变化即重新解析。
+_schema_path_cache = None
+# schema 内容缓存：{"path": ..., "schema": ...}（或 None）。按**路径**缓存，
+# 路径变了就重读 —— 改前这里是不带键的单例缓存，换路径后仍返回旧 schema。
 _schema_cache = None
 
 
+class _SchemaUnavailable(Exception):
+    """契约文件不可用（不存在 / 读不了 / 不是合法 JSON）。
+
+    刻意**不**继承 ActionError：ActionError 的契约是 `(code, message)`（结构化
+    错误码来自 docs/08 §5），而「契约文件缺失」是环境/配置问题、没有对应的动作
+    错误码；硬套一个 code 等于编造错误码。它只在本模块内部被 validate_action
+    接住并降级成一条 `runtime:` 提示。
+
+    单独一个类型是为了让 validate_action 把它与「动作本身不合 schema」区分开：
+    契约文件缺失是**配置问题**，不该让每条动作都判 invalid（改前症状：
+    每条动作都报 `schema: [Errno 2]`，看起来像"动作全坏了"）。
+    """
+
+
+def _schema_path() -> str:
+    """解析 action.schema.json 的路径（**惰性**，每次按候选列表重新解析）。
+
+    改前：`_SCHEMA_PATH` 是 import 时算死的常量。import 之后再改
+    `ACTUS_REPO_ROOT` 或 chdir（测试、嵌入式集成、进程内多次切仓库）仍拿旧路径
+    → 契约文件不存在 → 所有动作校验报 `schema: [Errno 2]` → **静默全红**。
+
+    现在：优先尊重 monkeypatch 过的 `_SCHEMA_PATH`（兼容层），否则按
+    `(ACTUS_REPO_ROOT, cwd)` 为键缓存惰性解析；缓存路径失效（文件消失）时重解析。
+    """
+    if _SCHEMA_PATH != _SCHEMA_PATH_SNAPSHOT:      # 兼容层：显式覆盖优先
+        return _SCHEMA_PATH
+    key = (os.environ.get('ACTUS_REPO_ROOT'), os.path.abspath(os.getcwd()))
+    cache = _schema_path_cache
+    if isinstance(cache, dict) and cache.get('key') == key:
+        cached_path = cache.get('path')
+        if cached_path and os.path.isfile(cached_path):
+            return cached_path
+    path = _resolve_schema_path()
+    globals()['_schema_path_cache'] = {'key': key, 'path': path}
+    return path
+
+
 def _load_schema() -> dict:
-    """加载 action.schema.json（带缓存），用于契约校验。"""
+    """加载 action.schema.json（按路径惰性缓存），用于契约校验。
+
+    契约文件不可用时抛 `_SchemaUnavailable`（带可执行的排查提示），
+    由 validate_action 降级成一条 `runtime:` 提示 —— 与「未安装 jsonschema」
+    同档处理，避免把配置问题伪装成「所有动作都 invalid」。
+    """
     global _schema_cache
-    if _schema_cache is None:
-        with open(_SCHEMA_PATH, 'r', encoding='utf-8') as f:
-            _schema_cache = json.load(f)
-    return _schema_cache
+    path = _schema_path()
+    cache = _schema_cache
+    if isinstance(cache, dict) and cache.get('path') == path:
+        return cache['schema']
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            schema = json.load(f)
+    except FileNotFoundError:
+        raise _SchemaUnavailable(
+            'contract schema 不存在: %s（检查 ACTUS_REPO_ROOT/contracts/action.schema.json '
+            '或当前运行目录；schema 级校验已跳过，其它校验照常）' % path)
+    except OSError as exc:
+        raise _SchemaUnavailable('contract schema 读取失败: %s (%s)' % (path, exc))
+    except ValueError as exc:
+        raise _SchemaUnavailable('contract schema 不是合法 JSON: %s (%s)' % (path, exc))
+    _schema_cache = {'path': path, 'schema': schema}
+    return schema
 
 
 def validate_action(action: Action) -> List[str]:
@@ -97,6 +160,9 @@ def validate_action(action: Action) -> List[str]:
     except ImportError:
         # 无 jsonschema 时退化为手工必填校验（见下），并提示
         errors.append('runtime: 未安装 jsonschema，已跳过 schema 级校验（pip install jsonschema）')
+    except _SchemaUnavailable as exc:
+        # 契约文件本身不可用 = 配置问题：明确报出来，但**不**让每条动作都判 invalid
+        errors.append('runtime: %s' % exc)
     except Exception as e:  # jsonschema.ValidationError
         errors.append(f'schema: {getattr(e, "message", str(e))}')
 

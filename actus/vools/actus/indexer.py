@@ -19,6 +19,7 @@ from .validate import (
     validate_action, validate_graph, analyze_graph,
     resolve_test_binding, governance_notices,
 )
+from .paths import repo_root
 from .constants import is_testish_id, is_action_file, ACTION_SUFFIXES
 
 _TZ = timezone(timedelta(hours=8))
@@ -42,11 +43,13 @@ def _inject_cached_path(rel: str, roots: List[str]) -> str:
 
 
 def _repo_root() -> str:
-    """仓库根。可被 ACTUS_REPO_ROOT 环境变量覆盖（测试/多仓库场景）。"""
-    env = os.environ.get('ACTUS_REPO_ROOT')
-    if env:
-        return env
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    """仓库根。可被 ACTUS_REPO_ROOT 环境变量覆盖（测试/多仓库场景）。
+
+    真源：`paths.repo_root()`（不设 env / 设 ACTUS_REPO_ROOT 两种情况下都与本函数
+    改前的行为逐字相同，迁移时已用两种状态做对照验证）。本函数保留为兼容别名 ——
+    全仓有大量模块 import 它。
+    """
+    return repo_root()
 
 
 def _seed_actions_dir() -> str:
