@@ -86,11 +86,23 @@ auth() / recover() / rotate() / rollback()
 - **L2/L3 的第二因子**：`seed_key` 仍是 TOTP 种子。本轮解决的是"库文件泄露"场景；
   若要防御"能读 keyring 的本机用户"，需要硬件因子（TPM/HSM，未来档位）。
 - **`key_meta` 里存 passphrase 的 salt/iters（明文）**：salt 本来不需要保密，iters 固定 200k。
-- **密钥轮换（`seed_key` 生命周期）：暂缓 —— 被一个 P0 阻塞，见 §6.1。**
+- **密钥轮换（`seed_key` 生命周期）：暂缓 —— 原被一个 P0 阻塞，该 P0 已在第 16 轮修复（§6.1）。**
   现有 `recover()` 不改变 `seed_key`，因此 KEK 也无需轮换；而真正的 `seed_key` 轮换
-  必须以「`master_key` 可稳定重算」为前提，当前不满足（§6.1）。
+  必须以「`master_key` 可稳定重算」为前提 —— 该前提**现已满足**（见 §6.1），
+  轮换可作为后续独立一轮实现（原地重加密，不需要 PIN、不需要导出重录）。
 
-### 6.1 P0（第 15 轮发现）：L2/L3 的 `master_key` 绑定了 60s 动态码 → 旧密文在窗口后就解不开
+### 6.1 P0（第 15 轮发现，**第 16 轮已修**）：L2/L3 的 `master_key` 曾绑定 60s 动态码
+
+> **已修**：`master_key` 现在只由 `seed_key + key_salt` 决定（`derive_master_key_stable`），
+> 动态码退回本职 —— **只做认证挑战**（TOTP 校验 + `used_codes` 防重放），不再参与 KDF。
+> 旧数据由 `Vault2.migrate_master_derivation()` 迁移（登录成功时自动触发一次；
+> 单事务、全成或全不改、幂等；`rotated_backups` **无需迁移**，它由 `_derive_backup_key(seed)` 派生）。
+> 验收：`tools/audit/verify_vault2_master_migration.py`（16 项全过：P0 复现 / 迁移后跨窗口可读 /
+> 中途失败整体回滚 / 幂等 / L1 行为不变 / 读路径零写），
+> A/B 对照：`tools/audit/prove_vault2_window_master.py`。
+> **轮换不能追溯保护已被拷走的密文** —— 它只缩短"泄漏快照"的有效期，这点别给人错误的安全感。
+> 以下保留事故记录，作为「为什么不能把动态码掺进 KDF」的案例。
+
 
 派生链（`vault2.auth()`）：
 ```

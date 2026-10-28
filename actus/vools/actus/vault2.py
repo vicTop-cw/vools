@@ -298,6 +298,47 @@ def _make_backend(cipher_alg: str, row_key: bytes):
     return cls(row_key)
 
 
+# ── 主密钥派生（P0 修复，第 15 轮）────────────────────────────────────────
+#
+# 事故：改前 `master_key = PBKDF2(seed_key_hex + dynamic_code, key_salt)`，而
+# `dynamic_code` 是**每 60 秒变一次**的 TOTP ⇒ master_key 每分钟都不一样 ⇒
+# 在窗口 A 写入的 secrets，到窗口 B 重新 auth 后用新 master 解 = **解不开**。
+# L1 因为 effective_dynamic 本来就是空串而幸免；**L2/L3 全中**，而 register()
+# 的默认级别正是 L2。所有测试都在同一个 60s 窗口内跑完，所以 14 轮全绿。
+#
+# 修复：master 只由 `seed_key + key_salt` 决定（与时间无关）；动态码退回本职 ——
+# **只做认证挑战**（TOTP 校验 + used_codes 防重放），不再参与 KDF。
+# 旧数据用 `created_at` 反推写入窗口 → 重建当时的 master 解密 → 用新派生重加密。
+
+def derive_master_key_stable(seed_or_pin: str, salt: bytes) -> bytes:
+    """稳定派生：**不掺时间**。动态码不再参与 KDF（P0 修复）。"""
+    return derive_master_key(seed_or_pin, "", salt)
+
+
+def derive_master_key_windowed(seed_or_pin: str, window_counter: int, salt: bytes) -> bytes:
+    """旧派生：把**指定时间窗口**的 TOTP 掺进 KDF。
+
+    仅用于**迁移旧密文**：每条 secret 有 `created_at`，`created_at // 60` 就是它
+    被写入时的窗口计数器 —— 用它就能重建当时的 master_key。
+    """
+    import struct as _struct
+    counter = int(window_counter)
+    digest = hmac.new(bytes.fromhex(seed_or_pin) if _is_hex(seed_or_pin)
+                      else seed_or_pin.encode('utf-8'),
+                      _struct.pack(">Q", counter), hashlib.sha256).digest()
+    offset = digest[-1] & 0x0F
+    code = (_struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF) % (10 ** 6)
+    return derive_master_key(seed_or_pin, str(code).zfill(6), salt)
+
+
+def _is_hex(value) -> bool:
+    try:
+        bytes.fromhex(value)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 # ── Vault2 ──
 class Vault2:
     def __init__(self, vault_dir: str = None):
@@ -900,17 +941,17 @@ class Vault2:
                     "DELETE FROM used_codes WHERE used_at < ?", (now - 86400,)
                 )
 
-            effective_dynamic = "" if level == "L1" else dynamic_code
+            # P0 修复（第 15 轮）：**动态码不再参与 KDF**。
+            # 改前这里把 effective_dynamic（L2/L3 的 60s TOTP）掺进 PBKDF2 ⇒ master
+            # 每分钟变一次 ⇒ 上个窗口写的密文下个窗口解不开。动态码的职责只剩
+            # 「认证挑战」—— 上面已经做过 TOTP 校验 + used_codes 防重放。
+            # L1 改前 effective_dynamic 就是空串 ⇒ 行为**逐字不变**（有断言）。
             if key_salt_hex:
-                # 主密钥由 seed_key + dynamic_code + key_salt 派生。
-                # seed_key / key_salt 注册时生成、recover 不改变，
-                # 因此 recover 重置 PIN 后历史 secrets 仍可解密。
-                master_key = derive_master_key(
-                    seed_key_hex, effective_dynamic, bytes.fromhex(key_salt_hex)
-                )
+                master_key = derive_master_key_stable(
+                    seed_key_hex, bytes.fromhex(key_salt_hex))
             else:
-                # 旧身份（无 key_salt）：回退为 pin 派生（向后兼容）
-                master_key = derive_master_key(pin, effective_dynamic, bytes.fromhex(salt_hex))
+                # 旧身份（无 key_salt）：回退为 pin 派生（向后兼容）；同样不掺时间
+                master_key = derive_master_key_stable(pin, bytes.fromhex(salt_hex))
 
             token = secrets.token_urlsafe(32)
             ttl = SESSION_TTL.get(level, 600)
@@ -923,9 +964,18 @@ class Vault2:
             }
 
             self._audit("auth", identity_id, machine_id, success=True)
-            return {"status": "ok", "dynamic_code": dynamic_code if level != "L1" else "",
-                    "expires_in": DEFAULT_TIME_STEP, "session_token": token,
-                    "security_level": level}
+            result = {"status": "ok", "dynamic_code": dynamic_code if level != "L1" else "",
+                      "expires_in": DEFAULT_TIME_STEP, "session_token": token,
+                      "security_level": level}
+        # 登录是天然的升级点（本来就是写路径）：把该身份在"旧派生时期"写入的密文
+        # 迁到稳定派生。失败不阻断登录，但**如实回传**（不静默）。
+        try:
+            result["master_migration"] = self.migrate_master_derivation(identity_id)
+        except Exception as exc:                       # noqa: BLE001
+            result["master_migration"] = {
+                "status": "error", "code": "migration_failed",
+                "message": "%s: %s" % (type(exc).__name__, exc)}
+        return result
 
     # ── recover（恢复密钥重置 PIN） ──
     def recover(self, identity_id: str, recovery_key: str, new_pin: str) -> dict:
@@ -1233,6 +1283,128 @@ class Vault2:
         return {"status": "ok", "name": name, "action": "delete"}
 
     # ── rotate_secret ──
+    # ── P0 迁移：把「动态码参与 KDF」时期写入的密文迁到稳定派生 ──
+
+    def _reencrypt_rows(self, conn, updates) -> None:
+        """把收集好的行更新一次性写进去（单独成方法便于测试注入失败）。"""
+        for row_id, new_value in updates:
+            conn.execute("UPDATE secrets SET value=? WHERE id=?", (new_value, row_id))
+
+    def migrate_master_derivation(self, identity_id: str = None) -> dict:
+        """迁移某身份（或全部身份）的 secrets 到**稳定派生**（master 不掺时间）。
+
+        设计要点（lead 硬要求）：
+          * **全成或全不改**：先全部"试解密/试重加密"到内存，**任何一条失败就整批放弃**
+            （此时磁盘一个字节都没写）；写阶段放在一个 `_db()` 事务里，抛错即回滚。
+          * **幂等**：每行先试**新派生**能否解开 —— 能解开说明它已经是新格式，跳过。
+            所以跑第二遍是 `migrated=0, already=N`，不报错。
+          * **旧数据可救**：旧格式用该行 `created_at // 60` 反推 TOTP 窗口重建旧 master。
+          * **不迁 `rotated_backups`**：它用 `_derive_backup_key(seed)`，只依赖 seed、
+            与 master/时间无关（seed 不变 ⇒ 备份仍可解密）。
+          * 无 `key_salt` 的旧身份需要 PIN 才能派生旧 master ⇒ 跳过并如实报告。
+        """
+        identities = []
+        with self._db() as conn:
+            if identity_id:
+                rows = conn.execute(
+                    "SELECT id, seed_key, key_protection, key_meta, key_salt, security_level "
+                    "FROM identities WHERE id=?", (identity_id,)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, seed_key, key_protection, key_meta, key_salt, security_level "
+                    "FROM identities").fetchall()
+            identities = list(rows)
+
+        migrated, already, skipped_legacy, failures = 0, 0, [], []
+        per_identity = {}
+        updates = []
+        for (ident, stored, protection, key_meta, key_salt_hex, level) in identities:
+            if not key_salt_hex:
+                skipped_legacy.append(ident)
+                continue
+            try:
+                seed_hex = self._decode_seed_hex(ident, stored, protection, key_meta)
+            except Exception as exc:                   # noqa: BLE001
+                failures.append({"identity": ident, "name": None,
+                                 "reason": "seed 解不开：%s" % exc})
+                continue
+            new_master = derive_master_key_stable(seed_hex, bytes.fromhex(key_salt_hex))
+            ident_migrated = ident_already = 0
+
+            with self._db() as conn:
+                secret_rows = conn.execute(
+                    "SELECT id, name, value, created_at, cipher_alg, key_salt, "
+                    "key_iters, key_dklen FROM secrets WHERE identity_id=?",
+                    (ident,)).fetchall()
+            for (row_id, name, enc_value, created_at, cipher_alg,
+                 row_salt_hex, key_iters, key_dklen) in secret_rows:
+                iters = key_iters or DEFAULT_ROW_ITERS
+                dklen = key_dklen or DEFAULT_ROW_DKLEN
+                alg = cipher_alg or DEFAULT_CIPHER_ALG
+
+                def _row_key(master):
+                    if row_salt_hex:
+                        return _derive_row_key(master, bytes.fromhex(row_salt_hex), iters, dklen)
+                    return master
+
+                # ① 先试新派生：能解开 = 已经是新格式（幂等）
+                try:
+                    plaintext = _make_backend(alg, _row_key(new_master)).decrypt(enc_value)
+                    ident_already += 1
+                    continue
+                except Exception:                      # noqa: BLE001
+                    pass
+                # ② 旧派生：用 created_at 反推窗口
+                window = int(created_at or 0) // DEFAULT_TIME_STEP
+                try:
+                    old_master = derive_master_key_windowed(seed_hex, window,
+                                                            bytes.fromhex(key_salt_hex))
+                    plaintext = _make_backend(alg, _row_key(old_master)).decrypt(enc_value)
+                except Exception as exc:               # noqa: BLE001
+                    failures.append({"identity": ident, "name": name,
+                                     "reason": "新旧派生都解不开（created_at 窗口=%d）：%s"
+                                               % (window, exc)})
+                    continue
+                # ③ 用新派生重加密，并**立刻验证**
+                try:
+                    new_enc = _make_backend(alg, _row_key(new_master)).encrypt(plaintext)
+                    if _make_backend(alg, _row_key(new_master)).decrypt(new_enc) != plaintext:
+                        raise ValueError("重加密后回读不一致")
+                except Exception as exc:               # noqa: BLE001
+                    failures.append({"identity": ident, "name": name,
+                                     "reason": "重加密失败：%s" % exc})
+                    continue
+                updates.append((row_id, new_enc))
+                ident_migrated += 1
+
+            per_identity[ident] = {"migrated": ident_migrated, "already": ident_already}
+            migrated += ident_migrated
+            already += ident_already
+
+        # 任何一条失败 → **整批放弃**（此刻磁盘仍未写入）
+        if failures:
+            self._audit("migrate_master", identity_id, target="failed",
+                        success=False, reason=failures[0]["reason"][:200],
+                        caller="vault2.migrate")
+            return {"status": "error", "code": "migration_failed",
+                    "message": ("迁移中止：%d 条无法迁移（其余行未改动）。"
+                                "首条失败：identity=%s name=%s —— %s"
+                                % (len(failures), failures[0]["identity"],
+                                   failures[0]["name"], failures[0]["reason"])),
+                    "failed": failures[:10], "migrated": 0, "already": already,
+                    "skipped_legacy": skipped_legacy}
+
+        if updates:
+            with self._db() as conn:                   # 单事务：抛错即整体回滚
+                self._reencrypt_rows(conn, updates)
+        if migrated:
+            self._audit("migrate_master", identity_id, target="migrated=%d" % migrated,
+                        success=True, caller="vault2.migrate")
+        return {"status": "ok", "migrated": migrated, "already": already,
+                "per_identity": per_identity, "skipped_legacy": skipped_legacy,
+                "note": ("rotated_backups 不迁移：它由 _derive_backup_key(seed) 加密，"
+                         "只依赖 seed（本次 seed 不变）")}
+
     def rotate_secret(self, token: str, name: str, new_value: str = None,
                       caller: str = None) -> dict:
         ok, sess = self._verify_token(token)
