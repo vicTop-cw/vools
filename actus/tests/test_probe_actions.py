@@ -16,12 +16,10 @@
 下游 ready / blocked 判定（PROBE_PLAN.md §9 Phase 3、`intent.IntentRouter`）也一并测：
 报告里列出的动作 = ready（可推荐），其余 = blocked。
 
-⚠️ **计划与实现的一处差异（按实现写，已在汇报里点名）**：计划 §4.7 设计的
-`analyze_actions(actions_dir, probe_report)` —— 逐个动作比对 `deps` 字段、产出
-`ready/blocked/missing_deps` —— **产品里并不存在**。现产品的语义是：
-`ActionsProber` 只做扫描 + 静态依赖表；「ready」的判据是「动作出现在探测报告里」，
-「blocked」= 没出现（解析失败、目录不可读、被探测过滤掉的动作都属于这一档）。
-所以本文件按这套**真实语义**测 ready/blocked，而不是按计划里未实现的 deps 比对。
+⚠️ **计划与实现的差异（按实现写）**：`analyze_actions()` 后来已按 §4.7 落地（逐动作
+`deps` → ready/blocked），但它是 `action_readiness` 条目、由 `tests/test_analyze_actions.py`
+专项覆盖；**本文件负责的是 `ActionsProber` 的两条既有条目（`actions` 清单 +
+`action_dependencies` 静态表）以及「报告里出现 = ready」这道粗粒度门**。
 
 怎么测（不依赖仓库里的真实动作）
 --------------------------------
@@ -29,6 +27,12 @@
   front-matter 形态、以及故意写坏的文件；
 * 扫描根用产品自带的覆盖点 `ACTUS_REPO_ROOT`（`indexer._repo_root()` 显式支持，
   docstring 写明「测试/多仓库场景」）切到 tmp，不碰仓库 `actions/`；
+* **多根语义（本轮更新）**：`actions` 条目缺省扫**全部动作根** —— 用户项目 `actions/`
+  + 包内种子（`indexer._action_roots()`，与 `action_readiness`、docs/actus/03:32 对齐）。
+  因此本文件分两档断言，避免「为了绿而放宽」：
+    - **扫描层**用显式目录 `_scan_actions_dir(str(dir))` → 精确断言「只扫该目录」；
+    - **条目层**用「本地动作 + 包内种子」的**精确并集**计数（种子集合动态取自产品
+      真源 `_seed_actions_dir()`，不写死 8/14 这些会漂移的数字）。
 * 唯一一条真跑 `probe()` 的冒烟用例把缓存目录也重定向到 tmp（不写工作区
   `_meta/probe_cache.json`）；当前整条 probe 实测约 2s。
 
@@ -48,6 +52,7 @@ import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
 _ai_local_bootstrap.install()
 
 from vools.actus.intent import IntentRouter  # noqa: E402
+from vools.actus.indexer import _action_roots, _seed_actions_dir  # noqa: E402
 from vools.actus.probe import cache as cache_mod  # noqa: E402
 from vools.actus.probe import probe  # noqa: E402
 from vools.actus.probe.actions import (  # noqa: E402
@@ -55,6 +60,7 @@ from vools.actus.probe.actions import (  # noqa: E402
     ActionsProber,
     _scan_actions_dir,
 )
+from vools.actus.probe.base import ProbeItem  # noqa: E402
 from vools.actus.probe.report import ProbeReport  # noqa: E402
 
 
@@ -131,6 +137,28 @@ def _item(items, name):
     return by_name[name]
 
 
+def _seed_action_entries():
+    """包内种子根的动作条目（多根扫描的第二根）。
+
+    为什么不写死数量：种子集随产品演进（当前 8 个），断言必须用
+    「本地 + 种子」的**精确并集**，种子集合从产品真源 `_seed_actions_dir()` 现算。
+    """
+    seed_dir = _seed_actions_dir()
+    if not os.path.isdir(seed_dir):
+        return []
+    return _scan_actions_dir(seed_dir)["actions"]
+
+
+def _seed_ids():
+    """包内种子动作 id 的排序列表（当前实现缺省多根扫描会并入它们）。"""
+    return sorted(entry["id"] for entry in _seed_action_entries())
+
+
+def _norm_paths(paths):
+    """路径归一化后比较（Windows 大小写/分隔符差异不该让断言抖动）。"""
+    return [os.path.normcase(os.path.abspath(path)) for path in paths]
+
+
 # ---------------------------------------------------------------------------
 # 夹具
 # ---------------------------------------------------------------------------
@@ -166,27 +194,61 @@ def test_scan_nonexistent_actions_dir(tmp_path):
     assert info["actions_dir"] == str(missing)
 
 
-def test_prober_reports_unavailable_when_actions_dir_missing(tmp_path, monkeypatch):
-    """扫描根下没有 actions/ 时，条目必须如实标不可用、计数为 0。"""
+def test_prober_uses_seed_root_when_repo_actions_missing(tmp_path, monkeypatch):
+    """仓库根没有 actions/ 时，多根扫描仍会扫到**包内种子** → 条目必须可用。
+
+    为什么从「不可用 / count=0」改成「可用 / count=种子数」：
+    改前 `actions` 条目只扫仓库根（单根口径），根不存在就判不可用；
+    多根化后（docs/actus/03-动作规范.md:32）「用户根缺失」≠「动作探测不可用」——
+    包内种子根仍在，报告要如实列出它们，否则 IntentRouter 永远看不到种子动作。
+    这是**语义修正**，不是放宽：断言用精确值（种子动作集 + roots 完整列表）。
+    """
     monkeypatch.setenv("ACTUS_REPO_ROOT", str(tmp_path))   # 故意不建 actions/
+    seed_ids = _seed_ids()
+    if not seed_ids:
+        pytest.skip("包内种子目录缺失/为空，无法验证多根回退语义")
+
     items = ActionsProber().run()
     item = _item(items, "actions")
-    assert item.available is False
-    assert item.extra["action_count"] == 0
-    assert item.extra["actions"] == []
+
+    assert item.available is True, "种子根存在时动作探测应可用（多根语义）"
+    assert item.extra["action_count"] == len(seed_ids), \
+        "缺省（多根）扫描计数应精确等于种子动作数 %d" % len(seed_ids)
+    assert sorted(entry["id"] for entry in item.extra["actions"]) == seed_ids
+    # roots 与产品真源 _action_roots() 一致：用户项目根（即使不存在）+ 包内种子根
+    assert _norm_paths(item.extra["roots"]) == _norm_paths(_action_roots()), \
+        "roots 应如实报告全部动作根，实得 %r" % (item.extra["roots"],)
+    assert len(item.extra["roots"]) >= 2, "多根语义下至少应有「用户根 + 种子根」两个根"
+    # 用户根没有文件：列出的路径必须全部来自种子根，不能凭空产生用户动作
+    seed_dir = _seed_actions_dir()
+    assert all(os.path.normcase(entry["path"]).startswith(os.path.normcase(seed_dir))
+               for entry in item.extra["actions"]), \
+        "缺失用户根时不应出现用户根下的动作"
     # 依赖表条目与目录可读性无关：始终可用
     assert _item(items, "action_dependencies").available is True
 
 
 def test_scan_empty_actions_dir(fake_repo):
-    """空目录：exists=True、0 个动作（「目录在但没动作」不能被误报成不可用）。"""
-    info = _scan_actions_dir()
+    """空用户目录：显式单根扫描 0 个；缺省多根扫描 = 包内种子（精确计数）。
+
+    为什么拆分：改前 `action_count == 0` 建立在「缺省也只看仓库根」的单根口径上；
+    多根后空用户目录只代表「本仓库没有动作」，包内种子照常计入 —— 所以扫描层
+    （显式目录）断言 0，条目层（缺省多根）断言精确种子数。
+    """
+    actions = _actions_dir(fake_repo)
+
+    info = _scan_actions_dir(str(actions))          # 显式单根：只扫该目录
     assert info["exists"] is True
     assert info["actions"] == []
+    assert _norm_paths(info["roots"]) == _norm_paths([str(actions)]), \
+        "显式传目录时应只有一个扫描根，实得 %r" % (info["roots"],)
 
+    seed_ids = _seed_ids()
     item = _item(ActionsProber().run(), "actions")
     assert item.available is True
-    assert item.extra["action_count"] == 0
+    assert item.extra["action_count"] == len(seed_ids), \
+        "空用户目录 + 包内种子 → 计数应精确等于种子数 %d，实得 %r" % (
+            len(seed_ids), item.extra["action_count"])
 
 
 # ---------------------------------------------------------------------------
@@ -194,36 +256,52 @@ def test_scan_empty_actions_dir(fake_repo):
 # ---------------------------------------------------------------------------
 
 def test_scan_collects_ids_from_both_formats(fake_repo):
-    """`.actus.md`（JSON cfg）与 `.actus.schema.md`（YAML front-matter）都要能扫到。"""
+    """两种格式都能扫到（扫描层：显式单根精确 3 个；条目层：本地 + 种子精确并集）。
+
+    为什么这样改：改前 `_scan_actions_dir()` 缺省只扫仓库根，所以能精确断言 3 个；
+    多根化后缺省会并入包内种子 → 扫描层改用**显式目录**保留「只扫该目录」的语义，
+    条目层则断精确并集（本地 3 + 种子 N），不是「>=3」这种弱断言。
+    """
     actions = _actions_dir(fake_repo)
     _write(actions / "alpha.actus.md", _json_action_text("test.alpha"))
     _write(actions / "nested" / "deeper" / "beta.actus.md",
            _json_action_text("test.beta", "Beta"))
     _write(actions / "gamma.actus.schema.md", _schema_action_text("test.gamma"))
+    local_ids = {"test.alpha", "test.beta", "test.gamma"}
 
-    info = _scan_actions_dir()
+    info = _scan_actions_dir(str(actions))          # 显式单根
     assert info["exists"] is True
-    assert {entry["id"] for entry in info["actions"]} == {
-        "test.alpha", "test.beta", "test.gamma"}
+    assert {entry["id"] for entry in info["actions"]} == local_ids
+    assert _norm_paths(info["roots"]) == _norm_paths([str(actions)])
 
+    seed_ids = set(_seed_ids())
     item = _item(ActionsProber().run(), "actions")
-    assert item.extra["action_count"] == 3
-    assert {entry["id"] for entry in item.extra["actions"]} == {
-        "test.alpha", "test.beta", "test.gamma"}
+    assert item.extra["action_count"] == len(local_ids | seed_ids), \
+        "缺省（多根）计数应为「本地 + 包内种子」精确并集大小 %d，实得 %r" % (
+            len(local_ids | seed_ids), item.extra["action_count"])
+    assert {entry["id"] for entry in item.extra["actions"]} == local_ids | seed_ids
     # 条目必须能 JSON 序列化（落缓存 / 给 LLM 消费两条下游都依赖）
     json.dumps(item.to_dict(), ensure_ascii=False)
 
 
 def test_scan_ignores_non_action_files(fake_repo):
-    """非动作文件（notes.md / readme.txt / data.json）一律不进动作列表。"""
+    """非动作文件（notes.md / readme.txt / data.json）不进动作列表。
+
+    扫描层用显式单根精确断言「只有 test.ok」；条目层（多根）只额外并包内种子。
+    """
     actions = _actions_dir(fake_repo)
     _write(actions / "notes.md", "# 只是文档\n")
     _write(actions / "readme.txt", "x\n")
     _write(actions / "data.json", "{}\n")
     _write(actions / "ok.actus.md", _json_action_text("test.ok"))
 
-    info = _scan_actions_dir()
+    info = _scan_actions_dir(str(actions))
     assert [entry["id"] for entry in info["actions"]] == ["test.ok"]
+
+    item = _item(ActionsProber().run(), "actions")
+    ids = {entry["id"] for entry in item.extra["actions"]}
+    assert ids == {"test.ok"} | set(_seed_ids()), \
+        "多根条目应恰为「本地 test.ok + 包内种子」，实得 %r" % (sorted(ids),)
 
 
 def test_scan_accepts_explicit_dir_argument(tmp_path):
@@ -247,6 +325,9 @@ def test_broken_action_files_fall_back_to_relative_path(fake_repo):
     这也是 PROBE_PLAN.md 风险表「动作依赖格式不统一 → 容错解析」那一行的
     可执行判据：坏文件既不许炸掉扫描，也不许被静默丢弃（它仍会计数，
     只是 id 退化），否则用户看不到「这个动作没解析成功」。
+
+    为什么计数从 3 改成「本地 3 + 种子 N」：多根化后缺省扫描会并入包内种子；
+    本用例先用**显式单根**断言精确 3 条（含 2 个退化 id），再用条目层断精确并集。
     """
     actions = _actions_dir(fake_repo)
     _write(actions / "good.actus.md", _json_action_text("test.good"))
@@ -255,7 +336,7 @@ def test_broken_action_files_fall_back_to_relative_path(fake_repo):
     _write(actions / "bad.actus.schema.md",
            "---\nid: [unclosed\nname: broken\n---\n\n# broken\n")
 
-    info = _scan_actions_dir()          # 不抛异常
+    info = _scan_actions_dir(str(actions))          # 显式单根：不抛异常
     ids = {entry["id"] for entry in info["actions"]}
     assert "test.good" in ids
     # 解析失败 → 相对路径作 id（而不是静默丢弃）
@@ -263,9 +344,11 @@ def test_broken_action_files_fall_back_to_relative_path(fake_repo):
     assert "bad.actus.schema.md" in ids
     assert len(info["actions"]) == 3
 
+    seed_ids = _seed_ids()
     item = _item(ActionsProber().run(), "actions")
     assert item.available is True
-    assert item.extra["action_count"] == 3
+    assert item.extra["action_count"] == 3 + len(seed_ids), \
+        "多根条目 = 本地 3 个（含 2 个解析失败退化）+ 包内种子 %d" % len(seed_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -339,14 +422,27 @@ def test_blocked_when_action_absent_from_probe_report(fake_repo):
     assert router.route("blocked")["action_id"] != "test.blocked"
 
 
-def test_unavailable_actions_report_does_not_block_everything(tmp_path, monkeypatch):
-    """探测报告里 actions 不可用（目录缺失）时，ready 过滤必须关闭（不误杀全部动作）。
+def test_unavailable_actions_report_does_not_block_everything():
+    """探测报告里 actions 条目 `available=False` 时，ready 过滤必须关闭（不误杀全部动作）。
 
-    否则「探测不到动作目录」会被下游解读成「所有动作都 blocked」，
-    用户一个动作都推荐不出来 —— 这是 ready 过滤最危险的失败形态。
+    为什么不再用「仓库根没有 actions/」来造这个场景：多根化后包内种子兜底，
+    缺省扫描**不会**再因为用户根缺失而判不可用（见
+    `test_prober_uses_seed_root_when_repo_actions_missing`）。但「探测失败/降级」
+    这种报告形态仍然存在（扫描抛异常、旧缓存、裁剪过的报告都会），
+    IntentRouter 对它的处理不该变 —— 所以这里直接构造该形态的报告来测
+    下游语义，而不是依赖某个会造成失败的扫描环境。
+
+    退步了会怎样：`set_probe_report` 对 `available=False` 也启用 ready 过滤 →
+    所有动作被判 blocked，用户一个推荐都拿不到（ready 过滤最危险的失败形态）。
     """
-    monkeypatch.setenv("ACTUS_REPO_ROOT", str(tmp_path))   # 无 actions/
-    report = ProbeReport(items=ActionsProber().run())
+    report = ProbeReport(items=[ProbeItem(
+        name="actions",
+        category="actions",
+        available=False,
+        error="stub: 扫描失败（降级形态）",
+        extra={"actions_dir": "/stub/actions", "roots": [],
+               "action_count": 0, "actions": []},
+    )])
     assert _item(report.items, "actions").available is False
 
     router = IntentRouter()
@@ -368,7 +464,9 @@ def test_probe_report_integrates_actions_section(fake_repo, isolated_probe_cache
 
     这是本文件唯一不靠打桩的用例：其余用例都只跑探测器本体，所以需要一条
     「探测 → 报告 → intent」的端到端证据（打桩测不出来接线断掉）。
-    缓存目录已重定向到 tmp，且扫描根是假仓库 —— 不依赖仓库里的真实动作。
+    缓存目录已重定向到 tmp；扫描根是假仓库 —— 注意多根语义下报告还会并入包内
+    种子动作，所以这里只断言「本地动作在列」+ ready 过滤命中本地动作（种子动作
+    没被 register，不会出现在 list_actions 里）。
     """
     _write(_actions_dir(fake_repo) / "alpha.actus.md",
            _json_action_text("test.probe.alpha"))
