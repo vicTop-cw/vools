@@ -343,6 +343,9 @@ class _AdapterIface:
                      **top})
                 registry = AdapterRegistry()
                 adapter = registry.create_adapter(spec)
+                # 审计（第 25 轮）：内联 spec 也要在执行前做可用性探测，
+                # 否则命令没装要等运行期才炸、且不给安装提示。
+                registry.ensure_available(spec.id, spec, adapter)
                 raw = adapter.run(ctx.params or {})
             except Exception as exc:  # noqa: BLE001 —— 统一出参契约：异常归一
                 return result_from_exception(exc)

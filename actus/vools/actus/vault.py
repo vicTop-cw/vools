@@ -26,11 +26,16 @@ __all__ = ['Vault', 'default_meta_dir', 'set_key', 'get_key', 'delete_key',
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
+import shutil
 import struct
+import tempfile
 import time
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ── 加密后端 ──
@@ -121,14 +126,23 @@ class Vault:
     - _meta/vault/meta.json: {scope: {key: {created_at, updated_at, description}}}
     """
 
-    def __init__(self, meta_dir: str, master_key: Optional[str] = None):
+    def __init__(self, meta_dir: str, master_key: Optional[str] = None,
+                 migrate_legacy: Optional[bool] = None):
         """
         参数:
             meta_dir: 仓库 _meta 目录路径。
             master_key: 加密主密钥（缺省从 ACTUS_VAULT_KEY 环境变量获取）。
+            migrate_legacy: 是否把旧位置的保险库迁到 `meta_dir/vault`。
+                None（默认）= 自动：不在测试环境下才迁移（测试绝不搬真实用户数据），
+                True/False 可强制。迁移结果记在 `migrated_from` / `migration_conflict`。
         """
         self._vault_dir = os.path.join(meta_dir, 'vault')
         os.makedirs(self._vault_dir, exist_ok=True)
+        # 旧位置探测/迁移必须在**读取数据之前**做，否则读到的是空库。
+        self.migrated_from: Optional[str] = None
+        self.migration_conflict: Optional[str] = None
+        self.last_refusal: Optional[dict] = None
+        self._maybe_migrate_legacy(migrate_legacy)
 
         if master_key is None:
             master_key = os.environ.get('ACTUS_VAULT_KEY')
@@ -156,19 +170,156 @@ class Vault:
                 return json.load(f)
         return {}
 
+    # ── 旧位置探测 / 迁移（audit 第 25 轮：路径来源统一到 paths.meta_dir 之后）──
+
+    @staticmethod
+    def _legacy_vault_candidates() -> List[str]:
+        """历史 v1 保险库可能出现过的旧位置（真实路径去重，按可能性排序）。
+
+        1. `<repo_root>/_meta/vault` —— 未设 ACTUS_META_DIR 时的常规位置；
+        2. `<cwd>/_meta/vault`     —— 旧版 `join(_, '_meta')` 跟 shell 走的时代；
+        3. `<cwd>/vault`           —— BUG-0010：`join('', 'vault')` 的相对产物。
+        """
+        from .paths import repo_root as _paths_repo_root
+        raw = [
+            os.path.join(_paths_repo_root(), '_meta', 'vault'),
+            os.path.join(os.getcwd(), '_meta', 'vault'),
+            os.path.join(os.getcwd(), 'vault'),
+        ]
+        seen, out = set(), []
+        for cand in raw:
+            real = os.path.realpath(cand)
+            if real not in seen:
+                seen.add(real)
+                out.append(cand)
+        return out
+
+    def _maybe_migrate_legacy(self, migrate_legacy: Optional[bool]) -> None:
+        """新位置为空、旧位置有数据时把旧库**移动**过来（不复制、不合并）。
+
+        与 `vault2._maybe_migrate_legacy()` 同款规则：
+          * 新位置本身就是常规位置（未设 ACTUS_META_DIR）→ 什么都不做；
+          * 旧有/新空 → 迁移（`shutil.move`），记 `migrated_from`；
+          * 两边都有 → 不合并，记 `migration_conflict`（ambiguous），交人处理；
+          * 只在**非测试环境**自动迁移（测试绝不允许搬动真实用户的保险库 —— 这与会
+            把我们自己的数据搬走的其它事故同族），也可用 `ACTUS_VAULT_MIGRATE=1`
+            或显式参数强制。
+        """
+        target = os.path.realpath(self._vault_dir)
+        candidates = self._legacy_vault_candidates()
+        if any(os.path.realpath(c) == target for c in candidates):
+            return                       # 新位置就是常规位置：零影响，无需迁移
+
+        legacy = None
+        for cand in candidates:
+            if os.path.isdir(cand) and os.listdir(cand):
+                legacy = cand
+                break
+        if legacy is None:
+            return
+
+        if os.path.isdir(self._vault_dir) and os.listdir(self._vault_dir):
+            self.migration_conflict = (
+                'ambiguous: 新旧保险库同时存在，未自动合并（旧=%s，新=%s）'
+                '—— 请人工确认保留哪一份' % (legacy, self._vault_dir))
+            return
+
+        if migrate_legacy is None:
+            in_test = bool(os.environ.get('PYTEST_CURRENT_TEST')
+                           or os.environ.get('ACTUS_TEST_MODE'))
+            migrate_legacy = (os.environ.get('ACTUS_VAULT_MIGRATE') == '1') or not in_test
+        if not migrate_legacy:
+            self.migration_conflict = (
+                'pending: 检测到旧位置保险库 %s（新位置为空），自动迁移已跳过'
+                '（测试环境）；可设 ACTUS_VAULT_MIGRATE=1 或人工搬迁' % legacy)
+            return
+
+        try:
+            os.rmdir(self._vault_dir)     # 空目录：让 move 直接落位
+            os.makedirs(os.path.dirname(self._vault_dir), exist_ok=True)
+            shutil.move(legacy, self._vault_dir)
+            self.migrated_from = legacy
+        except OSError as exc:
+            self.migration_conflict = 'migrate_failed: %s（旧=%s，新=%s）' % (
+                exc, legacy, self._vault_dir)
+
+    def status(self) -> dict:
+        """保险库状态（迁移/密钥可用性），供校验与排障。"""
+        return {
+            'vault_dir': self._vault_dir.replace(os.sep, '/'),
+            'ephemeral_key': bool(self.ephemeral_key),
+            'writable': not self.ephemeral_key,
+            'keys_count': sum(len(v) for v in self._keys_data.values()),
+            'migrated_from': self.migrated_from,
+            'migration_conflict': self.migration_conflict,
+        }
+
+    def _refuse_if_ephemeral(self) -> Optional[dict]:
+        """临时主密钥下拒绝写盘（audit 第 25 轮：兑现 docstring 承诺）。
+
+        改前 `ephemeral_key` **只被赋值、零读取** —— 未配置 ACTUS_VAULT_KEY 时
+        `set()` 照样返回 `{'status':'ok'}` 并把密文落盘，而主密钥是进程级临时值，
+        下次启动就解不开了（实测：进程 A set→ok，进程 B get→None、inspect→
+        undecryptable）。密文永久不可解，属**不可逆数据损失**，必须拒绝。
+        """
+        if not getattr(self, 'ephemeral_key', False):
+            return None
+        return {
+            'status': 'refused',
+            'code': 'vault_ephemeral_key',
+            'message': ('未配置 ACTUS_VAULT_KEY，拒绝写入：当前用的是本进程临时密钥，'
+                        '写进去的密文重启后永远解不开（请先设置 ACTUS_VAULT_KEY）'),
+        }
+
+    @staticmethod
+    def _atomic_write(path: str, data) -> None:
+        """原子写：同目录临时文件 + `os.replace`（Windows 亦原子）。
+
+        改前直接 `open(path, 'w') + json.dump`：崩在中间会留下截断的半份 JSON，
+        下次 `_load` 抛 JSONDecodeError 或读到残缺映射 —— 密钥文件损坏是灾难级。
+        """
+        directory = os.path.dirname(path) or '.'
+        fd, tmp_path = tempfile.mkstemp(prefix='.vault-', suffix='.tmp', dir=directory)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
     def _save(self):
-        with open(self._keys_path, 'w', encoding='utf-8') as f:
-            json.dump(self._keys_data, f, ensure_ascii=False, indent=2)
-        with open(self._meta_path, 'w', encoding='utf-8') as f:
-            json.dump(self._meta_data, f, ensure_ascii=False, indent=2)
+        """原子写盘。
+
+        **两份文件的顺序（判断）**：先 `keys.json`（密文真相），后 `meta.json`（描述）。
+        崩在两次 replace 之间时最坏结果是「密钥可用但描述/时间戳是旧的」；
+        反过来先写 meta 则会出现「列表里看得见、get 却拿不到」的幽灵条目，
+        那是更坏的假象（看起来存在、实际不存在）。所以 keys 先落。
+        """
+        self._atomic_write(self._keys_path, self._keys_data)
+        self._atomic_write(self._meta_path, self._meta_data)
 
     def set(self, key: str, value: str, scope: str = 'global',
             description: str = '') -> dict:
         """加密存储密钥。
 
         返回:
-            {'status': 'ok', 'key': ..., 'scope': ...}
+            {'status': 'ok', 'key': ..., 'scope': ...}；未配置主密钥时
+            {'status': 'refused', 'code': 'vault_ephemeral_key', ...}（不写盘）。
         """
+        refused = self._refuse_if_ephemeral()
+        if refused is not None:
+            return refused
+
+        # 快照（写盘失败时回滚内存，避免"内存已改、磁盘没改"，下次别的操作把半截写进去）
+        prev_value = self._keys_data.get(scope, {}).get(key)
+        prev_meta = self._meta_data.get(scope, {}).get(key)
+
         if scope not in self._keys_data:
             self._keys_data[scope] = {}
         if scope not in self._meta_data:
@@ -187,7 +338,19 @@ class Vault:
             meta['created_at'] = self._meta_data[scope][key].get('created_at', now)
         self._meta_data[scope][key] = meta
 
-        self._save()
+        try:
+            self._save()
+        except Exception as exc:              # noqa: BLE001 —— 落盘失败必须停止并回滚
+            if prev_value is None:
+                self._keys_data.get(scope, {}).pop(key, None)
+            else:
+                self._keys_data.setdefault(scope, {})[key] = prev_value
+            if prev_meta is None:
+                self._meta_data.get(scope, {}).pop(key, None)
+            else:
+                self._meta_data.setdefault(scope, {})[key] = prev_meta
+            return {'status': 'failed', 'code': 'vault_write_failed',
+                    'message': f'保险库写入失败（已回滚内存，磁盘未改动）: {exc}'}
         return {'status': 'ok', 'key': key, 'scope': scope}
 
     def get(self, key: str, scope: str = 'global') -> Optional[str]:
@@ -224,7 +387,19 @@ class Vault:
 
         返回:
             是否成功删除。
+
+        说明（temp 主密钥）：`delete` 同样是**写操作**，临时密钥下拒绝执行
+        （否则会在"读不出内容"的状态下按名字删掉真实密钥 —— 破坏性且不可逆）。
+        拒绝时返回 False 并把原因记进 `self.last_refusal`（供上层展示；
+        返回 False 与"密钥不存在"的区分由 `last_refusal` 承担）。
         """
+        refused = self._refuse_if_ephemeral()
+        if refused is not None:
+            self.last_refusal = refused
+            logger.warning('vault delete 被拒绝: %s', refused['message'])
+            return False
+        self.last_refusal = None
+
         existed = False
         if scope in self._keys_data and key in self._keys_data[scope]:
             del self._keys_data[scope][key]
@@ -294,27 +469,28 @@ _vault_singleton: Optional[Vault] = None
 
 
 def default_meta_dir() -> str:
-    """便捷函数缺省 meta_dir 时的落点：仓库的 _meta，绝不落到 cwd。
+    """便捷函数缺省 meta_dir 时的落点：**运行时数据目录真源** `paths.meta_dir()`。
 
-    调用方（executor 注入 secrets 时传的是 `meta_dir or ''`）给空串是常态。旧写法
-    `os.path.join('', 'vault')` 得到相对路径 'vault'，于是在**当时的 cwd** 长出一个
-    空保险库目录，密钥静默解析成 ''（仓库根实测长出过 vault/，见 BUG-0010）。
+    调用方（executor 注入 secrets 时传的是 `meta_dir or ''`）给空串是常态。
+
+    历史沿革（两次修）：
+      1. 旧写法 `os.path.join('', 'vault')` 得到相对路径 'vault'，于是在**当时的
+         cwd** 长出空保险库、密钥静默解析成 ''（BUG-0010）；
+      2. 之后改成 `ACTUS_REPO_ROOT > _repo_root() > cwd` 再拼 `_meta` —— 修好了 cwd
+         问题，但仍**无视 ACTUS_META_DIR**（测试/嵌入式隔离对它无效，会把 vault 写进
+         真实仓库的 `_meta/`）。
+    现在直接委托 `paths.meta_dir()`（`ACTUS_META_DIR` > `repo_root()/_meta`），
+    与全仓其它运行时数据目录同一真源。旧位置的库由 `Vault._maybe_migrate_legacy()`
+    探测/迁移，不会因为换路径而"看不见"。
     """
-    root = os.environ.get('ACTUS_REPO_ROOT') or ''
-    if not root:
-        try:
-            from .indexer import _repo_root
-            root = _repo_root() or ''
-        except Exception:                       # noqa: BLE001 - 拿不到仓库根就走 cwd 绝对路径
-            root = ''
-    if not root:
-        root = os.getcwd()
-    return os.path.join(root, '_meta')
+    from .paths import meta_dir as _paths_meta_dir
+    return _paths_meta_dir()
 
 
 def _get_vault(meta_dir: str) -> Vault:
     global _vault_singleton
     if _vault_singleton is None:
+        # 便捷函数是"常规运行时路径"，允许探测并迁移旧位置的保险库
         _vault_singleton = Vault(meta_dir or default_meta_dir())
     return _vault_singleton
 
