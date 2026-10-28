@@ -21,12 +21,16 @@ executor 注入）全部切只读；PIN/锁定/机器指纹检查照做，但不
 `ACTUS_VAULT_KEY` 显式设/删；每例重置 vault2 单例与 resolver 缓存。
 """
 
+import contextlib
 import hashlib
+import io
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
+import uuid
 
 import pytest
 
@@ -36,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
 _ai_local_bootstrap.install()
 
+from vools.actus import cli  # noqa: E402
 from vools.actus import executor as executor_mod  # noqa: E402
 from vools.actus import vault as vault_resolver  # noqa: E402
 from vools.actus import vault2 as vault2_mod  # noqa: E402
@@ -410,3 +415,109 @@ def test_delete_secret_v2_unavailable_is_failed_with_hint(world):
     assert result["errors"], result
     assert "v2 不可用" in result["errors"][0]
     assert result.get("hint")
+
+
+# ===========================================================================
+# ⑨ `actus vault migrate`：--dry-run 必须零写；部分失败 → partial + rc=1
+# ===========================================================================
+
+def _insert_legacy_secret_rows(world, setup, rows):
+    """直接往 v2 sqlite 插入 legacy 行（`key_salt IS NULL`）。
+
+    legacy 行的 value 按旧口径用 **master_key 直接 fernet 加密**；
+    `rows` 是 [(name, encrypted_value)]。返回插入的名字列表。
+    """
+    vault = setup["vault"]
+    now = int(time.time())
+    with sqlite3.connect(vault.db_path) as conn:
+        for name, encrypted in rows:
+            conn.execute(
+                "INSERT INTO secrets (id, identity_id, name, value, secret_type,"
+                " security_level, created_at, expires_at, last_rotated_at,"
+                " rotate_interval_days, metadata, cipher_alg, key_salt,"
+                " key_iters, key_dklen)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (str(uuid.uuid4()), setup["identity_id"], name, encrypted,
+                 "api_key", "L1", now, None, now, None, "{}", "fernet",
+                 None, None, None))
+        conn.commit()
+    return [name for name, _enc in rows]
+
+
+def _legacy_encrypted_value(setup, plaintext):
+    """用该身份当前 master_key 按 legacy 口径（fernet 直 enc）生成可迁移的密文。"""
+    vault = setup["vault"]
+    token = vault.auth(setup["identity_id"], setup["machine_id"], setup["pin"])["session_token"]
+    master = vault._sessions[token]["master_key"]
+    return vault2_mod._make_backend("fernet", master).encrypt(plaintext)
+
+
+def _run_cli(argv):
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            rc = cli.main(list(argv))
+        except SystemExit as exc:      # pragma: no cover
+            rc = exc.code if exc.code is not None else 0
+    return rc, out.getvalue(), err.getvalue()
+
+
+def test_cli_vault_migrate_dry_run_does_not_write(world):
+    """退步了会怎样（`publish --dry-run` 的同款坑）：`vault migrate --dry-run`
+    说是"只统计"，实际却写 db/audit —— 预览一次就改了权威数据（且需要写权限）。
+
+    断言：dry-run rc=0、输出 `dry_run=true` + `checked` + `legacy_names`；
+    **vault2.db 与 audit.log 的 sha256 + mtime_ns + size 全部不变**。
+    """
+    setup = _setup_v2(world)
+    _insert_legacy_secret_rows(
+        world, setup, [("legacy-one", _legacy_encrypted_value(setup, "old-value"))])
+    db_before = _snapshot(world.db_path)
+    audit_path = world.v2dir / "audit.log"
+    audit_before = _snapshot(audit_path) if audit_path.is_file() else None
+
+    rc, out, err = _run_cli(["vault", "migrate", "--dry-run"])
+    payload = json.loads(out)
+
+    assert rc == 0, (out, err)
+    assert payload["status"] == "ok"
+    data = payload["data"]
+    assert data["dry_run"] is True
+    assert data["checked"] == 1
+    assert "legacy-one" in (data.get("legacy_names") or []), data
+    assert data["migrated"] == 0 and data["failed"] == 0
+
+    assert _snapshot(world.db_path) == db_before, "dry-run 写改了 vault2.db"
+    audit_after = _snapshot(audit_path) if audit_path.is_file() else None
+    assert audit_after == audit_before, "dry-run 写改了 audit.log"
+
+
+def test_cli_vault_migrate_partial_when_some_rows_fail(world):
+    """退步了会怎样（假成功）：有行迁移失败时仍报 ok / rc=0 —— 用户以为全部迁移完成，
+    坏行静默留在 legacy 格式（下次读才炸）。
+
+    断言：1 好 1 坏 → rc=1、外层 failed、`data.status='partial'`、`failed_names`
+    含坏行、`migrated=1`；且**好行的 key_salt 已写入、坏行仍为 NULL**（不是只改返回值）。
+    """
+    setup = _setup_v2(world)
+    _insert_legacy_secret_rows(world, setup, [
+        ("legacy-good", _legacy_encrypted_value(setup, "ok-value")),
+        ("legacy-bad", "not-a-valid-ciphertext"),
+    ])
+
+    rc, out, err = _run_cli(["vault", "migrate"])
+    payload = json.loads(out)
+
+    assert rc == 1, (out, err)
+    assert payload["status"] == "failed"
+    data = payload["data"]
+    assert data["status"] == "partial"
+    assert data["failed"] >= 1
+    assert data["failed_names"] == ["legacy-bad"], data
+    assert data["migrated"] >= 1
+
+    with sqlite3.connect(setup["vault"].db_path) as conn:
+        salts = dict(conn.execute(
+            "SELECT name, key_salt FROM secrets WHERE name LIKE 'legacy-%'").fetchall())
+    assert salts.get("legacy-good"), "好行没有真正迁移（key_salt 仍为空）"
+    assert salts.get("legacy-bad") is None, "坏行不应被假装迁移"
