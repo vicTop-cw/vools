@@ -247,6 +247,9 @@ _DEFERRED_NO_REQUIRED = {
     # 第 29 轮新增：系统健康检查（磁盘/网络/编译器/Vault 真探测）。慢且随环境波动，
     # 不适合放进本文件的"只读可安全调用"批量里；待专门派单补行为用例。
     "actus_health": "真跑系统健康检查（慢、随环境波动），待 health 专项测试",
+    # 第 30 轮新增：旧格式 vault 密钥行显式迁移（默认**写 db**；dry_run=true 只统计）。
+    # 属写操作，需专用 v1/v2 混合夹具，待派单补行为用例。
+    "actus_vault_migrate": "默认写 db（legacy→行级加密迁移）；dry_run 可选，属写操作",
     "actus_project_build": "会执行构建命令（写操作）",
     "actus_project_test": "会执行测试命令（写操作）",
     "actus_project_status": "同上",
