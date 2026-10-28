@@ -344,8 +344,8 @@ def resolve_target(target: str, allow_hosts: List[str] = None,
             pass
         return result
 
-    # 优先级 5: 按 name 查索引
-    index = load_index()
+    # 优先级 5: 按 name 查索引（第 17 轮：只读，索引缺失时内存扫描，不落盘）
+    index = _known_index()
     name_hits = _lookup_by_name(raw, index)
     if len(name_hits) == 1:
         result.source = 'name'
