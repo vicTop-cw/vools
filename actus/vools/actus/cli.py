@@ -890,9 +890,7 @@ def _dispatch(args) -> int:
                 expect_signature_key=getattr(args, 'require_signature', None))
             if resolved.ambiguous:
                 _out({'status': 'failed',
-                      'error': {'code': 'ambiguous',
-                                'message': f"目标 {target!r} 命中多个动作，请用完整 id 指定",
-                                'details': {'candidates': resolved.ambiguous}}})
+                      'error': _ambiguous_error(target, resolved.ambiguous)})
                 return 1
             # 计划 §六.3：远程动作「下载即执行」的供应链风险 ⇒ 默认拒绝未校验远程
             if resolved.source == 'url' and not resolved.digest_verified \
@@ -916,8 +914,21 @@ def _dispatch(args) -> int:
                 target = resolved.action_id or action.meta.get('id') or target
             elif resolved.action_id:
                 target = resolved.action_id
-        except Exception:
-            # 解析失败不阻断旧路径（零回归）：原值交给 execute，给出原有错误文案
+        except Exception as exc:                       # noqa: BLE001
+            # 审计（第 17 轮）：**ambiguous 族必须在这里显式报出**。
+            # 改前这里一律 `pass` → 落到旧路径 execute('Dup') → 用户拿到
+            # `action_not_found: 动作不存在: Dup`，而 `info Dup` 却明确报
+            # "命中多个动作 + 候选列表" —— 同一个目标两种结论，正是我们在修的
+            # 入口不一致。现在与 info/preview/validate 共用 `_ambiguous_error()`。
+            code = getattr(exc, 'code', None)
+            details = getattr(exc, 'details', None) or {}
+            if code in ('ambiguous', 'action_ambiguous'):
+                _out({'status': 'failed',
+                      'error': _ambiguous_error(
+                          target, details.get('candidates')
+                          or details.get('ambiguous') or [])})
+                return 1
+            # 其余解析失败不阻断旧路径（零回归）：原值交给 execute，给出原有错误文案
             pass
         try:
             from .resolver import resolve_params_extended
@@ -1641,6 +1652,20 @@ def _gen_config(client: str) -> int:
     return 0
 
 
+def _ambiguous_error(target, candidates):
+    """目标命中多个动作时的**唯一**错误体（run / info / preview / validate 共用）。
+
+    为什么抽出来：改前两处各写一份 —— `run` 发 `code='ambiguous'` + `details.candidates`，
+    而 `_resolve_cli_target` 捕获 resolver 抛的 `ActionError` 时**丢掉 details**，
+    发 `code='action_ambiguous'` 且没有候选列表。同一个语义（目标命中多个）出现两套
+    结构和两个 code，用户/脚本没法统一处理（"三方不一致"的同类）。
+    现在只有这一份构造，**将来不会再分叉**。
+    """
+    return {'code': 'ambiguous',
+            'message': '目标 %r 命中多个动作，请用完整 id 指定' % (target,),
+            'details': {'candidates': list(candidates or [])}}
+
+
 def _resolve_cli_target(raw: str):
     """info / preview / validate 的目标解析（第 17 轮）。
 
@@ -1655,12 +1680,21 @@ def _resolve_cli_target(raw: str):
     try:
         r = resolve_target(raw, allow_hosts=[])
     except Exception as exc:  # noqa: BLE001 —— 解析失败统一结构化
-        return ('error', {'code': getattr(exc, 'code', 'param_invalid'),
-                          'message': str(exc)})
+        # 审计（第 17 轮）：改前只保留 code/message，**details 被丢弃** ——
+        # 于是 info/preview/validate 的 ambiguous 没有候选列表，且 code 是
+        # `action_ambiguous`（run 是 `ambiguous`）。同一个语义两套结构。
+        code = getattr(exc, 'code', 'param_invalid')
+        details = getattr(exc, 'details', None) or {}
+        if code in ('ambiguous', 'action_ambiguous'):
+            # resolver 抛的候选在 details['ambiguous']（历史字段名），统一成 candidates
+            return ('error', _ambiguous_error(
+                raw, details.get('candidates') or details.get('ambiguous') or []))
+        error = {'code': code, 'message': str(exc)}
+        if details:
+            error['details'] = details
+        return ('error', error)
     if r.ambiguous:
-        return ('error', {'code': 'ambiguous',
-                          'message': '目标 %r 命中多个动作，请用完整 id 指定' % raw,
-                          'details': {'candidates': r.ambiguous}})
+        return ('error', _ambiguous_error(raw, r.ambiguous))
     if r.source == 'url':
         return ('error', {'code': 'param_invalid',
                           'message': ('info/preview/validate 不支持 URL 目标'
