@@ -1163,9 +1163,19 @@ def parse_module_text(text: str) -> Dict[str, Any]:
     def flush():
         # 与 Rust flush_block 同语义：有指纹 → op；无指纹但有签名 → 声明函数（编码）；
         # 两者皆无 → 丢弃。
+        #
+        # 审计修复（Law I 可达性）：改前只要没有 Fingerprint 就一律降级成 `fns`
+        # 声明 —— 于是一个**漏写 Fingerprint 的 Operation** 会从 ops 里静默消失，
+        # Law I 的 `MissingFingerprint` 分支永远走不到（实测只能手工构造 module
+        # 才能触发），而且"零操作"规约还会因此真空通过所有定律。
+        # 现在：带测试/定律/定义的签名块视为**显式 Operation**，保留为 op 并置
+        # fp=None，让 Law I 如实报 `MissingFingerprint`；只有"纯签名"块才当声明函数
+        # （Law II 的 encoder 声明依赖这条路径）。
         nonlocal blk
         if blk is not None:
             if blk['fp'] is not None:
+                module['ops'].append(blk)
+            elif blk['sig'] and (blk['tests'] or blk['laws'] or blk['definition']):
                 module['ops'].append(blk)
             elif blk['sig']:
                 module['fns'].append(blk)
@@ -1546,17 +1556,43 @@ def check_fingerprint_uniqueness(module: Dict[str, Any]) -> List[str]:
 
 @_law
 def check_encoding(module: Dict[str, Any]) -> List[str]:
-    """Law II — 非数值返回类型必须声明到 ℕ 的编码。"""
-    encoders = [fn['name'] + ' ' + fn['sig'] for fn in module['fns']
-                if 'encode' in (fn['name'] or '').lower()]
+    """Law II — 非数值返回类型必须声明到 ℕ 的编码。
+
+    判定口径（审计修正）：改前只做子串匹配（函数名含 'encode' + 返回类型串
+    出现在签名里），**声明一个空壳 encoder**（无指纹、无定义）就能满足
+    `f: ℕ → Str` 的编码要求 —— 实测如此。
+    现在要求：
+      1. encoder 必须是**真正存在的东西**（有指纹的 op，或有定义的 fn），
+         纯签名声明不算（否则"声明即通过"）；
+      2. encoder 的签名必须**结构化对应**：返回类型是数值（编码到 ℕ），
+         且某个参数类型 == 待编码操作的返回类型。
+    """
+    encoders = []
+    for blk in list(module.get('fns') or []) + list(module.get('ops') or []):
+        if 'encode' not in (blk.get('name') or '').lower():
+            continue
+        if not blk.get('sig'):
+            continue
+        if blk.get('fp') is None and not (blk.get('definition') or []):
+            continue                     # 空壳声明不算数
+        encoders.append(blk['sig'])
     out = []
     for op in module['ops']:
         rt = return_type(op['sig'])
         if rt in NUMERIC_TYPES:
             continue
-        if not any('encode' in e and rt in e for e in encoders):
+        if not any(_signature_encodes(sig, rt) for sig in encoders):
             out.append(f"MissingEncoding({op['name']})")
     return out
+
+
+def _signature_encodes(sig: str, target_type: str) -> bool:
+    """该签名是否是 target_type → ℕ 的编码：返回数值 && 某参数类型是 target_type。"""
+    if not sig:
+        return False
+    if return_type(sig) not in NUMERIC_TYPES:
+        return False
+    return any(p == target_type for p in param_types(sig))
 
 
 @_law
@@ -1631,15 +1667,24 @@ def check_timing_contract(module: Dict[str, Any]) -> List[str]:
 
 @_law
 def check_calibration(module: Dict[str, Any]) -> List[str]:
-    """Law IX — Conf 型操作必须在定律里锚定 0/1（main.rs:744）。"""
+    """Law IX — Conf 型操作必须在定律里锚定 0/1（main.rs:744）。
+
+    判定口径（审计修正）：必须是**独立的 0 / 1 字面量**，不是任意子串。
+    改前用 `'0' not in laws and '1' not in laws` —— 定律行里写 `# 见 RFC 1.0`
+    就能同时含 0/1 而通过（实测 Conf 型操作零校准锚点也判 pass）。
+    """
     out = []
     for op in module['ops']:
         if 'Conf' not in return_type(op['sig']):
             continue
         laws = ' '.join(op['laws'])
-        if '0' not in laws and '1' not in laws:
+        if not _CALIBRATION_ANCHOR_RE.search(laws):
             out.append(f"Uncalibrated({op['name']})")
     return out
+
+
+# 独立的 0 或 1 字面量：前后不能紧邻数字或小数点（排除 "1.0" / "10" / "0.5"）。
+_CALIBRATION_ANCHOR_RE = re.compile(r'(?<![\d.])[01](?![\d.])')
 
 
 @_law
@@ -1919,8 +1964,10 @@ def check_iron_laws(module: Dict[str, Any], strict: bool = True) -> Dict[str, An
          supplemental: {...}, violations: [...], tests: {...}}
     """
     law_results, failed, advisory = [], [], []
+    skipped_laws: List[Dict[str, Any]] = []
     all_violations: List[str] = []
 
+    skipped_ids = _skipped_law_ids(module)
     for law in IRON_LAWS:
         fn = _CHECK_REGISTRY.get(law['check'])
         violations = fn(module) if fn else []
@@ -1934,31 +1981,93 @@ def check_iron_laws(module: Dict[str, Any], strict: bool = True) -> Dict[str, An
         if violations:
             failed.append(entry)
             all_violations.extend(violations)
+        elif law['id'] in skipped_ids:
+            # 未声明相关章节 → 本条**没查**（不是查过且通过）。显式标 skipped，
+            # 让消费方分得清"通过"与"跳过"（改前这里一律 status='pass'）。
+            entry['status'] = 'skipped'
+            entry['skip_reason'] = skipped_ids[law['id']]
+            skipped_laws.append(entry)
         else:
             entry['status'] = 'pass'
 
     supplemental = {}
+    supplemental_skipped = _skipped_supplemental(module)
     for name in SUPPLEMENTAL_CHECKS:
         fn = _CHECK_REGISTRY.get(name)
         vs = fn(module) if fn else []
         supplemental[name] = vs
         all_violations.extend(vs)
 
-    passed = not failed and not any(supplemental.values())
+    tests = run_canonical_tests(module)
+    # 审计修复（P1）：改前 `passed` 只看 failed_laws + supplemental，
+    # **完全不含规范测试结果** —— 一条 `0/2 全挂` 的规约照样 pass、verdict=pass、
+    # run_sigma_block exit 0（报告正文却打印 "0/2 passed"）。
+    # 现在：测试失败一律算不通过，且**不设"strict 才管测试"的双轨**（那等于默认放行）。
+    # 测试为空不算失败 —— 那由 Law IV（NoTestsDefined）负责拦。
+    base_ok = not failed and not tests['failures']
+    passed = base_ok and not any(supplemental.values())
     if not passed and not strict:
-        passed = not failed            # 宽松模式只按 17 条主定律定夺
+        passed = base_ok            # 宽松模式只放宽补充细则，测试失败仍拦
     return {
         'passed': passed,
         'strict': strict,
         'laws': law_results,
         'failed_laws': failed,
         'advisory_laws': advisory,
+        'skipped_laws': skipped_laws,
         'supplemental': supplemental,
+        'supplemental_skipped': supplemental_skipped,
         'violations': all_violations,
-        'tests': run_canonical_tests(module),
+        'test_failures': len(tests['failures']),
+        'tests': tests,
         'module': module.get('name'),
         'fingerprint': fingerprint_of(module),
     }
+
+
+# 哪些定律因"规约未声明相应章节"而无法检查（→ status=skipped，不是 pass）。
+# 与各 check 里的 `if not ...: return []` 一一对应；放这里集中登记，避免
+# "改了 check 忘了改报告"的漂移。
+_SKIPPED_LAW_REASONS = (
+    ('XV', lambda m: not (m.get('exports') or []),
+     '未声明 ## Exports 块（v0.1 政策：无 Exports 不检查一一对应）'),
+    ('XVII', lambda m: not m.get('guarantee_declared'),
+     '未声明 ## Guarantee 块（无从检查概率保证是否良构）'),
+)
+
+# 补充细则的跳过条件（同理：未声明即未检查）。
+_SKIPPED_SUPPLEMENTAL_REASONS = (
+    ('check_proof_structure', lambda m: not m.get('proof_declared'),
+     '未声明 ## Proof 块'),
+    ('check_eval_determinism', lambda m: not m.get('determinism_declared'),
+     '未声明 ## Determinism 块'),
+    ('check_package_signature', lambda m: not m.get('signature_declared'),
+     '未声明 ## Signature 块'),
+)
+
+
+def _skipped_law_ids(module: Dict[str, Any]) -> Dict[str, str]:
+    """返回 {law_id: reason}：本条定律因"未声明"而**没检查**。"""
+    out = {}
+    for law_id, absent, reason in _SKIPPED_LAW_REASONS:
+        try:
+            if absent(module):
+                out[law_id] = reason
+        except (TypeError, AttributeError):
+            continue
+    return out
+
+
+def _skipped_supplemental(module: Dict[str, Any]) -> Dict[str, str]:
+    """返回 {check_name: reason}：该补充细则因"未声明"而没检查。"""
+    out = {}
+    for name, absent, reason in _SKIPPED_SUPPLEMENTAL_REASONS:
+        try:
+            if absent(module):
+                out[name] = reason
+        except (TypeError, AttributeError):
+            continue
+    return out
 
 
 def fingerprint_of(module: Dict[str, Any]) -> str:
@@ -2077,14 +2186,19 @@ def _pre_error(op: Dict[str, Any]) -> str:
 
 
 def _split_input(inp: str, op_name: str) -> List[str]:
-    """`f(a, b)` 形式取实参；否则按顶层逗号/空白切分。"""
+    """`f(a, b)` 形式取实参；否则按**顶层逗号**切分（不再按空白切）。
+
+    审计修复（P2）：改前最后的兜底是 `re.split(r'\\s+', inp)` —— 把
+    `| 1 + 1 | 2 |` 这类**表达式**测试切成 `[1, '+', 1]` 三个实参，
+    spec JSON 往返后 judge 报 `expected 1 arg(s), got 3`（实测）。
+    表达式应整体作为一个输入节点；只有多实参写法（逗号）才切。
+    """
     parts = _args1(inp.strip(), op_name)
     if parts:
         return parts
-    for sep in (',',):
-        if sep in inp:
-            return split_all_top_level(inp, sep)
-    return [t for t in re.split(r'\s+', inp.strip()) if t]
+    if ',' in inp:
+        return split_all_top_level(inp, ',')
+    return [inp.strip()]
 
 
 def _as_json_value(token: str) -> Any:
@@ -2098,6 +2212,30 @@ def _to_plain(v):
     if v[0] == 'list':
         return [_to_plain(x) for x in v[1]]
     return v[1]
+
+
+def _plain_cmp(value):
+    """把值归一成"可比较的普通表示"（spec 测试 vs 实现/引擎结果对比用）。
+
+    审计修复（P1，judge 恒 WA）：引擎对 definition 里的字符串节点原样返回
+    （`{kind:'expression', body:'1'}` → `'1'`，`params` 为空时 `'x'` 也不会绑定），
+    而 spec 期望值是 `1` —— `'1' == 1` 为 False，于是**连常量定义都判 WA**，
+    任何合法 spec 的自洽 judge 恒 exit 1。
+    这里两侧统一归一：sigma 值元组 → plain；可解析字面量串 → plain；列表递归。
+    """
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+        try:
+            return _to_plain(value)
+        except (IndexError, TypeError):
+            return value
+    if isinstance(value, str):
+        v = parse_val(value)
+        if v is not None:
+            return _to_plain(v)
+        return value
+    if isinstance(value, list):
+        return [_plain_cmp(v) for v in value]
+    return value
 
 
 _SPEC_JSON_REQUIRED = ('spec', 'version', 'fingerprint_prefix', 'types', 'operations')
@@ -2596,15 +2734,29 @@ class SigmaEngine(_ExprEvaluator):
         _raise_error(default_error, f"{op['name']}: no table row matched for state {state!r}")
 
     def _resolve_input_node(self, x: Any) -> Any:
-        """corpus input 节点：表达式 dict 先求值，列表递归，"$_" 取上一个结果。"""
+        """corpus input 节点：表达式 dict 先求值，列表递归，"$_" 取上一个结果。
+
+        审计修复（P2）：字符串节点若是**字面量**先解析成具体值（`'1'` → 1），
+        若是**表达式**（`'1 + 1'`）则用 sigma 求值器算出来 —— 否则 spec JSON 里
+        的表达式输入会被当成原始字符串传给实现/引擎（judge 因此也是 WA）。
+        求值失败时保持原字符串（可能是合法的字符串输入）。
+        """
         if isinstance(x, dict):
             return self._eval_node(x, {})      # 如 {"op": "task_create", "args": [7, 100]}
         if isinstance(x, list):
             return [self._resolve_input_node(v) for v in x]
-        if x == '$_':
-            if self._last_result is None:
-                raise SpecValidationError("'$_' in corpus input before any operation result")
-            return self._last_result
+        if isinstance(x, str):
+            if x == '$_':
+                if self._last_result is None:
+                    raise SpecValidationError("'$_' in corpus input before any operation result")
+                return self._last_result
+            lit = parse_val(x)
+            if lit is not None:
+                return _to_plain(lit)
+            ev = eval_expr(x)
+            if isinstance(ev, tuple) and len(ev) == 2:
+                return _to_plain(ev)
+            return x
         return x
 
     def run_corpus(self, ops: Optional[List[str]] = None) -> List[Tuple[str, Dict[str, Any], bool, str]]:
@@ -2636,7 +2788,7 @@ class SigmaEngine(_ExprEvaluator):
                     if want_err:
                         out.append((name, t, False,
                                     f'expected error {want_err}, got {got!r}'))
-                    elif got == want_out:
+                    elif _plain_cmp(got) == _plain_cmp(want_out):
                         out.append((name, t, True, f'{got!r}'))
                     else:
                         out.append((name, t, False, f'expected {want_out!r}, got {got!r}'))
@@ -2761,7 +2913,9 @@ def judge_spec(spec_path: Optional[str] = None, spec: Optional[Dict[str, Any]] =
                     ok = raised == want_err
                     detail = '' if ok else f'expected {want_err}, got {raised or repr(got)}'
                 else:
-                    ok = raised is None and got == t.get('output')
+                    # 审计修复（P1）：两侧统一归一后再比较 —— 实现可能返回 sigma 内部
+                    # 值元组 / 字面量串，spec 里存的是普通值（`'1'` vs `1`）。
+                    ok = raised is None and _plain_cmp(got) == _plain_cmp(t.get('output'))
                     detail = '' if ok else (raised or f'expected {t.get("output")!r}, got {got!r}')
                 verdicts.append({'id': f'{name}#t{i}',
                                  'verdict': 'PASS' if ok else 'WA', 'detail': detail})
@@ -2800,18 +2954,71 @@ def _write_report(report_path: str, payload: Dict[str, Any]) -> None:
 
 
 def _module_from_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """spec JSON → module dict（供 Iron Laws / bootstrap 复用）。
+
+    审计修复（P1，bootstrap 恒假阴性）：改前只搬 name/fp/sig/laws/exports，
+    **丢掉 imports 与 tests** —— 于是任何 spec 派生出来的 module 都恒违反
+    Law IV（NoTestsDefined）、Law VII（NoCoreImport）、Law XIV（NoNegativeTest），
+    `bootstrap(spec=...)` 永远过不了第 1 步（文档承诺的 spec→impl→verify 闭环失效）。
+    现在把 `to_spec_json()` 写进 spec 的字段**逐项还原**（保持往返可逆）：
+    imports（meta.imports）与 tests（input/output/error → `(输入, 期望)` 对）。
+    """
     m = _new_module(spec.get('spec') or 'spec_module')
     m['version'] = spec.get('version') or m['version']
+    meta = spec.get('meta') or {}
+    imports = meta.get('imports') if isinstance(meta, dict) else None
+    if not imports:
+        imports = spec.get('imports') or []
+    m['imports'] = [str(i) for i in imports]
     for op in spec.get('operations') or []:
+        tests = []
+        for t in op.get('tests') or []:
+            if not isinstance(t, dict):
+                continue
+            inp = _join_input_nodes(t.get('input') or [])
+            err = t.get('error')
+            if err:
+                # 反向映射：`to_spec_json` 把 MD 的裸 `⊥`（未指定错误名）序列化成
+                # 默认 'TypeError'；还原成裸 `⊥` 才能保持"spec → module"与
+                # 直接读 MD 的测试语义等价（具体错误名则原样保留）。
+                expected = '⊥' if str(err) == 'TypeError' else '⊥ %s' % err
+            else:
+                expected = _plain_to_sigma(t.get('output'))
+            tests.append((inp, expected))
         m['ops'].append({'name': op.get('name'), 'fp': op.get('fingerprint'),
                          'sig': f"{op.get('name')} : "
                                 f"{' × '.join((op.get('signature') or {}).get('params') or [])}"
                                 f" → {return_type_of(op)}",
                          'laws': [l.get('predicate', '') for l in op.get('laws') or []],
-                         'tests': [], 'mode': 'sig', 'has_pre': False, 'has_post': False,
+                         'tests': tests, 'mode': 'sig', 'has_pre': False, 'has_post': False,
                          'pre': None, 'post': None, 'definition': []})
     m['exports'] = sorted({op.get('name') for op in spec.get('operations') or []})
+    # spec 里可能没有 Exports 概念 → 不伪造"有 Exports"，但要把 imports 带上，
+    # 否则 Law VII 恒定失败（见上）。
     return m
+
+
+def _join_input_nodes(nodes) -> str:
+    """spec 的 input 节点列表 → MD 测试的输入表达式串（`_split_input` 的逆）。"""
+    if not isinstance(nodes, list):
+        return _plain_to_sigma(nodes)
+    parts = [_plain_to_sigma(n) for n in nodes]
+    return ', '.join(parts)
+
+
+def _plain_to_sigma(value) -> str:
+    """普通值 → sigma 字面量文本（供 spec → module 回填测试期望值）。"""
+    if value is None:
+        return '⊥'
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (int, float)):
+        return repr(value) if isinstance(value, float) else str(value)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return '[' + ', '.join(_plain_to_sigma(v) for v in value) + ']'
+    return json.dumps(value, ensure_ascii=False)
 
 
 def return_type_of(op: Dict[str, Any]) -> str:
@@ -2907,12 +3114,19 @@ def bootstrap(spec_path: Optional[str] = None, spec: Optional[Dict[str, Any]] = 
         md_path = spec.get('meta', {}).get('source_path') if spec else None
         module = parse_module(md_path) if md_path else _module_from_spec(spec or {})
     laws = check_iron_laws(module, strict=False)
-    step('spec_readable', laws['passed'],
-         'Iron Laws 通过' if laws['passed'] else f'违规 {len(laws["violations"])} 条: '
-         f'{laws["violations"][:5]}')
     if not laws['passed']:
+        # 失败原因必须分型说清：改前只写"违规 N 条"，而"规范测试失败"不在
+        # violations 里 → 会出现 "违规 0 条: []" 这种自相矛盾的失败说明。
+        reasons = []
+        if laws['violations']:
+            reasons.append('违规 %d 条: %s' % (len(laws['violations']), laws['violations'][:5]))
+        if laws.get('test_failures'):
+            reasons.append('规范测试失败 %d/%d' % (
+                laws['test_failures'], laws['tests']['total']))
+        step('spec_readable', False, '; '.join(reasons) or 'Iron Laws 未过')
         report['laws'] = laws
         return report
+    step('spec_readable', True, 'Iron Laws 通过')
 
     if spec is None:
         spec = to_spec_json(module)
@@ -3001,6 +3215,11 @@ def sigma_block_is_loadable(text: str) -> Tuple[bool, Optional[str]]:
         return (False, f'sigma 解析异常: {type(exc).__name__}: {exc}')
     if not module['ops'] and not module['fns']:
         return (False, 'sigma 规约块未定义任何操作（无 ## Operation / Fingerprint）')
+    # 审计修复（P1）：只有声明函数、没有任何 Operation → 没有可执行操作，
+    # 不能算"可加载"。改前守卫是 `not ops and not fns`，一个残留的声明 fn
+    # 就能让"零操作规约"通过（实测漏写 Fingerprint 时 ops=0 / fns=['f'] → True）。
+    if not module['ops']:
+        return (False, 'sigma 规约块没有任何 Operation（只有签名声明）')
     return (True, None)
 
 
@@ -3019,6 +3238,11 @@ def run_sigma_block(text: str, as_json: bool = False) -> Tuple[str, str, int]:
         return '', f'sigma: 规约解析失败 {type(exc).__name__}: {exc}', 1
     if not module['ops'] and not module['fns']:
         return '', 'sigma: 规约块未定义任何操作', 1
+    # 审计修复（P1）：守卫必须按 **ops** 判。改前 `not ops and not fns` 让
+    # "漏写 Fingerprint 的 Operation 被降级成声明 fn"这种情况直接通过（实测
+    # ops=0 / fns=['f'] → run_sigma_block exit 0），即零操作规约真空通过。
+    if not module['ops']:
+        return '', 'sigma: 规约块没有任何 Operation（只有签名声明，无可执行操作）', 1
 
     report = verify_module(module)
     buf = io.StringIO()
@@ -3032,9 +3256,20 @@ def run_sigma_block(text: str, as_json: bool = False) -> Tuple[str, str, int]:
         for law in report['laws']:
             if law.get('status') == 'advisory' or law['id'] == 'XIII':
                 mark = 'ADVISORY'
+            elif law.get('status') == 'skipped':
+                # 审计修复（P3）：未声明章节 → 本条**没查**，如实标 SKIPPED，
+                # 不能和"查过且通过"共用 PASS（消费方会误读成已检查）。
+                mark = 'SKIPPED'
             else:
                 mark = 'PASS' if not law['violations'] else 'FAIL'
             buf.write(f"  Law {law['id']:<5} {law['zh']} [{law['key']}]: {mark}\n")
+        skipped = report.get('skipped_laws') or []
+        if skipped:
+            buf.write('\n## 未检查（未声明，不等同通过）\n')
+            for law in skipped:
+                buf.write(f"  Law {law['id']}: {law.get('skip_reason', '')}\n")
+        for name, reason in (report.get('supplemental_skipped') or {}).items():
+            buf.write(f"  {name}: {reason}\n")
         failed = report['failed_laws']
         if failed:
             buf.write('\n## 违规\n')

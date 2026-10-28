@@ -851,7 +851,7 @@ class MCPServer:
                                  'team': {'type': 'string',
                                           'description': '团队名称（可选，不填列出所有）'},
                              }}},
-            {'name': 'actus_preview',
+            {'name': 'actus_highlight',
              'description': '代码语法高亮预览（Shiki）',
              'inputSchema': {'type': 'object',
                              'required': ['code'],
@@ -1509,8 +1509,10 @@ class MCPServer:
         if name == 'actus_team_list':
             return _handle_team_list(args)
 
-        # Highlight 工具
-        if name == 'actus_preview':
+        # Highlight 工具（审计修：它原也叫 actus_preview，与上方的动作干跑工具
+        # 撞名 —— tools/list 里出现两个同名但 schema 不同的工具，且本分支被上方
+        # 那个 `if name == 'actus_preview'` 抢先命中，整个 Shiki 高亮工具是死代码。）
+        if name == 'actus_highlight':
             return _handle_preview(args)
 
         # 动作工具：反查 action id
@@ -1565,13 +1567,24 @@ def _handle_visibility_set(args):
 
 def _handle_registry_add(args):
     from vools.actus.visibility import RegistryConfig, get_visibility_engine
+    # 审计修：priority 此前原样透传。传字符串 "10"（MCP 客户端按 JSON 字符串
+    # 发参数很常见）会被写进 ~/.actus/config.json，然后**任何进程**下次构造
+    # get_visibility_engine() 都会在 RegistryConfig.from_dict 里抛 ValueError
+    # → visibility / registry / team 全部工具永久不可用，直到人工修配置。
+    # （实测踩到过：把真实 config.json 写坏后必须手工删掉那条记录才恢复。）
+    priority = args.get('priority', 50)
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        return text_result({'status': 'failed', 'error': {
+            'code': 'param_invalid',
+            'message': 'priority 必须是整数，得到 %r' % (priority,),
+            'details': {'priority': priority}}}, True)
     engine = get_visibility_engine()
     reg = RegistryConfig(
         name=args.get('name', ''),
         url=args.get('url', ''),
         registry_type=args.get('registry_type', 'http'),
         branch=args.get('branch', 'main'),
-        priority=args.get('priority', 50),
+        priority=priority,
     )
     engine.registry.add_registry(reg)
     return text_result({'status': 'ok', 'registry': reg.to_dict()})
