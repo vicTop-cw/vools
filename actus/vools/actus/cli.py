@@ -1733,17 +1733,47 @@ def _cmd_registry(args) -> int:
         if not os.path.isfile(index_path):
             print(f'❌ 索引文件不存在: {index_path}')
             return 1
+        from vools.actus.registry import RegistryEntry
         index = reg.load_from_file(index_path)
         repo_dir = os.path.dirname(os.path.abspath(index_path))
         actions = index.get('actions', [])
-        valid_count = 0
+        if index.get('corrupt') or index.get('problems'):
+            # 索引本身损坏/有条目非法：明确报出来，不当成"0 个动作"静默通过
+            print('❌ 索引损坏或含非法条目:', index_path)
+            for key, problem in (index.get('problems') or {}).items():
+                print('   - %s: %s' % (key, problem))
+            return 1
+        if not actions:
+            print(f'✅ 注册表校验通过: 0/0 个动作有效（空索引）')
+            return 0
+        # 审计修复（P1 假校验）：改前只数 `if aid: valid_count += 1` —— 实测
+        # name 空 / version 非 semver / 文件不存在 / checksum 全 0 的条目也报
+        # "✅ 校验通过 1/1"、rc=0。现在逐条走 `ActionRegistry.validate_entry()`
+        # （id 格式 / version / 文件存在且不越界 / checksum / 签名），失败点名每项。
+        _entry_fields = getattr(RegistryEntry, '__dataclass_fields__', None)
+        if _entry_fields is None:
+            _entry_fields = {a.name: a for a in
+                             getattr(RegistryEntry, '__attrs_attrs__', ())}
+        invalid = []
         for raw in actions:
-            entry = raw if isinstance(raw, dict) else raw.to_dict() if hasattr(raw, 'to_dict') else {}
-            # 简单校验
-            aid = entry.get('id', '')
-            if aid:
-                valid_count += 1
-        print(f'✅ 注册表校验通过: {valid_count}/{len(actions)} 个动作有效')
+            if not isinstance(raw, dict):
+                invalid.append(('?', '条目不是对象: %r' % (raw,)))
+                continue
+            try:
+                entry = RegistryEntry(**{k: v for k, v in raw.items()
+                                        if k in _entry_fields})
+            except TypeError as exc:
+                invalid.append((raw.get('id', '?'), '字段缺失/非法: %s' % exc))
+                continue
+            ok, message = reg.validate_entry(entry, repo_dir)
+            if not ok:
+                invalid.append((entry.id, message))
+        if invalid:
+            print('❌ 注册表校验失败: %d/%d 个动作无效' % (len(invalid), len(actions)))
+            for aid, message in invalid:
+                print('   - %s: %s' % (aid, message))
+            return 1
+        print(f'✅ 注册表校验通过: {len(actions)}/{len(actions)} 个动作有效')
         return 0
 
     elif args.registry_command == 'info':

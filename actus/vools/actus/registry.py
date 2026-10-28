@@ -2,16 +2,27 @@
 
 动作注册表索引构建、搜索、验证和缓存管理。
 支持本地仓库和远程 Git 仓库的索引发现。
+
+审计口径（第 10 轮）：
+- **写语义**只有 `write_index` / `build_from_directory(write=True)` /
+  `cache_remote_index` / `record_installation` / `invalidate_cache` /
+  `remove_installation`；`load_*` / `search` / `list_*` / `verify_*` 一律不落盘。
+- 索引写盘必须**原子**（tmp + `os.replace`）；索引损坏时 `load_from_file` 返回
+  带 `problems` 信号的空索引，`load_from_repo` 回退到内存重建（`write=False`）。
 """
 
 import json
 import hashlib
 import os
 import re
+import tempfile
 import time
 from typing import Dict, List, Optional, Tuple
 from vools.core.dataclass_compat import dataclass, asdict
 from .constants import is_action_file
+
+#: 安装清单目录可用环境变量覆盖（嵌入式/测试隔离；默认仍 `~/.actus/installed`）。
+INSTALLED_DIR_ENV = "ACTUS_INSTALLED_DIR"
 
 
 @dataclass
@@ -54,21 +65,37 @@ class ActionRegistry:
     - 缓存远程索引
     """
 
-    def __init__(self, cache_dir: str = None) -> None:
+    def __init__(self, cache_dir: str = None, manifest_dir: str = None) -> None:
         """
         参数:
-            cache_dir: 远程索引缓存目录（默认 ~/.actus/cache）
+            cache_dir: 远程索引缓存目录（默认 ~/.actus/cache）。
+            manifest_dir: 安装清单目录（默认 `~/.actus/installed`；
+                可用环境变量 ACTUS_INSTALLED_DIR 覆盖，嵌入式/测试用）。
+
+        注意：**构造不写盘**。改前这里无条件 `os.makedirs(cache_dir)` ——
+        只读查询（`actus search`/`registry info`）也会在 HOME 下建目录；
+        现在缓存目录在首次真正写缓存时才创建。
         """
         if cache_dir is None:
             cache_dir = os.path.join(os.path.expanduser("~"), ".actus", "cache")
         self._cache_dir = cache_dir
-        os.makedirs(cache_dir, exist_ok=True)
+        self._manifest_dir = (manifest_dir
+                              or os.environ.get(INSTALLED_DIR_ENV)
+                              or os.path.join(os.path.expanduser("~"), ".actus", "installed"))
         self._entries: Dict[str, RegistryEntry] = {}
+        #: 读路径上的非致命问题（索引损坏回退、跳过坏 manifest、path 越界…）。
+        #: 只做诊断，不改变返回值语义。
+        self.warnings: List[str] = []
 
     @property
     def cache_dir(self) -> str:
         """缓存目录路径。"""
         return self._cache_dir
+
+    @property
+    def manifest_dir(self) -> str:
+        """安装清单目录路径。"""
+        return self._manifest_dir
 
     # ── 索引构建 ──
 
@@ -77,10 +104,25 @@ class ActionRegistry:
 
         从 `build_from_directory` 里抽出来做单一真源：需要「先构建、成功后才落盘」
         的调用方（publish 要先签名，签名失败不能留下半成品）可以把构建与写盘拆开。
+
+        审计修复（P1 非原子）：改前 `open(...,"w")` 先截断原文件再 dump —— 磁盘满/
+        进程被杀会把**原本有效的索引**清成空/半截，而 load 侧又不会重建，于是
+        `search`/`install` 永久坏掉（只能手删文件）。现在写临时文件 + `os.replace`
+        （同目录，原子替换）：失败时旧索引原样保留，临时文件清理干净。
         """
         registry_path = os.path.join(repo_dir, ".actus.registry.json")
-        with open(registry_path, "w", encoding="utf-8") as f:
-            json.dump(index, f, ensure_ascii=False, indent=2)
+        fd, tmp_path = tempfile.mkstemp(prefix=".actus.registry.", suffix=".tmp",
+                                        dir=repo_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(index, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, registry_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         return registry_path
 
     def build_from_directory(self, repo_dir: str, write: bool = True) -> dict:
@@ -133,13 +175,28 @@ class ActionRegistry:
             registry_path: 索引文件路径。
 
         返回:
-            索引字典。
+            索引字典。损坏时返回 **空索引 + 明确信号**（`corrupt` / `problems`），
+            不再抛 `JSONDecodeError`（调用方应按"索引不可用"处理，如回退重建）。
         """
         if not os.path.isfile(registry_path):
             return {"actions": []}
 
-        with open(registry_path, "r", encoding="utf-8") as f:
-            index = json.load(f)
+        try:
+            with open(registry_path, "r", encoding="utf-8") as f:
+                index = json.load(f)
+        except (OSError, ValueError) as exc:
+            problem = "index corrupt: %s: %s" % (type(exc).__name__, exc)
+            self.warnings.append("%s（%s）" % (problem, registry_path))
+            return {"actions": [], "corrupt": True,
+                    "problems": {registry_path: problem}}
+        if not isinstance(index, dict):
+            problem = "index corrupt: 顶层不是对象（%s）" % type(index).__name__
+            self.warnings.append("%s（%s）" % (problem, registry_path))
+            return {"actions": [], "corrupt": True,
+                    "problems": {registry_path: problem}}
+
+        repo_root = os.path.dirname(os.path.abspath(registry_path))
+        problems = dict(index.get("problems") or {})
 
         # 加载条目到内存
         # py3.6 下 dataclass_compat 用 attrs 实现，类没有 __dataclass_fields__
@@ -147,14 +204,74 @@ class ActionRegistry:
         _entry_fields = getattr(RegistryEntry, '__dataclass_fields__', None)
         if _entry_fields is None:
             _entry_fields = {a.name: a for a in getattr(RegistryEntry, '__attrs_attrs__', ())}
-        for raw in index.get("actions", []):
-            entry = RegistryEntry(**{
-                k: v for k, v in raw.items()
-                if k in _entry_fields
-            })
+        for raw in index.get("actions", []) or []:
+            if not isinstance(raw, dict):
+                problems["?%d" % len(problems)] = "条目不是对象: %r" % (raw,)
+                continue
+            rel_path = raw.get("path", "")
+            if self._resolve_entry_path(repo_root, rel_path) is None:
+                # 索引里的 path 越界（绝对路径/../）→ 拒绝加载，绝不读仓库外文件
+                problems[raw.get("id", "?")] = "path 越界/非法: %r" % (rel_path,)
+                continue
+            try:
+                entry = RegistryEntry(**{
+                    k: v for k, v in raw.items()
+                    if k in _entry_fields
+                })
+            except TypeError as exc:
+                problems[raw.get("id", "?")] = "条目字段缺失/非法: %s" % exc
+                continue
             self._entries[entry.id] = entry
 
+        if problems:
+            index["problems"] = problems
+            self.warnings.append("索引有条目被跳过（%d 条）: %s"
+                                 % (len(problems), registry_path))
         return index
+
+    def _resolve_entry_path(self, repo_root: str, rel_path: str) -> Optional[str]:
+        """索引条目 path → 仓库内绝对路径；绝对路径 / `..` / 越界一律返回 None。
+
+        审计修复（P1 越界读）：改前 `_entry_to_action`/`verify_checksum` 直接
+        `os.path.join(repo_dir, entry.path)` —— `os.path.join` 遇到绝对路径会**丢弃**
+        repo_dir，于是恶意/损坏索引可让质量分级读取仓库外任意文件（实测读到 HOME 下
+        文件）。现在统一走 `errors.ensure_within` 的 realpath 包含性检查。
+        """
+        if not rel_path or not isinstance(rel_path, str):
+            return None
+        if os.path.isabs(rel_path) or rel_path.startswith(("/", "\\")):
+            return None
+        candidate = os.path.join(repo_root, rel_path)
+        try:
+            from .errors import ensure_within
+            return ensure_within(repo_root, candidate, what="索引条目路径")
+        except Exception:
+            return None
+
+    def _index_is_stale(self, index: dict, registry_path: str, repo_dir: str) -> bool:
+        """索引是否与磁盘不一致（条目文件缺失/比索引新/索引空但磁盘有动作）。"""
+        try:
+            index_mtime = os.path.getmtime(registry_path)
+        except OSError:
+            return True
+        entries = index.get("actions") or []
+        for raw in entries:
+            rel_path = raw.get("path") if isinstance(raw, dict) else None
+            fpath = self._resolve_entry_path(repo_dir, rel_path) if rel_path else None
+            if fpath is None or not os.path.isfile(fpath):
+                return True
+            try:
+                if os.path.getmtime(fpath) > index_mtime + 1e-6:
+                    return True
+            except OSError:
+                return True
+        if not entries:
+            actions_dir = os.path.join(repo_dir, "actions")
+            if os.path.isdir(actions_dir):
+                for _root, _dirs, files in os.walk(actions_dir):
+                    if any(is_action_file(fname) for fname in files):
+                        return True
+        return False
 
     def load_from_repo(self, repo_dir: str) -> dict:
         """从仓库目录加载索引（优先 .actus.registry.json，否则实时构建）。
@@ -165,11 +282,31 @@ class ActionRegistry:
         与 `publish --dry-run` 假干跑同族（界面是查询，实际改了仓库状态）。
         需要持久化的调用方仍然显式走 `build_from_directory(write=True)`
         （`registry build` / `publish` / installer 都是这样）。
+
+        审计修复（P1 损坏不设防 + P2 陈旧索引）：
+          * 索引损坏 / 有条目非法 → **回退内存重建**（仍不落盘）+ `warnings` 记录；
+          * 索引与磁盘不一致（动作文件缺失/被改/索引空但磁盘有）→ 同样内存重建，
+            返回体带 `stale_index=True`，不再"无声信索引"返回幽灵条目。
         """
         registry_path = os.path.join(repo_dir, ".actus.registry.json")
-        if os.path.isfile(registry_path):
-            return self.load_from_file(registry_path)
-        return self.build_from_directory(repo_dir, write=False)
+        if not os.path.isfile(registry_path):
+            return self.build_from_directory(repo_dir, write=False)
+
+        index = self.load_from_file(registry_path)
+        if index.get("corrupt") or index.get("problems"):
+            rebuilt = self.build_from_directory(repo_dir, write=False)
+            rebuilt.setdefault("problems", {}).update(index.get("problems") or {})
+            rebuilt["rebuilt_from_memory"] = True
+            self.warnings.append("索引损坏/有条目非法，已回退内存重建（未落盘）: %s"
+                                 % registry_path)
+            return rebuilt
+        if self._index_is_stale(index, registry_path, repo_dir):
+            rebuilt = self.build_from_directory(repo_dir, write=False)
+            rebuilt["stale_index"] = True
+            self.warnings.append("索引与磁盘不一致，已回退内存重建（未落盘）: %s"
+                                 % registry_path)
+            return rebuilt
+        return index
 
     # ── 搜索与查询 ──
 
@@ -238,20 +375,30 @@ class ActionRegistry:
             level: 目标等级（platinum/gold/silver/bronze/internal）；
                    None 时返回全部（每条带 computed quality 字段）。
             limit: 最大返回数。
-            repo_dir: 仓库根（签名验证与动作文件定位用；缺省取 cache_dir 上一级）。
+            repo_dir: 仓库根（**必填**：动作文件定位与越界校验的基准）。
 
         返回:
             [{entry, quality, evidence}] 按质量等级降序。
+
+        审计修复（"查不到"伪装成"没有"）：改前 repo_dir 缺省时用
+        `cache_dir` 上一级当仓库根（默认值是 `~`，几乎永远错）→ 所有条目解析失败
+        → 静默返回 []，调用方以为"没有高质量动作"。现在缺 repo_dir 直接报错，
+        不再给假空结果。
         """
         from .quality import quality_scale, QUALITY_LEVELS, _LEVEL_RANK
 
         if level is not None and level not in QUALITY_LEVELS:
             raise ValueError(f'未知质量等级: {level!r}（支持 {QUALITY_LEVELS}）')
+        if not repo_dir:
+            raise ValueError(
+                'filter_by_quality() 需要 repo_dir（动作文件所在仓库根）；'
+                '缺省会静默返回空列表，把"查不到"伪装成"没有"')
 
         results: List[dict] = []
         for entry in self._entries.values():
             action = self._entry_to_action(entry, repo_dir)
             if action is None:
+                self.warnings.append('质量分级跳过条目 %s：动作文件不可解析' % entry.id)
                 continue
             q = quality_scale(action)
             if level is not None and q['quality'] != level:
@@ -263,14 +410,13 @@ class ActionRegistry:
         return results[:limit]
 
     def _entry_to_action(self, entry, repo_dir: str = None):
-        """RegistryEntry → Action（质量计算用；解析失败返回 None）。"""
+        """RegistryEntry → Action（质量计算用；解析失败/路径越界返回 None）。"""
         from .model import parse_cfg_from_file
-        root = repo_dir or os.path.dirname(self._cache_dir.rstrip(os.sep))
-        fpath = os.path.join(root, entry.path)
-        if not os.path.isfile(fpath):
-            # cache_dir 上一级不是仓库根时，退回绝对路径尝试
-            fpath = entry.path if os.path.isfile(entry.path) else None
-        if not fpath:
+        root = repo_dir
+        if not root:
+            return None
+        fpath = self._resolve_entry_path(root, entry.path)
+        if fpath is None or not os.path.isfile(fpath):
             return None
         try:
             return parse_cfg_from_file(fpath)
@@ -392,14 +538,14 @@ class ActionRegistry:
             repo_dir: 仓库根目录。
 
         返回:
-            校验是否通过。
+            校验是否通过。path 越界（绝对路径/`..`）→ False（不读仓库外文件）。
         """
-        fpath = os.path.join(repo_dir, entry.path)
-        if not os.path.isfile(fpath):
+        fpath = self._resolve_entry_path(repo_dir, entry.path)
+        if fpath is None or not os.path.isfile(fpath):
             return False
 
         actual_checksum = self._compute_checksum(fpath)
-        expected = entry.checksum
+        expected = entry.checksum or ""
         if expected.startswith("sha256:"):
             expected = expected[7:]
 
@@ -421,12 +567,12 @@ class ActionRegistry:
             # 无签名视为 community 级别
             return entry.trust_level == "community"
 
-        sig_path = os.path.join(repo_dir, entry.signature)
-        if not os.path.isfile(sig_path):
+        sig_path = self._resolve_entry_path(repo_dir, entry.signature)
+        if sig_path is None or not os.path.isfile(sig_path):
             return False
 
-        fpath = os.path.join(repo_dir, entry.path)
-        if not os.path.isfile(fpath):
+        fpath = self._resolve_entry_path(repo_dir, entry.path)
+        if fpath is None or not os.path.isfile(fpath):
             return False
 
         # 尝试 Ed25519 验证
@@ -439,11 +585,21 @@ class ActionRegistry:
 
             # 加载公钥
             if public_key is None:
-                # 从注册表索引的 author 字段推断
-                key_path = os.path.join(
-                    os.path.expanduser("~"), ".actus", "keys",
-                    f"{entry.author}.pub"
-                )
+                # 从注册表索引的 author 字段推断（author 来自索引 → 必须防路径逃逸：
+                # 形如 '../../x' 的 author 会让 key_path 跳出 ~/.actus/keys 读任意文件）
+                author = str(entry.author or "")
+                if not re.match(r'^[A-Za-z0-9][A-Za-z0-9._-]*$', author) or ".." in author:
+                    self.warnings.append(
+                        "拒绝对 author=%r 推断公钥路径（非法字符/可能越界）" % (author,))
+                    return False
+                keys_dir = os.path.join(os.path.expanduser("~"), ".actus", "keys")
+                try:
+                    from .errors import ensure_within
+                    key_path = ensure_within(keys_dir,
+                                             os.path.join(keys_dir, author + ".pub"),
+                                             what="公钥路径")
+                except Exception:
+                    return False
                 if not os.path.isfile(key_path):
                     return False
                 with open(key_path, "rb") as f:
@@ -473,35 +629,40 @@ class ActionRegistry:
                 return False
 
         except ImportError:
-            # cryptography 库不可用，退化到简单哈希验证
-            return self._verify_signature_fallback(entry, repo_dir)
+            # 审计修复（P2 假通过）：改前这里退化到 `_verify_signature_fallback`
+            # 做"sig.message == entry.checksum"的伪验签 —— checksum 就写在索引里、
+            # sig 文件也可写，等于任何人都能伪造"验签通过"。没有密码学能力时
+            # **必须 fail-closed**：拒绝该签名（并记录原因，便于排查）。
+            self.warnings.append(
+                "未安装 cryptography，无法验证签名（fail-closed，拒绝 %s）"
+                % entry.id)
+            return False
 
     def validate_entry(self, entry: RegistryEntry, repo_dir: str) -> Tuple[bool, str]:
         """完整校验条目（格式 + 校验和 + 签名）。
 
         返回:
-            (是否有效, 错误信息)
+            (是否有效, 错误信息)。CLI `registry validate` 用本函数（真校验），
+            不再只数 id 个数。
         """
-        # 格式校验
+        # 逐项收集全部问题（不只报第一个）：CLI `registry validate` 因此能"点名每项"
+        problems: List[str] = []
         if not re.match(r'^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$', entry.id):
-            return False, f"Invalid action ID format: {entry.id}"
-
+            problems.append("Invalid action ID format: %s" % entry.id)
         if not re.match(r'^\d+\.\d+\.\d+$', entry.version):
-            return False, f"Invalid version format: {entry.version}"
-
-        # 文件存在性
-        fpath = os.path.join(repo_dir, entry.path)
-        if not os.path.isfile(fpath):
-            return False, f"Action file not found: {entry.path}"
-
-        # 校验和验证
-        if entry.checksum and not self.verify_checksum(entry, repo_dir):
-            return False, f"Checksum mismatch for {entry.id}"
-
-        # 签名验证
+            problems.append("Invalid version format: %s" % entry.version)
+        # 文件存在性 + 路径越界（绝对不能读仓库外文件）
+        fpath = self._resolve_entry_path(repo_dir, entry.path)
+        if fpath is None:
+            problems.append("Action path 越界/非法: %s" % entry.path)
+        elif not os.path.isfile(fpath):
+            problems.append("Action file not found: %s" % entry.path)
+        elif entry.checksum and not self.verify_checksum(entry, repo_dir):
+            problems.append("Checksum mismatch for %s" % entry.id)
         if entry.signature and not self.verify_signature(entry, repo_dir):
-            return False, f"Signature verification failed for {entry.id}"
-
+            problems.append("Signature verification failed for %s" % entry.id)
+        if problems:
+            return False, "; ".join(problems)
         return True, "ok"
 
     # ── 缓存管理 ──
@@ -517,6 +678,7 @@ class ActionRegistry:
             缓存文件路径。
         """
         cache_key = self._url_to_cache_key(repo_url)
+        os.makedirs(self._cache_dir, exist_ok=True)   # 懒创建：只读构造不再建目录
         cache_path = os.path.join(self._cache_dir, f"{cache_key}.json")
 
         cache_data = {
@@ -579,7 +741,10 @@ class ActionRegistry:
             # 清除全部缓存（**只删本模块写的 .json**）
             # 审计修复（零风险）：改前删除 cache_dir 里**所有文件**——实测把用户
             # 放进缓存目录的 USER_DATA.txt 也删了。cache_dir 可由调用方传入任意路径，
-            # 误删面过大；现在只清 `*.json` 缓存文件。
+            # 误删面过大；现在只清 `*.json` 缓存文件，目录不存在时直接返回（懒创建后
+            # 可能从未建过）。
+            if not os.path.isdir(self._cache_dir):
+                return
             for fname in os.listdir(self._cache_dir):
                 fpath = os.path.join(self._cache_dir, fname)
                 if os.path.isfile(fpath) and fname.endswith(".json"):
@@ -592,10 +757,14 @@ class ActionRegistry:
                             commit: str = None) -> dict:
         """记录安装信息到安装清单。
 
-        返回:
-            安装清单条目。
+        审计修复（P2 无视 cache_dir）：改前固定拼 `~/.actus/installed` —— 嵌入式/
+        测试里传了隔离 cache_dir 也会污染真实 HOME。现在清单目录可配置：
+        显式 `manifest_dir=`（构造参数）或环境变量 ACTUS_INSTALLED_DIR，默认仍是
+        `~/.actus/installed`（保持既有契约，有测试钉住该默认值）。
+
+        清单写盘也用 tmp + `os.replace`（避免半截清单，与索引同一口径）。
         """
-        manifest_dir = os.path.join(os.path.expanduser("~"), ".actus", "installed")
+        manifest_dir = self._manifest_dir
         os.makedirs(manifest_dir, exist_ok=True)
 
         cache_key = self._url_to_cache_key(repo_url)
@@ -617,28 +786,48 @@ class ActionRegistry:
         manifest["actions"] = [
             {"id": e["id"], "version": e["version"], "checksum": e.get("checksum", "")}
             for e in index.get("actions", [])
+            if isinstance(e, dict)
         ]
 
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        fd, tmp_path = tempfile.mkstemp(prefix=".manifest.", suffix=".tmp",
+                                        dir=manifest_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, manifest_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
         return manifest
 
     def load_manifest(self, repo_url: str) -> Optional[dict]:
-        """加载安装清单。"""
-        manifest_dir = os.path.join(os.path.expanduser("~"), ".actus", "installed")
+        """加载安装清单（损坏 → None + warning，不抛）。"""
+        manifest_dir = self._manifest_dir
         cache_key = self._url_to_cache_key(repo_url)
         manifest_path = os.path.join(manifest_dir, f"{cache_key}.json")
 
         if not os.path.isfile(manifest_path):
             return None
 
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError) as exc:
+            self.warnings.append("安装清单损坏（%s），按缺失处理: %s"
+                                 % (exc, manifest_path))
+            return None
 
     def list_installed(self) -> List[dict]:
-        """列出所有已安装的仓库。"""
-        manifest_dir = os.path.join(os.path.expanduser("~"), ".actus", "installed")
+        """列出所有已安装的仓库。
+
+        审计修复（P3）：改前任一清单损坏（半截 JSON）→ 整个列表抛异常，
+        `actus install list` 全崩。现在逐个跳过坏文件并记 `warnings`。
+        """
+        manifest_dir = self._manifest_dir
         if not os.path.isdir(manifest_dir):
             return []
 
@@ -647,13 +836,21 @@ class ActionRegistry:
             if not fname.endswith(".json"):
                 continue
             fpath = os.path.join(manifest_dir, fname)
-            with open(fpath, "r", encoding="utf-8") as f:
-                manifests.append(json.load(f))
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError) as exc:
+                self.warnings.append("跳过损坏的安装清单（%s）: %s" % (exc, fpath))
+                continue
+            if isinstance(data, dict):
+                manifests.append(data)
+            else:
+                self.warnings.append("跳过非对象安装清单: %s" % fpath)
         return manifests
 
     def remove_installation(self, repo_url: str) -> None:
         """移除安装清单。"""
-        manifest_dir = os.path.join(os.path.expanduser("~"), ".actus", "installed")
+        manifest_dir = self._manifest_dir
         cache_key = self._url_to_cache_key(repo_url)
         manifest_path = os.path.join(manifest_dir, f"{cache_key}.json")
 
@@ -756,31 +953,21 @@ class ActionRegistry:
         return key[:64]
 
     def _verify_signature_fallback(self, entry: RegistryEntry, repo_dir: str) -> bool:
-        """签名验证退化方案（无 cryptography 库时使用）。
+        """签名验证退化方案（无 cryptography 库时使用）——**已改为 fail-closed**。
 
-        退化到校验和验证（无加密签名）。
+        审计修复（P2 假通过）：改前这里用 `sig.message == entry.checksum` 冒充验签：
+        checksum 写在索引里、sig 文件可随意写，手写
+        `{"message": "<公开 checksum>", "signature": "ZmFrZQ=="}` 就能"验签通过"。
+        没有密码学能力时**不能假装验过**：签名条目一律 False；只有"无签名"条目
+        按主路径同款判据（仅 community）放行。`verify_signature()` 的 ImportError
+        分支已直接 fail-closed，本方法保留给外部调用方/历史兼容。
         """
         if not entry.signature:
-            # 审计修复（零风险）：与主路径 `verify_signature()` 的判据对齐。
-            # 主路径是 `return entry.trust_level == "community"`（无签名只接受
-            # community）；改前这里放行 ("community", "trusted")，导致
-            # **同一份索引在"装了 cryptography"和"没装"的机器上验签结论不同** ——
-            # 无签名 + trust_level=trusted 在主路径判 False，退化路径却判 True（假通过）。
             return entry.trust_level == "community"
-
-        sig_path = os.path.join(repo_dir, entry.signature)
-        if not os.path.isfile(sig_path):
-            return False
-
-        try:
-            with open(sig_path, "r", encoding="utf-8") as f:
-                sig_data = json.load(f)
-
-            # 退化：只验证消息与文件校验和匹配
-            expected_message = sig_data.get("message", "")
-            return expected_message == entry.checksum
-        except (OSError, json.JSONDecodeError):
-            return False
+        self.warnings.append(
+            "未安装 cryptography，跳过签名校验并判为未通过（fail-closed）: %s"
+            % getattr(entry, "id", "?"))
+        return False
 
 
 # ── 便捷函数 ──
