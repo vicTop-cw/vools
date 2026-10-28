@@ -173,32 +173,54 @@ READY_SCOPE_DEPS_ONLY = "deps_and_entry_directives"
 # ---------------------------------------------------------------------------
 
 def _scan_actions_dir(actions_dir: str = None) -> dict:
-    """扫描动作目录，提取依赖信息。"""
-    if actions_dir is None:
-        # 与 indexer 对齐：ACTUS_REPO_ROOT 优先，否则按包位置推断仓库根
-        actions_dir = os.path.join(_repo_root(), "actions")
+    """扫描动作，提取 id / path（动作清单条目的数据源）。
 
-    if not os.path.isdir(actions_dir):
-        return {"actions_dir": actions_dir, "exists": False, "actions": []}
+    **扫描根语义与 `indexer._action_roots()` 统一**（`docs/actus/03-动作规范.md:32`）：
+    * 显式传 `actions_dir` → 只扫该目录（测试 / 单仓场景）；
+    * 缺省 → 扫**全部动作根**：用户项目 `actions/` + 包内种子目录（去重保序）。
+
+    改前缺省只扫 `_repo_root()/actions`（单根）→ 动作清单条目（6 个）与
+    `action_readiness`（14 个，从一开始就用多根）覆盖范围不一致，导致 IntentRouter
+    永远看不到 8 个包内种子动作（4 个 GUI + 4 个 demo），而 docs 明确宣传「pip install
+    自带 4 个基线 GUI 种子动作」。这是口径漂移，不是设计（原 PROBE_PLAN 写单根、
+    后续 §4.7 与 docs/03 都改成多根）。
+    """
+    roots = _action_roots(actions_dir)
+    # 兼容字段：无显式目录时保留「仓库根 actions/」作为主根（既有消费方读它）
+    primary_dir = actions_dir if actions_dir is not None else os.path.join(_repo_root(), "actions")
 
     actions = []
-    for dirpath, _dirnames, filenames in os.walk(actions_dir):
-        for fn in sorted(filenames):
-            if not is_action_file(fn):
-                continue
-            full = os.path.join(dirpath, fn)
-            rel = os.path.relpath(full, actions_dir).replace(os.sep, "/")
-            # 解析动作真实 id（与 indexer 的 aid 一致），失败则退化为相对路径
-            aid = rel
-            try:
-                from ..model import parse_cfg_from_file
-                act = parse_cfg_from_file(full)
-                aid = (act.meta or {}).get("id") or rel
-            except Exception:
-                pass
-            actions.append({"id": aid, "path": full})
+    seen_ids = set()
+    exists = False
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        exists = True
+        for dirpath, _dirnames, filenames in os.walk(root):
+            for fn in sorted(filenames):
+                if not is_action_file(fn):
+                    continue
+                full = os.path.join(dirpath, fn)
+                try:
+                    rel = os.path.relpath(full, root).replace(os.sep, "/")
+                except ValueError:          # 跨盘符
+                    rel = full.replace(os.sep, "/")
+                # 解析动作真实 id（与 indexer 的 aid 一致），失败则退化为相对路径
+                aid = rel
+                try:
+                    from ..model import parse_cfg_from_file
+                    act = parse_cfg_from_file(full)
+                    aid = (act.meta or {}).get("id") or rel
+                except Exception:
+                    pass
+                # 同 id 多份（用户项目与包内种子撞车）：先到的优先（用户优先）
+                if aid in seen_ids:
+                    continue
+                seen_ids.add(aid)
+                actions.append({"id": aid, "path": full})
 
-    return {"actions_dir": actions_dir, "exists": True, "actions": actions}
+    return {"actions_dir": primary_dir, "exists": exists,
+            "actions": actions, "roots": list(roots)}
 
 
 def _scan_actions_with_deps(actions_dir: str = None) -> dict:
@@ -925,6 +947,9 @@ class ActionsProber(Prober):
             available=info["exists"],
             extra={
                 "actions_dir": info["actions_dir"],
+                # 本轮起与 action_readiness 同源：缺省扫**全部动作根**（用户项目 + 包内种子），
+                # 显式传目录时只扫该目录。roots 与 readiness 对称，便于排障对账。
+                "roots": info.get("roots") or [],
                 "action_count": len(info["actions"]),
                 "actions": info["actions"][:50],  # 限制数量
             },

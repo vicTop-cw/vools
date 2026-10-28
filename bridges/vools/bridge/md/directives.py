@@ -46,6 +46,16 @@ BLOCK_DIRECTIVE_KEYS: Set[str] = {
     "blocking",
     "html",
     "inject",
+    # ── webview2：执行器**早就在读**、但白名单漏登记的两个键 ──
+    # 为什么补：`webview2.py:1330` 读 `directives.get("devtools", "false")` 传给
+    # `WebView2Config(devtools=...)`，`:1318` 读 `directives.get("theme")` 传给
+    # `WebView2Theme(...)` —— 语义早就实现；但 `run_block()` 在**语言分派之前**
+    # （`runner.py:488` 的 validate_directives → webview2 分派在 `:741`）就用本白名单
+    # 拦掉了未登记键，于是这两个分支成了**不可达代码**：4 个 webview2 种子动作
+    # 写了 `devtools=false` 必然报「未知指令: devtools」而跑不起来。
+    # 只放行闸门，不涉及任何新语义实现（实现侧本来就有）。
+    "devtools",
+    "theme",
     # 富内容展示指令（计划 §4.2，P1）
     "svg",
     "rich",

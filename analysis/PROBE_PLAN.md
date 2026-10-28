@@ -1099,7 +1099,9 @@ def probe(*, actions_dir=None, cache_dir=None, force=False, timeout=5):
         ready_actions = [a for a in report["actions"] if a["ready"]]
         
     参数:
-        actions_dir: 动作目录（默认 vools-actus/actions/）
+        actions_dir: 动作目录（缺省扫 **indexer 的全部动作根**：用户项目 actions/ +
+                     包内种子目录，去重保序 —— 与 §4.7 analyze_actions 的口径统一；
+                     显式传目录时只扫该目录）
         cache_dir: 缓存目录（默认 vools-actus/_meta/）
         force: True 时忽略缓存
         timeout: 单个探测项超时秒数

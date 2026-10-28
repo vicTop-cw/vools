@@ -2476,7 +2476,7 @@ def _execute_webview2(
     """
     执行 webview2 代码块，渲染 GUI。
 
-    支持指令：
+    支持指令（与 `directives.BLOCK_DIRECTIVE_KEYS` 的 webview2 段保持一致）：
     - title: 窗口标题
     - width: 窗口宽度
     - height: 窗口高度
@@ -2484,6 +2484,12 @@ def _execute_webview2(
     - blocking: 是否阻塞等待 (true/false)
     - html: 外部 HTML 文件路径
     - inject: 注入的 JS 代码
+    - devtools: 是否开启开发者工具 (true/false)，默认 false
+      → `webview2.py` 读 `directives["devtools"]` 传给 `WebView2Config`
+    - theme: 主题（light/dark），默认 light
+      → `webview2.py` 读 `directives["theme"]` 传给 `WebView2Theme`
+    （devtools / theme 此前**漏登记**在白名单里，导致写了就报「未知指令」而不可达；
+      2026-10 已补白名单。）
 
     Returns:
         (stdout, stderr, exit_code)
