@@ -1,6 +1,29 @@
 # vault v1 / v2 现状与合并建议
 
-> 第 10 轮审计产出（`cmd-polish`），供决策用；**未改动任何 vault 代码**。
+> 第 10 轮审计产出（`cmd-polish`）；**第 12 轮已实施第 3 步（统一 secret resolver）**，
+> 实施细节见 §0。
+
+## 0. 第 3 步实施记录（第 12 轮，2026-10-29）
+
+已在 `vault.py` 落地统一 resolver（无新模块）：
+`resolve_secret(name, scope, meta_dir, lazy_migrate=None)` /
+`write_secret(...)` / `resolve_vault_refs(config, meta_dir)` / `resolver_status()`。
+
+- **读**：v2 优先（凭据 `VAULT_IDENTITY_ID/VAULT_MACHINE_ID/VAULT_PIN`，与 executor 旧口径一致）；
+  v2 不可用或没有该密钥 → 回退 v1（`Vault.last_read_source` 记来源）；
+  **两边都有且值不同 → `status='conflict'`，不自动选择**（消息里给两个值的 sha256 短指纹，
+  不打印明文）。
+- **写**：默认写 v2；v2 不可用 → **拒绝**（`code='vault2_unavailable'`），
+  仅显式 `allow_v1_write=True` 才写 v1 并 warning（避免"写到 resolver 将来读不到的地方"）。
+- **懒迁移**：**默认关闭**，opt-in `ACTUS_VAULT_LAZY_MIGRATE=1`。原因：本轮 CLI 仍直连 v1
+  写入（`cli.py` 在并行改动，禁改），若读时自动把 v1 复制到 v2，CLI 之后再改 v1 的值
+  就会与 v2 旧副本"值不同" → 每次读都变冲突。等 CLI 切到 resolver（下一步）后再打开默认迁移。
+- **executor 的 `vault://`** 已改走 resolver：冲突/读取失败 → `ActionError`
+  （`vault_secret_conflict` / `vault_read_failed`）显式拒绝执行，不再静默跳过。
+- **CLI 兼容读**：v1 `Vault.get()` 在 v1 缺失时按需回退读 v2（`ACTUS_VAULT_RESOLVER=0` 可关），
+  因此 resolver/v2 写入的密钥，现有 `actus vault get` 也能读到 —— **CLI 写入路径不变**，
+  切换 CLI 写入口（让它也写 v2）仍需 cmd-engine 协调（`cli.py` 禁改）。
+
 
 ## 1. 现状：两套并存，入口各自为政
 
@@ -21,15 +44,15 @@
 
 ## 3. 合并建议（分三步，不一次性切换）
 
-**步骤 1（低风险，先收口"错误语义"）**
+**步骤 1（✅ 已实施：低风险，先收口"错误语义"）**
 - v1 在 `Vault.__init__` 生成临时密钥时**打 warning 并返回结构化提示**（或直接拒绝写，除非显式 `ACTUS_VAULT_ALLOW_EPHEMERAL=1`）；
 - v1 的 `_save` 改为 tmp + `os.replace`（与 v2 同一标准）。
 
-**步骤 2（统一读路径，保留写兼容）**
+**步骤 2（✅ 已实施：统一读路径，保留写兼容）**
 - `executor` 的 gated 密钥查找（`vault.get_key`）与 `vault://`（`vault2.auth/resolve`）**统一到同一个"secret resolver"**：优先 v2（有身份/审计），v1 仅作兼容读；读不到时给出**统一错误码**（`secret_not_found` / `vault_locked` 区分）。
 - CLI/MCP 的 `vault get/set` 先保留 v1 行为，但输出里标明当前读的是 v1 库（迁移期可见）。
 
-**步骤 3（迁移 + 切换默认）**
+**步骤 3（⏳ 读侧统一已实施；CLI 写入口切换待 cmd-engine 协调）**
 - 提供 `actus vault migrate-v2`：读 v1 `keys.json` → 用 v2 的身份密钥重新加密写入 `vault2.db`（**逐条、可回滚**，迁移失败不改动原库）；迁移后 v1 只读保留一个版本周期。
 - 切换后 CLI/MCP vault 命令直连 v2；删除 v1（或降级为"legacy import 模块"）。
 - 在此之前，**不要再往 v1 增加能力**（避免合并面继续扩大）。
