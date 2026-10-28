@@ -47,6 +47,10 @@ class IntentRouter:
         self._keyword_map: Dict[str, str] = {}
         # probe 集成（PROBE_PLAN.md §9 Phase 3）：ready 动作过滤
         self._ready_ids: Optional[set] = None
+        # 依赖级门禁（PROBE_PLAN.md §4.7）：报告里明确判 blocked 的动作 id。
+        # None = 不启用（报告没带 action_readiness 条目 / 条目不可用 / 结构异常），
+        # 此时行为与升级前**逐字一致**（只看 _ready_ids）。
+        self._blocked_ids: Optional[set] = None
 
     def set_ready_ids(self, ready_ids):
         """设置可推荐（ready）的动作 id 集合。
@@ -73,6 +77,9 @@ class IntentRouter:
                 if not isinstance(i, str) or not i:
                     raise ValueError(f"ready_ids 的元素必须是非空字符串，得到 {i!r}")
             self._ready_ids = ids
+        # 手工设置的 ready 集合是**显式覆盖**：同时清掉报告派生的依赖级门禁，
+        # 否则一份过期报告的 blocked 判定会偷偷盖掉调用方的显式选择。
+        self._blocked_ids = None
         return self
 
     def set_probe_report(self, report):
@@ -80,6 +87,15 @@ class IntentRouter:
 
         probe 报告 actions 类别的 extra['actions'] 列出了探测到的动作 id，
         只有这些动作视为 ready，route() 推荐时仅推荐它们。
+
+        **本轮升级（PROBE_PLAN.md §4.7）**：再读 `action_readiness` 条目的
+        `extra['verdicts']`，把「在报告里、但声明的依赖不满足」的动作也挡在推荐面
+        之外（依赖级门禁）。向后兼容的三条纪律：
+          1. 报告里**没有** `action_readiness` 条目（旧缓存/旧报告）→ 门禁不启用，
+             行为与升级前逐字一致；
+          2. 该条目 `available=False`（分析失败）→ 同样不启用（**绝不因为分析本身
+             失败就把所有动作误杀**，与 actions 条目 unavailable 时的处理同一条纪律）；
+          3. 只认**显式** `verdict == "blocked"`，结构异常的条目一律忽略。
         """
         ready = []
         for item in getattr(report, "items", []):
@@ -91,13 +107,48 @@ class IntentRouter:
                         ready.append(act)
         ready = [x for x in ready if x]
         self._ready_ids = set(ready) if ready else None
+        self._blocked_ids = self._extract_blocked_ids(report)
         return self
 
+    @staticmethod
+    def _extract_blocked_ids(report):
+        """从报告提取「明确判 blocked」的动作 id；取不到/不可用/异常 → None。"""
+        for item in getattr(report, "items", []) or []:
+            if getattr(item, "category", None) != "actions":
+                continue
+            if getattr(item, "name", None) != "action_readiness":
+                continue
+            if not getattr(item, "available", False):
+                return None                  # 分析失败：不启用门禁，别误杀
+            verdicts = (getattr(item, "extra", None) or {}).get("verdicts")
+            if not isinstance(verdicts, dict):
+                return None                  # 结构异常：退回粗粒度行为
+            blocked = set()
+            for action_id, record in verdicts.items():
+                if not isinstance(action_id, str) or not action_id:
+                    continue
+                if not isinstance(record, dict):
+                    continue                 # 结构异常（如裸字符串）：忽略，不当 blocked
+                if record.get("verdict") == "blocked":   # 只认显式 blocked
+                    blocked.add(action_id)
+            return blocked
+        return None                          # 旧报告：没有这一条目
+
     def _is_ready(self, action_id: str) -> bool:
-        """判断动作是否 ready（未启用过滤时恒为 True）。"""
+        """判断动作是否 ready（未启用过滤时恒为 True）。
+
+        两道门（顺序即语义）：
+          1. `_ready_ids`：动作是否出现在探测报告里（既有粗粒度判据，不变）；
+          2. `_blocked_ids`：动作声明的依赖是否**明确**不满足（§4.7 依赖级门禁）；
+             报告没带该信息时为 None → 只看第 1 道门，行为与升级前一致。
+        """
         if self._ready_ids is None:
             return True
-        return action_id in self._ready_ids
+        if action_id not in self._ready_ids:
+            return False
+        if self._blocked_ids and action_id in self._blocked_ids:
+            return False
+        return True
 
     def register_action(self, action_id: str, description: str, usage: str = "", tags: List[str] = None):
         """注册动作的语义描述。
@@ -215,10 +266,15 @@ class IntentRouter:
         return {"match": "none", "action_id": None, "confidence": 0, "reason": "无匹配"}
 
     def list_actions(self) -> List[dict]:
-        """列出所有已注册的动作（未启用 ready 过滤时全量；启用时仅 ready 动作）。"""
+        """列出所有已注册的动作（未启用 ready 过滤时全量；启用时仅 ready 动作）。
+
+        走 `_is_ready()` 而不是直接比 `_ready_ids`，这样依赖级门禁（§4.7）对
+        `list_actions()` 与 `route()` 是**同一套判据**（两处口径分开写正是历史上
+        最容易漂移的地方）。
+        """
         if self._ready_ids is None:
             return self._actions.copy()
-        return [a for a in self._actions if a["id"] in self._ready_ids]
+        return [a for a in self._actions if self._is_ready(a["id"])]
 
     def list_workflows(self) -> List[dict]:
         """列出所有已注册的工作流。"""

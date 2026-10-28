@@ -34,6 +34,8 @@ __all__ = [
 
 import concurrent.futures
 import importlib
+import os
+import re
 import sys
 import threading
 
@@ -129,6 +131,31 @@ def _load_metadata_module():
             return None
 
 
+# 版本串一律以数字开头（PEP 440）；用它把 `xxx-1.0-py3.13.egg-info` 这类
+# 带 ABI 标记的目录名挡在「反解」之外，避免把 `py3.13` 当成版本号。
+_VERSION_START_RE = re.compile(r'^\d')
+
+
+def _split_dist_filename(filename: str):
+    """从 `发行名-版本.dist-info` / `.egg-info` 反解 (发行名, 版本)，失败返回 None。
+
+    wheel/egg 的元数据目录按 `{distribution}-{version}.{dist-info|egg-info}`
+    命名（PEP 427/376），所以目录名本身就带 name+version —— 不必打开 METADATA。
+    """
+    for suffix in ('.dist-info', '.egg-info'):
+        if filename.endswith(suffix):
+            stem = filename[:-len(suffix)]
+            break
+    else:
+        return None
+    if '-' not in stem:
+        return None
+    name, version = stem.rsplit('-', 1)
+    if not name or not version or not _VERSION_START_RE.match(version):
+        return None                   # 反解不可靠 → 调用方回退读真值
+    return name, version
+
+
 def _normalize_dist_name(name: str) -> str:
     """PEP 503 规范化：小写 + 连续 [-_.] 折叠成 '-'（与 importlib.metadata 一致）。"""
     normalized = []
@@ -145,15 +172,23 @@ def _normalize_dist_name(name: str) -> str:
 
 
 def _build_metadata_index():
-    """一次扫描建成 {规范化发行名: 版本}，查不到返回 {}。
+    """建成 {规范化发行名: (distribution, 已知版本或 None)}，查不到返回 {}。
 
     为什么要有索引：`metadata.distribution(name)` 每次调用都会扫描整个
     sys.path（含所有 site-packages/*.dist-info），本机实测 65 个包 ×
     每个最多 2 个候选名 = **一百多次全量扫描**，这才是包探测 6–11s 的主因，
     而且它主要是 Python 层的路径遍历 —— 吃 GIL，加线程也压不下去。
-    一次 `metadata.distributions()` 扫描 + 字典查找即可，语义不变：
-    `distribution(name)` 与按 PEP 503 规范化后的字典键是同一套匹配规则，
-    同名多版本时 `setdefault` 保留扫描到的第一个，与 distribution() 一致。
+
+    为什么建索引时**不读 METADATA 文件**：348 个发行版逐个读文件实测 500ms，
+    而元数据目录名本身就带 name-version（PEP 427/376）。只解析目录名实测
+    **16ms**。准确性没有让步：目录名只用来定位「哪个发行版是这个包」，
+    **版本真值在真正被问到（命中）时才读 `distribution.version`**，
+    与本文件「版本必须取自包元数据」的契约一致。
+    （本机 348 条里目录名与 METADATA 版本只有 1 条不一致 —— vools-actus 的
+    可编辑安装目录名落后于 METADATA；它不在探测清单里，且被命中的包一律读真值。）
+
+    目录名反解失败的极少数（如带 ABI 标记的 `foo-1.0-py3.13.egg-info`）
+    就地读一次元数据，宁可慢一点也不要漏。
     """
     index = {}
     metadata_module = _load_metadata_module()
@@ -161,20 +196,102 @@ def _build_metadata_index():
         return index
     try:
         for distribution in metadata_module.distributions():
+            path = getattr(distribution, '_path', None)
+            filename = getattr(path, 'name', '')
+            parsed = _split_dist_filename(filename) if filename else None
+            if parsed is not None:
+                # 版本留到真正被问到时读真值（已知版本位传 None）
+                index.setdefault(_normalize_dist_name(parsed[0]),
+                                 (distribution, None))
+                continue
             try:
-                # 只读一次 METADATA：`.metadata` 与 `.version` 各读一遍文件的话，
-                # 348 个发行版就是近 700 次文件读，实测 634ms → 269ms。
                 metadata = distribution.metadata
                 name = metadata['Name']
                 version = metadata['Version']
             except Exception:
                 continue          # 单条元数据损坏不该毁掉整个索引
-            if not name or not version:
-                continue
-            index.setdefault(_normalize_dist_name(name), version)
+            if name and version:
+                index.setdefault(_normalize_dist_name(name), (distribution, version))
     except Exception:
         return {}                 # 扫描整体失败 → 调用方退回逐名查询
     return index
+
+
+def _indexed_version(entry):
+    """从索引条目取权威版本，返回 (version, signal)。"""
+    distribution, known_version = entry
+    if known_version is not None:
+        return known_version, None
+    try:
+        return distribution.version, None
+    except Exception as exc:      # 元数据损坏等：留痕（只记类型名）
+        return '', {'error_kind': 'metadata_error', 'error': type(exc).__name__}
+
+
+_PATH_SCAN = None
+_PATH_SCAN_LOCK = threading.Lock()
+
+
+def _build_path_scan():
+    """一次扫 sys.path，返回 {'vendor': {规范名: 版本}, 'legacy_eggs': bool}（懒加载单例）。
+
+    为什么需要 vendor 视图：本机 `tomli 2.0.1` 装在 `setuptools/_vendor` 里，
+    importlib.metadata **完全扫不到**，只有 pkg_resources 的 working_set 认得
+    （改造前正是靠 pkg_resources 兜底命中它的，去掉就是假阴性回归）。
+    但光 import pkg_resources 就要 ~434ms —— 为极少数 vendored 发行版付这个
+    代价不划算。直接解析 `_vendor` 下元数据目录名只要 ~30ms，且结果对得上：
+    实测 pkg_resources 比 importlib.metadata 多出的 17 个发行版全在这里、
+    版本一致（含 tomli 2.0.1）。
+
+    `legacy_eggs` 的作用是给 pkg_resources 一个**门槛**：sys.path 上没有
+    `.egg` / `.egg-link` / `easy-install.pth` 时，pkg_resources 相对
+    「metadata + _vendor + import」没有任何额外覆盖，那 434ms 就不必付；
+    一旦机器上真有 legacy egg 安装，门槛打开，pkg_resources 照旧兜底。
+    """
+    global _PATH_SCAN
+
+    with _PATH_SCAN_LOCK:
+        if _PATH_SCAN is not None:
+            return _PATH_SCAN
+
+        vendor = {}
+        legacy_eggs = False
+        for directory in sys.path:
+            if not directory or not os.path.isdir(directory):
+                continue
+            try:
+                entries = os.listdir(directory)
+            except OSError:
+                continue
+            for entry in entries:
+                if (entry.endswith('.egg') or entry.endswith('.egg-link')
+                        or entry == 'easy-install.pth'):
+                    legacy_eggs = True
+                vendor_dir = os.path.join(directory, entry, '_vendor')
+                if not os.path.isdir(vendor_dir):
+                    continue
+                try:
+                    vendored = os.listdir(vendor_dir)
+                except OSError:
+                    continue
+                for filename in vendored:
+                    parsed = _split_dist_filename(filename)
+                    if parsed is None:
+                        continue
+                    vendor.setdefault(_normalize_dist_name(parsed[0]), parsed[1])
+
+        _PATH_SCAN = {'vendor': vendor, 'legacy_eggs': legacy_eggs}
+        return _PATH_SCAN
+
+
+def _build_vendor_index():
+    """vendored 发行版视图（`_build_path_scan` 的便捷入口）。"""
+    return _build_path_scan()['vendor']
+
+
+def _has_legacy_eggs():
+    """sys.path 上是否存在 legacy egg 安装（决定要不要启用 pkg_resources 兜底）。"""
+    return _build_path_scan()['legacy_eggs']
 
 
 _PKG_RESOURCES_INDEX = None
@@ -229,10 +346,11 @@ def _get_pkg_version_detail(package_name: str, import_name: str, index=None):
              （键 error_kind / error，error 只放异常类型名）
 
     探测顺序（与模块 docstring 的契约一致）：
-      1. importlib.metadata 索引（一次建成，O(1) 查找）；
-      2. pkg_resources 索引（覆盖 setuptools/_vendor 的 vendored 发行版等
-         索引扫不到、只有 pkg_resources 认得的安装）；
-      3. import 兜底，**只用 import_name**（能 import 但拿不到元数据版本）。
+      1. importlib.metadata 索引（一次建成，O(1) 查找；版本真值在命中时才读）；
+      2. `_vendor` 索引（覆盖 setuptools/_vendor 这类 importlib.metadata
+         扫不到、只有 pkg_resources 认得的 vendored 发行版）；
+      3. pkg_resources 索引（最后兜底：.egg / egg-link 等 legacy 安装）；
+      4. import 兜底，**只用 import_name**（能 import 但拿不到元数据版本）。
     索引不可用时（py3.6/3.7 无 importlib.metadata / backport）退回改造前的
     逐名链路，行为不变。
     """
@@ -246,19 +364,32 @@ def _get_pkg_version_detail(package_name: str, import_name: str, index=None):
     metadata_index = _build_metadata_index() if index is None else index
     if metadata_index:
         for dist_name in dist_names:
-            version = metadata_index.get(_normalize_dist_name(dist_name))
+            entry = metadata_index.get(_normalize_dist_name(dist_name))
+            if entry is None:
+                continue
+            version, index_signal = _indexed_version(entry)
             if version:
                 return version, None
-        # 索引是权威的全量视图：这里查不到，再查 pkg_resources 视图
-        # （覆盖 setuptools/_vendor 里的 vendored 发行版与 legacy 安装），
-        # 两者都没有才进 import 兜底。**不逐个调 get_distribution**：
-        # 它对「查不到」的包每个要 90–130ms，23 个未装包就是 3.7s 纯浪费；
-        # 而 import 兜底失败只要 0.3–1.6ms。
-        legacy_index = _build_pkg_resources_index()
+            if index_signal and signal is None:
+                signal = index_signal
+        # ── 2) vendored 发行版视图（先于 pkg_resources：廉价且覆盖 tomli 这类）──
+        vendor_index = _build_vendor_index()
         for dist_name in dist_names:
-            version = legacy_index.get(_normalize_dist_name(dist_name))
+            version = vendor_index.get(_normalize_dist_name(dist_name))
             if version:
                 return version, None
+        # ── 3) pkg_resources 视图：只在机器上**真有 legacy egg 安装**时才启用 ──
+        # sys.path 上没有 .egg / .egg-link / easy-install.pth 时，pkg_resources
+        # 相对上面两套索引没有任何额外覆盖，于是省掉它 434ms 的导入代价。
+        # 一旦发现有 legacy egg，照旧兜底（正确性优先于速度）。
+        # **也不逐个调 get_distribution**：它对「查不到」的包每个要 90–130ms，
+        # 23 个未装包就是 3.7s 纯浪费；import 兜底失败只要 0.3–1.6ms。
+        if _has_legacy_eggs():
+            legacy_index = _build_pkg_resources_index()
+            for dist_name in dist_names:
+                version = legacy_index.get(_normalize_dist_name(dist_name))
+                if version:
+                    return version, None
     else:
         # 索引不可用（py3.6/3.7 没有 importlib.metadata / backport，或扫描失败）
         # → 退回改造前的逐名链路，行为不变。
