@@ -706,6 +706,22 @@ class MCPServer:
                                  'scope': {'type': 'string',
                                            'description': '作用域（默认 global）'},
                              }}},
+            {'name': 'actus_vault_migrate',
+             'description': ('显式迁移旧格式（legacy）vault 密钥行到行级加密。'
+                             'dry_run=true 只统计（零写，建议先预览）；'
+                             '真迁移写 db。读路径**绝不**自动迁移。'),
+             'inputSchema': {'type': 'object',
+                             'properties': {
+                                 'dry_run': {'type': 'boolean',
+                                             'description': '只统计不写（默认 false）'},
+                                 'scope': {'type': 'string',
+                                           'enum': ['global', 'project'],
+                                           'description': '作用域（v2 按身份迁移，'
+                                                          '仅兼容保留）'},
+                                 'all': {'type': 'boolean',
+                                         'description': '迁移当前身份全部 legacy 行'
+                                                        '（默认即全部，保留兼容）'},
+                             }}},
             {'name': 'actus_dep_tree',
              'description': '查看动作依赖树：递归展示动作的所有依赖及其状态',
              'inputSchema': {'type': 'object',
@@ -1964,6 +1980,24 @@ class MCPServer:
                     include_v1=bool(args.get('include_v1', False))))
             except Exception as e:
                 return text_result({'status': 'failed', 'error': {'code': 'vault_error', 'message': str(e)}}, True)
+
+        if name == 'actus_vault_migrate':
+            # 第 15 轮：显式迁移 legacy 行（dry_run 零写；读路径不迁移）
+            from vools.actus.vault import migrate_legacy_secrets
+            from vools.actus.paths import meta_dir as _paths_meta_dir
+            try:
+                r = migrate_legacy_secrets(
+                    dry_run=bool(args.get('dry_run', False)),
+                    meta_dir=_paths_meta_dir(),
+                    scope=args.get('scope') or 'global')
+                if r.get('status') == 'refused':
+                    # hint 由 vault.migrate_legacy_secrets 统一给出
+                    pass
+                # text_result 默认按 status 判 isError：partial/refused/error → True
+                return text_result(r)
+            except Exception as e:
+                return text_result({'status': 'failed', 'error': {
+                    'code': 'vault_error', 'message': str(e)}}, True)
 
         if name == 'actus_runtimes':
             from vools.actus.runtimes import get_available_runtimes
