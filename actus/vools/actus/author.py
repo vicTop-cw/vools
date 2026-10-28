@@ -374,7 +374,10 @@ def publish_action(action_id: str, repo_root: Optional[str] = None,
     """
     # 审计修：默认根跟随 paths.repo_root()（ACTUS_REPO_ROOT 优先），不跟 shell cwd。
     # 局部变量与函数同名，导入用别名避免遮蔽。
+    # `_explicit_root` 记下"调用方是否显式给了仓库根"，后面决定 _meta 落点要用它
+    # （默认根时应跟随 ACTUS_META_DIR，显式根时就用 <root>/_meta）。
     from .paths import repo_root as _paths_repo_root
+    _explicit_root = repo_root is not None
     repo_root = repo_root or _paths_repo_root()
     file_path = _find_action_file(action_id, repo_root)
 
@@ -408,7 +411,14 @@ def publish_action(action_id: str, repo_root: Optional[str] = None,
     # 入索引
     try:
         from . import indexer
-        idx = indexer.build_index(meta_dir=os.path.join(repo_root, '_meta'))
+        # 审计修（`_meta` 手写 → paths.meta_dir()）：调用方显式给了 repo_root
+        # 就用 `<repo_root>/_meta`；走默认根时跟随 ACTUS_META_DIR（隔离测试依赖）。
+        if _explicit_root:
+            meta_base = os.path.join(repo_root, '_meta')
+        else:
+            from .paths import meta_dir as _paths_meta_dir
+            meta_base = _paths_meta_dir()
+        idx = indexer.build_index(meta_dir=meta_base)
         in_index = action_id in idx['actions']
         idx_status = idx['actions'].get(action_id, {}).get('status', 'unknown')
     except Exception as e:

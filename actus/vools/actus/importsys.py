@@ -214,7 +214,14 @@ class ImportResolver:
 
     def __init__(self, repo_root: str = "."):
         self.repo_root = Path(repo_root)
-        self.cache_dir = self.repo_root / "_meta" / "imports_cache"
+        # 审计修（`_meta` 手写 → paths.meta_dir()）：显式 repo_root 时沿用
+        # `<repo_root>/_meta/imports_cache`（隔离测试依赖这一点）；默认构造
+        # 则跟随 paths.meta_dir()（ACTUS_META_DIR > repo_root()/_meta）。
+        if str(repo_root) in ('.', ''):
+            from .paths import meta_dir as _paths_meta_dir
+            self.cache_dir = Path(_paths_meta_dir()) / "imports_cache"
+        else:
+            self.cache_dir = self.repo_root / "_meta" / "imports_cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         # 注册编译器

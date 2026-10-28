@@ -116,7 +116,12 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
     # ── 加载 mtime 缓存 ──
     mtimes_cache: Dict[str, float] = {}
     if use_cache:
-        meta_dir = os.path.join(_repo_root(), '_meta')
+        # 审计修（`_meta` 手写 → paths.meta_dir()）：缓存是**运行时数据**，
+        # 之前硬编码 `_repo_root()/_meta`，于是设了 ACTUS_META_DIR 也不隔离
+        # （test_demo_indexing 里记着这个老毛病：不显式传 meta_dir 就会把缓存
+        # 写进真实仓库）。现在跟随 paths.meta_dir()（ACTUS_META_DIR > repo_root()/_meta）。
+        from .paths import meta_dir as _paths_meta_dir
+        meta_dir = _paths_meta_dir()
         cache_path = os.path.join(meta_dir, _MTIMES_CACHE)
         try:
             with open(cache_path, 'r', encoding='utf-8') as f:
@@ -214,7 +219,9 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
 
     # ── 保存 mtime 缓存 ──
     if use_cache and new_mtimes:
-        meta_dir = os.path.join(_repo_root(), '_meta')
+        # 同上：跟随 paths.meta_dir()，让 ACTUS_META_DIR 能真正隔离缓存
+        from .paths import meta_dir as _paths_meta_dir
+        meta_dir = _paths_meta_dir()
         cache_path = os.path.join(meta_dir, _MTIMES_CACHE)
         try:
             os.makedirs(meta_dir, exist_ok=True)
@@ -256,7 +263,10 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
     现在每个动作校验一次，**真实错误**决定 status，`runtime:` 环境提示只进
     brief['warnings']（不丢、不影响 status）。
     """
-    meta = meta_dir or os.path.join(_repo_root(), '_meta')
+    # 审计修（`_meta` 手写 → paths.meta_dir()）：显式 meta_dir 优先，
+    # 默认跟随 ACTUS_META_DIR > repo_root()/_meta。
+    from .paths import meta_dir as _paths_meta_dir
+    meta = meta_dir or _paths_meta_dir()
     actions = scan_actions(actions_dir, validate=False)
 
     # 每动作校验一次（`runtime:` 提示与真实错误分开，见 validate.split_validation）
@@ -396,7 +406,10 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
 
 def load_index(meta_dir: str = None) -> dict:
     """读取索引；不存在时先构建。"""
-    meta = meta_dir or os.path.join(_repo_root(), '_meta')
+    # 审计修（`_meta` 手写 → paths.meta_dir()）：显式 meta_dir 优先，
+    # 默认跟随 ACTUS_META_DIR > repo_root()/_meta。
+    from .paths import meta_dir as _paths_meta_dir
+    meta = meta_dir or _paths_meta_dir()
     path = os.path.join(meta, 'actions.index.json')
     if not os.path.exists(path):
         return build_index(meta_dir=meta)

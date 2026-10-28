@@ -98,8 +98,14 @@ def _resolve_ref_call_id(project_dir: Optional[str], ref_call_id: int) -> str:
     （账本允许人工补充出处），由 hygiene 闸门 repro_ledger_03 的 J2 负责判红，
     同时把状态原样回给调用方，避免静默降级。
     """
-    root = project_dir or _default_root()
-    db = os.path.join(root, '_meta', 'call_log.db')
+    if project_dir:
+        # 调用方显式给了项目根 → 用它自己的 _meta（不受全局 ACTUS_META_DIR 影响）
+        db = os.path.join(project_dir, '_meta', 'call_log.db')
+    else:
+        # 审计修（`_meta` 手写 → paths.meta_dir()）：默认根时，运行时数据目录
+        # 应跟随 ACTUS_META_DIR > repo_root()/_meta。
+        from .paths import meta_dir as _paths_meta_dir
+        db = os.path.join(_paths_meta_dir(), 'call_log.db')
     if not os.path.isfile(db):
         return 'no_call_log'
     uri = 'file:' + db.replace('\\', '/') + '?mode=ro'
