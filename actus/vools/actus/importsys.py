@@ -222,7 +222,8 @@ class ImportResolver:
             self.cache_dir = Path(_paths_meta_dir()) / "imports_cache"
         else:
             self.cache_dir = self.repo_root / "_meta" / "imports_cache"
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # 第 16 轮：**构造不建目录** —— 只读检查（如 `actus imports --check`）
+        # 构造 resolver 不该写 `_meta/imports_cache/`。缓存目录延迟到真正编译落盘时建。
 
         # 注册编译器
         self._backends: Dict[str, CompilerBackend] = {
@@ -283,6 +284,7 @@ class ImportResolver:
                 return True, "缓存命中", cached
 
         # 编译到临时文件：成功才落下最终名，失败/超时不留半成品
+        self.cache_dir.mkdir(parents=True, exist_ok=True)   # 真正要写缓存时才建目录
         tmp_path = cached.with_name(cached.name + f".tmp{os.getpid()}")
         try:
             ok, msg = backend.compile(source_path, tmp_path)

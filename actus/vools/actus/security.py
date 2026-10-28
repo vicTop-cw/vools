@@ -92,7 +92,8 @@ class AuditLogger:
             from .paths import meta_dir as _meta_dir
             log_dir = os.path.join(_meta_dir(), "audit")
         self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+        # 第 16 轮：**构造不建目录** —— 只读诊断（如 `actus scan` 读审计历史）
+        # 构造 AuditLogger 时不该在磁盘上留下 audit/ 目录。目录延迟到首次写事件时建。
         self._events: List[AuditEvent] = []
 
     def log(self, action_id: str, event_type: str, details: Dict, success: bool = True):
@@ -108,7 +109,8 @@ class AuditLogger:
         self._write_event(event)
 
     def _write_event(self, event: AuditEvent):
-        """写入审计日志文件。"""
+        """写入审计日志文件（真正的写入口：目录在这里才创建）。"""
+        self.log_dir.mkdir(parents=True, exist_ok=True)
         log_file = self.log_dir / f"audit_{time.strftime('%Y%m%d')}.jsonl"
         entry = {
             "timestamp": event.timestamp,
