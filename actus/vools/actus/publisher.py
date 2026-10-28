@@ -252,13 +252,50 @@ def validate_action_paths(paths: List[str]) -> List[str]:
     return sorted(set(out))
 
 
-def _copy_into_repo(action_path: str, repo: ActionRepo,
-                    category: str = '') -> str:
-    """把动作文件拷进仓的 `actions/`（保留分类子目录）。"""
+def _check_copy_target(action_path: str, repo: "ActionRepo",
+                       category: str = '', force: bool = False) -> str:
+    """复制**前**预检目标：返回目标路径；冲突则抛 `action_exists`。
+
+    与 `_copy_into_repo` 的判据完全一致（存在且内容不同 → 拒绝），拆出来是为了
+    在 `publish_local_only` 里**先把所有目标都预检完再动手** —— 否则多文件发布时
+    可能"拷了前两个、第三个才冲突"，留下半截发布。
+    """
     dest_dir = os.path.join(repo.actions_dir, category) if category \
         else repo.actions_dir
-    os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, os.path.basename(action_path))
+    if not os.path.exists(dest) or force:
+        return dest
+    try:
+        with open(dest, 'rb') as existing, open(action_path, 'rb') as incoming:
+            identical = existing.read() == incoming.read()
+    except OSError:
+        identical = False
+    if not identical:
+        raise PublishError(
+            'action_exists',
+            f'目标仓里已有同名动作且内容不同，拒绝覆盖：{dest}'
+            f'（确认要覆盖请显式传 force=True）',
+            {'dest': dest.replace(os.sep, '/'),
+             'source': action_path.replace(os.sep, '/')})
+    return dest
+
+
+def _copy_into_repo(action_path: str, repo: ActionRepo,
+                    category: str = '', force: bool = False) -> str:
+    """把动作文件拷进仓的 `actions/`（保留分类子目录）。
+
+    审计修（与 scaffold / installer 同族）：改前无条件 `shutil.copyfile` ——
+    发布一个与仓内**同名**的动作会**静默覆盖**仓里既有文件（实测仓内
+    `REPO_ORIGINAL` 被替换，无任何提示）。现在的语义：
+      * 目标不存在 → 正常写入；
+      * 目标已存在且内容相同 → 幂等 no-op（重复发布同一版本不该报错）；
+      * 目标已存在且内容不同 → 抛 `action_exists` 拒绝，除非显式 `force=True`。
+    """
+    dest = _check_copy_target(action_path, repo, category, force=force)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if os.path.exists(dest) and not force:
+        # 预检已确认内容一致 → 幂等 no-op，不重写（保留原文件 mtime）
+        return os.path.relpath(dest, repo.root).replace(os.sep, '/')
     shutil.copyfile(action_path, dest)
     return os.path.relpath(dest, repo.root).replace(os.sep, '/')
 
@@ -335,7 +372,8 @@ def _refresh_registry(repo: ActionRepo, action_ids: List[str]) -> Dict[str, Any]
 def publish_local_only(paths: List[str], repo_root: str, category: str = '',
                        dry_run: bool = True, gate: bool = True,
                        owner: str = 'unknown',
-                       actions_dir: Optional[str] = None) -> Dict[str, Any]:
+                       actions_dir: Optional[str] = None,
+                       force: bool = False) -> Dict[str, Any]:
     """只把动作落进本地仓目录 + 刷新 registry（不碰远端）。
 
     `gate=True` 时逐个动作过三重门，任一不可发布即整笔拒绝 ——
@@ -364,10 +402,15 @@ def publish_local_only(paths: List[str], repo_root: str, category: str = '',
 
     repo = ActionRepo(repo_root, owner=owner)
     published: List[Dict[str, Any]] = []
+    if not dry_run:
+        # 预检**全部**目标：冲突在"一个字节都还没写"的阶段就暴露，
+        # 避免多文件发布时"拷了前几个、后面才冲突"留下半截发布。
+        for f in files:
+            _check_copy_target(f, repo, category, force=force)
     for f in files:
         rel = None
         if not dry_run:
-            rel = _copy_into_repo(f, repo, category)
+            rel = _copy_into_repo(f, repo, category, force=force)
         aid = ''
         for g in reports:
             if g['path'] == os.path.abspath(f).replace(os.sep, '/') or \
@@ -391,7 +434,8 @@ def publish_to_repo(paths: List[str], repo_ref: str, push: bool = False,
                     dry_run: bool = True, gate: bool = True,
                     branch: str = 'main', category: str = '',
                     actions_dir: Optional[str] = None,
-                    meta_dir: str = '', timeout: int = 120) -> Dict[str, Any]:
+                    meta_dir: str = '', timeout: int = 120,
+                    force: bool = False) -> Dict[str, Any]:
     """途径 C：发布到自有 `.actus` 仓（本地落 + 可选 push 远端）。
 
     `repo_ref` 接受两种形态：
@@ -444,7 +488,7 @@ def publish_to_repo(paths: List[str], repo_ref: str, push: bool = False,
     inner = publish_local_only(paths, local_root, category=category,
                                dry_run=dry_run, gate=gate,
                                owner=ref['owner'] or 'unknown',
-                               actions_dir=actions_dir)
+                               actions_dir=actions_dir, force=force)
     result.update(inner)
     result['route'] = 'own_repo'
 
@@ -501,7 +545,8 @@ def publish(paths: List[str], *, to_repo: Optional[str] = None,
             dry_run: bool = True, gate: bool = True, branch: str = 'main',
             category: str = '', base: str = 'master', title: str = '',
             actions_dir: Optional[str] = None, meta_dir: str = '',
-            client: Optional[GitHubClient] = None) -> Dict[str, Any]:
+            client: Optional[GitHubClient] = None,
+            force: bool = False) -> Dict[str, Any]:
     """三条途径的统一入口（docs/41 §D1 / §D4）。
 
         publish(paths, to_repo='owner/name.actus')   # C 自有仓
@@ -517,13 +562,15 @@ def publish(paths: List[str], *, to_repo: Optional[str] = None,
     if to_repo:
         return publish_to_repo(paths, to_repo, push=push, dry_run=dry_run,
                                gate=gate, branch=branch, category=category,
-                               actions_dir=actions_dir, meta_dir=meta_dir)
+                               actions_dir=actions_dir, meta_dir=meta_dir,
+                               force=force)
 
     if to_fork:
         # 途径 B：先把动作落进**自己的** fork 仓，再（可选）push
         res = publish_to_repo(paths, to_fork, push=push, dry_run=dry_run,
                               gate=gate, branch=branch, category=category,
-                              actions_dir=actions_dir, meta_dir=meta_dir)
+                              actions_dir=actions_dir, meta_dir=meta_dir,
+                              force=force)
         res['route'] = 'fork'
         if not dry_run and res.get('status') == 'ok':
             gh = client or GitHubClient(resolve_token(meta_dir=meta_dir))

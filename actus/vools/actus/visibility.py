@@ -16,6 +16,7 @@ import time
 import hmac
 import secrets
 import hashlib
+import re
 from vools.core.dataclass_compat import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -50,6 +51,9 @@ INTERNAL_DIR_MARKER = "_internal"
 
 #: 错误语义串（供上层映射到 actus 错误码 auth_required / action_invalid）。
 AUTH_REQUIRED = "auth_required"
+
+#: 团队名白名单（防路径逃逸：禁 '/'、'\\'、盘符、'..' 跳转；见 TeamManager._team_file_path）。
+_TEAM_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
 
 
 def is_internal_path(path: str) -> bool:
@@ -441,9 +445,36 @@ class TeamManager:
         self._teams_dir = os.path.join(self._config_dir, "teams")
         self._teams: Dict[str, TeamConfig] = {}
 
+    def _team_file_path(self, team_name: str) -> str:
+        """团队名 → 团队文件绝对路径（**两道**校验）。
+
+        审计修复（路径逃逸 P1）：改前 `os.path.join(self._teams_dir, f"{name}.json")`
+        完全不校验 name，实测：
+          * `create_team('../../escaped_team', ...)` 把文件写到配置目录**外**；
+          * `delete_team('../victim')` **删掉了目录外的任意 .json**（比写入更危险）。
+        现在：
+          1. 白名单：只允许 `[A-Za-z0-9._-]`，且不得含 `..`（挡掉 '/'、'\\'、盘符、相对跳转）；
+          2. 归一化兜底：`realpath` 后必须仍落在 `realpath(_teams_dir)` 之内
+             （白名单是第一道，realpath 是第二道 —— 防止将来有人放宽白名单）。
+        非法名抛 ValueError；只读入口（load_team/delete_team）自行降级为 None/False。
+        """
+        if (not isinstance(team_name, str) or not team_name
+                or not _TEAM_NAME_RE.match(team_name) or '..' in team_name):
+            raise ValueError(
+                f"非法团队名: {team_name!r}（只允许字母/数字/._-，且不得含 '..'）")
+        team_file = os.path.abspath(os.path.join(self._teams_dir, team_name + ".json"))
+        base = os.path.realpath(self._teams_dir)
+        real = os.path.realpath(team_file)
+        if real != base and not real.startswith(base + os.sep):
+            raise ValueError(f"团队路径越界（已拒绝）: {team_name!r}")
+        return team_file
+
     def load_team(self, team_name: str) -> Optional[TeamConfig]:
-        """加载团队配置。"""
-        team_file = os.path.join(self._teams_dir, f"{team_name}.json")
+        """加载团队配置。非法团队名 → None（拒绝访问，不抛穿）。"""
+        try:
+            team_file = self._team_file_path(team_name)
+        except ValueError:
+            return None
         if os.path.isfile(team_file):
             try:
                 with open(team_file, "r", encoding="utf-8") as f:
@@ -460,25 +491,30 @@ class TeamManager:
         return None
 
     def save_team(self, team: TeamConfig):
-        """保存团队配置。"""
+        """保存团队配置。团队名非法 → 抛 ValueError（不写盘）。"""
+        team_file = self._team_file_path(team.name)
         os.makedirs(self._teams_dir, exist_ok=True)
-        team_file = os.path.join(self._teams_dir, f"{team.name}.json")
         with open(team_file, "w", encoding="utf-8") as f:
             json.dump(team.to_dict(), f, ensure_ascii=False, indent=2)
         self._teams[team.name] = team
 
     def create_team(self, name: str, creator_user_id: str) -> TeamConfig:
-        """创建团队。"""
+        """创建团队。团队名非法 → 抛 ValueError（由 save_team 的校验把关）。"""
         team = TeamConfig(name=name, members=[TeamMember(user_id=creator_user_id, role="admin")])
         self.save_team(team)
         return team
 
-    def delete_team(self, name: str):
-        """删除团队。"""
+    def delete_team(self, name: str) -> bool:
+        """删除团队。返回是否真的删了；非法团队名 → False（**不删除任何文件**）。"""
+        try:
+            team_file = self._team_file_path(name)
+        except ValueError:
+            return False
         self._teams.pop(name, None)
-        team_file = os.path.join(self._teams_dir, f"{name}.json")
         if os.path.isfile(team_file):
             os.remove(team_file)
+            return True
+        return False
 
     def add_member(self, team_name: str, user_id: str, role: str = "member",
                    public_key: str = "") -> bool:
@@ -519,13 +555,17 @@ class TeamManager:
         return self.load_team(team_name)
 
     def list_teams(self) -> List[str]:
-        """列出所有团队。"""
+        """列出所有团队（只列白名单内的合法名字，跳过可疑文件）。"""
         if not os.path.isdir(self._teams_dir):
             return []
         teams = []
         for f in os.listdir(self._teams_dir):
-            if f.endswith(".json"):
-                teams.append(f[:-5])
+            if not f.endswith(".json"):
+                continue
+            name = f[:-5]
+            if not _TEAM_NAME_RE.match(name) or '..' in name:
+                continue
+            teams.append(name)
         return sorted(teams)
 
 
@@ -700,7 +740,19 @@ class VisibilityEngine:
         return False, f"Unknown visibility level: {visibility}"
 
     def _find_action(self, action_id: str) -> Optional[dict]:
-        """在所有注册表中查找动作。"""
+        """在**私有动作索引**里查找动作。
+
+        审计修复（文档与实现不符）：改前 docstring 写"在所有注册表中查找动作"，
+        但实现只查 `self._private_actions` —— team 级动作若没登记进私有索引，
+        `check_visibility(team)` 会恒返回 `No team associated with action`
+        （fail-closed，但功能不可用，且与承诺不符）。
+
+        现状（诚实版）：team 级动作**必须**通过 `add_private_action(action_id,
+        {"team": <name>})` 登记到私有索引，才会被本引擎识别。真去遍历
+        RegistryManager 需要"每个注册表里都有一份动作元数据"，当前注册表只存
+        index.json/URL 配置、没有动作→团队映射，强行遍历只会制造更大的假象，
+        因此这里选择"改文档说清边界"，而不是假装支持全注册表查找。
+        """
         # 先检查私有索引
         if action_id in self._private_actions:
             return self._private_actions[action_id]
