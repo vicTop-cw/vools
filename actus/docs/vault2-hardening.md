@@ -86,7 +86,53 @@ auth() / recover() / rotate() / rollback()
 - **L2/L3 的第二因子**：`seed_key` 仍是 TOTP 种子。本轮解决的是"库文件泄露"场景；
   若要防御"能读 keyring 的本机用户"，需要硬件因子（TPM/HSM，未来档位）。
 - **`key_meta` 里存 passphrase 的 salt/iters（明文）**：salt 本来不需要保密，iters 固定 200k。
-- 未实现：密钥轮换（`seed_key` 生命周期）。现有 `recover()` 不改变 `seed_key`，因此 KEK 也无需轮换。
+- **密钥轮换（`seed_key` 生命周期）：暂缓 —— 被一个 P0 阻塞，见 §6.1。**
+  现有 `recover()` 不改变 `seed_key`，因此 KEK 也无需轮换；而真正的 `seed_key` 轮换
+  必须以「`master_key` 可稳定重算」为前提，当前不满足（§6.1）。
+
+### 6.1 P0（第 15 轮发现）：L2/L3 的 `master_key` 绑定了 60s 动态码 → 旧密文在窗口后就解不开
+
+派生链（`vault2.auth()`）：
+```
+dynamic_code   = TOTP(seed_key, 当前时间窗口)          # 每 60s 变一次
+master_key     = PBKDF2(seed_key_hex + dynamic_code, key_salt)
+row_key        = PBKDF2(master_key, row_salt)
+```
+⇒ **`master_key` 每分钟都不一样**。于是在窗口 A 写入的 secrets，在窗口 B 重新 `auth`
+之后就用新 `master_key` 去解 —— **解不开**。
+
+- **L1 身份不受影响**：`effective_dynamic = ""`（空串），`master_key` 稳定。
+- **L2/L3 受影响，而 `register()` 的默认级别正是 L2。**
+- 复现脚本（可复跑）：`tools/audit/prove_vault2_window_master.py`
+  ```
+  [窗口1] auth=ok code=557394
+           set_secret(K)=ok
+           get(K)='TOP-SECRET'
+  [窗口2 +300s] auth=ok code=116931
+                get(K)=error | message=凭证解密失败（密钥错误？）
+  ```
+- **为什么现有测试没发现**：所有用例都在**同一个 60s 窗口内**完成
+  "register → auth → set → get"；而真实用法（今天 `vault set`、明天 `vault get`）
+  必然跨窗口。这也是为什么 `pytest -k vault` 全绿却掩盖了它。
+- **好消息：旧数据可救**。每条 secret 都有 `created_at`，用它反推写入时的窗口计数器，
+  就能重建当时的 `master_key`：
+  ```
+  [可迁移性] 用 created_at 反推窗口 29886925 重建 master → 解密旧密文 = 'TOP-SECRET'
+  ```
+
+**正确的修复顺序（三轮，本轮只做判断不动产品代码）：**
+1. **修派生**：`master_key = PBKDF2(seed_key_hex, key_salt)`（**只由 seed 决定、与时间无关**），
+   动态码退回它本来的职责 —— **只做认证挑战**（TOTP 校验 + 防重放），不再参与 KDF；
+2. **迁移旧数据**：对每条 secret，用 `created_at` 反推窗口重建旧 master，解密后用新派生重加密
+   （同一事务、全成或全不改；迁移脚本可复用 §6.1 的探针逻辑）；
+3. **最后再做 `seed_key` 轮换**：派生稳定后，轮换 = 换 seed + 用新 master 重加密全部行 + 换
+   `seed_key` 信封，全部落在**一个 SQLite 事务**里（`_db()` 已保证 commit/close 语义），
+   失败即回滚；此时才有意义。
+
+**轮换本身的价值（修完 P0 后仍值得做，但优先级低于 P0）**：`master_key` 不含 PIN，
+所以 `seed_key` 是**唯一的密码学根** —— 只要同时拿到 `vault2.db` 与 seed 信封的 KEK
+（keyring/口令），就能解出全部 secrets。轮换缩短"泄漏快照"的有效期（cryptoperiod），
+并让历史 TOTP 失效；但它**不能**追溯保护已经被拷走的密文。
 
 ## 7. 验收（第 9 轮实测）
 
