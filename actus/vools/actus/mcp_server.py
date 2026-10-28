@@ -1929,12 +1929,10 @@ class MCPServer:
 
         if name == 'actus_vault_list':
             # 审计（第 30 轮）：合并 v1 + v2，每条带 source / conflict
-            from vools.actus.vault import Vault, resolve_secret
             from vools.actus.paths import meta_dir as _paths_meta_dir
             scope = args.get('scope')
             try:
-                return text_result(_vault_list_merged(_paths_meta_dir(), scope,
-                                                      Vault, resolve_secret))
+                return text_result(_vault_list_merged(_paths_meta_dir(), scope))
             except Exception as e:
                 return text_result({'status': 'failed', 'error': {'code': 'vault_error', 'message': str(e)}}, True)
 
@@ -2340,80 +2338,28 @@ def serve() -> None:
 
 # ── 触发器处理器 ──
 
-def _v2_secret_names():
-    """列出 v2 里的密钥名 → (names, available, reason)。
+def _vault_list_merged(meta_dir, scope):
+    """合并 v1 + v2 的密钥清单 —— 委托 resolver 的公开 `list_secret_names()`。
 
-    借用 resolver 的私有 `_v2_session`：vault.py 目前没有公开的 list/delete helper
-    （本轮 vault.py 禁改）。已在汇报里提出：应把 list/delete 提升为 resolver 的公开 API。
+    审计（第 31 轮）：上一轮借用 resolver 的**私有 v2 会话助手**自己拼合并；公开 API 已就位，
+    私依赖归零，且与 CLI 走同一份实现（单一真源，不会各自漂移）。
     """
-    try:
-        from vools.actus.vault import _v2_session
-        v2, token, reason = _v2_session()
-    except Exception as exc:                       # noqa: BLE001
-        return [], False, '%s: %s' % (type(exc).__name__, exc)
-    if v2 is None:
-        return [], False, reason
-    try:
-        res = v2.list_secrets(token)
-    except Exception as exc:                       # noqa: BLE001
-        return [], False, 'v2 列举异常（%s: %s）' % (type(exc).__name__, exc)
-    if res.get('status') != 'ok':
-        return [], False, str(res.get('message') or 'v2 列举失败')
-    return [s.get('name') for s in (res.get('secrets') or [])], True, None
-
-
-def _vault_list_merged(meta_dir, scope, Vault, resolve_secret):
-    """合并 v1 + v2 的密钥清单；每条带 source(v1/v2/v1+v2) 与 conflict 标记。"""
-    v1_names, v1_error = [], None
-    try:
-        v1_names = [row.get('key') for row in Vault(meta_dir).list(scope)]
-    except Exception as exc:                       # noqa: BLE001
-        v1_error = '%s: %s' % (type(exc).__name__, exc)
-    v2_names, v2_available, v2_reason = _v2_secret_names()
-    names = sorted(set(n for n in v1_names if n) | set(n for n in v2_names if n))
-    rows = []
-    for name in names:
-        r = resolve_secret(name, scope or 'global', meta_dir=meta_dir)
-        rows.append({'key': name,
-                     'scope': scope or 'global',
-                     'source': r.get('source') or ('v1' if name in v1_names else 'v2'),
-                     'conflict': r.get('status') == 'conflict',
-                     'in_v1': name in v1_names,
-                     'in_v2': name in v2_names})
-    return {'status': 'ok', 'keys': rows, 'count': len(rows),
-            'v2_available': v2_available, 'v2_reason': v2_reason,
-            'v1_error': v1_error}
+    from vools.actus.vault import list_secret_names
+    return list_secret_names(scope or 'global', meta_dir)
 
 
 def _vault_delete_merged(meta_dir, key, scope, include_v1: bool = False):
-    """删除密钥：默认删 v2；include_v1=True 才删旧库 v1（破坏性，显式）。"""
-    from vools.actus.vault import Vault, _v2_session
-    removed, errors = [], []
-    v2, token, reason = _v2_session()
-    if v2 is None:
-        errors.append('v2 不可用：%s' % reason)
-    else:
-        try:
-            res = v2.delete_secret(token, key, caller='mcp.vault')
-            if res.get('status') == 'ok':
-                removed.append('v2')
-            elif '凭证不存在' not in str(res.get('message') or ''):
-                errors.append('v2 删除失败：%s' % res.get('message'))
-        except Exception as exc:                   # noqa: BLE001
-            errors.append('v2 删除异常（%s: %s）' % (type(exc).__name__, exc))
-    if include_v1:
-        try:
-            if Vault(meta_dir).delete(key, scope):
-                removed.append('v1')
-        except Exception as exc:                   # noqa: BLE001
-            errors.append('v1 删除异常（%s: %s）' % (type(exc).__name__, exc))
-    status = 'ok' if removed else ('failed' if errors else 'not_found')
-    payload = {'status': status, 'key': key, 'scope': scope,
-               'deleted': removed, 'errors': errors}
-    if not include_v1 and 'v1' not in removed:
-        payload['hint'] = ('默认只删 v2（权威来源）；旧库 v1 若也有副本，'
-                           '需显式传 include_v1=true（破坏性）')
-    return payload
+    """删除密钥 —— 委托 resolver 的公开 `delete_secret()`。
+
+    来源判断：默认只删 v2（权威来源）；v1 旧库副本删除不可逆，须显式 include_v1。
+    """
+    from vools.actus.vault import delete_secret
+    result = delete_secret(key, scope, meta_dir, include_v1=include_v1,
+                           caller='mcp.vault')
+    if result.get('hint'):
+        result['hint'] = ('默认只删 v2（权威来源）；旧库 v1 若也有副本，'
+                          '需显式传 include_v1=true（破坏性）')
+    return result
 
 
 def _get_trigger_engine(meta_dir: str = ''):
