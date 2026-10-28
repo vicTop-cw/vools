@@ -11,16 +11,19 @@ import shutil
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict
 
+from .paths import meta_dir
+
 _TZ = timezone(timedelta(hours=8))  # 项目文档时区 +08:00
 
 
 def _default_meta() -> str:
-    """缺省 _meta 目录 = 仓库根/_meta（ACTUS_REPO_ROOT 可覆盖）。"""
-    root = os.environ.get('ACTUS_REPO_ROOT')
-    if root:
-        return os.path.join(root, '_meta')
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))), '_meta')
+    """缺省 _meta 目录 = `paths.meta_dir()`（**唯一真源**）。
+
+    优先级：ACTUS_META_DIR > ACTUS_REPO_ROOT/_meta > __file__ 推导。
+    不设环境变量时与改前逐字相同；本轮新增的是 ACTUS_META_DIR 也能搬走
+    `_meta/runs/`（replay/export 的数据源）。
+    """
+    return meta_dir()
 
 
 def _now_iso() -> str:

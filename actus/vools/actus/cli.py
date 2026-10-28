@@ -195,6 +195,8 @@ def _build_parser():
     p_scaffold.add_argument('--id', dest='action_id', help='指定动作 id（缺省自动生成）')
     p_scaffold.add_argument('--trust', choices=['audit', 'trusted', 'sandbox'],
                             default='audit', help='信任级别（默认 audit）')
+    p_scaffold.add_argument('--force', action='store_true',
+                            help='目标动作文件已存在时允许覆盖（默认拒绝，防数据丢失）')
 
     p_author = sub.add_parser('author', help='AI：修改已有动作')
     p_author.add_argument('action_id', help='要修改的动作 id')
@@ -779,7 +781,24 @@ def _dispatch(args) -> int:
 
     if args.command == 'scaffold':
         from vools.actus.scaffold import scaffold_action
-        r = scaffold_action(args.description, action_id=args.action_id, trust=args.trust)
+        from vools.actus.errors import ActionError
+        from vools.actus.indexer import _repo_root
+        try:
+            # 显式传 repo_root：scaffold 内部推断的默认目录恰好等于 _repo_root()，
+            # 所以默认行为不变；但显式传入后 ACTUS_REPO_ROOT 才真正生效
+            # （测试/多仓库场景需要把写入重定向到临时仓库），也与 viz/author
+            # 等命令的「仓库由 _repo_root() 决定」口径一致。
+            r = scaffold_action(args.description, action_id=args.action_id,
+                                trust=args.trust, repo_root=_repo_root(),
+                                force=getattr(args, 'force', False))
+        except ActionError as exc:
+            # 撞已有动作文件：明确失败并 rc≠0。改前这里会静默覆盖用户动作、
+            # 还打印 status=ok —— 用户看到"生成成功"根本不知道文件被替换了。
+            _out({'status': 'failed',
+                  'error': {'code': exc.code, 'message': exc.message,
+                            'details': exc.details}})
+            print(f'❌ {exc.message}', file=sys.stderr)
+            return 1
         _out({'status': 'ok', 'data': r})
         return 0
 
@@ -2633,25 +2652,59 @@ def _cmd_viz(args) -> int:
     """
     from vools.actus.viz import visualize_workflow, visualize_action_workflow
     from vools.actus.indexer import _repo_root
-    from vools.actus.model import Action
+    from vools.actus.model import parse_cfg_from_file
     import os
 
     root = _repo_root()
 
     if args.action:
-        # 可视化指定动作的工作流
-        action_path = os.path.join(root, "actions", args.action + ".actus.md")
-        if not os.path.exists(action_path):
-            # 搜索子目录。改前是内层 for 里 break —— 只跳出内层，外层 os.walk
-            # 继续走，后找到的同名文件会覆盖 action_path（可能可视化错的那个）。
-            for dirpath, _, files in os.walk(os.path.join(root, "actions")):
-                if args.action + ".actus.md" in files:
-                    action_path = os.path.join(dirpath, args.action + ".actus.md")
+        # 可视化指定动作的工作流。
+        # 审计修复：改前按「文件名 == <action> + '.actus.md'」猜路径 —— 本仓库
+        # 动作文件是 foo.actus.md、id 是 actus.test.foo，于是 `viz --action
+        # actus.test.foo` 永远「动作不存在」。改为用索引 + resolver 的单一查找
+        # 实现（find_action_file 按解析后的 meta['id'] 比对，与文件名无关）：
+        #   1) 索引按 id 直取 path；2) 按 name 反查 id 再取；3) 兜底走
+        #   find_action_file 在两个动作根里扫。
+        from vools.actus.resolver import find_action_file
+        from vools.actus.indexer import load_index
+
+        action_roots = [os.path.join(root, "actions")]
+        try:
+            from vools.actus import __file__ as _pkg_file
+            pkg_actions = os.path.join(os.path.dirname(os.path.abspath(_pkg_file)), "actions")
+            if os.path.isdir(pkg_actions) and pkg_actions not in action_roots:
+                action_roots.append(pkg_actions)
+        except Exception:
+            pass
+
+        index = load_index()
+        actions_index = index.get("actions") or {}
+        action_id = args.action
+        action_path = None
+
+        entry = actions_index.get(action_id) or {}
+        indexed_path = entry.get("path")
+        if indexed_path:
+            candidate = indexed_path if os.path.isabs(indexed_path) \
+                else os.path.join(root, indexed_path)
+            if os.path.exists(candidate):
+                action_path = candidate
+        if action_path is None and action_id not in actions_index:
+            # 允许传可读 name（子命令帮助里写的是「指定动作 ID」，name 是便利增强）
+            for aid in (index.get("by_name") or {}).get(action_id) or []:
+                action_id = aid
+                break
+        if action_path is None:
+            for actions_root in action_roots:
+                action_path = find_action_file(action_id, actions_root)
+                if action_path:
                     break
-        if not os.path.exists(action_path):
+        if not action_path:
             print(f'❌ 动作不存在: {args.action}')
             return 1
-        action = Action.from_file(action_path)
+        # 审计修复：`Action` 没有 from_file()（真源是 model.parse_cfg_from_file），
+        # 原写法让 `actus viz --action <存在文件>` 恒崩 AttributeError。
+        action = parse_cfg_from_file(action_path)
         result = visualize_action_workflow(action.meta, args.format)
     else:
         # 可视化项目级工作流（如果有）
@@ -3015,7 +3068,12 @@ def _cmd_health(args) -> int:
                         for r in report.results],
         }, sys.stdout, ensure_ascii=False, indent=2)
     else:
-        print(report.report_text())
+        # 审计修复：HealthReport 没有 report_text()（只有 summary()/results），
+        # 原写法让人类可读的 `actus health` 恒崩 AttributeError（--json 正常）。
+        print(report.summary())
+        for r in report.results:
+            print(f"  [{r.status.upper()}] {r.name}: {r.message}"
+                  + (f"  建议: {r.suggestion}" if r.suggestion else ""))
 
     return 0 if report.overall == "ok" else 1
 

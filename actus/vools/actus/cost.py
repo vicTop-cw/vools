@@ -17,6 +17,8 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from .paths import meta_dir
+
 __all__ = ['record_cost', 'get_cost_summary', 'check_budget',
            'alert_budget_if_over', 'COSTS_DIR']
 
@@ -31,18 +33,13 @@ _INCOMPLETE_UNKNOWN_COST = 'unknown_cost'    # cost_usd=null → 成本未知（
 _INCOMPLETE_MISSING_PROVIDER = 'missing_provider'  # 缺/空 provider → 归 unknown
 _INCOMPLETE_BAD_PROVIDER = 'bad_provider'    # provider 非字符串 → 归 unknown
 
-# 成本账本目录。优先走 ACTUS_REPO_ROOT 环境变量（Actus 仓库根，run_tests.ps1 与
-# 主程序都设它）；回退到相对本文件推导 —— 那个回退分支只在**vools 独立用**、
-# 没有 Actus 主仓时兜底。
-# 2026-10-13（docs/45 S2 shim 化）：本模块实现落在 vools，但 _meta/costs/ 是
-# **宿主仓库**的运行时数据，不能跟着实现文件走。若靠 __file__ 推导，shim 后
-# 会写成 `vools/.../_meta/costs/`，账本记到仓库外去了。
-_ACTUS_ROOT = os.environ.get('ACTUS_REPO_ROOT')
-if _ACTUS_ROOT:
-    COSTS_DIR = os.path.join(_ACTUS_ROOT, '_meta', 'costs')
-else:
-    COSTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))), '_meta', 'costs')
+# 成本账本目录：`paths.meta_dir()/costs`（**唯一真源**）。
+# 优先级由 paths 统一：ACTUS_META_DIR > ACTUS_REPO_ROOT/_meta > __file__ 推导。
+# 2026-10-13（docs/45 S2 shim 化）的历史约束仍然成立：_meta/costs/ 是**宿主仓库**
+# 的运行时数据，不能跟着实现文件走 —— 真源的默认分支正是「仓库根/_meta」。
+# 本轮修正：改前只读 ACTUS_REPO_ROOT，**ACTUS_META_DIR 对它无效**，用户没法用一条
+# 环境变量把整棵 _meta 搬走；现在与其它模块一致了（不设环境变量时路径逐字不变）。
+COSTS_DIR = os.path.join(meta_dir(), 'costs')
 
 
 def _ensure_dir():

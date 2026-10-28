@@ -24,6 +24,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+from .paths import meta_dir
 from . import calllog
 from . import omega as _omega
 from .errors import ActionError
@@ -84,11 +85,8 @@ def omega_norm_max_rounds(v: int) -> int:
 
 
 def _default_meta() -> str:
-    root = os.environ.get('ACTUS_REPO_ROOT')
-    if root:
-        return os.path.join(root, '_meta')
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))), '_meta')
+    # 路径真源：ACTUS_META_DIR > ACTUS_REPO_ROOT/_meta > __file__ 推导（paths.meta_dir()）
+    return meta_dir()
 
 
 def _ledger_path(task_id: str, meta_dir: Optional[str] = None) -> str:

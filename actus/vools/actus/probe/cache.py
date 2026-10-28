@@ -16,6 +16,27 @@
 * **原子写**：先 `json.dumps` 再写同目录临时文件、最后 `os.replace`。改前直接
   `json.dump` 落盘，遇到不可序列化的值（或进程被 kill）会留下半截 JSON，
   下一次读缓存就走异常路径。
+
+缓存文件位置（可测性/可重定向，本轮修复）
+------------------------------------------
+改前：`_CACHE_DIR` 是 import 时用 `__file__` 硬算出来的模块级常量，**完全不读
+`ACTUS_META_DIR`** —— 而 actus 其它模块（`cli.py` 的 `_meta`、`export.py` 的
+`meta_dir`、`cost.py` 的 `COSTS_DIR`）都遵循「`ACTUS_META_DIR` 优先」的约定。
+三个真实后果：
+  1. **测试隔离不掉**：测试里 `ACTUS_META_DIR=tmp` 挡不住 probe 缓存，真跑 probe
+     会写进仓库的 `actus/_meta/probe_cache.json`；
+  2. **用户重定向不了**：把 `_meta` 挪走（只读仓库 / 多项目共存）后，probe 缓存
+     仍写原处；
+  3. **打包安装后**会把缓存算到 site-packages 里的 `_meta`，那里可能不可写。
+
+改后：路径改成**函数式解析**（`_cache_dir()` / `_cache_path()`，每次调用重新解析），
+优先级（**先后顺序即语义，写死在这里**）：
+  1. 模块属性 `_CACHE_FILE` / `_CACHE_DIR` **被显式改过**（测试用
+     `monkeypatch.setattr` 隔离）→ 用它，保证既有测试与外部代码不受影响；
+  2. `paths.meta_dir()`（**唯一真源**）：`ACTUS_META_DIR` → 用它；
+     否则 `ACTUS_REPO_ROOT/_meta`；再否则 `__file__` 推导（三者都由 paths 解析）；
+  3. 都没有 → 与改前**逐字相同**的 `__file__` 推导（`<repo_root>/_meta`）。
+`_CACHE_FILE` / `_CACHE_DIR` 作为「默认值」继续保留（外部有引用，不能删）。
 """
 
 __all__ = [
@@ -32,12 +53,44 @@ import tempfile
 import time
 from typing import Optional
 
+from ..paths import DEFAULT_REPO_ROOT, meta_dir
 from .report import REPORT_SCHEMA_VERSION
 
-# 缓存文件路径
-_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "_meta")
-_CACHE_FILE = os.path.join(_CACHE_DIR, "probe_cache.json")
+# 缓存文件名（目录可变，文件名不变）
+_CACHE_FILENAME = "probe_cache.json"
+
+
+# 默认值（兼容保留：外部/测试一直用 monkeypatch.setattr 改这两个名字来隔离缓存）。
+# 注意：这里用**不含环境变量**的常量做基线，_cache_path() 里靠「是否等于基线」
+# 判断模块属性有没有被显式改过；真正生效的目录由 paths.meta_dir() 在调用时解析。
+_DEFAULT_CACHE_DIR = os.path.join(DEFAULT_REPO_ROOT, "_meta")
+_DEFAULT_CACHE_FILE = os.path.join(_DEFAULT_CACHE_DIR, _CACHE_FILENAME)
+_CACHE_DIR = _DEFAULT_CACHE_DIR
+_CACHE_FILE = _DEFAULT_CACHE_FILE
+
 _CACHE_TTL = 3600  # 1 小时过期
+
+
+def _cache_dir() -> str:
+    """解析缓存目录（优先级见模块 docstring：显式 monkeypatch > ACTUS_META_DIR > 默认）。"""
+    if _CACHE_FILE != _DEFAULT_CACHE_FILE:
+        # 显式指定了缓存文件（测试最常用的隔离手段）：目录跟着它走
+        return os.path.dirname(os.path.abspath(_CACHE_FILE))
+    if _CACHE_DIR != _DEFAULT_CACHE_DIR:
+        # 只改了目录（少见，但兼容）：文件名沿用默认
+        return _CACHE_DIR
+    # 真源：ACTUS_META_DIR > ACTUS_REPO_ROOT/_meta > __file__ 推导（paths.meta_dir()）
+    return meta_dir()
+
+
+def _cache_path() -> str:
+    """解析缓存文件路径（**每次调用重新解析**，所以测试可以在 import 之后再设环境变量）。"""
+    if _CACHE_FILE != _DEFAULT_CACHE_FILE:
+        return _CACHE_FILE
+    if _CACHE_DIR != _DEFAULT_CACHE_DIR:
+        return os.path.join(_CACHE_DIR, _CACHE_FILENAME)
+    # 真源：ACTUS_META_DIR > ACTUS_REPO_ROOT/_meta > __file__ 推导（paths.meta_dir()）
+    return os.path.join(meta_dir(), _CACHE_FILENAME)
 
 # 缓存 payload 结构版本。真源在 report.REPORT_SCHEMA_VERSION（报告结构在哪定义，
 # 版本就在哪），这里只做别名 —— 两处各写一个数字迟早会漂移。
@@ -58,8 +111,8 @@ _LAST_REJECT = ""
 
 
 def _ensure_cache_dir():
-    """确保缓存目录存在。"""
-    os.makedirs(_CACHE_DIR, exist_ok=True)
+    """确保缓存目录存在（目录按 _cache_dir() 解析，支持 ACTUS_META_DIR）。"""
+    os.makedirs(_cache_dir(), exist_ok=True)
 
 
 def _resolve_max_age(max_age) -> Optional[float]:
@@ -84,7 +137,7 @@ def _resolve_max_age(max_age) -> Optional[float]:
 def _read_payload():
     """读取并解析缓存文件，返回 (payload, reason)。"""
     try:
-        with open(_CACHE_FILE, "r", encoding="utf-8") as f:
+        with open(_cache_path(), "r", encoding="utf-8") as f:
             return json.load(f), ""
     except FileNotFoundError:
         return None, "missing"
@@ -209,7 +262,7 @@ def save_cache(report: dict) -> bool:
         data["timestamp"] = _report_timestamp(report)
         data["cached_at"] = time.time()
         text = json.dumps(data, ensure_ascii=False, indent=2)   # 先序列化：不落半截
-        _atomic_write(_CACHE_FILE, text)
+        _atomic_write(_cache_path(), text)
         return True
     except Exception:
         return False
@@ -239,14 +292,15 @@ def _atomic_write(path: str, text: str):
 
 def invalidate_cache():
     """清除缓存（含上一次原子写中断留下的临时文件）。"""
+    path = _cache_path()
     try:
-        if os.path.exists(_CACHE_FILE):
-            os.remove(_CACHE_FILE)
+        if os.path.exists(path):
+            os.remove(path)
     except OSError:
         pass
     # 清理临时残留：只碰本模块自己生成的 .probe_cache.*.tmp，不扫其它文件
     try:
-        directory = os.path.dirname(os.path.abspath(_CACHE_FILE)) or "."
+        directory = os.path.dirname(os.path.abspath(path)) or "."
         for name in os.listdir(directory):
             if name.startswith(".probe_cache.") and name.endswith(".tmp"):
                 try:
@@ -263,9 +317,10 @@ def cache_info() -> dict:
     回答「我明明探测过，为什么又重跑了」这类问题：文件在不在、多大、schema
     是否匹配、数据多旧、上次为什么被拒绝。`probe()` 不消费它，供 CLI/排障用。
     """
+    path = _cache_path()
     info = {
-        "path": _CACHE_FILE,
-        "exists": os.path.exists(_CACHE_FILE),
+        "path": path,
+        "exists": os.path.exists(path),
         "schema_expected": CACHE_SCHEMA_VERSION,
         "schema_in_file": None,
         "ttl_seconds": _CACHE_TTL,
@@ -281,7 +336,7 @@ def cache_info() -> dict:
         info["reason"] = "missing"
         return info
     try:
-        info["size_bytes"] = os.path.getsize(_CACHE_FILE)
+        info["size_bytes"] = os.path.getsize(path)
     except OSError:
         pass
 

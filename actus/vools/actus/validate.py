@@ -26,6 +26,7 @@ import os
 import re
 import sys
 from typing import Dict, List, Tuple
+from .paths import repo_root
 
 from .errors import ActionError
 from .model import Action, parse_cfg_from_file
@@ -53,8 +54,7 @@ def _resolve_schema_path() -> str:
     root = os.environ.get('ACTUS_REPO_ROOT')
     if root:
         candidates.append(os.path.join(root, 'contracts', 'action.schema.json'))
-    candidates.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))), 'contracts', 'action.schema.json'))
+    candidates.append(os.path.join(repo_root(), 'contracts', 'action.schema.json'))
     cur = os.path.abspath(os.getcwd())
     for _ in range(6):
         candidates.append(os.path.join(cur, 'contracts', 'action.schema.json'))
@@ -769,8 +769,7 @@ def _repo_root_from_path(action: Action) -> str:
     if env:
         return env
     # 引擎代码侧仓库（vools/actus）作为兜底，便于包内种子动作自校验
-    return os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))))
+    return repo_root()
 
 
 def resolve_test_binding(action: Action) -> Tuple[bool, List[str]]:

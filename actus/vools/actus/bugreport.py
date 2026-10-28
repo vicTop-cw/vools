@@ -29,6 +29,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
+from .paths import repo_root
 
 __all__ = ['report_bug', 'bug_list', 'bugs_path', 'BugreportError', 'SEVERITIES']
 
@@ -59,12 +60,8 @@ def _now_iso() -> str:
 
 
 def _default_root() -> str:
-    root = os.environ.get('ACTUS_REPO_ROOT')
-    if root:
-        return root
-    # engine/actuscore/bugreport.py → 仓库根
-    return os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))))
+    # 路径真源：ACTUS_REPO_ROOT > __file__ 上三级（paths.repo_root()）
+    return repo_root()
 
 
 def bugs_path(project_dir: Optional[str] = None) -> str:
