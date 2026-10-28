@@ -546,8 +546,16 @@ class ActionRegistry:
         if not os.path.isfile(cache_path):
             return None
 
-        with open(cache_path, "r", encoding="utf-8") as f:
-            cache_data = json.load(f)
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cache_data = json.load(f)
+        except (OSError, ValueError):
+            # 审计修复（零风险）：缓存是**可重建的副本**，损坏等价于"没有缓存"。
+            # 改前 json.load 直接抛 JSONDecodeError 穿透到 CLI（`install --cached` 崩）；
+            # 现在按 cache miss 处理（返回 None → 调用方重新拉取）。
+            return None
+        if not isinstance(cache_data, dict):
+            return None
 
         # 检查过期
         cached_at = cache_data.get("cached_at", 0)
@@ -568,10 +576,13 @@ class ActionRegistry:
             if os.path.isfile(cache_path):
                 os.remove(cache_path)
         else:
-            # 清除全部缓存
+            # 清除全部缓存（**只删本模块写的 .json**）
+            # 审计修复（零风险）：改前删除 cache_dir 里**所有文件**——实测把用户
+            # 放进缓存目录的 USER_DATA.txt 也删了。cache_dir 可由调用方传入任意路径，
+            # 误删面过大；现在只清 `*.json` 缓存文件。
             for fname in os.listdir(self._cache_dir):
                 fpath = os.path.join(self._cache_dir, fname)
-                if os.path.isfile(fpath):
+                if os.path.isfile(fpath) and fname.endswith(".json"):
                     os.remove(fpath)
 
     # ── 安装清单 ──
@@ -750,7 +761,12 @@ class ActionRegistry:
         退化到校验和验证（无加密签名）。
         """
         if not entry.signature:
-            return entry.trust_level in ("community", "trusted")
+            # 审计修复（零风险）：与主路径 `verify_signature()` 的判据对齐。
+            # 主路径是 `return entry.trust_level == "community"`（无签名只接受
+            # community）；改前这里放行 ("community", "trusted")，导致
+            # **同一份索引在"装了 cryptography"和"没装"的机器上验签结论不同** ——
+            # 无签名 + trust_level=trusted 在主路径判 False，退化路径却判 True（假通过）。
+            return entry.trust_level == "community"
 
         sig_path = os.path.join(repo_dir, entry.signature)
         if not os.path.isfile(sig_path):
