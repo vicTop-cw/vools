@@ -16,8 +16,9 @@
 所有用例都在**同一个 60 秒窗口**内跑 `register → auth → set → get`；
 `pytest -k vault` 54 passed 全绿，恰恰因为**跑得太快**。
 
-本文件用**可控假时钟**（monkeypatch `vault2.time`）把窗口推进到下一/五个窗口，
-不 sleep、不依赖真实时间；先写测试看红，修复后必须绿。
+时间控制统一走 `tests/conftest.py` 的共用夹具 `advance_totp_window(n)`
+（同时 patch `vault2.time` 与 `vools.security.otp.time`）——这样所有"跨时间"缺陷
+以后都有同一把可控时钟，不再重复实现、也不再被"跑得太快"掩护。
 """
 
 import os
@@ -29,11 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
 _ai_local_bootstrap.install()
 
-import time as real_time  # noqa: E402  — 真实时间模块，仅供 FakeClock 兜底属性
-
 from vools.actus import vault2 as vault2_mod  # noqa: E402
-from vools.actus.vault2 import DEFAULT_TIME_STEP, Vault2  # noqa: E402
-from vools.security import otp as otp_mod  # noqa: E402
+from vools.actus.vault2 import Vault2  # noqa: E402
 
 _PIN = "123456"
 
@@ -42,26 +40,12 @@ _PIN = "123456"
 # 可控假时钟 + 隔离夹具
 # ---------------------------------------------------------------------------
 
-class _FakeClock(object):
-    """TOTP 窗口可控制的时钟：只替换 `vault2.time`，不 sleep。"""
-
-    def __init__(self, start: int):
-        self.now = int(start)
-
-    def time(self) -> float:
-        return float(self.now)
-
-    def __getattr__(self, name):
-        # `vault2` 只在 anomaly_check 里用 time.localtime；其余属性透传真实模块
-        return getattr(real_time, name)
-
-
 class _World(object):
     pass
 
 
 @pytest.fixture
-def world(tmp_path, monkeypatch):
+def world(tmp_path, monkeypatch, advance_totp_window):
     home = tmp_path / "home"
     meta = tmp_path / "meta"
     v2dir = tmp_path / "vault2"
@@ -80,15 +64,10 @@ def world(tmp_path, monkeypatch):
     monkeypatch.delenv("ACTUS_VAULT_LAZY_MIGRATE", raising=False)
 
     vault2_mod._vault2_singleton = None
-    clock = _FakeClock(1_700_000_000)      # 固定时刻，窗口边界确定
-    # TOTP 算法定义在 vools.security.otp（vault2 只是 import 引用）——两处都要 patch，
-    # 否则窗口推进只影响 vault2 的过期判断，动态码仍按真实时间生成。
-    monkeypatch.setattr(vault2_mod, "time", clock)
-    monkeypatch.setattr(otp_mod, "time", clock)
 
     w = _World()
     w.vault = Vault2(vault_dir=str(v2dir))
-    w.clock = clock
+    w.advance = advance_totp_window      # 共用夹具：推进 n 个 TOTP 窗口（不 sleep）
     return w
 
 
@@ -122,7 +101,7 @@ def test_secret_survives_across_totp_windows(world):
     assert written["status"] == "ok", written
 
     # 推进一个完整窗口（+61s，避免边界抖动；不 sleep）
-    world.clock.now += DEFAULT_TIME_STEP + 1
+    world.advance(1)
     auth_next = _auth(world.vault, reg)
     assert auth_next["status"] == "ok", auth_next
 
@@ -146,7 +125,7 @@ def test_l1_is_unaffected_by_window(world):
     reg, auth_n = _register_and_auth(world.vault, "bob", "L1")
     assert world.vault.set_secret(auth_n["session_token"], "l1_key", "L1-VALUE")["status"] == "ok"
 
-    world.clock.now += DEFAULT_TIME_STEP + 1
+    world.advance(1)
     auth_next = _auth(world.vault, reg)
     assert auth_next["status"] == "ok", auth_next
 
@@ -174,7 +153,7 @@ def test_write_and_read_in_different_windows_is_documented_contract(world):
     assert world.vault.set_secret(auth_n["session_token"], "long_lived",
                                   "LONG-LIVED-VALUE")["status"] == "ok"
 
-    world.clock.now += 5 * DEFAULT_TIME_STEP      # 跨 5 个窗口
+    world.advance(5)      # 跨 5 个窗口
     auth_later = _auth(world.vault, reg)
     assert auth_later["status"] == "ok", auth_later
 
