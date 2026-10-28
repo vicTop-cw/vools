@@ -78,6 +78,9 @@ def _store():
     store.user = "postgres"
     store.lock_ttl_sec = 600
     store.claim_scan_limit = 50
+    # BUG-368：init_schema 会先取迁移 advisory lock 并设 lock_timeout；这里用 __new__
+    # 绕过 __init__，所以该属性要显式补上（与生产默认值一致）。
+    store.migration_lock_timeout_ms = 5000
     store._conn = _RecordingConn()
     return store
 
@@ -145,7 +148,11 @@ def test_init_schema_executes_create_then_all_migrations():
 
     stmts = store._conn.statements
     assert stmts, "没有发出任何语句"
-    assert "CREATE TABLE IF NOT EXISTS t_tasks" in stmts[0]
+    # BUG-368：迁移前先「限时 + 取 advisory lock」，再发 DDL；否则并发启动的多个会话
+    # 会互相抢 AccessExclusiveLock 直至死锁（见 test_pg_store_concurrency.py）。
+    assert stmts[0].startswith("SET LOCAL lock_timeout"), "第一条应为锁等待上限: %r" % (stmts[0],)
+    assert "pg_advisory_xact_lock" in stmts[1], "第二条应为迁移 advisory lock: %r" % (stmts[1],)
+    assert "CREATE TABLE IF NOT EXISTS t_tasks" in stmts[2]
     alters = [s for s in stmts if s.startswith("ALTER TABLE t_tasks ADD COLUMN IF NOT EXISTS ")]
     assert len(alters) == len(store.migration_sql())
     assert store._conn.commits == 1
