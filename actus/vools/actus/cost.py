@@ -130,6 +130,7 @@ def get_cost_summary(month: str = None) -> dict:
     total = 0.0
     calls = 0
     by_provider = {}
+    by_model = {}
     tokens_total = 0
     calls_unknown_cost = 0
     tokens_unknown_cost = 0
@@ -206,6 +207,16 @@ def get_cost_summary(month: str = None) -> dict:
             if unknown_cost:
                 by_provider[provider]['calls_unknown_cost'] += 1
 
+            # 第 11 轮：按**模型**分组（此前只有 by_provider；CLI cost 要展示模型级
+            # 花费，否则"按模型分组"只能靠人肉再算一遍）。
+            model = entry.get('model') or 'unknown'
+            if not isinstance(model, str):
+                model = 'unknown'
+            if model not in by_model:
+                by_model[model] = {'usd': 0, 'calls': 0}
+            by_model[model]['usd'] += cost
+            by_model[model]['calls'] += 1
+
     skipped_lines = sum(skipped_reasons.values())
     incomplete_lines = sum(incomplete_reasons.values())
     return {
@@ -213,6 +224,7 @@ def get_cost_summary(month: str = None) -> dict:
         'total_usd': round(total, 6),
         'calls': calls,
         'by_provider': by_provider,
+        'by_model': by_model,
         'tokens_total': tokens_total,
         'skipped_lines': skipped_lines,
         'skipped_reasons': dict(sorted(skipped_reasons.items())),

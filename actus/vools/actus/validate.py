@@ -552,7 +552,7 @@ def language_notices(action: Action) -> List[str]:
     """无 tag 文档围栏里不可路由的语言标记 → 只提示，不判失败。
 
     存在意义是"别装作没看见"：这些块现在跑不到，但一旦有人给它们补上 tag 就会
-    立刻进入 §6.5 硬门。列出来供 `actus check` 展示，不作为 errors 计数。
+    立刻进入 §6.5 硬门。列出来供 `actus validate` 展示，不作为 errors 计数。
     """
     notices: List[str] = []
     try:

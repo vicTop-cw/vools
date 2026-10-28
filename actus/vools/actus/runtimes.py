@@ -556,7 +556,3 @@ def get_available_runtimes() -> list:
     return _get_registry().available_languages()
 
 
-def reset_registry():
-    """测试用：重置注册表。"""
-    global _registry
-    _registry = None

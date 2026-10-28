@@ -234,7 +234,8 @@ class ActionRepo:
 def create_repo(root: str, name: Optional[str] = None, owner: str = 'unknown',
                 description: str = '', license_: str = 'MIT',
                 overwrite: bool = False) -> Dict[str, Any]:
-    """建仓（docs/41 §D4 `actus repo create`）。
+    """建仓（docs/41 §D4；**库内 API `create_repo`** —— CLI 当前没有 `actus repo` 子命令，
+    旧的 ``actus repo create`` 提法不成立，第 11 轮文档审计修正）。
 
     命名硬约束在建仓时就挡住：名字不以 `.actus` 结尾 → 直接拒。
     这条约束如果留到检索时才发现，作者的仓会"建好了但搜不到"，现象与"没建"一样。

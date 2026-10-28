@@ -157,6 +157,11 @@ def _build_parser():
     parser.add_argument('--version', action='version',
                         version='%(prog)s ' + _actus_version,
                         help='显示版本号并退出')
+    # 审计（第 27 轮）：全局机器可读开关。此前 `search` / `registry build|validate|info`
+    # / `visibility get|set` 只打印人类文本，脚本无法解析（三方一致性审计的 ⑤）。
+    # 输出形状对齐 MCP 的**扁平**结构（{status, ...}，不套 {status, data}）。
+    parser.add_argument('--json', dest='json_output', action='store_true',
+                        help='机器可读输出：扁平 JSON（形状与 MCP 一致）')
     sub = parser.add_subparsers(dest='command')
 
     sub.add_parser('scan', help='扫描 actions/ 并重建 _meta/actions.index.json')
@@ -356,6 +361,9 @@ def _build_parser():
 
     # registry 子命令（动作市场）
     p_registry = sub.add_parser('registry', help='动作注册表管理')
+    p_registry.add_argument('--json', dest='json_output', action='store_true',
+                        default=argparse.SUPPRESS,
+                        help='机器可读输出：扁平 JSON（形状与 MCP 一致）')
     registry_sub = p_registry.add_subparsers(dest='registry_command')
 
     p_registry_build = registry_sub.add_parser('build', help='构建当前仓库的注册表索引')
@@ -395,6 +403,9 @@ def _build_parser():
 
     # search 子命令
     p_search = sub.add_parser('search', help='搜索动作')
+    p_search.add_argument('--json', dest='json_output', action='store_true',
+                        default=argparse.SUPPRESS,
+                        help='机器可读输出：扁平 JSON（形状与 MCP 一致）')
     p_search.add_argument('query', nargs='?', help='搜索关键词')
     p_search.add_argument('--category', help='分类过滤')
     p_search.add_argument('--author', help='作者过滤')
@@ -482,6 +493,33 @@ def _build_parser():
     p_health = sub.add_parser('health', help='系统健康检查')
     p_health.add_argument('--json', action='store_true', help='JSON 格式输出')
     p_health.add_argument('--check', help='只运行指定检查项')
+
+    # cost 子命令（第 11 轮接线：record_cost 只写不读，读端此前零入口）
+    p_cost = sub.add_parser('cost', help='查看 AI 成本记账（本月 spend / calls / 按 provider、模型）')
+    p_cost.add_argument('--month', default=None,
+                        help='月份 YYYY-MM（缺省当月）')
+
+    # selfdrive 子命令（第 11 轮接线：此前只有库内 API，文档却声称 CLI 已接通）
+    p_selfdrive = sub.add_parser('selfdrive',
+                                 help='自驱式编程（递归拆解 → 执行 → Ω 强验证）')
+    p_selfdrive.add_argument('selfdrive_action', choices=['run', 'status'],
+                             nargs='?', default='run',
+                             help='run=运行目标（默认）/ status=查看历史运行快照')
+    p_selfdrive.add_argument('goal', nargs='?', default='', help='目标文本（run 必填）')
+    p_selfdrive.add_argument('run_id', nargs='?', default='',
+                             help='status 用：指定 run_id（缺省列出最近运行）')
+    p_selfdrive.add_argument('--plan', default=None,
+                             help='动作计划 JSON 字符串（[{"action_id":...,"params":{}}] 或 ["动作id"]）')
+    p_selfdrive.add_argument('--plan-file', default=None, dest='plan_file',
+                             help='动作计划 JSON 文件路径')
+    p_selfdrive.add_argument('--worker', choices=['echo', 'action'], default='echo',
+                             help='echo=确定性空跑（默认，不执行真实动作）/ action=真实执行计划动作')
+    p_selfdrive.add_argument('--max-depth', type=int, default=2, dest='max_depth',
+                             help='递归拆解最大深度（默认 2）')
+    p_selfdrive.add_argument('--max-rounds', type=int, default=3, dest='max_rounds',
+                             help='失败回炉轮次预算（默认 3）')
+    p_selfdrive.add_argument('--strong', action='store_true',
+                             help='强验证模式（缺 Ω spec 视为失败）')
 
     # sync 子命令
     p_sync = sub.add_parser('sync', help='同步已安装的动作仓库')
@@ -574,6 +612,9 @@ def _build_parser():
 
     # visibility 子命令
     p_visibility = sub.add_parser('visibility', help='动作可见性管理')
+    p_visibility.add_argument('--json', dest='json_output', action='store_true',
+                        default=argparse.SUPPRESS,
+                        help='机器可读输出：扁平 JSON（形状与 MCP 一致）')
     visibility_sub = p_visibility.add_subparsers(dest='visibility_command')
 
     p_vis_get = visibility_sub.add_parser('get', help='查询动作可见性')
@@ -1066,6 +1107,12 @@ def _dispatch(args) -> int:
     # Health 命令
     if args.command == 'health':
         return _cmd_health(args)
+
+    if args.command == 'cost':
+        return _cmd_cost(args)
+
+    if args.command == 'selfdrive':
+        return _cmd_selfdrive(args)
 
     # Probe 命令（环境探测器，PROBE_PLAN.md §9 Phase 3）
     if args.command == 'probe':
@@ -1687,6 +1734,11 @@ def _cmd_visibility(args) -> int:
             return 1
         level = (action.meta.get('visibility') or 'public').strip().lower()
         team = (action.meta.get('team') or '').strip()
+        if getattr(args, 'json_output', False):
+            # 机器模式：扁平形状（与 MCP `actus_visibility_get` 一致）
+            _out({'status': 'ok', 'action_id': args.action_id,
+                  'visibility': level, 'team': team, 'source': 'action_file'})
+            return 0
         print(f'👁️  {args.action_id}: {level}' + (f'（团队: {team}）' if team else ''))
         return 0
 
@@ -1742,6 +1794,11 @@ def _cmd_registry(args) -> int:
         repo_dir = _repo_root_path()
         index = reg.build_from_directory(repo_dir)
         output = args.output or os.path.join(repo_dir, '.actus.registry.json')
+        if getattr(args, 'json_output', False):
+            # 机器模式：扁平形状（与 MCP 一致），脚本可解析
+            _out({'status': 'ok', 'index': output, 'repo': repo_dir,
+                  'count': len(index.get('actions', []))})
+            return 0
         print(f'✅ 注册表索引已构建: {output}')
         print(f'   动作数量: {len(index.get("actions", []))}')
         return 0
@@ -2007,6 +2064,18 @@ def _cmd_search(args) -> int:
         tags=tags,
         limit=args.limit
     )
+
+    # 审计（第 27 轮）：机器模式（--json）输出**扁平**结构，与 MCP 的
+    # `{status, data:{actions:[...]}}` 同形；人类模式保持原有可读输出。
+    if getattr(args, 'json_output', False):
+        _out({'status': 'ok', 'query': args.query, 'count': len(results),
+              'actions': [{
+                  'id': e.id, 'name': getattr(e, 'name', '') or e.id,
+                  'version': e.version, 'trust': e.trust_level,
+                  'description': e.description, 'author': e.author,
+                  'category': e.category, 'tags': e.tags,
+              } for e in results]})
+        return 0
 
     if not results:
         print('🔍 未找到匹配的动作')
@@ -2987,7 +3056,7 @@ def _cmd_replay(args) -> int:
     2. `run_id == id == args.run_id` 是链式比较 bug，--run-id 恒匹配不上。
 
     现在非 dry-run 真正调用现有执行入口 `vools.actus.execute(...)`（与
-    `actus exec` 同一条路径，不另造执行器），单条失败不中断整批，
+    `actus execute` 同一条路径，不另造执行器），单条失败不中断整批，
     结尾汇总「成功 N / 失败 M」，有失败时退出码 1。
     """
     from vools.actus.export import load_run_history, RunHistoryCorruptError
@@ -3221,6 +3290,128 @@ def _cmd_probe(args) -> int:
     else:
         print(format_summary(report))
     return 0
+
+
+def _cmd_cost(args) -> int:
+    """cost 子命令：AI 成本记账汇总。
+
+    第 11 轮接线：`record_cost()` 早已在 AI 调用路径写入账本，但**没有任何命令
+    能读**（原 `get_cost_summary`/`check_budget` 全仓零消费）→ 记账只写不读、
+    预算告警不可见。无记账数据时如实说"暂无记账"，不显示 $0 让人误以为免费。
+    """
+    from vools.actus.cost import check_budget, get_cost_summary
+
+    month = getattr(args, 'month', None)
+    summary = get_cost_summary(month)
+    recorded = bool(summary.get('calls'))
+    data = {
+        'month': summary.get('month'),
+        'recorded': recorded,
+        'spend_usd': summary.get('total_usd'),
+        'calls': summary.get('calls'),
+        'tokens_total': summary.get('tokens_total'),
+        'by_provider': summary.get('by_provider') or {},
+        'by_model': summary.get('by_model') or {},
+        'ledger_complete': summary.get('ledger_complete'),
+        'incomplete_reasons': summary.get('incomplete_reasons') or {},
+    }
+    if not recorded:
+        data['message'] = '暂无记账数据（本月没有 AI 调用或未启用记账）'
+    if month is None:
+        data['budget'] = check_budget()
+    return _out_result({'status': 'ok', 'data': data})
+
+
+def _cmd_selfdrive(args) -> int:
+    """selfdrive 子命令：自驱式编程（run / status）。
+
+    第 11 轮接线：此前 selfdrive / selfdrive_worker **只有库内 API**，而 docstring
+    却声称 CLI/MCP 入口已接通（实测 grep 均 0 命中，属文档造假）。现在补 CLI：
+      * `--worker echo`（默认）：确定性空跑，只跑通拆解/验证流程，不执行真实动作；
+      * `--worker action`：用 `selfdrive_worker.ActionWorker.from_plan` 真实执行计划；
+      * `status [run_id]`：读取 `_meta/selfdrive/*.json` 快照。
+    """
+    from vools.actus import selfdrive as sd
+    from vools.actus.paths import meta_dir as _mdir
+
+    meta_dir = _mdir()
+    action = getattr(args, 'selfdrive_action', 'run')
+
+    if action == 'status':
+        # 位置参数布局：`selfdrive status [run_id]` —— run_id 在 argparse 里会先落到
+        # goal 位置（goal 是为 run 定义的），这里按 action 语义取回来。
+        rid = (getattr(args, 'run_id', '') or getattr(args, 'goal', '') or '').strip()
+        if rid:
+            snap = sd.load_run(rid, meta_dir)
+            if snap is None:
+                return _out_result({'status': 'failed', 'error': {
+                    'code': 'not_found', 'message': '运行快照不存在: %s' % rid}})
+            return _out_result({'status': 'ok', 'run': snap})
+        runs = sd.list_runs(meta_dir)
+        rows = [{
+            'run_id': r.get('run_id'),
+            'goal': r.get('goal'),
+            'strong': r.get('strong'),
+            'updated_at': r.get('updated_at'),
+            'summary': r.get('summary'),
+        } for r in runs]
+        rows.sort(key=lambda r: r.get('updated_at') or '', reverse=True)
+        data = {'runs': rows[:20], 'count': len(rows)}
+        if not rows:
+            data['message'] = '暂无 selfdrive 运行记录'
+        return _out_result({'status': 'ok', **data})
+
+    goal = (getattr(args, 'goal', '') or '').strip()
+    if not goal:
+        return _out_result({'status': 'failed', 'error': {
+            'code': 'param_invalid',
+            'message': ('用法: actus selfdrive run <goal> [--plan JSON] '
+                        '[--plan-file FILE] [--worker echo|action]')}})
+
+    plan_raw = None
+    plan_file = getattr(args, 'plan_file', None)
+    if plan_file:
+        try:
+            with open(plan_file, 'r', encoding='utf-8') as f:
+                plan_raw = f.read()
+        except OSError as exc:
+            return _out_result({'status': 'failed', 'error': {
+                'code': 'param_invalid', 'message': '读取 --plan-file 失败: %s' % exc}})
+    elif getattr(args, 'plan', None):
+        plan_raw = args.plan
+
+    worker = None
+    spec_resolver = None
+    worker_kind = 'echo'
+    if getattr(args, 'worker', 'echo') == 'action':
+        if not plan_raw:
+            return _out_result({'status': 'failed', 'error': {
+                'code': 'param_invalid',
+                'message': '--worker action 需要 --plan/--plan-file（动作计划）'}})
+        from vools.actus.paths import repo_root as _rroot
+        from vools.actus.selfdrive_worker import ActionWorker
+        try:
+            aw = ActionWorker.from_plan(
+                plan_raw, actions_dir=os.path.join(_rroot(), 'actions'),
+                meta_dir=meta_dir)
+        except ValueError as exc:
+            return _out_result({'status': 'failed', 'error': {
+                'code': 'param_invalid', 'message': str(exc)}})
+        worker = aw.worker
+        spec_resolver = aw.spec_resolver
+        worker_kind = 'action'
+
+    max_depth = getattr(args, 'max_depth', 2)
+    max_rounds = getattr(args, 'max_rounds', 3)
+    run = sd.SelfDrive(goal, max_depth=max(0, int(max_depth)),
+                       max_rounds=max(1, int(max_rounds)),
+                       worker=worker, spec_resolver=spec_resolver,
+                       strong=True if getattr(args, 'strong', False) else None,
+                       meta_dir=meta_dir)
+    snap = dict(run.run())
+    snap['worker_kind'] = worker_kind
+    snap.setdefault('status', 'ok')
+    return _out_result(snap)
 
 
 def _cmd_health(args) -> int:

@@ -1365,38 +1365,41 @@ def _run_blocks(action: Action, params: dict, exec_id: str,
 
 def _register_artifacts(meta_dir: str, action: Action, exec_id: str,
                         artifacts: list) -> None:
-    """产物登记 _meta/artifacts.json（docs/04 §3：名称/路径/哈希/来源动作/版本）。"""
+    """产物登记（docs/04 §3：名称/路径/哈希/来源动作/版本）。
+
+    第 11 轮审计修复（双实现口径不一致）：改前本函数直接写自己的
+    `{"actions": {aid: {ver: {artifacts: {...}}}}}` 格式，而 `records.list_artifacts()`
+    读的是 `{"artifacts": [...]}` —— 实测 CLI/MCP 的 `actus artifacts list` 对真实
+    执行产物**永远返回空**、`cleanup` 空转。现在统一走数据层
+    `records.register_artifact()`（单一写入入口，格式唯一）。
+    """
     if not artifacts:
         return
-    path = os.path.join(meta_dir, 'artifacts.json')
-    reg = {'actions': {}}
-    if os.path.exists(path):
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                reg = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            reg = {'actions': {}}
-
+    from . import records as _records
+    version = action.meta.get('version', '0.0.0')
     import hashlib
-    actions_reg = reg.setdefault('actions', {})
-    ver_reg = actions_reg.setdefault(action.id, {}).setdefault(
-        action.meta.get('version', '0.0.0'), {'artifacts': {}})
-    table = ver_reg.setdefault('artifacts', {})
     for a in artifacts:
         p = a.get('path')
         sha = a.get('hash')
         if p and os.path.exists(p) and not sha:
-            with open(p, 'rb') as f:
-                sha = hashlib.sha256(f.read()).hexdigest()
-        table[a.get('name') or f'block_{a.get("block")}'] = {
-            'path': (p or '').replace(os.sep, '/'),
-            'sha256': sha,
-            'source_exec': exec_id,
-            'block': a.get('block'),
-        }
-    os.makedirs(meta_dir, exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(reg, f, ensure_ascii=False, indent=2)
+            try:
+                with open(p, 'rb') as f:
+                    sha = hashlib.sha256(f.read()).hexdigest()
+            except OSError:
+                sha = None
+        name = a.get('name') or 'block_%s' % a.get('block')
+        _records.register_artifact(
+            meta_dir, exec_id,
+            name=name,
+            artifact_type='file' if p else 'text',
+            path=(p or '').replace(os.sep, '/'),
+            action_id=action.id,
+            description='',
+            sha256=sha,
+            version=version,
+            block=a.get('block'),
+            source_exec=exec_id,
+        )
 
 
 def preview(action_id: str, params: dict = None, actions_dir: str = None) -> dict:

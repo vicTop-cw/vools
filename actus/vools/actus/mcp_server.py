@@ -35,6 +35,25 @@ PROTOCOL_VERSION = '2024-11-05'
 SERVER_INFO = {'name': 'actus-mcp', 'version': '0.1.0'}
 
 # 管理工具（固定映射）
+#: 全局事件转发注册表：只保留**一个活跃 MCPServer** 的订阅。
+#: 旧实现每次 `MCPServer(...)` 都往全局 EventBus 追加两个闭包且从不撤销 ——
+#: 实测订阅者随实例数累积（重复通知 + 泄漏），第 11 轮修复见 `_detach_event_forwarding`。
+_EVENT_FORWARDING = {'bus': None, 'subs': [], 'server': None}
+
+
+def _detach_event_forwarding() -> None:
+    """撤销上一次注册的转发订阅（幂等；bus 不支持 unsubscribe 时静默跳过）。"""
+    state = _EVENT_FORWARDING
+    bus = state.get('bus')
+    if bus is not None:
+        for event_type, callback in state.get('subs') or []:
+            try:
+                bus.unsubscribe(event_type, callback)
+            except Exception:  # noqa: BLE001 —— 撤销失败不应阻塞关闭
+                pass
+    state.update({'bus': None, 'subs': [], 'server': None})
+
+
 ADMIN_TOOLS = ('actus_list', 'actus_info', 'actus_status', 'actus_preview',
                'actus_confirm', 'actus_scaffold', 'actus_author', 'actus_publish',
                'actus_deps', 'actus_dep_tree')
@@ -168,12 +187,28 @@ def _action_tool_map(ttl: float = 5.0) -> dict:
 
     带 5s TTL 缓存：非动作工具的每次调用**不必**付一次索引查找；新 scaffold 的
     动作最多晚 5s 进入异步白名单（在此之前走同步路径，行为仍然正确）。
+
+    审计（第 27 轮）：改前这里调 `actuscore.load_index()` —— 该函数**索引不存在时
+    会顺手构建并落盘**，于是**每一次工具调用**（包括 `actus_vault_set` 这种根本
+    不涉及动作、而且会被拒绝的调用）都会写出 `actions.index.json` /
+    `actions.mtimes.json`。审计实测：refused 的 vault_set 在 MCP 侧留下 3 个文件、
+    在 CLI/API 侧 0 个 —— 失败操作产生副作用。
+    现在改为**只读**索引文件：不存在就返回空映射（冷启动时动作工具走同步路径，
+    行为仍正确，只是少了"超时转后台"这一个优化），不再为了分类一次调用而建索引。
     """
     now = time.time()
     if _ACTION_TOOLS_CACHE['map'] is not None and now - _ACTION_TOOLS_CACHE['ts'] < ttl:
         return _ACTION_TOOLS_CACHE['map']
-    import vools.actus as actuscore
-    mapping = {_tool_name(aid): aid for aid in actuscore.load_index()['actions']}
+    from vools.actus.paths import meta_dir as _paths_meta_dir
+    idx_path = os.path.join(_paths_meta_dir(), 'actions.index.json')
+    mapping = {}
+    if os.path.isfile(idx_path):
+        try:
+            with open(idx_path, 'r', encoding='utf-8') as f:
+                idx = json.load(f)
+            mapping = {_tool_name(aid): aid for aid in (idx.get('actions') or {})}
+        except (OSError, ValueError):
+            mapping = {}
     _ACTION_TOOLS_CACHE['map'] = mapping
     _ACTION_TOOLS_CACHE['ts'] = now
     return mapping
@@ -266,47 +301,68 @@ class MCPServer:
         self._setup_event_forwarding()
 
     def _setup_event_forwarding(self):
-        """设置事件总线到 MCP notification 的转发。"""
+        """设置事件总线到 MCP notification 的转发。
+
+        第 11 轮审计修复（泄漏）：旧实现**每次实例化**都往全局 EventBus 追加两个
+        新闭包，却从不 unsubscribe —— 实测订阅者随 MCPServer 数量线性累积
+        （重复通知 + 内存泄漏）。现在每次注册前先撤销上一份订阅，只保留一个活跃
+        server 的转发；`close()` / `serve_forever` 退出时也会撤销。
+        """
         try:
             from vools.actus.eventbus import EventType, get_event_bus
             bus = get_event_bus()
-            
+
+            _detach_event_forwarding()   # 先撤旧的，避免多实例累积
+
             def _on_action_completed(event):
                 self._notify('actus/actionCompleted', {
                     'action_id': event.data.get('action_id'),
                     'exec_id': event.data.get('exec_id'),
                     'result': event.data.get('result'),
                 })
-            
+
             def _on_action_failed(event):
                 self._notify('actus/actionFailed', {
                     'action_id': event.data.get('action_id'),
                     'exec_id': event.data.get('exec_id'),
                     'error': event.data.get('error'),
                 })
-            
+
             bus.subscribe(EventType.ACTION_COMPLETED, _on_action_completed)
             bus.subscribe(EventType.ACTION_FAILED, _on_action_failed)
+            _EVENT_FORWARDING.update({
+                'bus': bus, 'server': self,
+                'subs': [(EventType.ACTION_COMPLETED, _on_action_completed),
+                         (EventType.ACTION_FAILED, _on_action_failed)],
+            })
         except Exception:
             pass  # 事件总线不可用时静默跳过
 
+    def close(self):
+        """撤销本实例的事件转发订阅（幂等；serve_forever 退出时自动调用）。"""
+        if _EVENT_FORWARDING.get('server') is self:
+            _detach_event_forwarding()
+
     # ── 协议层 ──
     def serve_forever(self) -> None:
-        for line in self._read_messages():
-            if line is None:
-                break
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line.decode('utf-8'))
-            except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                self._write({'jsonrpc': '2.0', 'id': None, 'error': {
-                    'code': -32700, 'message': f'Parse error: {e}'}})
-                continue
-            response = self.handle(msg)
-            if response is not None:
-                self._write(response)
+        try:
+            for line in self._read_messages():
+                if line is None:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line.decode('utf-8'))
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    self._write({'jsonrpc': '2.0', 'id': None, 'error': {
+                        'code': -32700, 'message': f'Parse error: {e}'}})
+                    continue
+                response = self.handle(msg)
+                if response is not None:
+                    self._write(response)
+        finally:
+            self.close()
 
     def _read_messages(self):
         """逐行读；兼容 LSP-style Content-Length 帧。"""
@@ -419,32 +475,43 @@ class MCPServer:
         return {'jsonrpc': '2.0', 'id': msg_id, 'error': err}
 
     # ── 工具层 ──
-    def _list_tools(self) -> list:
-        import vools.actus as actuscore
-        idx = actuscore.load_index()
+    def _list_tools(self, with_dynamic: bool = True) -> list:
+        """返回工具清单。
+
+        `with_dynamic=False` 只返回**固定工具**、完全不读索引 —— 供
+        `_required_params()` 这类「只想看 schema」的场景使用。
+        审计（第 27 轮）：改前 `_required_params()` 每次调用都走 `_list_tools()`
+        → `load_index()`，而 `load_index()` 在索引缺失时会**建索引并落盘**；
+        于是连 `actus_vault_set` 这种被拒绝（refused）的调用也会留下
+        `actions.index.json` / `actions.mtimes.json` —— **失败操作产生副作用**
+        （实测 CLI/API 侧 0 个文件、MCP 侧 3 个）。
+        """
         tools = []
-        for aid, brief in idx['actions'].items():
-            if aid.startswith('_invalid:') or brief.get('status') != 'valid':
-                continue  # docs/05 §5.1：不合规动作自动下架
-            desc = brief.get('description') or brief.get('name') or aid
-            trust = brief.get('trust')
-            if trust:
-                desc = f'[{trust}] {desc}'
-            # 分类体系 v2.0（docs/03 §2）：描述带 purpose/industry 摘要，
-            # AI 选工具时能按"做什么/服务谁"判断（此前只有 trust 前缀，
-            # 7 个动作在 AI 眼里除了 trust 完全同质）。
-            purpose = brief.get('purpose') or ['utility']
-            industry = brief.get('industry') or ['general']
-            desc = f'{desc}\n\n【分类】用途: {"/".join(purpose)} · 行业: {"/".join(industry)}'
-            # docs/10 §A.3：拼接 usage 字段，供 AI 理解用法
-            usage = brief.get('usage')
-            if usage:
-                desc = f'{desc}\n\n【用法】\n{usage}'
-            tools.append({
-                'name': _tool_name(aid),
-                'description': desc,
-                'inputSchema': _input_schema(brief),
-            })
+        if with_dynamic:
+            import vools.actus as actuscore
+            idx = actuscore.load_index()
+            for aid, brief in idx['actions'].items():
+                if aid.startswith('_invalid:') or brief.get('status') != 'valid':
+                    continue  # docs/05 §5.1：不合规动作自动下架
+                desc = brief.get('description') or brief.get('name') or aid
+                trust = brief.get('trust')
+                if trust:
+                    desc = f'[{trust}] {desc}'
+                # 分类体系 v2.0（docs/03 §2）：描述带 purpose/industry 摘要，
+                # AI 选工具时能按"做什么/服务谁"判断（此前只有 trust 前缀，
+                # 7 个动作在 AI 眼里除了 trust 完全同质）。
+                purpose = brief.get('purpose') or ['utility']
+                industry = brief.get('industry') or ['general']
+                desc = f'{desc}\n\n【分类】用途: {"/".join(purpose)} · 行业: {"/".join(industry)}'
+                # docs/10 §A.3：拼接 usage 字段，供 AI 理解用法
+                usage = brief.get('usage')
+                if usage:
+                    desc = f'{desc}\n\n【用法】\n{usage}'
+                tools.append({
+                    'name': _tool_name(aid),
+                    'description': desc,
+                    'inputSchema': _input_schema(brief),
+                })
 
         tools.extend([
             {'name': 'actus_list',
@@ -477,9 +544,15 @@ class MCPServer:
                 'limit': {'type': 'integer', 'description': '最大推荐数'}}}},
             {'name': 'actus_info',
              'description': '查看动作元数据与依赖。' + TARGET_FORMS_HINT,
-             'inputSchema': {'type': 'object', 'required': ['id'],
-                             'properties': {'id': {'type': 'string',
-                                                   'description': TARGET_FORMS_HINT}}}},
+             # 审计（第 27 轮）：参数名从 `id` 统一到 `action_id`（与其余动作类工具一致），
+             # `id` 保留为兼容别名 —— 此前同一批工具里两种命名混用，AI 传错即报
+             # "缺少必需参数: id"，而它刚在 actus_list 里看到的是 `id` 字段。
+             'inputSchema': {'type': 'object', 'required': ['action_id'],
+                             'properties': {
+                                 'action_id': {'type': 'string',
+                                               'description': '动作 id，如 actus.basics.calculator。' + TARGET_FORMS_HINT},
+                                 'id': {'type': 'string',
+                                        'description': '（兼容别名，等价 action_id；新代码请用 action_id）'}}}},
             {'name': 'actus_status',
              'description': ('查询执行状态：可传 exec_id（执行留痕）或 task_id'
                              '（慢工具转后台后的任务句柄，返回 running/ok/failed/timeout）。'
@@ -489,12 +562,26 @@ class MCPServer:
                                  'exec_id': {'type': 'string'},
                                  'task_id': {'type': 'string',
                                              'description': '异步任务 id（tools/call 返回的 running 句柄里）'}}}},
+            {'name': 'actus_cost',
+             'description': ('AI 成本记账汇总（本月 spend/calls，按 provider 与模型分组）。'
+                             '第 11 轮接线：record_cost 早已写入账本，但此前没有任何'
+                             '命令/工具能读（get_cost_summary 全仓零消费）→ 记账只写不读、'
+                             '预算告警不可见。无记账时如实返回 recorded=false。'),
+             'inputSchema': {'type': 'object',
+                             'properties': {
+                                 'month': {'type': 'string',
+                                           'description': '月份 YYYY-MM（缺省当月）'}}}},
             {'name': 'actus_preview',
-             'description': '干跑：展示将执行的块/指令/依赖，不执行。' + TARGET_FORMS_HINT + 
+             'description': '干跑：展示将执行的块/指令/依赖，不执行。' + TARGET_FORMS_HINT +
                             '；args 为入参 JSON object',
-             'inputSchema': {'type': 'object', 'required': ['id'],
-                             'properties': {'id': {'type': 'string'},
-                                            'args': {'type': 'object'}}}},
+             # 同 actus_info：主名 action_id，`id` 兼容别名
+             'inputSchema': {'type': 'object', 'required': ['action_id'],
+                             'properties': {
+                                 'action_id': {'type': 'string',
+                                               'description': '动作 id，如 actus.basics.calculator。' + TARGET_FORMS_HINT},
+                                 'id': {'type': 'string',
+                                        'description': '（兼容别名，等价 action_id；新代码请用 action_id）'},
+                                 'args': {'type': 'object'}}}},
             {'name': 'actus_confirm',
              'description': ('人类确认通道（**本版本不可用**：没有按 exec_id 的确认接口，'
                              '调用会返回 not_implemented。请改用带 confirmed=true 的动作'
@@ -660,8 +747,34 @@ class MCPServer:
             {'name': 'actus_triggers_status',
              'description': '查看触发器引擎状态（运行中的任务数、引擎状态）',
              'inputSchema': {'type': 'object', 'properties': {}}},
+            {'name': 'actus_run_code',
+             'description': ('执行**代码片段**：在指定语言运行时中直接运行 python/shell/'
+                             'node/go/rust/ruby/php 代码。'
+                             '⚠️ 这不是执行 Actus 动作！要执行动作请用动作自己的工具'
+                             '名（见 actus_list 返回的 `tool` 字段，如 actus_basics_calculator），'
+                             '或用 CLI `actus run <action_id>` / API execute(action_id)。'),
+             'inputSchema': {'type': 'object',
+                             'required': ['language', 'code'],
+                             'properties': {
+                                 'language': {'type': 'string',
+                                              'description': '语言：python/shell/node/go/rust/ruby/php'},
+                                 'code': {'type': 'string',
+                                          'description': '要执行的代码'},
+                                 'args': {'type': 'string',
+                                          'description': '命令行参数（可选）'},
+                                 'stdin': {'type': 'string',
+                                           'description': '标准输入（可选）'},
+                                 'env': {'type': 'object',
+                                         'description': '环境变量（可选）'},
+                                 'timeout': {'type': 'integer',
+                                             'description': '超时秒数（可选，默认 30）'},
+                             }}},
+            # 兼容别名（保留一个版本周期）：旧名 actus_execute 容易与"执行动作"混淆，
+            # 已改名 actus_run_code；旧名行为不变，但 description 点明差别。
             {'name': 'actus_execute',
-             'description': '执行代码：直接在指定语言运行时中运行代码片段（python/shell/node/go/rust/ruby/php）',
+             'description': ('⚠️ 已改名为 `actus_run_code`（旧名保留兼容，下个版本移除）；'
+                             '两者相同：**执行代码片段**，不是执行动作。'
+                             '执行动作请用动作自己的工具名（见 actus_list 的 `tool` 字段）。'),
              'inputSchema': {'type': 'object',
                              'required': ['language', 'code'],
                              'properties': {
@@ -1267,9 +1380,13 @@ class MCPServer:
         """
         if self._required_map is None:
             try:
+                # 只取**固定工具**的 schema（with_dynamic=False）：动态动作工具的
+                # 必需参数由动作自身的 args schema 决定、由 executor 校验，
+                # 这里不需要读索引 —— 读索引会在冷启动时**建索引并落盘**，
+                # 让"验证参数"变成一次副作用（审计第 27 轮）。
                 self._required_map = {
                     tool['name']: tuple(tool.get('inputSchema', {}).get('required') or ())
-                    for tool in self._list_tools()}
+                    for tool in self._list_tools(with_dynamic=False)}
             except Exception:
                 self._required_map = {}
         return self._required_map.get(tool_name, ())
@@ -1344,6 +1461,31 @@ class MCPServer:
         return result
 
     def _call_tool(self, params: dict) -> dict:
+        """工具调用**安全边界**：任何未预期异常都收敛为结构化 isError 结果。
+
+        审计（第 27 轮）：改前本方法内部不兜底 —— 例如
+        `_call_tool({'name': 'actus_team_create', 'arguments': {'name': 'bad name!'}})`
+        会直接抛 `ValueError` 穿透给调用方（只有经过 `handle()` 协议层才会映射成
+        -32602）。凡是直接驱动 `_call_tool` 的代码（测试、嵌入式集成、内部循环）
+        都会炸成裸异常，且连 isError 都拿不到。现在统一收敛：
+          * `ActionError` → 用它自己的 code；
+          * `ValueError`（产品层参数校验）→ `param_invalid`；
+          * 其它 → `internal`。
+        **不要求调用方必须走 handle()：内部函数应该自己扛住。**
+        """
+        try:
+            return self._call_tool_inner(params)
+        except Exception as exc:                       # noqa: BLE001 —— 边界兜底
+            code = getattr(exc, 'code', None)
+            if code is None:
+                code = 'param_invalid' if isinstance(exc, ValueError) else 'internal'
+            return text_result({'status': 'failed', 'error': {
+                'code': code,
+                'message': '%s: %s' % (type(exc).__name__, exc),
+                'details': {'tool': (params or {}).get('name', '')},
+            }}, True)
+
+    def _call_tool_inner(self, params: dict) -> dict:
         name = params.get('name', '')
         args = params.get('arguments') or {}
         import vools.actus as actuscore
@@ -1367,6 +1509,12 @@ class MCPServer:
         # 一份校验表。改前没有这层：`actus_registry_add {}` / `actus_private_add {}`
         # / `actus_team_create {}` 会静默返回 status=ok，同时把空名注册表、
         # 空 id 私有动作、teams/.json（team="" / member id=""）写进配置存储。
+        # 兼容别名（审计第 27 轮参数命名统一）：`actus_info` / `actus_preview`
+        # 历史上用 `id`，主名已改成 `action_id`。这里把旧名归一，保证两种写法都可用，
+        # 同时 `required: ['action_id']` 的校验不会被旧名误伤。
+        if name in ('actus_info', 'actus_preview') and not args.get('action_id')                 and args.get('id'):
+            args = dict(args, action_id=args['id'])
+
         missing = [param for param in self._required_params(name)
                    if args.get(param) in (None, '')]
         if missing:
@@ -1402,7 +1550,11 @@ class MCPServer:
                              'kind': b.get('kind') or 'exec',
                              'purpose': b.get('purpose') or ['utility'],
                              'industry': b.get('industry') or ['general'],
-                             'tags': action_tags})
+                             'tags': action_tags,
+                             # 审计（第 27 轮）：动作的**动态 MCP 工具名**此前无法枚举
+                             # （只能靠猜 `actus_` + id 归一），AI 拿到动作却不知道该
+                             # 调哪个工具。这里把工具名随行返回，让工具可被发现。
+                             'tool': _tool_name(aid)})
             return text_result({'status': 'ok', 'data': {'actions': rows}})
 
         if name == 'actus_search':
@@ -1438,7 +1590,11 @@ class MCPServer:
                              'kind': b.get('kind') or 'exec',
                              'purpose': b.get('purpose') or ['utility'],
                              'industry': b.get('industry') or ['general'],
-                             'tags': action_tags})
+                             'tags': action_tags,
+                             # 审计（第 27 轮）：动作的**动态 MCP 工具名**此前无法枚举
+                             # （只能靠猜 `actus_` + id 归一），AI 拿到动作却不知道该
+                             # 调哪个工具。这里把工具名随行返回，让工具可被发现。
+                             'tool': _tool_name(aid)})
             return text_result({'status': 'ok', 'data': {'actions': rows[:limit], 'total': len(rows)}})
 
         if name == 'actus_recommend':
@@ -1459,6 +1615,11 @@ class MCPServer:
                 desc = a.meta.get('description', '')
                 usage = a.meta.get('usage', '')
                 router.register_action(aid, desc, usage, tags)
+                # 第 11 轮接线：register_workflow 此前注册了没人读（route 无分支），
+                # 现在把 bundle/workflow 类动作同时登记为工作流，route 可返回
+                # match='workflow'。此处按动作 kind 登记，属最小真实来源。
+                if str(a.meta.get('kind') or 'exec').lower() in ('bundle', 'workflow'):
+                    router.register_workflow(aid, desc, tags)
 
             # probe 集成（PROBE_PLAN.md §9 Phase 3）：只推荐 ready 的动作
             try:
@@ -1469,7 +1630,12 @@ class MCPServer:
                 pass  # 探测失败时不启用 ready 过滤，保持向后兼容
             
             result = router.route(description)
-            
+
+            workflow = None
+            if result.get('workflow_id'):
+                workflow = {'id': result['workflow_id'],
+                            'reason': result.get('reason', '')}
+
             recommendations = []
             if result.get('action_id'):
                 aid = result['action_id']
@@ -1483,10 +1649,16 @@ class MCPServer:
                         'description': b.get('description', ''),
                     })
             
-            return text_result({'status': 'ok', 'data': {'recommendations': recommendations, 'total': len(recommendations)}})
+            data = {'recommendations': recommendations,
+                    'total': len(recommendations)}
+            if workflow is not None:
+                data['workflow'] = workflow
+            return text_result({'status': 'ok', 'data': data})
 
         if name == 'actus_info':
+            # action_id 为主名，id 为兼容别名（第 27 轮统一参数命名）
             aid = resolve_action_arg(args.get('id', ''))
+            aid = resolve_action_arg(args.get('action_id') or aid)
             try:
                 action = actuscore.get_action(aid)
             except actuscore.ActionError as e:
@@ -1514,10 +1686,41 @@ class MCPServer:
                         'code': 'action_not_found',
                         'message': f'执行记录不存在: {eid}'}}, True)
                 return text_result({'status': 'ok', 'data': r})
-            return text_result({'status': 'ok', 'data': rec.load_status(None)})
+            data = rec.load_status(None)
+            try:
+                from vools.actus.eventbus import get_event_bus
+                data['event_subscribers'] = get_event_bus().subscriber_count()
+            except Exception:  # noqa: BLE001 —— 诊断字段，缺失不影响状态查询
+                data['event_subscribers'] = None
+            return text_result({'status': 'ok', 'data': data})
+
+        if name == 'actus_cost':
+            from vools.actus.cost import check_budget, get_cost_summary
+            month = args.get('month') or None
+            summary = get_cost_summary(month)
+            recorded = bool(summary.get('calls'))
+            data = {
+                'month': summary.get('month'),
+                'recorded': recorded,
+                'spend_usd': summary.get('total_usd'),
+                'calls': summary.get('calls'),
+                'tokens_total': summary.get('tokens_total'),
+                'by_provider': summary.get('by_provider') or {},
+                'by_model': summary.get('by_model') or {},
+                'ledger_complete': summary.get('ledger_complete'),
+                'incomplete_reasons': summary.get('incomplete_reasons') or {},
+            }
+            if not recorded:
+                # 如实说明"暂无记账"，不返回 0 让人以为免费
+                data['message'] = '暂无记账数据（本月没有 AI 调用或未启用记账）'
+            if month is None:
+                data['budget'] = check_budget()
+            return text_result({'status': 'ok', 'data': data})
 
         if name == 'actus_preview':
+            # action_id 为主名，id 为兼容别名（第 27 轮统一参数命名）
             aid = resolve_action_arg(args.get('id', ''))
+            aid = resolve_action_arg(args.get('action_id') or aid)
             try:
                 p = actuscore.preview(aid, args.get('args') or {})
             except actuscore.ActionError as e:
@@ -1736,7 +1939,7 @@ class MCPServer:
         if name == 'actus_triggers_status':
             return _handle_triggers_status()
 
-        if name == 'actus_execute':
+        if name in ('actus_run_code', 'actus_execute'):
             return _handle_execute(args)
 
         if name == 'actus_records_list':

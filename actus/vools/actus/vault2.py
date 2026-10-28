@@ -1753,6 +1753,3 @@ def list_machines(token: str) -> dict:
     return _get_vault2().list_machines(token)
 
 
-def reset_singleton():
-    global _vault2_singleton
-    _vault2_singleton = None
