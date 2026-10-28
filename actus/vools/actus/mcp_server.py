@@ -119,6 +119,7 @@ class MCPServer:
         self.stdin = stdin or sys.stdin.buffer
         self.stdout = stdout or sys.stdout.buffer
         self._log_level = 'info'
+        self._required_map = None      # 懒加载：{tool 名: 声明的 required 元组}
         self._setup_event_forwarding()
 
     def _setup_event_forwarding(self):
@@ -220,6 +221,21 @@ class MCPServer:
             elif method == 'tools/list':
                 result = {'tools': self._list_tools()}
             elif method == 'tools/call':
+                # ⑥ 最小缓解：`serve_forever` 是严格串行的（read→handle→write），
+                # 一个慢工具会阻塞整个服务 —— 实测 GUI 动作
+                # `actus_basics_calculator` 单次阻塞 188s，期间所有请求都无响应，
+                # 客户端看起来像"服务挂了"。这里在**执行前**先回一条 MCP 日志
+                # 通知（notifications/message，无需应答），让调用方知道服务还活着、
+                # 正在干活。不做并发化（协议/线程安全风险大，未经设计不动）。
+                try:
+                    self._notify('notifications/message', {
+                        'level': 'info',
+                        'logger': 'actus-mcp',
+                        'data': '正在执行工具 %s …（本服务串行执行，若该动作是 GUI/'
+                                '长任务会阻塞其它请求直到它结束）'
+                                % (params or {}).get('name', '?')})
+                except Exception:
+                    pass          # 通知失败不影响调用本身
                 result = self._call_tool(params)
             elif method == 'prompts/list':
                 result = {'prompts': self._list_prompts()}
@@ -322,7 +338,9 @@ class MCPServer:
                              'properties': {'id': {'type': 'string'},
                                             'args': {'type': 'object'}}}},
             {'name': 'actus_confirm',
-             'description': '人类确认通道：对 awaiting_confirmation 的 exec 放行重跑',
+             'description': ('人类确认通道（**本版本不可用**：没有按 exec_id 的确认接口，'
+                             '调用会返回 not_implemented。请改用带 confirmed=true 的动作'
+                             '执行工具重新执行）'),
              'inputSchema': {'type': 'object', 'required': ['exec_id'],
                              'properties': {'exec_id': {'type': 'string'}}}},
             {'name': 'actus_scaffold',
@@ -1082,6 +1100,22 @@ class MCPServer:
             }
         }
 
+    def _required_params(self, tool_name: str) -> tuple:
+        """取该工具**声明**的必需参数（`inputSchema.required`，唯一真源）。
+
+        懒加载一次并缓存；声明里没有 required 的工具返回空元组（= 不校验）。
+        `_list_tools()` 依赖索引，理论上可能失败 —— 那种情况下退化为「不校验」，
+        不能因为校验层建不起来就把所有工具调用打死（真正的错误由各 handler 报）。
+        """
+        if self._required_map is None:
+            try:
+                self._required_map = {
+                    tool['name']: tuple(tool.get('inputSchema', {}).get('required') or ())
+                    for tool in self._list_tools()}
+            except Exception:
+                self._required_map = {}
+        return self._required_map.get(tool_name, ())
+
     def _call_tool(self, params: dict) -> dict:
         name = params.get('name', '')
         args = params.get('arguments') or {}
@@ -1092,6 +1126,28 @@ class MCPServer:
         # 本地副本，模块级的"统一返回格式"实际是死代码，MCP/CLI 判据也无从统一。
         # 现在删掉本地副本，全部走模块级 `text_result`（内部复用
         # errors.is_failure_status，与 CLI `_out_result` 同一份判据）。
+
+        # 审计修复：`arguments` 可能是 null / 数组 / 字符串（客户端不保证类型），
+        # 直接 args.get(...) 会 AttributeError 穿透到协议层。统一收敛成 dict。
+        if not isinstance(args, dict):
+            return text_result({'status': 'failed', 'error': {
+                'code': 'param_invalid',
+                'message': 'arguments 必须是 JSON 对象，得到 %s' % type(args).__name__,
+            }}, True)
+
+        # ── 必需参数统一校验（审计新增）──
+        # 单一真源：**直接用 tools/list 里声明的 inputSchema.required**，不另写
+        # 一份校验表。改前没有这层：`actus_registry_add {}` / `actus_private_add {}`
+        # / `actus_team_create {}` 会静默返回 status=ok，同时把空名注册表、
+        # 空 id 私有动作、teams/.json（team="" / member id=""）写进配置存储。
+        missing = [param for param in self._required_params(name)
+                   if args.get(param) in (None, '')]
+        if missing:
+            return text_result({'status': 'failed', 'error': {
+                'code': 'param_invalid',
+                'message': '%s 缺少必需参数: %s' % (name, ', '.join(missing)),
+                'details': {'missing': missing,
+                            'required': list(self._required_params(name))}}}, True)
 
         if name == 'actus_list':
             idx = actuscore.load_index()
@@ -1652,10 +1708,25 @@ def _handle_team_add_member(args):
 
 def _handle_team_remove_member(args):
     from vools.actus.visibility import get_visibility_engine
-    engine = get_visibility_engine()
     team = args.get('team', '')
     user_id = args.get('user_id', '')
-    ok = engine.teams.remove_member(team, user_id)
+    # 审计修：空 id 会让 TeamManager 内部的 TeamMember 校验抛
+    # `ValueError: TeamMember.id 必须是非空字符串`，而这里没有任何 try/except →
+    # 原始内置异常直接穿过协议层抛给 MCP 客户端（与 actus_confirm 修前的
+    # AttributeError 同族）。先做参数预检，再给 engine 调用兜底。
+    if not str(team or '').strip() or not str(user_id or '').strip():
+        return text_result({'status': 'failed', 'error': {
+            'code': 'param_invalid',
+            'message': 'actus_team_remove_member 需要非空的 team 与 user_id',
+            'details': {'team': team, 'user_id': user_id}}}, True)
+    try:
+        engine = get_visibility_engine()
+        ok = engine.teams.remove_member(team, user_id)
+    except Exception as exc:      # noqa: BLE001 - 引擎内部异常不得原样泄漏给客户端
+        return text_result({'status': 'failed', 'error': {
+            'code': 'internal',
+            'message': '移除团队成员时引擎报错: %s: %s' % (type(exc).__name__, exc),
+            'details': {'team': team, 'user_id': user_id}}}, True)
     if ok:
         return text_result({'status': 'ok', 'removed': user_id})
     return text_result({'status': 'failed',
@@ -1853,26 +1924,57 @@ def _handle_execute(args: dict):
     if 'env' in args and isinstance(args['env'], dict):
         context['env'] = args['env']
 
+    # 超时（审计修）：改成**复用 runtime 层**的能力，不在这里另造一套。
+    # `runtimes.execute()` 本来就读 `context['timeout']` 并传给 subprocess.run，
+    # 超时返回 exit_code=124 —— Windows 上一样生效。改前 mcp_server 想用
+    # signal.SIGALRM，可 Windows 没有 SIGALRM，else 分支又既无线程也无定时器，
+    # 于是 `timeout` 参数被**静默忽略**（实测 timeout=1 仍跑满 3.32s 并报 ok）。
     timeout = args.get('timeout', 30)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        return text_result({'status': 'failed', 'error': {
+            'code': 'param_invalid',
+            'message': 'timeout 必须是数字（秒），得到 %r' % (timeout,)}}, True)
+    if timeout <= 0:
+        timeout = None                       # 0 / 负数 = 不限制
+    if timeout is not None:
+        context['timeout'] = timeout         # 交给 runtime 层（subprocess 会真 kill）
+
+    def _run_once():
+        return execute_block(language, code, context)
 
     try:
-        import signal
-
-        def timeout_handler(signum, frame):
-            raise TimeoutError(f'执行超时（{timeout} 秒）')
-
-        # Windows 不支持 signal.SIGALRM，使用替代方案
-        if hasattr(signal, 'SIGALRM'):
-            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(timeout)
-            try:
-                stdout, stderr, exit_code = execute_block(language, code, context)
-            finally:
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, old_handler)
+        if timeout is None:
+            stdout, stderr, exit_code = _run_once()
         else:
-            # Windows: 使用线程级超时（简化处理）
-            stdout, stderr, exit_code = execute_block(language, code, context)
+            # 进程内 runtime（PythonRuntime 用 exec 跑）不受 subprocess 超时覆盖，
+            # 线程也无法强杀 —— 这里再给 MCP 侧一道**墙钟闸门**：到点就返回并
+            # 如实标注 worker 可能仍在跑，绝不假装没超时。
+            # 不能用 `with ThreadPoolExecutor(...)`：__exit__ 是 wait=True，
+            # 会把「到点返回」变回「等 worker 跑完」（executor.py 踩过同一个坑）。
+            from concurrent.futures import (ThreadPoolExecutor,
+                                            TimeoutError as FutureTimeout)
+            pool = ThreadPoolExecutor(max_workers=1)
+            try:
+                future = pool.submit(_run_once)
+                try:
+                    stdout, stderr, exit_code = future.result(timeout=timeout)
+                except FutureTimeout:
+                    return text_result({'status': 'timeout', 'error': {
+                        'code': 'timeout',
+                        'message': ('执行超过 %ss 已返回；进程内 runtime 无法强杀，'
+                                    'worker 可能仍在后台运行（其副作用可能继续发生）'
+                                    % timeout),
+                        'details': {'timeout': timeout, 'deferred': True,
+                                    'language': language}}}, True)
+            finally:
+                pool.shutdown(wait=False)
+
+        if exit_code == 124:
+            # runtime 层的超时约定（runtimes.py: return '', '超时 (Ns)', 124）
+            return text_result({'status': 'timeout', 'error': {
+                'code': 'timeout',
+                'message': stderr or ('执行超时（%ss）' % timeout),
+                'details': {'timeout': timeout, 'language': language}}}, True)
 
         return text_result({
             'status': 'ok',
@@ -1881,10 +1983,6 @@ def _handle_execute(args: dict):
             'stderr': stderr,
             'exit_code': exit_code,
         })
-    except TimeoutError as e:
-        return text_result({'status': 'failed', 'error': {
-            'code': 'timeout', 'message': str(e)
-        }}, True)
     except RuntimeError as e:
         return text_result({'status': 'failed', 'error': {
             'code': 'runtime_error', 'message': str(e)
