@@ -102,6 +102,141 @@ jobs:
         working-directory: ./actus
         run: ruff check vools/actus tests/
 
+  guards:
+    # 13 轮审计挖出 17 个「假的保护」，多数只靠"人记得"维护：
+    # AST 扫描器写好没接 CI、desktop 修好没 smoke、只读契约没守卫。
+    # 本 job 把它们钉进每个 PR：
+    #   * 只读契约（pytest 3 个测试文件）—— **门禁**，退步必须红；
+    #   * 只读命名扫描 / desktop smoke / CI 自检 —— **告警级**（continue-on-error），
+    #     只写 Job Summary，不阻塞合并。
+    #
+    # ⚠️ 重要结构事实：仓库根的 `.gitignore` 有 `build/`，所以
+    # `actus/build/audit/*.py` **没有入库**（git ls-files 为空）。因此：
+    #   - desktop smoke 直接内联在本 workflow 里（不依赖未入库脚本）；
+    #   - AST 扫描步骤先检测脚本是否存在：存在就跑（有人 un-ignore 之后自动生效），
+    #     不存在就在 Summary 里明确写"扫描器未入库 → 本守卫当前是盲的"。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # 只读契约只需 pytest；desktop smoke 需要 fastapi/uvicorn/jinja2 + httpx(TestClient)；
+          # keyring 是 vault2 的可选依赖（装上更接近真实用户环境）。
+          pip install pytest fastapi uvicorn jinja2 httpx keyring
+
+      # ── 门禁（唯一不 continue-on-error 的新增步骤）──
+      - name: Read-only contracts（读路径零写）
+        working-directory: ./actus
+        # 这三份是「只读契约」的实测守卫：MCP tools/list 零写、CLI info/search 零写、
+        # vault 读路径零写、omega 账本只追加不改写。退步 = 前几轮的修复被推翻。
+        run: |
+          python -m pytest -q tests/test_vault_readonly_contracts.py \
+                              tests/test_cli_no_side_effects.py \
+                              tests/test_registry_omega_contracts.py
+
+      # ── 告警级：desktop smoke（13 轮"首页 500 / 运行端点 500"的回归守卫）──
+      - name: Desktop smoke（advisory，内联）
+        continue-on-error: true
+        working-directory: ./actus
+        run: |
+          python - <<'PY' 2>&1 | tee desktop-smoke.txt
+          import os, sys, tempfile
+          sys.path.insert(0, os.getcwd())
+          sb = tempfile.mkdtemp(prefix='desktop-smoke-')
+          os.environ.setdefault('ACTUS_META_DIR', os.path.join(sb, '_meta'))
+          os.environ.setdefault('HOME', sb); os.environ.setdefault('USERPROFILE', sb)
+          os.makedirs(os.environ['ACTUS_META_DIR'], exist_ok=True)
+          from fastapi.testclient import TestClient
+          from vools.actus import desktop
+          from vools.actus.indexer import load_index
+          ok, bad = [], []
+          def chk(label, cond, detail=''):
+              (ok if cond else bad).append('%s %s%s' % ('PASS' if cond else 'FAIL', label, (': ' + detail) if detail else ''))
+              print((ok if cond else bad)[-1])
+          try:
+              idx = load_index(); ids = [a for a in (idx.get('actions') or {}) if not a.startswith('_invalid:')]
+              chk('build index', True, 'count=%d' % len(ids))
+          except Exception as exc:
+              ids = []; chk('build index', False, '%s: %s' % (type(exc).__name__, exc))
+          c = TestClient(desktop.app, raise_server_exceptions=False)
+          r = c.get('/'); chk('GET / 200', r.status_code == 200, 'status=%d' % r.status_code)
+          r = c.get('/api/actions'); chk('GET /api/actions 200', r.status_code == 200, 'status=%d' % r.status_code)
+          probe = ids[0] if ids else None
+          if probe:
+              r = c.get('/api/actions/' + probe)
+              chk('GET /api/actions/<id> 无 500', r.status_code != 500, 'status=%d' % r.status_code)
+          r = c.post('/api/actions/__smoke_missing__/run', json={'params': {}})
+          chk('POST run(<missing>) 无 500', r.status_code != 500, 'status=%d' % r.status_code)
+          print('SUMMARY: %d passed, %d failed' % (len(ok), len(bad)))
+          sys.exit(1 if bad else 0)
+          PY
+          {
+            echo
+            echo "### desktop smoke（**告警级**）"
+            echo '```'
+            tail -12 desktop-smoke.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── 告警级：只读命名 vs 写副作用（AST 扫描，依赖可能未入库的脚本）──
+      - name: Audit readonly-named functions with write side effects（advisory）
+        continue-on-error: true
+        working-directory: ./actus
+        run: |
+          summary="$GITHUB_STEP_SUMMARY"
+          { echo; echo "### 只读命名 vs 写副作用（**告警级**）"; echo; } >> "$summary"
+          scanner="build/audit/readonly_name_writes.py"
+          if [ ! -f "$scanner" ]; then
+            echo "- ⚠️ 扫描器未入库：\`$scanner\` 不存在（仓库根 \`.gitignore\` 有 \`build/\`）。" >> "$summary"
+            echo "- 后果：**本守卫当前是盲的**。修复方式（二选一，需 owner 决定）：" >> "$summary"
+            echo "  1. \`git add -f actus/$scanner actus/build/audit/ci_readonly_summary.py\`；" >> "$summary"
+            echo "  2. 把扫描器移出 \`build/\`（如 \`actus/tools/audit/\`）并更新本步骤路径。" >> "$summary"
+            echo "- 本步骤仍按告警级存在：脚本入库后**自动生效**，无需再改 workflow。" >> "$summary"
+            exit 0
+          fi
+          python "$scanner" --depth 3 --json readonly-writes.json | tee readonly-writes.txt || true
+          renderer="build/audit/ci_readonly_summary.py"
+          if [ -f "$renderer" ]; then
+            python "$renderer" readonly-writes.json >> "$summary" || true
+          else
+            echo "- ⚠️ 渲染器未入库（\`$renderer\`）：原始结果见下方 ```" >> "$summary"
+            { echo '```'; tail -20 readonly-writes.txt; echo '```'; } >> "$summary"
+          fi
+          # 已知局限（误报来源）见扫描器 docstring：kwarg 常量关闭写、三方库按名字
+          # 归类、动态分派/反射、只覆盖 vools/actus/。**告警不是门禁**，别为清零放宽检测。
+
+      # ── 告警级：CI 自检（test-actus / ruff 钉 / YAML / 矩阵 vs requires-python）──
+      - name: CI self-guard（advisory）
+        continue-on-error: true
+        run: |
+          summary="$GITHUB_STEP_SUMMARY"
+          { echo; echo "### CI 自检（**告警级**）"; echo; } >> "$summary"
+          if grep -q '^  test-actus:' .github/workflows/ci.yml; then
+            echo "- ✅ \`test-actus\` 作业存在（actus 唯一 CI 覆盖）" >> "$summary"
+          else
+            echo "- ❌ \`test-actus\` 作业**缺失** —— actus 将失去全部 CI 覆盖" >> "$summary"
+          fi
+          if grep -q 'ruff==0.17.0' .github/workflows/ci.yml; then
+            echo "- ✅ \`ruff==0.17.0\` 版本钉存在（可复现性）" >> "$summary"
+          else
+            echo "- ❌ \`ruff==0.17.0\` 版本钉被移除（可复现性受损）" >> "$summary"
+          fi
+          if python -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml', encoding='utf-8'))" 2>/dev/null; then
+            echo "- ✅ ci.yml YAML 可解析" >> "$summary"
+          else
+            echo "- ❌ ci.yml YAML **解析失败**" >> "$summary"
+          fi
+          if grep -q 'requires-python = ">=3.7"' actus/pyproject.toml 2>/dev/null; then
+            echo "- ⚠️ 声明 \`requires-python >=3.7\`，但 CI 矩阵从 **3.8** 起：3.7 无覆盖" >> "$summary"
+          fi
+
   publish:
     needs: test
     runs-on: ubuntu-latest
