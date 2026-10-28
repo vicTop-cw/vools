@@ -68,24 +68,63 @@ def check_python_version() -> HealthCheckResult:
     return HealthCheckResult("python_version", "error", f"Python {version.major}.{version.minor} 过低，需要 3.8+", time.time() - start, "升级 Python 到 3.8+")
 
 
+# 核心模块检查的两种布局（顺序即优先级）：
+#   1) **包布局**：vools-actus 以源码树 / wheel 安装时的真实布局，按
+#      `vools.actus.__file__` 定位；模块集是包实际随附的那 4 个（本包不发布
+#      discovery.py，把它列进必需项等于制造永久假错误）。
+#   2) **引擎主仓布局** `engine/actuscore`：历史布局，保留向后兼容。
+# 改前只认 engine/actuscore —— 在 vools-actus 独立仓库/发布包里该目录**永远
+# 不存在**，于是 `actus health` 恒 `overall=error`、exit 恒 1（实测：任何以健康
+# 检查为门禁的 CI 永远红）。这是"检查器自己过时→恒假阴性"，不是被测系统坏了。
+_CORE_LAYOUTS = (
+    ('包 vools.actus',
+     ('executor.py', 'model.py', 'validate.py', 'scaffold.py')),
+    ('engine/actuscore',
+     ('executor.py', 'model.py', 'validate.py', 'scaffold.py', 'discovery.py')),
+)
+
+
+def _core_module_dirs(repo_root):
+    """返回 [(布局名, 目录, 必需模块元组)]：包位置在前，engine/actuscore 兜底。"""
+    layouts = []
+    try:
+        import vools.actus as _pkg
+        layouts.append((_CORE_LAYOUTS[0][0],
+                        Path(_pkg.__file__).resolve().parent,
+                        _CORE_LAYOUTS[0][1]))
+    except Exception:
+        # 包自身都 import 不了时不该在这里炸：交给下面的 engine 候选与最终报错
+        pass
+    layouts.append((_CORE_LAYOUTS[1][0],
+                    Path(repo_root) / 'engine' / 'actuscore',
+                    _CORE_LAYOUTS[1][1]))
+    return layouts
+
+
 def check_core_modules(repo_root: str = ".") -> HealthCheckResult:
-    """检查核心模块完整性。"""
+    """检查核心模块完整性（按包位置自适应，engine/actuscore 兜底）。"""
     start = time.time()
-    required = ["executor.py", "model.py", "validate.py", "scaffold.py", "discovery.py"]
-    engine_dir = Path(repo_root) / "engine" / "actuscore"
-
-    if not engine_dir.exists():
-        return HealthCheckResult("core_modules", "error", "engine/actuscore 目录不存在", time.time() - start)
-
-    missing = []
-    for mod in required:
-        if not (engine_dir / mod).exists():
-            missing.append(mod)
-
-    if missing:
-        return HealthCheckResult("core_modules", "error", f"缺少核心模块: {', '.join(missing)}", time.time() - start)
-
-    return HealthCheckResult("core_modules", "ok", f"核心模块完整 ({len(required)} 个)", time.time() - start)
+    checked = []
+    for label, directory, required in _core_module_dirs(repo_root):
+        checked.append('%s=%s' % (label, directory))
+        if not directory.is_dir():
+            continue
+        missing = [mod for mod in required if not (directory / mod).exists()]
+        if missing:
+            return HealthCheckResult(
+                "core_modules", "error",
+                f"{label} 缺少核心模块: {', '.join(missing)}",
+                time.time() - start,
+                "重装 vools-actus（安装不完整）")
+        return HealthCheckResult(
+            "core_modules", "ok",
+            f"核心模块完整（{label}，{len(required)} 个）",
+            time.time() - start)
+    return HealthCheckResult(
+        "core_modules", "error",
+        "未找到核心模块目录（已查: %s）" % '; '.join(checked),
+        time.time() - start,
+        "确认 vools.actus 已正确安装")
 
 
 def check_actions_directory(repo_root: str = ".") -> HealthCheckResult:
