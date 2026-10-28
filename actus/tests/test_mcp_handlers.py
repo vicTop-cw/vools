@@ -437,13 +437,20 @@ def test_registry_priority_wrong_type_is_structured_error(world):
 
 
 # ---------------------------------------------------------------------------
-# 5) 可见性：校验语义（绿）+ 持久化契约（当前红，xfail 记录）
+# 5) 可见性：校验语义 + 持久化契约（cmd-engine 已收口为真写落盘）
 # ---------------------------------------------------------------------------
 
 def test_visibility_set_validates_level_and_team(world):
     """退步了会怎样：非法级别 / team 级缺 team 参数也返回成功（假成功）。
-    断言：两者都 isError=True 且消息点名原因；合法级别返回回显字段。
+
+    语义区分（收口后的正确契约）：
+      * 非法级别 / team 缺 team —— **与动作是否存在无关**，必须先被参数校验拦下；
+      * 合法级别 —— set 是真写落盘，必须先能解析到动作（对不存在的 my.x 应
+        返回 action_not_found，而不是回显成功）。所以这里先播种动作再断言成功；
+        「写进去了且能读回」由 `test_visibility_set_persists_and_is_readable` 覆盖。
     """
+    _write_action(world.actions / "my.actus.md", "my.x")
+
     is_error, payload, _raw = _call(
         world, "actus_visibility_set",
         {"action_id": "my.x", "visibility": "weird"})
@@ -458,18 +465,26 @@ def test_visibility_set_validates_level_and_team(world):
     is_error, payload, _raw = _call(
         world, "actus_visibility_set",
         {"action_id": "my.x", "visibility": "unlisted"})
-    assert is_error is False
+    assert is_error is False, payload
     assert (payload["action_id"], payload["visibility"]) == ("my.x", "unlisted")
 
 
-@pytest.mark.xfail(strict=False, reason=(
-    "审计发现：MCP actus_visibility_set 只校验+回显，**不落盘**（不写动作文件也不写"
-    "私有动作索引），actus_visibility_get 读不到刚设的级别 —— 假成功。已上报，"
-    "cmd-polish 修复后本用例自动 xpass。"))
-def test_visibility_set_persists_and_is_readable(world):
-    """退步了会怎样（当前就是）：设置可见性只回显、不持久化，调用方以为已生效。
+def test_visibility_set_on_missing_action_is_action_not_found(world):
+    """退步了会怎样：对**不存在的动作**调 set 也回显成功（假成功契约复活）——
+    真实现必须先解析动作、解析不到就报 action_not_found，不能假装写成功。
+    """
+    is_error, payload, _raw = _call(
+        world, "actus_visibility_set",
+        {"action_id": "no.such.action", "visibility": "unlisted"})
+    assert is_error is True, payload
+    assert (payload.get("error") or {}).get("code") == "action_not_found", payload
 
-    断言正确契约：设 private 后，`actus_visibility_get` 必须能读到 private。
+
+def test_visibility_set_persists_and_is_readable(world):
+    """退步了会怎样：设置可见性只回显、不持久化，调用方以为已生效。
+
+    断言正确契约：设 private 后，`actus_visibility_get` 必须能读到 private
+    （cmd-engine 已改为与 CLI 共用 write_action_visibility，真写动作文件）。
     """
     _write_action(world.actions / "vis.actus.md", "test.mcp.vis")
     is_error, payload, _raw = _call(
