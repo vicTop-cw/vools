@@ -86,10 +86,38 @@ auth() / recover() / rotate() / rollback()
 - **L2/L3 的第二因子**：`seed_key` 仍是 TOTP 种子。本轮解决的是"库文件泄露"场景；
   若要防御"能读 keyring 的本机用户"，需要硬件因子（TPM/HSM，未来档位）。
 - **`key_meta` 里存 passphrase 的 salt/iters（明文）**：salt 本来不需要保密，iters 固定 200k。
-- **密钥轮换（`seed_key` 生命周期）：暂缓 —— 原被一个 P0 阻塞，该 P0 已在第 16 轮修复（§6.1）。**
-  现有 `recover()` 不改变 `seed_key`，因此 KEK 也无需轮换；而真正的 `seed_key` 轮换
-  必须以「`master_key` 可稳定重算」为前提 —— 该前提**现已满足**（见 §6.1），
-  轮换可作为后续独立一轮实现（原地重加密，不需要 PIN、不需要导出重录）。
+- **密钥轮换（`seed_key` 生命周期）：已实现 —— `Vault2.rotate_seed_key(token)`（第 16 轮）。**
+  前置条件（`master_key` 可稳定重算）已由 §6.1 的 P0 修复满足；轮换=换 seed + 用新 master
+  **原地重加密**（不需要 PIN、不需要导出重录）。
+
+  | 项 | 处理 |
+  |---|---|
+  | `secrets.value` | 用新 master 重加密（保留每行自己的 salt/alg/迭代参数） |
+  | **`rotated_backups.value`** | **一起重加密**（它由 `_derive_backup_key(seed)` 派生，**也依赖 seed** —— 最容易漏的一条） |
+  | `identities.seed_key` | 用**现有 KEK** 重新封装信封（**不轮换 KEK**，见下） |
+  | `used_codes` | 清该身份全部记录（旧 TOTP 随 seed 失效；留着只会在极小概率下与新码撞判"重放"） |
+  | `identities.recovery_key_hash` | **置 NULL**（它是 `HMAC(recovery_key, seed_hex)`，seed 一变必然失效；没有 recovery_key 无法重算）→ 返回值带 warning，需重新生成恢复密钥 |
+  | 会话 | 该身份所有内存会话**失效**（旧 master 已过期）；调用方需重新 auth |
+
+  **原子性**：读阶段（解密 + 重加密 + **逐条回读验证**）全部在内存完成、**零写**；
+  写阶段是**一个 SQLite 事务**（`_apply_seed_rotation`，单独成方法便于注入失败测试），
+  任何一条失败 → 整批放弃 / 事务回滚 ⇒ **seed 与所有密文保持原样**（验收里注入写阶段异常实测过）。
+  **失败即中止**，不"跳过坏的继续"（轮换是重大操作，半途状态比失败更糟）。
+
+  **为什么 KEK 不一起轮换**（诚实记录）：`_encrypt_seed_hex()` 的 keyring 模式会**新建 KEK 并写 keyring**，
+  那是 DB 事务**之外**的写 —— 一旦 DB 提交失败就会出现"keyring 换了、DB 还是旧 seed"，
+  旧 seed 再也解不开（不可逆）。因此轮换只换 seed、复用现有 KEK，**全程留在 DB 内可回滚**。
+  KEK 轮换需要跨 store 的两阶段提交，属独立课题。
+
+  **局限（别给错误的安全感）**：轮换**不能追溯保护已经被拷走的密文** —— 它只缩短
+  "泄漏快照"的有效期，并让历史 TOTP 全部失效。
+
+  **UX 注意**：轮换会让会话失效，而同一次 auth 的 60s 动态码已被 `used_codes` 记录，
+  所以**在同一分钟内重新 auth 会被告知"动态码已被使用"** —— 等下一个窗口即可（防重放语义不变）。
+
+  验收：`tools/audit/verify_vault2_seed_rotation.py`（16 项：轮换后 secrets 可读 / 备份仍可 rollback /
+  写阶段失败全回滚 / 连续两次轮换 / 读路径零写 / 跨窗口可读=P0 未回归）。
+
 
 ### 6.1 P0（第 15 轮发现，**第 16 轮已修**）：L2/L3 的 `master_key` 曾绑定 60s 动态码
 
