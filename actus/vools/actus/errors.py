@@ -49,6 +49,10 @@ ERROR_CODES = [
     # entry_no_output，名单当时没同步 ⇒ 按这份名单分派的调用方会漏掉它。
     # （docs/38 §1；executor.py 属禁改区，这里只补登记，不动行为。）
     'entry_no_output',
+    # 2026-10 执行路径审计：块失败（用户代码抛异常/非零退出/超时）从 `internal`
+    # 分流出来 —— `internal` 只表示**引擎自身**异常，调用方靠此区分"我的代码错"
+    # 还是"引擎错"（executor._run_blocks 的失败分支发这个码）。
+    'block_failed',
 ]
 
 class ActionError(Exception):

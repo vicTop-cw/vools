@@ -398,6 +398,12 @@ def push(local_path: str, remote_path: str,
     """
     files = collect_files(local_path, exclude)
     if not files:
+        # ok 只表示「确实传了」或「确实没有需要传的、且源存在」。
+        # 源路径不存在时 collect_files 同样返回 []，改前会假成功报 ok —— 与
+        # `export 报 ✅ 但文件不存在` 同族，调用方会以为推送成功了。
+        if not os.path.exists(local_path):
+            return {"status": "error",
+                    "message": f"本地路径不存在: {local_path}"}
         return {"status": "ok", "files_transferred": 0, "bytes": 0, "message": "没有需要传输的文件"}
 
     if dry_run:
@@ -422,13 +428,15 @@ def pull(remote_path: str, local_path: str,
          password: str = None, dry_run: bool = False,
          timeout: int = 300) -> dict:
     """从远程拉取文件到本地（method 语义同 push，默认 paramiko）。"""
-    os.makedirs(local_path, exist_ok=True)
-
     if dry_run:
         # files_transferred/bytes 显式给 0：dry_run 的出参形状必须与真跑一致，
         # 否则调用方要按两套形状处理。
         return {"status": "ok", "files_transferred": 0, "bytes": 0,
                 "dry_run": True, "transport": method, "message": "预览模式"}
+
+    # 目录只在**真跑**时创建：dry_run 承诺零副作用（改前 makedirs 在判断之前，
+    # 一次 dry-run 预览就会在磁盘上留下空目录树）。
+    os.makedirs(local_path, exist_ok=True)
 
     if method in ("paramiko", "sftp"):
         return _pull_paramiko(remote_path, local_path, remote_host, remote_user,
@@ -561,6 +569,10 @@ def _push_tar_ssh(local_path, remote_path, remote_host, remote_user,
             return {"status": "error", "message": f"传输超时（{timeout}秒）"}
         if ssh_proc.returncode != 0:
             return {"status": "error", "message": "ssh 失败"}
+        # 与 _pull_tar_ssh 的 "解压失败" 检查对称：tar 打包失败时 ssh 仍可能退出 0
+        # （远端只收到半截流），只看 ssh 会报 ok 并按本地文件数虚报已传输。
+        if tar_proc.returncode != 0:
+            return {"status": "error", "message": f"打包失败（tar 退出码 {tar_proc.returncode}）"}
         files = collect_files(local_path, exclude)
         total_bytes = sum(os.path.getsize(f) for f in files if os.path.isfile(f))
         return {"status": "ok", "files_transferred": len(files), "bytes": total_bytes}
