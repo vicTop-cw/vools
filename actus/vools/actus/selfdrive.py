@@ -35,6 +35,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
+from .paths import meta_dir
 from . import calllog
 from . import omega as _omega
 from . import omega_strong as _omega_strong
@@ -69,11 +70,8 @@ def strong_enabled(config: Optional[dict] = None) -> bool:
 
 
 def _default_meta() -> str:
-    root = os.environ.get('ACTUS_REPO_ROOT')
-    if root:
-        return os.path.join(root, '_meta')
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))), '_meta')
+    # 路径真源：ACTUS_META_DIR > ACTUS_REPO_ROOT/_meta > __file__ 推导（paths.meta_dir()）
+    return meta_dir()
 
 
 # ── 拆解器 ──

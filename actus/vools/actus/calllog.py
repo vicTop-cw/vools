@@ -24,6 +24,7 @@ import threading
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Callable, Dict, List, Optional
+from .paths import meta_dir
 
 __all__ = [
     'CallLogStore', 'get_store', 'write_call_log', 'recent_call_logs',
@@ -74,11 +75,10 @@ def _default_meta() -> str:
     metrics_dir = os.environ.get('ACTUS_METRICS_DIR')
     if metrics_dir:
         return metrics_dir
-    root = os.environ.get('ACTUS_REPO_ROOT')
-    if root:
-        return os.path.join(root, '_meta')
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))), '_meta')
+    # 方案 A（专用逃生门优先于通用）：
+    #   ACTUS_METRICS_DIR > ACTUS_META_DIR > ACTUS_REPO_ROOT/_meta > __file__ 推导
+    # 后三级由 paths.meta_dir() 一处解析。
+    return meta_dir()
 
 
 def log_path(meta_dir: Optional[str] = None) -> str:

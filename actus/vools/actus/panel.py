@@ -19,9 +19,12 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
+from .paths import meta_dir, repo_root
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-META_DIR = os.path.join(_REPO_ROOT, '_meta')
+# 路径真源：paths.repo_root()/meta_dir()（ACTUS_META_DIR > ACTUS_REPO_ROOT/_meta > __file__ 推导）
+# 改前这里是纯 __file__ 推导、**没有任何环境变量覆盖**，面板读的索引无法重定向。
+_REPO_ROOT = repo_root()
+META_DIR = meta_dir()
 
 DEFAULT_HOTKEY = 'ctrl+alt+space'
 

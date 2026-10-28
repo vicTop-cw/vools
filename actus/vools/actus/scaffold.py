@@ -148,6 +148,7 @@ def scaffold_action(
     output_dir: Optional[str] = None,
     author: str = 'ai-scaffold',
     repo_root: Optional[str] = None,
+    force: bool = False,
 ) -> dict:
     """根据自然语言描述生成动作骨架。
 
@@ -158,6 +159,7 @@ def scaffold_action(
         output_dir: 输出目录（缺省 = repo_root/actions/ 或模块推断的 actions/）。
         author: 作者标识。
         repo_root: 仓库根目录（用于定位 actions/ 和 _meta/）。
+        force: 目标动作文件已存在时是否覆盖（默认 False = 拒绝覆盖）。
 
     返回:
         dict: {
@@ -167,7 +169,19 @@ def scaffold_action(
             'template': 使用的模板,
             'validation': { 'valid': bool, 'errors': [...] },
             'next_steps': [...],
+            'overwritten': 是否覆盖了已有动作文件,
+            'test_file_skipped': 配套测试骨架是否因已存在而跳过,
         }
+
+    异常:
+        ActionError('action_exists')：目标动作文件已存在且 force=False。
+
+    覆盖保护（本轮修）：改前这里对**主要产物**（动作文件）直接 `open(..., 'w')`，
+    而同一函数里次要的配套测试骨架反倒有 `if not os.path.exists(...)` 保护 ——
+    保护了次要的、破坏了主要的。实测 `actions/zh.actus.md` 因此被静默覆盖两次
+    （-156 行，内容变成 PLACEHOLDER 模板）且照样打印"生成成功"；用户手写的动作
+    只要 id 撞上就没了。现在默认拒绝覆盖并抛 `action_exists`（消息里点名被占用的
+    文件、提示用 force/--force），只有显式 force=True 才覆盖。
     """
     if not description or not description.strip():
         from .errors import ActionError
@@ -289,17 +303,34 @@ def scaffold_action(
     # 文件名：id 最后一段
     file_name = aid.rsplit('.', 1)[-1] + '.actus.md'
     file_path = os.path.join(output_dir, file_name)
+
+    # ── 覆盖保护（数据丢失防线）──
+    # 动作文件是本命令的**主要产物**，绝不能静默覆盖用户手写的动作。
+    overwritten = os.path.exists(file_path)
+    if overwritten and not force:
+        from .errors import ActionError
+        raise ActionError(
+            'action_exists',
+            '动作文件已存在，拒绝覆盖: %s（如需覆盖请用 force=True / CLI 的 --force）'
+            % file_path,
+            {'path': os.path.abspath(file_path), 'id': aid},
+        )
+
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(rendered)
 
     # 4b) 写出配套测试骨架（docs/47 §4 绑定）。root = actions 的父目录；
     # 显式声明已在 cfg 中写入，只需保证该文件真实存在。
+    # 已存在时跳过是既有保护（不动它），但**不再静默**：结果里回传
+    # test_file_skipped，调用方/用户能看到「测试骨架没生成因为已经在了」。
+    test_file_skipped = False
     if trust in ('audit', 'trusted'):
         repo_root_dir = repo_root or os.path.dirname(os.path.dirname(file_path))
         test_dir = os.path.join(repo_root_dir, 'tests')
         os.makedirs(test_dir, exist_ok=True)
         test_path = os.path.join(test_dir, test_file)
-        if not os.path.exists(test_path):
+        test_file_skipped = os.path.exists(test_path)
+        if not test_file_skipped:
             with open(test_path, 'w', encoding='utf-8') as f:
                 f.write(
                     f'"""回归骨架（scaffold 自动生成）：动作 {aid}。"""\n\n\n'
@@ -335,6 +366,8 @@ def scaffold_action(
         'template': template_name,
         'validation': validation,
         'next_steps': next_steps,
+        'overwritten': overwritten,
+        'test_file_skipped': test_file_skipped,
     }
 
 
