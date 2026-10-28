@@ -1192,8 +1192,11 @@ def _dispatch_vault(args) -> int:
 
     if args.vault_command == 'set':
         r = vault.set(args.key, args.value, args.scope, args.desc)
-        _out(r)
-        return 0
+        # 审计修（假成功）：改前是 `_out(r); return 0` —— 底层在未配置
+        # ACTUS_VAULT_KEY 时返回 `{'status':'refused'}`，CLI 却仍 exit 0
+        # （脚本据此以为已存盘）。统一走 `_out_result`（与 author/scaffold/workflow
+        # 同一判据：`refused` 不在 OPERATION_OK_STATUSES → failed → rc=1）。
+        return _out_result(r)
     elif args.vault_command == 'get':
         val = vault.get(args.key, args.scope)
         if val is None:
@@ -1207,6 +1210,11 @@ def _dispatch_vault(args) -> int:
         return 0
     elif args.vault_command == 'delete':
         deleted = vault.delete(args.key, args.scope)
+        # delete 也是写操作：临时密钥下底层会拒绝，不能把它说成"不存在"。
+        refusal = getattr(vault, 'last_refusal', None)
+        if refusal:
+            _out(refusal)
+            return 1
         _out({'status': 'ok' if deleted else 'not_found', 'deleted': deleted})
         return 0 if deleted else 1
     else:
