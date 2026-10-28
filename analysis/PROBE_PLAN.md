@@ -1434,7 +1434,7 @@ def probe_from_language_map():
 
 全部探测（~50 个工具）：
   串行：~5-15 秒
-  并行（线程池 8 线程）：~2-4 秒
+  并行（线程池 10 线程）：~2-4 秒
 
 优化策略：
   1. shutil.which() 先行（快），再对找到的做版本探测（慢）
@@ -1451,7 +1451,7 @@ def probe_from_language_map():
 > | 阶段 | probe 冷启动 | 说明 |
 > |---|---|---|
 > | 本轮起点（并行化前，串行） | **79 052 ms** | 版本探测的 `subprocess` 开销被本文档严重低估 |
-> | 仅加并行（8 线程） | **11 136 ms** | `ThreadPoolExecutor`（`probe/__init__.py`） |
+> | 仅加并行（当时 _MAX_PROBE_WORKERS=8，现为 10） | **11 136 ms** | `ThreadPoolExecutor`（`probe/__init__.py`） |
 > | 分探测器逐个优化后 | **1 823 / 1 897 / 2 171 ms** | 三次独立测量 |
 > | 本轮（`python_pkgs` 0.88s→0.079s、WSL 尖峰收口后） | **2 000-3 700 ms** | 随机器负载波动；安静时 ~2s |
 >
@@ -1505,7 +1505,7 @@ def probe_from_language_map():
 > |---|---|---|
 > | Phase 0 — 核心探测 + 权限 + 环境 | ✅ **已完成** | Phase 0 涉及的 10 个模块全部落地（`probe/` 现共 15 个 `.py`，含后加的 `platform_tools.py`） |
 > | Phase 1 — Python 包 + 动作分析 + 缓存 | ✅ **已完成** | `python_pkgs.py` / `actions.py` / `cache.py` 均在位；**`analyze_actions()` ready/blocked 契约 2026-10-28 真正落地** |
-> | Phase 2 — 平台特定 + 并行化 | 🟡 **基本完成（缺 macOS 实跑）** | 并行 8 线程 + 冷启动 79s→2s；Windows 真跑 / Linux 借 WSL 真跑 / **macOS 未实跑** |
+> | Phase 2 — 平台特定 + 并行化 | 🟡 **基本完成（缺 macOS 实跑）** | 并行 **10 线程**（= 探测器总数）+ 冷启动 79s→2s；Windows 真跑 / Linux 借 WSL 真跑 / **macOS 未实跑** |
 > | Phase 3 — CLI + 集成 | ✅ **已完成** | `actus probe` 含 4 个开关 + MCP `actus_probe` + `intent.py` ready 过滤 |
 >
 > 本节的复选框**按实际代码核对**，未完成的**不勾**。路径约定：下面的 `probe/xxx.py`
@@ -1596,10 +1596,15 @@ def probe_from_language_map():
       **为何仍不勾**：整组**无 macOS 实跑证据** —— darwin 分支只用平台钩子模拟执行 +
       伪造 brew 验解析链路（11/11 过），`csrutil` 一行都没在真 Mac 上跑过。
       代码齐 ≠ 平台跑通，故保留 `[~]`
-- [x] 线程池并行探测（8 线程）✅ 已实现（`probe/__init__.py` `import concurrent.futures`、
-      `_MAX_PROBE_WORKERS = 8`、`ThreadPoolExecutor(max_workers=workers)`，
-      并行度取 `min(8, 探测器数)`；`as_completed` 收结果后**按原始顺序合并**，不改变 items 结构；
+- [x] 线程池并行探测（**10 线程**）✅ 已实现（`probe/__init__.py` `import concurrent.futures`、
+      `_MAX_PROBE_WORKERS = 10`、`ThreadPoolExecutor(max_workers=workers)`，
+      并行度取 `min(10, 探测器数)`；`as_completed` 收结果后**按原始顺序合并**，不改变 items 结构；
       `verbose` 进度打印用 `threading.Lock` 串行化防交错）。
+      **为什么是 10（而不是 8 或 12）**：`_MAX_PROBE_WORKERS` **只需覆盖探测器总数（当前 10 个）** ——
+      线程数在 `min(常量, len(probers))` 里现算，所以**填 12 与填 10 完全等价**，是个不生效的死旋钮，
+      反而让人误以为还有更大并行度；填 8 则会让 `platform_tools` 排队（启动上多出 100-165ms 人为延迟，
+      等 `system_tools` 优化到 1s 以内这条延迟就会直接进墙钟）。
+      实测 8→10 的墙钟差 **+15ms（0.8%）**，落在 run-to-run 噪声（±100ms）内，峰值线程数 68-71 → 69-71 几乎不变。
       **耗时（本轮实测，含前一轮串行基线与后续单探测器优化，见 §8.1）**：
       **79 052ms → 11 136ms（仅并行）→ 1 823-2 171ms（分探测器优化后）→ 2 000-3 700ms（本轮）**，
       相对串行起点约 **41x**。本机复测 `probe(force_refresh=True)` 实际 **2 045 / 2 189 / 2 212ms**

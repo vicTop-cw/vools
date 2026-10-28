@@ -316,8 +316,11 @@ def test_ready_when_action_is_listed_in_probe_report(fake_repo):
 def test_blocked_when_action_absent_from_probe_report(fake_repo):
     """动作没出现在探测报告里（缺依赖 / 解析失败 / 不在扫描根）→ blocked，不得被推荐。
 
-    现产品的 blocked 判据就是「报告里没有它」：`_scan_actions_dir` 解析失败的动作
-    会退化成相对路径 id、根本不在报告里，于是与「缺依赖」同样落到 blocked 一档。
+    现产品有两道门：① `IntentRouter._ready_ids` —— 报告里没有它 → 不可推荐；
+    ② 报告里 `action_readiness` 条目的逐动作 verdict（`analyze_actions` 明确判
+    blocked 的动作同样不可推荐）。本用例走的是第一道门：`_scan_actions_dir` 解析
+    失败的动作会退化成相对路径 id、根本不在报告里，于是与「依赖不满足」同样落到
+    blocked 一档。
     """
     _write(_actions_dir(fake_repo) / "alpha.actus.md",
            _json_action_text("test.alpha"))

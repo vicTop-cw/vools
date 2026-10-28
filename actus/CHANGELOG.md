@@ -6,6 +6,138 @@
 > **依赖提示**：`vools-actus` 依赖 `vools` 与 `vools-bridges`。三者的版本通常同步发布；
 > 只升级 actus 而不升级依赖，可能拿到不含对应修复的底层实现。
 
+## [Unreleased]
+
+> 本段记录 **0.9.0 发布之后**、尚未发版的改动。版本号（0.9.1 / 1.0.0）待下次发布时确定，
+> 此处不预设。核心是 `actus probe` 环境探测器从「能跑」做到「跑得快、数据可信」。
+
+### ⚡ 性能：`actus probe` 冷启动 **79 052ms → 稳态 ~2 000ms（≈41x）**
+
+| 探测器 | 改造前 | 改造后 | 手段 |
+|---|---|---|---|
+| 整体（串行 → 线程池） | 79 052ms | 11 136ms | 线程池 + `as_completed` 收结果后按原下标保序 |
+| `system_tools` | 10.7–15.3s | **1.48s**（现 1.2–1.5s） | PATH 一次性 `scandir` 建索引预筛（65 条里 42 条是负向查找） |
+| `environment` | 6 551ms | **77ms** | `os.scandir` + PATHEXT 判据（≈85x） |
+| `python_pkgs` | 6.4–11.1s | **0.88s → 0.079s** | 元数据索引一次读（395→48ms）、`pkg_resources` 门槛跳过（555ms→0）|
+| `runtimes` | 3.59–6.83s | **0.38s** | 同一实例按 name+aliases 去重（20 条 items 只有 7 个真实运行时） |
+| `compilers` | 1.4–3.9s | **0.39s** | 11 条并发 + PATH 索引 |
+
+- **最终冷探测**：wall **2.13 / 2.21 / 2.50s**，`elapsed_ms` **1 823 / 1 897 / 2 171ms**；
+  文档复核时本机复测 **2 045 / 2 189 / 2 212ms**（items=173）。
+- 按保守口径折算各探测器贡献：`system_tools` ≈6.5x、`environment` **≈85x**、
+  `python_pkgs` ≈12x（再降到 0.079s 后又约 ×11）、`runtimes` ≈10.4x、`compilers` ≈10x。
+  （`environment` 按 `6 551ms → 77ms` 实算为 **85x**，不取「≈100x」这类约数 ——
+  能被验算的数比听起来漂亮的数有用。）
+- **重要结论：并行化只贡献 79s → 11s，剩下 11s → 2s 全靠分探测器优化**。
+  「加个线程池就快了」是错的：真正的瓶颈是逐个工具的 `subprocess` 版本探测与 PATH stat 风暴。
+- 并发调优是**有数据结论**的，不靠猜：跨探测器共享信号量实测**更慢**
+  （重压下不限 2.15s vs 限 24 并发 2.86s —— 它只约束自己、不约束别人），故默认关闭仅留旋钮；
+  内层线程数自适应（被外层池调用时 16→8 拿回 29%：2.87s → 2.04s，单跑 16 最优）。
+- 全量测试套件耗时 **237s → 107s**（因 probe 提速连带）。
+
+### ✨ 新增能力
+
+- **`analyze_actions()` 兑现 `PROBE_PLAN.md` §4.7**（此前该节只是设计草图，代码里零命中）：
+  `analyze_actions(actions_dir=None, probe_report=None) -> dict` 按动作文件声明的 `deps`
+  逐项比对探测结果 → `total` / `ready` / `blocked` / `missing_deps` 契约四件套 +
+  逐动作 `verdicts`（含 `blocked_reasons` 原因链）+ `undeclared` / `parse_failed` /
+  `unverifiable` / `duplicate_ids` / `index_source`。
+- **探测报告新增第 3 个条目 `action_readiness`**：`probe()` 报告里**终于有 ready/blocked 字段**
+  （items **172 → 173**）；既有两个条目 `actions` / `action_dependencies` 一个字段都没改。
+  实跑 **`total=14 ready=14 blocked=0`**，其中 8 个种子动作未声明 `deps`（带 `undeclared` 显式信号）
+  —— **真实动作里没有任何一个声明非空 deps，0 blocked 是正确结果，没有为了演示编造 blocked**。
+- **`runtime:` 依赖前缀真正进 resolver**（`dependency.py`）：此前 `_parse_dep_string` 无该分支，
+  `runtime:python` 会被当成一个名叫 `runtime:python` 的动作、永远找不到 → **永远 blocked**。
+  现新增 `DepType.RUNTIME` + 解析分支 + `fix_command` + `_check_runtime()`，
+  并做抽象名展开（`shell`→bash/sh/powershell、`rust`→rustc/cargo、`node`→nodejs，同名命令优先）；
+  `probe/actions.py` 里此前的临时兜底已删除，统一走 resolver 真源。
+- **`IntentRouter` 接上依赖级门禁**：`_is_ready()` 从一道门变两道 ——
+  ①动作必须在探测报告里（既有语义不变）；②**不得被 `verdicts` 明确判 blocked**（新增）。
+  向后兼容三重保险：无 `action_readiness` 条目 / 条目 `available=False` / `verdicts` 结构异常
+  → 门禁不启用，绝不因为分析自己炸了就把全部动作误杀。`list_actions()` 改走 `_is_ready()`
+  （原先 `route()` / `list_actions()` 各写一遍判据正是漂移温床）。
+- **平台特有探测补齐**（新增 `probe/platform_tools.py`）：
+  Windows —— VS Build Tools（`vswhere` + `VC\Tools\MSVC\*` + `vcvars64.bat`）、
+  WSL（`wsl -l -v`，专门判 **UTF-16LE 无 BOM** 编码、按「最后一列是整数」语言无关解析）、
+  Windows Terminal（从商店包目录名取版本，**不执行 `wt.exe`**——空参会弹窗）；
+  Linux —— systemd（`systemctl --version` + `/proc/1/comm` + `/run/systemd/system`，
+  分 `available` / `usable` 两层）、包管理器（10 候选判家族）；
+  macOS —— Xcode CLT（`xcode-select -p` + `clang --version` 实证）、
+  **Homebrew**（PATH + `/opt/homebrew/bin/brew` + `/usr/local/bin/brew` 三路 + `--version`/`--prefix`，
+  拒绝非 posix 派生路径冒充 prefix）。
+  判据全部真实可执行，**探测不到如实报未安装，不伪造**；非本源平台的组不执行；外部命令 5s 兜底。
+
+### 🐛 修复
+
+- **Windows 上 `os.access(path, X_OK)` 对任何存在的文件恒为 True** → `.dll/.pdb/.txt` 全被算成
+  「可执行文件」（几万条 → **1 404 条**真可执行，本机 PATH 89 个目录实测）。
+  改用 `PATHEXT` 判据 + `os.scandir`。
+- **占位值冒充真实版本**：`pywin32` 的 version 是占位串 `'installed'` → 真实元数据版本 **`311`**；
+  `cl` 的 version 是**用法文本**（`用法: cl [ 选项... ]`）→ 真实版本 **`19.44.35219`**；
+  `unzip` 是告警文本、`scp`/`sftp` 是错误文本 → 全部改为真值或明确 `error_kind`。
+- **4 处 `except Exception: pass`（静默吞错）→ 分型记录**：
+  `timeout` / `spawn_error` / `empty_output` / `unexpected` / `crashed` / `nonzero_exit`，
+  让「没装」与「探测失败」在数据上可区分。
+- **探测污染用户工作区**：并发起 JVM 时 mmap 失败，JVM 把崩溃转储
+  （`hs_err_pid*.log` / `replay_pid*.log`）写进**进程 cwd**（= 用户执行 `actus probe` 的目录；
+  实测仓库 `actus/` 下留下过 4 个）。→ 版本探测子进程统一改用**临时 cwd** + `atexit` 清理 +
+  命中崩溃特征串记 `version_error_kind="crashed"`。
+- **缓存三处静默错误**（`probe/cache.py`）：`max_age=0` 被 `max_age or _CACHE_TTL` 吞成 3600
+  （`--max-age 0` 静默复用 1 小时旧数据）；**未来时间戳让缓存永久有效**；
+  `[]` / `{"timestamp":"abc"}` 这类损坏缓存**直接崩**。现全部优雅降级
+  （缺失/损坏/形状不对/时钟回拨 → 视为无缓存），并新增 **`schema_version` 闸门**
+  （旧缓存不能冒充新报告）+ 原子写（tempfile + `os.replace`）+ `cache_info()`。
+- **报告夹带 13 个 NUL**：`wsl --version` 是 UTF-16 输出，解码后带 NUL，
+  导致 `actus probe | grep` 把整份输出判成 binary。→ 所有取值经 `_clean()` 去控制字符、折叠空白。
+- **KPI 曾是自欺欺人**：`elapsed_ms` 在四个维度采集器**之前**计算，实测 wall 13.66s 却上报 8714ms
+  （**少报 4.95s**）。现 `elapsed_ms` = 总墙钟，并拆成
+  `probers_ms / dimensions_ms / assemble_ms / cache_write_ms` **四段加和恒等于 elapsed_ms**，
+  不留黑箱；同时修掉四维度重复采集（`dimensions_ms` 6551ms → 0）。
+- **外部命令探测的超时不生效（Windows 特有，影响面不止 WSL）**：`subprocess.run(timeout=...)`
+  在 Windows 上**不是真上限** —— CPython 超时后是 `kill()` + **再调一次没有 timeout 的
+  `communicate()`** = 等 stdout 管道 **EOF**；当子进程（如 `wsl.exe`）拉起**孙进程**且孙进程
+  继承了管道句柄时，这段等待**完全不受超时约束**。
+  **合成复现**：上限 0.5s，子进程 spawn 一个 3s 的孙进程 → `subprocess.run` 实际 **4.932s**；
+  改为有界实现后 **0.681s**。→ 修法（已落地）：`Popen` + `kill()` + **有限回收**
+  `_REAP_TIMEOUT = 0.1s`（`probe/platform_tools.py:101`、`:125-156`）。
+  **这不是 WSL 专属坑**：Windows 上任何「会拉孙进程」的命令探测（构建工具、包管理器、
+  终端启动器……）都会踩 —— 单条命令的 `timeout` 参数本身给不了上界保证。
+- **WSL 探测尖峰**：`wsl -l -v` 与 `wsl --version` 各吃满 5s 超时会叠成 **~10s 尖峰**
+  （实测到 10 012ms / 8 284ms）→ 加整组预算（约 1.8s，最坏含开销 ≈1.9s），修复后实测 **0.31–0.88s**。
+  这条尖峰的**深层根因**见上一条「超时不生效」；预算只是把症状压住，`Popen` 有界回收才是根因修复。
+- **「整个 WSL 不可用」的错误结论**：旧判据是 `available = list_code == 0` ——
+  把「`-l -v` 超时、但 `-l -q` 成功」错报成**整个 WSL 不可用**（一个子查询失败 ≠ 平台能力缺失）。
+  → 改为「**至少有一条查询应答**」：`responded = any(code == 0 for code in
+  (version_code, list_code, quiet_code))`（`probe/platform_tools.py:573-579`），
+  并在 `distro_source == "quiet"` 时如实标注数据来源。属「简化判据冒充真实结论」同一族。
+
+### ✅ 验收与证据
+
+- 全量 `pytest tests` → **741 passed, 4 skipped**（本轮起点 711，新增 30 个探针用例）。
+- 新增测试：`tests/test_probe_actions.py`（387 行 / 12 用例）、
+  `tests/test_probe_windows.py`（385 行 / 9 用例，假 Windows 世界 + 非 Windows 宿主整文件 skip）、
+  `tests/test_action_readiness_intent.py`（329 行 / 9 用例），全部不依赖本机装了什么。
+- `actus probe --json --force-refresh`：exit=0，items=**173**，`action_readiness` 恒
+  `total=14 ready=14 blocked=0`。
+- **Linux 分支借 WSL 真跑取证**：WSL Ubuntu 22.04.5（kernel `6.6.87.2-microsoft-standard-WSL2`）
+  内加载真实产品代码 → systemd 249 `usable=true`（`/proc/1/comm=systemd` 真 PID1）、
+  `apt 2.4.14` + `dpkg 1.21.1` + `snap 2.76.3`（family=debian）、`is_wsl=true`，自检 **17/17**。
+- `PROBE_PLAN.md` §4.7 从「设计草图」升级为「实现现状」，§9 复选框
+  **30 个 `[ ]` → 28 `[x]` + 2 `[~]`**（未完成项注明原因，并留档了此前一次**虚假勾选**的教训）。
+
+### ⚠️ 已知问题（不阻塞使用）
+
+- **`system_tools` 冷启动尖峰**：稳定态 1.2–1.5s，但同进程内若先跑 `actions`（`os.walk` 扫动作目录
+  冲掉文件缓存）后续 PATH 扫描可慢到 ~5.7s；文档复核时另观察到一次 **7 027ms** 尖峰（随后回落）。
+  属磁盘缓存效应而非代码回归 —— **KPI 应看安静环境下的数字**。
+- **macOS 分支无实跑证据**：SIP（`csrutil`）、Homebrew、Xcode CLT 代码齐备，
+  但从未在真 Mac 上执行过（仅平台钩子模拟 + 伪造 brew 验解析链路），故 `PROBE_PLAN` 该项保持 `[~]`。
+- **两个测试缺口**（已排期补测，实现本身已提交）：`analyze_actions` 的细粒度信号
+  （`verdicts` / `blocked_reasons` / `undeclared` / `unverifiable` / `duplicate_ids`）无专项单测；
+  `runtime:` 依赖解析分支无单测。
+- `probe/__init__.py` 外层线程池已由 8 调到 **10**（覆盖 10 个探测器）。实测对墙钟无可测影响
+  （<1%），属预防性调整：等 `system_tools` 变快后 `platform_tools` 会成为新尾巴。
+
 ## [0.9.0] - 2026-10-27
 
 这一版是**以「验收 + 缺陷围剿」为主题的版本**：从 0.8.0（10-17）之后累计 600+ 次提交，
