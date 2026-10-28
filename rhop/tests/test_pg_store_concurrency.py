@@ -30,11 +30,16 @@
 
 from __future__ import absolute_import
 
+import os
+import sys
 import threading
 import time
 import uuid
 
 import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pg_probe import pg_gate  # noqa: E402  （共享放行探针，见 tests/_pg_probe.py）
 
 from vools.rhop.task.errors import StoreError
 from vools.rhop.task.models import TASK_COLUMNS, TaskRecord
@@ -55,22 +60,10 @@ PG_SPEC = {
 CTX = {"name": "pg-concurrency", "role": "B", "base_dir": "."}
 
 
-def _pg_available():
-    """探测 PG 可达（服务/账号/端口任一不符都算不可达 → 整组 skip）。"""
-    try:
-        import psycopg2
-        conn = psycopg2.connect(host=PG_SPEC["host"], port=PG_SPEC["port"],
-                                user=PG_SPEC["user"], password=PG_SPEC["password"],
-                                dbname=PG_SPEC["dbname"], connect_timeout=3)
-        conn.close()
-        return True
-    except Exception:
-        return False
+_PG_ALLOWED, _PG_SKIP_REASON = pg_gate()
 
-
-pytestmark = pytest.mark.skipif(
-    not _pg_available(),
-    reason="PostgreSQL 不可达（服务未启动，或账号/密码/端口不符）")
+# 只在「探活阶段判定为不可靠」时 skip；放行之后用例里的真实失败仍然是 failure。
+pytestmark = pytest.mark.skipif(not _PG_ALLOWED, reason=_PG_SKIP_REASON)
 
 
 def _spec(table, **over):

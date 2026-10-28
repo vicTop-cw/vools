@@ -34,23 +34,16 @@ PG_SPEC = {
 _SESSION_TABLE = "rhop_test_pg_%d" % int(time.time())
 
 
-def _pg_available() -> bool:
-    """探测 PostgreSQL 是否可达（服务未启动 / 账号密码端口不符都算不可达）。"""
-    try:
-        import psycopg2
-        conn = psycopg2.connect(host=PG_SPEC["host"], port=PG_SPEC["port"],
-                                user=PG_SPEC["user"], password=PG_SPEC["password"],
-                                dbname=PG_SPEC["dbname"], connect_timeout=3)
-        conn.close()
-        return True
-    except Exception:
-        return False
+#: 放行判定交给共享探针（多次「真实查询」探活 + 平台/opt-in 策略）。
+#: 为什么不再用「单次 connect」：Windows→WSL 的 localhost 转发是抖动的，
+#: 探活一次就放行会让 40+ 条用例在随后查询超时时集体假红；详见 tests/_pg_probe.py。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pg_probe import pg_gate  # noqa: E402  （必须在 sys.path 就绪之后）
 
+_PG_ALLOWED, _PG_SKIP_REASON = pg_gate()
 
-# 外部服务不可达时应当 skip 而非 error —— 否则 25 个 ERROR 会在 CI 里掩盖真实失败。
-pytestmark = pytest.mark.skipif(
-    not _pg_available(),
-    reason="PostgreSQL 不可达（服务未启动，或账号/密码/端口不符）")
+# 只在「探活阶段判定为不可靠」时 skip；放行之后用例里的真实失败仍然是 failure。
+pytestmark = pytest.mark.skipif(not _PG_ALLOWED, reason=_PG_SKIP_REASON)
 
 
 def _pg_store(table=None, **overrides):
