@@ -234,7 +234,7 @@ actus run 9f2a11add43fbf12a546606fb2b962ab # 按内容 md5
 
 # 预览 / 依赖检查 / 注册表 / 工作流
 actus preview my_action.actus.schema.md
-actus check my_action.actus.schema.md
+actus validate my_action.actus.schema.md
 actus registry build /path/to/actions
 actus workflow run my_workflow.yaml
 actus validate                          # 批量校验（valid=true / invalid={}）
