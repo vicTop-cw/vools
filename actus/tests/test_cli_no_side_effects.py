@@ -20,11 +20,17 @@ tmp 仓库做递归快照（路径 + size + **mtime_ns** + **sha256**，覆盖 `
 ----------------------------------
 * **严格只读**：跑完仓库**零变化**（包括 `_meta/` 里的运行期文件）。适用于
   `publish --dry-run`、`search`、`list`、`status`、`events`、`records list`、
-  `health`、`viz`、`export`、`deps`、`runtimes`、`replay --dry-run`、失败路径。
-* **只允许写 `_meta/` 运行期产物**：`scan` / `validate` 的产物本来就是索引，
-  `info` 会刷新 mtime 缓存，`probe` 会写自己的缓存。对这类命令断言**变化集合
-  ⊆ 明确白名单**（源码树 `actions/`/`contracts/`/根目录一律不许动）。
-  白名单外任何改动都算红 —— 包括「顺手多写一个文件」。
+  `health`、`viz`、`export`、`deps`、`runtimes`、`replay --dry-run`、失败路径，
+  以及 **`info` / 单目标 `validate`**（第 18 轮审计修复：它们曾被错误地放进
+  `_META_CASES`，等于把旧的"读时写 mtime 缓存"行为合法化了）。
+* **只允许写 `_meta/` 运行期产物**：**仅限"产物本身就是文件"的命令** ——
+  全仓 `validate` / `scan`（重建索引是它们的目的）、`probe`（写自己的缓存）。
+  每条必须带**理由**（`_META_CASES` 第三项）且由自检用例强制非空；对这类命令
+  断言**变化集合 ⊆ 明确白名单**（源码树 `actions/`/`contracts/`/根目录一律不许动）。
+
+⚠️ 护栏反向的历史教训（第 18 轮审计 #1）：如果一条命令"现在会写"就把它挪进
+白名单，护栏会**把写行为合法化**。判定标准是"这个写是不是命令的**目的**"，
+不是"它现在写不写" —— 自检用例会拒绝 `_META_CASES` 里出现空理由/敷衍理由。
 
 变异验证（写测试时实际执行过）
 ------------------------------
@@ -73,20 +79,28 @@ _STRICT_CASES = [
     (["runtimes"], "只读：探测运行时（只在内存里）"),
 ]
 
+# 第 18 轮审计修复（#1 护栏反向）：`info` 与**单目标** `validate` 是纯查询，
+# 曾经因为"实现会刷新 mtime 缓存"被放进 _META_CASES —— 那是把缺陷合法化。
+# 现在它们在这里接受**严格零变化**断言；变异验证见汇报（把 info 改回写 mtimes 即红）。
+_STRICT_CASES += [
+    (["info", "actus.generated.probe"], "只读：解析单个动作（不许刷新 mtime 缓存）"),
+    (["validate", "actus.generated.probe"],
+     "只读：单目标校验（不重建索引、不写 audit；全仓 validate 才建索引）"),
+]
+
 # 允许写 `_meta/` 运行期产物的命令：白名单是**精确路径**，多写一个都算红。
+# 第三项是**强制理由**（自检用例 test_meta_allowlist_entries_have_justification
+# 校验非空、且不得是"因为它现在会写"这类敷衍话）。
 _META_CASES = [
-    (["info", "actus.generated.probe"],
-     ("_meta/actions.mtimes.json",),
-     "info 解析动作会刷新 mtime 缓存（只允许这一个文件）"),
     (["validate"],
      ("_meta/actions.index.json", "_meta/actions.mtimes.json"),
-     "全仓校验会重建索引（只允许索引 + mtime 缓存）"),
+     "全仓校验的目的就是重建索引（索引文件是其产物），故允许写索引+其 mtime 缓存"),
     (["scan"],
      ("_meta/actions.index.json", "_meta/actions.mtimes.json"),
-     "scan 的**产物**就是索引，允许写；但不许碰 actions/contracts/根目录"),
+     "scan 的语义就是重建索引产物，故允许写索引+其 mtime 缓存"),
     (["probe", "--json", "--force-refresh"],
      ("_meta/probe_cache.json",),
-     "probe 允许写自己的缓存；不许写别处"),
+     "probe 的产物是自己的探测缓存，故允许写该缓存文件"),
 ]
 
 _WORKFLOW = {
@@ -357,3 +371,38 @@ def test_meta_writers_only_touch_whitelisted_files(world, argv, allowed, note):
 
     assert rc in (0, 1, 2), "%s 退出码异常: %r" % (label, rc)
     _assert_only_changes(world, before, frozenset(allowed), "%s（%s）" % (label, note))
+
+
+# ---------------------------------------------------------------------------
+# 4) 自检：白名单里的每条必须给出**真实理由**（防止护栏反向再次发生）
+# ---------------------------------------------------------------------------
+
+def test_meta_allowlist_entries_have_justification():
+    """退步了会怎样（第 18 轮审计 #1 的根因）：将来有人再把一条"现在会写"的命令
+    加进 `_META_CASES`，只写一句"因为它现在会写"——护栏又把缺陷合法化了。
+
+    断言：
+      * 每条都有非空理由（>= 10 个字符），且不含「现在会写 / 因为它现在」等敷衍措辞；
+      * 只允许写 `_meta/` 下的路径（源码树/根目录永远不许出现在白名单）；
+      * 同一命令不能既在 `_STRICT_CASES`（零变化）又在 `_META_CASES`（允许写）。
+    """
+    strict_labels = {" ".join(argv) for argv, _note in _STRICT_CASES}
+    meta_labels = set()
+    forbidden_phrases = ["现在会写", "因为它现在", "它现在会", "反正会写", "实测会写"]
+
+    for argv, allowed, reason in _META_CASES:
+        label = " ".join(argv)
+        assert label not in meta_labels, "重复登记: %s" % label
+        assert isinstance(reason, str) and len(reason.strip()) >= 10, (
+            "%s 的白名单理由太短（必须说明'为什么这个写是命令目的'）: %r"
+            % (label, reason))
+        for phrase in forbidden_phrases:
+            assert phrase not in reason, (
+                "%s 的理由在为写行为找借口（%r），应说明'这个写是不是命令的目的'"
+                % (label, phrase))
+        assert allowed, "%s 白名单不能为空（空白名单请放 _STRICT_CASES）" % label
+        for rel in allowed:
+            assert rel.startswith("_meta/"), (
+                "%s 白名单只能包含 _meta/ 运行期产物，不许包含 %r" % (label, rel))
+        assert label not in strict_labels, \
+            "%s 同时出现在严格只读与允许写两个清单里" % label
