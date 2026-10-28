@@ -65,7 +65,9 @@ class EvolutionEngine:
             from .paths import meta_dir as _paths_meta_dir
             meta_base = _paths_meta_dir()
         self._evolution_dir = os.path.join(meta_base, 'evolution')
-        os.makedirs(self._evolution_dir, exist_ok=True)
+        # 第 16 轮：**构造不建目录** —— `actus evolve --list`（纯读）也会构造本类，
+        # 改前它会在 `_meta/` 下写 evolution/。各写方法（_save_version_snapshot 等）
+        # 自己会 mkdir；读方法用 isdir 判断，目录不存在即"无历史"。
         self._history: List[EvolutionRecord] = []
 
     @property

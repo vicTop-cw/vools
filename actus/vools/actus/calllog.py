@@ -122,9 +122,14 @@ class CallLogStore:
         return db
 
     def _probe(self) -> bool:
-        """探测 SQLite 是否可用（建库建表后立即释放句柄）。"""
+        """探测 SQLite 是否可用（第 16 轮：用**内存库**探测，不落盘）。
+
+        改前这里 `self._connect()` 会 `makedirs` 并建出 `_meta/call_log.db` ——
+        于是**任何构造 CallLogStore 的只读路径都会写盘**（实测构造即产生 12KB 库文件）。
+        """
         try:
-            db = self._connect()
+            db = sqlite3.connect(":memory:")
+            db.execute("CREATE TABLE _probe (x INTEGER)")
             db.commit()
             db.close()
             return True
@@ -196,7 +201,9 @@ class CallLogStore:
     def recent(self, limit: int = 50) -> List[dict]:
         """最近 limit 条记录（新的在前）。"""
         limit = max(1, int(limit or 50))
-        if self._use_sql:
+        # 第 16 轮：纯读路径**不建库** —— 库文件不存在就直接回内存缓冲（通常为空），
+        # 否则 `_connect()` 的 makedirs+connect 会为一次"看日志"创建 12KB 空库。
+        if self._use_sql and os.path.exists(self.path):
             try:
                 with self._lock:
                     db = self._connect()

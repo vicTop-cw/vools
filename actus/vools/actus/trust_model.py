@@ -27,7 +27,8 @@ class KeyManager:
         if keys_dir is None:
             keys_dir = os.path.join(os.path.expanduser("~"), ".actus", "keys")
         self._keys_dir = keys_dir
-        os.makedirs(keys_dir, exist_ok=True)
+        # 第 16 轮：**构造不建目录** —— 只读用途（列公钥/验签）构造 KeyManager
+        # 不该在 HOME 下留 ~/.actus/keys/。目录延迟到真正生成密钥时建。
 
     @property
     def keys_dir(self) -> str:
@@ -43,6 +44,7 @@ class KeyManager:
         返回:
             (私钥路径, 公钥路径)
         """
+        os.makedirs(self._keys_dir, exist_ok=True)
         priv_path = os.path.join(self._keys_dir, f"{name}.key")
         pub_path = os.path.join(self._keys_dir, f"{name}.pub")
 
@@ -141,6 +143,8 @@ class KeyManager:
     def list_keys(self) -> List[str]:
         """列出所有密钥名称。"""
         keys = []
+        if not os.path.isdir(self._keys_dir):
+            return []          # 第 16 轮：还没生成过密钥 = 空列表（不为此建目录）
         for fname in os.listdir(self._keys_dir):
             if fname.endswith(".key"):
                 keys.append(fname[:-4])
@@ -394,7 +398,8 @@ class ApprovalManager:
         if approvals_dir is None:
             approvals_dir = os.path.join(os.path.expanduser("~"), ".actus", "approvals")
         self._approvals_dir = approvals_dir
-        os.makedirs(approvals_dir, exist_ok=True)
+        # 第 16 轮：**构造不建目录** —— `actus pending`（纯读）也会构造本类，
+        # 改前它会在 HOME 下建 ~/.actus/approvals/。目录延迟到首次写入审批记录时建。
 
     def request_approval(self, action_id: str, source_url: str,
                          permissions: List[str], checksum: str,
@@ -468,6 +473,9 @@ class ApprovalManager:
     def list_pending(self) -> List[dict]:
         """列出待审批的动作。"""
         records = []
+        # 第 16 轮：目录不存在（还没写过任何审批记录）= 空列表，**不要**为此建目录
+        if not os.path.isdir(self._approvals_dir):
+            return []
         for fname in os.listdir(self._approvals_dir):
             if not fname.endswith(".json"):
                 continue
@@ -480,6 +488,8 @@ class ApprovalManager:
 
     def _save(self, record: dict) -> None:
         """保存审批记录。"""
+        # 第 16 轮：目录延迟到**真正写入**时才建（构造/只读不建）
+        os.makedirs(self._approvals_dir, exist_ok=True)
         action_id = record["action_id"]
         fpath = os.path.join(self._approvals_dir, f"{action_id}.json")
         with open(fpath, "w", encoding="utf-8") as f:
