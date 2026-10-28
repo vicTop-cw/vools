@@ -786,9 +786,12 @@ def _dispatch(args) -> int:
         real_errors, runtime_notes = split_validation(errs)
         for note in runtime_notes:
             print('⚠️  %s' % note, file=sys.stderr)
-        payload_data = {'id': args.action_id, 'errors': errs}
+        # 审计（第 29 轮 ⑩）：`data.errors` 只放**真实错误**；`runtime:`/`warning:`
+        # 环境提示只进 `data.warnings`。改前两者都塞进 errors，而 status 又按
+        # split_validation 判 ok —— 返回体自相矛盾（"errors 非空却 status=ok"），
+        # 调用方无从判断该不该拦。
+        payload_data = {'id': args.action_id, 'errors': real_errors}
         if runtime_notes:
-            # 只在真有环境提示时加字段：正常仓库下返回体形状与改前一致
             payload_data['warnings'] = runtime_notes
         _out({'status': 'ok' if not real_errors else 'failed', 'data': payload_data})
         return 0 if not real_errors else 1
@@ -1768,9 +1771,21 @@ def _cmd_visibility(args) -> int:
         # team 级必须把团队名一起落进 #!cfg（否则规则无法被 check_visibility 判定）
         ok, message = _write_action_visibility(
             action_path, level, team=(args.team if level == 'team' else None))
+        _json_mode = getattr(args, 'json_output', False)
         if not ok:
+            if _json_mode:
+                _out({'status': 'failed', 'action_id': args.action_id,
+                      'error': {'code': 'visibility_write_failed',
+                                'message': message}})
+                return 1
             print(f'❌ 设置可见性失败: {message}', file=sys.stderr)
             return 1
+        if _json_mode:
+            # 扁平结构（与 MCP `actus_visibility_set` 一致、不套 data）
+            _out({'status': 'ok', 'action_id': args.action_id,
+                  'visibility': level, 'team': args.team or '',
+                  'previous': old_level})
+            return 0
         print(f'✅ 可见性已更新: {args.action_id} {old_level} → {level}')
         if level == 'team':
             print(f'   团队: {args.team}（已写入 #!cfg）')
@@ -1808,7 +1823,13 @@ def _cmd_registry(args) -> int:
         # 时仍然去看当前 shell 目录（实测报 cwd 下的 .actus.registry.json 不存在）。
         from vools.actus.paths import repo_root as _repo_root_path
         index_path = args.index or os.path.join(_repo_root_path(), '.actus.registry.json')
+        _json_mode = getattr(args, 'json_output', False)
         if not os.path.isfile(index_path):
+            if _json_mode:
+                _out({'status': 'failed', 'index': index_path,
+                      'error': {'code': 'index_not_found',
+                                'message': '索引文件不存在: %s' % index_path}})
+                return 1
             print(f'❌ 索引文件不存在: {index_path}')
             return 1
         from vools.actus.registry import RegistryEntry
@@ -1817,11 +1838,21 @@ def _cmd_registry(args) -> int:
         actions = index.get('actions', [])
         if index.get('corrupt') or index.get('problems'):
             # 索引本身损坏/有条目非法：明确报出来，不当成"0 个动作"静默通过
+            problems = index.get('problems') or {}
+            if _json_mode:
+                _out({'status': 'failed', 'index': index_path,
+                      'problems': [{'key': k, 'problem': v}
+                                   for k, v in problems.items()]})
+                return 1
             print('❌ 索引损坏或含非法条目:', index_path)
-            for key, problem in (index.get('problems') or {}).items():
+            for key, problem in problems.items():
                 print('   - %s: %s' % (key, problem))
             return 1
         if not actions:
+            if _json_mode:
+                _out({'status': 'ok', 'index': index_path, 'total': 0,
+                      'valid': 0, 'invalid': []})
+                return 0
             print(f'✅ 注册表校验通过: 0/0 个动作有效（空索引）')
             return 0
         # 审计修复（P1 假校验）：改前只数 `if aid: valid_count += 1` —— 实测
@@ -1846,6 +1877,15 @@ def _cmd_registry(args) -> int:
             ok, message = reg.validate_entry(entry, repo_dir)
             if not ok:
                 invalid.append((entry.id, message))
+        if _json_mode:
+            # 扁平结构（与 MCP 一致、不套 data）：valid 条数 + 逐条 invalid 明细
+            _out({'status': 'failed' if invalid else 'ok',
+                  'index': index_path,
+                  'total': len(actions),
+                  'valid': len(actions) - len(invalid),
+                  'invalid': [{'id': aid, 'message': message}
+                              for aid, message in invalid]})
+            return 1 if invalid else 0
         if invalid:
             print('❌ 注册表校验失败: %d/%d 个动作无效' % (len(invalid), len(actions)))
             for aid, message in invalid:
@@ -1861,6 +1901,18 @@ def _cmd_registry(args) -> int:
             print(f'❌ 索引文件不存在: {index_path}')
             return 1
         index = reg.load_from_file(index_path)
+        if getattr(args, 'json_output', False):
+            # 扁平：注册表元数据直接放顶层（不套 data / registry 子对象就少一层解析）
+            _out({'status': 'ok', 'index': index_path,
+                  'name': index.get('name', 'unknown'),
+                  'version': index.get('version', '?'),
+                  'author': index.get('author', '?'),
+                  'description': index.get('description', '?'),
+                  'count': len(index.get('actions', [])),
+                  'actions': [{'id': a.get('id', '?'),
+                               'version': a.get('version', '?')}
+                              for a in index.get('actions', [])]})
+            return 0
         print(f'📦 注册表: {index.get("name", "unknown")}')
         print(f'   版本: {index.get("version", "?")}')
         print(f'   作者: {index.get("author", "?")}')

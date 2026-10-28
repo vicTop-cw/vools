@@ -582,6 +582,22 @@ class MCPServer:
                                  'id': {'type': 'string',
                                         'description': '（兼容别名，等价 action_id；新代码请用 action_id）'},
                                  'args': {'type': 'object'}}}},
+            {'name': 'actus_validate',
+             'description': ('校验动作契约（schema / trust / 依赖 / entry / 平台等）。'
+                             '给 action_id 只校验该动作；不给则校验**全仓**（逐动作 status）。'
+                             '注意：`runtime:` 开头的是**环境提示**（裸仓库缺 contracts/'
+                             '未装 jsonschema 等），只进 warnings、不影响 valid。'),
+             'inputSchema': {'type': 'object',
+                             'properties': {
+                                 'action_id': {'type': 'string',
+                                               'description': '动作 id，如 actus.basics.calculator；缺省 = 校验全仓'},
+                                 'id': {'type': 'string',
+                                        'description': '（兼容别名，等价 action_id）'}}}},
+            {'name': 'actus_health',
+             'description': ('系统健康检查：Python 版本 / 核心模块 / 动作目录 / _meta / '
+                             '编译器 / 磁盘 / 网络 / Vault。返回 overall（ok|warn|error）'
+                             '与逐项明细；warn 不算失败。'),
+             'inputSchema': {'type': 'object', 'properties': {}}},
             {'name': 'actus_confirm',
              'description': ('人类确认通道（**本版本不可用**：没有按 exec_id 的确认接口，'
                              '调用会返回 not_implemented。请改用带 confirmed=true 的动作'
@@ -1654,6 +1670,47 @@ class MCPServer:
             if workflow is not None:
                 data['workflow'] = workflow
             return text_result({'status': 'ok', 'data': data})
+
+        if name == 'actus_validate':
+            # 语义清晰：有 action_id → 校验单个；无 → 校验全仓。
+            # 与 CLI `validate` / API `validate_action` 同一真源（split_validation），
+            # `runtime:` 环境提示只进 warnings、不影响 valid（与第 27 轮 CLI 修复一致）。
+            import vools.actus as actuscore
+            from vools.actus.validate import split_validation
+            aid = (args.get('action_id') or args.get('id') or '').strip()
+            if not aid:
+                idx = actuscore.load_index()
+                bad = {k: (v.get('errors') or []) for k, v in (idx.get('actions') or {}).items()
+                       if v.get('status') != 'valid'}
+                return text_result({'status': 'ok' if not bad else 'failed',
+                                    'scope': 'repo',
+                                    'valid': not bad,
+                                    'checked': len(idx.get('actions') or {}),
+                                    'invalid': bad})
+            action = actuscore.get_action(aid)
+            real_errors, runtime_notes = split_validation(
+                actuscore.validate_action(action))
+            return text_result({'status': 'ok' if not real_errors else 'failed',
+                                'scope': 'action',
+                                'action_id': aid,
+                                'valid': not real_errors,
+                                'errors': real_errors,
+                                'warnings': runtime_notes})
+
+        if name == 'actus_health':
+            from vools.actus.health import run_health_check
+            report = run_health_check()
+            overall = report.overall
+            return text_result({
+                # warn 不算失败；只有 error 才是 failed
+                'status': 'failed' if overall == 'error' else 'ok',
+                'overall': overall,
+                'counts': report.status_counts,
+                'total_duration': round(report.total_duration, 3),
+                'checks': [{'name': r.name, 'status': r.status,
+                            'message': r.message, 'suggestion': r.suggestion}
+                           for r in report.results],
+            })
 
         if name == 'actus_info':
             # action_id 为主名，id 为兼容别名（第 27 轮统一参数命名）
