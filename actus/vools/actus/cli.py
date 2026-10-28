@@ -201,6 +201,10 @@ def _build_parser():
                             '下载同名 .sig 并验签，失败即拒绝（计划 §六.3）')
     p_run.add_argument('--allow-unverified-remote', action='store_true',
                        help='允许执行未经指纹校验的远程动作（默认拒绝，自担供应链风险）')
+    # 与 executor.execute(force=...) 对齐：动作声明的**必需依赖缺失**时，
+    # 引擎（含 MCP）早就提示"可使用 force=True 强制执行"，但 CLI 一直没暴露这个开关。
+    p_run.add_argument('--force', action='store_true',
+                       help='缺少必需依赖时仍强制运行（默认拒绝；与 --confirm 不同语义）')
 
     p_status = sub.add_parser('status', help='查询执行状态')
     p_status.add_argument('exec_id', nargs='?', help='缺省 = 最近执行汇总')
@@ -371,6 +375,9 @@ def _build_parser():
     p_install.add_argument('--commit', help='commit hash')
     p_install.add_argument('--scope', help='权限范围（trusted/community/sandbox）')
     p_install.add_argument('--dir', help='安装目录（默认 ~/.actus/actions）')
+    p_install.add_argument('--overwrite-config', action='store_true',
+                           help='重装时覆盖已有的 .actus.scope/.actus.visibility'
+                                '（默认保留用户手改的配置）')
 
     # uninstall 子命令
     p_uninstall = sub.add_parser('uninstall', help='卸载已安装的动作仓库')
@@ -432,6 +439,8 @@ def _build_parser():
     p_template.add_argument('--action-id', help='目标动作 ID')
     p_template.add_argument('--name', help='动作名称')
     p_template.add_argument('--output', help='输出目录')
+    p_template.add_argument('--force', action='store_true',
+                            help='目标动作文件已存在时覆盖（默认拒绝，防静默覆盖）')
 
     # export 子命令
     p_export = sub.add_parser('export', help='导出动作执行历史')
@@ -825,6 +834,7 @@ def _dispatch(args) -> int:
         except Exception:
             params = _parse_params(args.params)
         r = actuscore.execute(target, params, confirmed=confirmed,
+                              force=getattr(args, 'force', False),
                               preparsed_action=_scattered_action)
         _out(r)
         if r['status'] == 'awaiting_confirmation':
@@ -1771,6 +1781,10 @@ def _cmd_install(args) -> int:
         kwargs['scope'] = args.scope
     if args.dir:
         kwargs['install_dir'] = args.dir
+    if getattr(args, 'overwrite_config', False):
+        # 与 installer 的配置保护对齐：默认**保留**用户手改的
+        # .actus.scope / .actus.visibility，只有显式开关才覆盖。
+        kwargs['overwrite_config'] = True
 
     installer = ActionInstaller()
     result = installer.install(**kwargs)
@@ -3259,7 +3273,8 @@ def _cmd_template(args) -> int:
         name = args.name or args.action_id.split('.')[-1]
         output_dir = args.output or 'actions/custom'
 
-        path = create_action_from_template(args.id, args.action_id, name, output_dir)
+        path = create_action_from_template(args.id, args.action_id, name, output_dir,
+                                           force=getattr(args, 'force', False))
         if path:
             print(f'✅ 动作已创建: {path}')
             return 0

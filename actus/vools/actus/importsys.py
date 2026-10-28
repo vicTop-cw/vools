@@ -146,13 +146,19 @@ class CCompiler(CompilerBackend):
         if not self.is_available():
             return False, "C 编译器不可用"
 
+        # 审计修（仓库根残留）：MSVC 的 `cl.exe /LD a.c /Fe:out` 会把中间产物
+        # `a.obj` 写到**当前工作目录**（gcc 不会），于是跑测试时仓库根莫名多出
+        # actus/a.obj。这里把 CWD 钉到缓存目录，并用 `/Fo<dir>\` 把中间文件也
+        # 重定向到同一处 —— 源文件、产物、中间产物都不再落到仓库里。
+        out_dir = str(output_path.parent)
         if shutil.which("gcc"):
             cmd = ["gcc", "-shared", "-fPIC", "-o", str(output_path), str(source_path)]
         else:
-            cmd = ["cl.exe", "/LD", str(source_path), f"/Fe:{output_path}"]
+            cmd = ["cl.exe", "/LD", str(source_path), f"/Fe:{output_path}",
+                   f"/Fo{out_dir}{os.sep}"]
 
         try:
-            result = run_cmd_safe(cmd, timeout=60)
+            result = run_cmd_safe(cmd, timeout=60, cwd=out_dir)
             if result.returncode == 0:
                 return True, ""
             if result.returncode == -9:
