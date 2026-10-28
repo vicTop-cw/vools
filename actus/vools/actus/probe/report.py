@@ -52,7 +52,12 @@ from .base import ProbeItem
 #   4: 新增 `report_source`（probe / cache）字段；缓存命中路径改为**重算 summary**，
 #      `cache.load_cache` 也会校验 summary 与 items 自洽 —— 旧缓存没有这层保证，
 #      可能带着伪造/过期的 summary 冒充新报告，故 schema=3 的缓存整体失效
-REPORT_SCHEMA_VERSION = 4
+#   5: 缓存 payload 新增「防事故」三件套 host / probe_version / items_digest
+#      （跨机器误用 / 旧版本残留 / 写坏或人工编辑）。三者都是**新增必填**形状，
+#      schema=4 的缓存一律缺这三键 ⇒ 虽会被新校验以 host-missing 拒掉，但那种
+#      拒绝理由会误导排障（像是"文件缺字段"而不是"结构换代了"）；
+#      故按既有规矩 bump，让旧缓存在 schema 闸门处就以 schema-mismatch 明确失效。
+REPORT_SCHEMA_VERSION = 5
 
 # 关键工具分类：只有这些分类的条目才会进 summary["key_tools"]（保持改前口径）
 _KEY_TOOL_CATEGORIES = ("system_tools", "compilers", "runtimes")

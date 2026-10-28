@@ -319,17 +319,27 @@ def _has_overlapping_calls(calls):
 
 
 def _rewrite_cache_items(cache_file, items, timestamp=None):
-    """把已落盘缓存里的 items 换成标记条目（其余字段原样保留）。
+    """把已落盘缓存里的 items 换成标记条目，**并同步更新防事故三件套**。
 
     **不手写整份 payload**：缓存 payload 带 ``schema_version`` 等版本化字段
     （cache.py 是真源，且正在演进），手写等于把测试钉死在某一个版本上。
     做法是先让 probe() 用桩跑一轮写出结构合法的缓存，再就地改 items ——
     结构合法性与版本一致性都由产品自己保证。
+
+    但「改 items」必须同步 ``items_digest``：schema v5 起 load_cache 会用
+    ``_items_digest(items)`` 重算比对，只改 items 不改摘要 → 缓存被判
+    ``digest-mismatch`` 失效 → probe() 重新探测，本用例造出的「应命中的缓存」
+    就命不中了（实测曾因此误红）。``host`` / ``probe_version`` 也显式重写：
+    它们本来就来自真实 save_cache，这里再写一遍保证不依赖来源、口径与产品一致。
     """
     payload = json.loads(cache_file.read_text(encoding="utf-8"))
     assert isinstance(payload, dict), "缓存文件顶层不是对象: %r" % (payload,)
     payload["items"] = items
     payload["summary"] = {}
+    # 防事故三件套（cache.py 是唯一真源，用它的 helper 计算，别在本文件重算）
+    payload["host"] = cache_mod._current_host()
+    payload["probe_version"] = cache_mod._probe_version()
+    payload["items_digest"] = cache_mod._items_digest(items)
     if timestamp is not None:
         payload["timestamp"] = timestamp
     cache_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

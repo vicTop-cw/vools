@@ -17,6 +17,21 @@
   `json.dump` 落盘，遇到不可序列化的值（或进程被 kill）会留下半截 JSON，
   下一次读缓存就走异常路径。
 
+完整性校验的边界（重要，别误读）
+--------------------------------
+payload 里带 `host` / `probe_version` / `items_digest` 三个字段，用于**防事故**，
+**不是安全边界**：能在本机写这个缓存文件的人，同样能重算摘要、伪造 host 和版本号 ——
+这三者都不防篡改者。它们防的是**事故**：
+  1. **跨机器误用**：`_meta` 放在共享盘 / NAS / 网盘同步时，A 机的探测结果被 B 机
+     当成「自己的机器能力」（`host` 不符 → 缓存无效）；
+  2. **旧版本残留**：升级后把旧版本结构/口径的探测结果当成本版本的能力快照
+     （`probe_version` 不匹配 → 缓存无效）；
+  3. **写坏的 JSON / 人工编辑出错**：items 被截断、被手改、字节损坏
+     （`items_digest` 重算不符 → 缓存无效）。
+字段名故意叫 `items_digest`（而不是 `signature` / `checksum`），并在注释里写明
+「可被重算」—— 避免读代码的人误以为这里有安全性。真正的可信边界是签名
+（`trust_model` 的 ed25519 / `.sig`），不是这个缓存文件。
+
 缓存文件位置（可测性/可重定向，本轮修复）
 ------------------------------------------
 改前：`_CACHE_DIR` 是 import 时用 `__file__` 硬算出来的模块级常量，**完全不读
@@ -47,8 +62,10 @@ __all__ = [
     "CACHE_SCHEMA_VERSION",
 ]
 
+import hashlib
 import json
 import os
+import platform
 import tempfile
 import time
 from typing import Optional
@@ -165,6 +182,92 @@ def _valid_timestamp(value) -> Optional[float]:
     return stamp
 
 
+def _current_host() -> str:
+    """本机标识（`platform.node()`），用于缓存来源比对；取不到用 "unknown"。"""
+    try:
+        return platform.node() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _probe_version() -> str:
+    """当前探测实现版本（`vools.actus.__version__`）；取不到用 "unknown"。"""
+    try:
+        import vools.actus as _actus_pkg
+        return str(getattr(_actus_pkg, "__version__", "") or "unknown")
+    except Exception:
+        return "unknown"
+
+
+def _parse_version_prefix(version):
+    """把 "0.9.0" 解析成用于兼容判断的版本前缀元组；无法解析返回 None。
+
+    比较粒度 —— **为什么 0.x 要带上 minor（这不是随手写的）**
+    ------------------------------------------------------
+    规则：主版本不同即不兼容（`1.x` 与 `2.x` 的探测口径不可互换）；
+    **但主版本为 0 时，把次版本也纳入比较**（`0.8.x` vs `0.9.x` 判为不兼容）。
+
+    理由（两条，缺一不可）：
+      1. **语义**：本项目 0.x 的 minor 一直在承载 breaking 变更 —— 0.7 → 0.8 → 0.9
+         每一版都动过探测结构/字段口径（新增 section、`elapsed_ms` 改总墙钟、
+         缓存加 report_source/schema 等），semver 的「0.x minor 可 breaking」
+         在这里是字面成立的；
+      2. **有效性**：只比 major 的话，主版本恒为 0 ⇒ 这道闸门在发布 1.0 之前
+         **永远不会触发**，而一个"永远不触发"的闸门等于没做闸门 —— 达不到
+         「旧版本的探测结果不许冒充本机能力」这个目的。
+
+    1.0 之后无需改代码：那时 `numbers[0] != 0` 成立，自动退化为「只比主版本」
+    （见最后两行），与主版本的语义一致。
+
+    解析不出（空串 / 非字符串 / 形如 "dev" 的版本）一律返回 None，
+    由 `_version_compatible` 当作不兼容处理 —— 宁可重探一次，也不拿可疑缓存。
+    """
+    if not isinstance(version, str):
+        return None
+    numbers = []
+    for chunk in version.strip().split(".")[:2]:
+        digits = ""
+        for char in chunk:
+            if char.isdigit():
+                digits += char
+            else:
+                break
+        if not digits:
+            return None
+        numbers.append(int(digits))
+    if not numbers:
+        return None
+    # 主版本非 0 → 只比主版本（1.0 之后自动退化为主版本语义）；
+    # 主版本为 0 → 连 minor 一起比（理由见 docstring「为什么 0.x 要带上 minor」）
+    if numbers[0] != 0 or len(numbers) < 2:
+        return (numbers[0],)
+    return (numbers[0], numbers[1])
+
+
+def _version_compatible(stored, current) -> bool:
+    """缓存里的 probe_version 与当前实现版本是否兼容（粒度见上）。"""
+    stored_prefix = _parse_version_prefix(stored)
+    current_prefix = _parse_version_prefix(current)
+    if stored_prefix is None or current_prefix is None:
+        return False          # 解析不出就当不兼容：宁可重探，也不用可疑缓存
+    return stored_prefix == current_prefix
+
+
+def _items_digest(items) -> str:
+    """items 的摘要（sha256 前 16 位）。
+
+    **可被任何人重算 —— 只防事故（写坏/人工编辑/截断），不防篡改。**
+    特意不叫 signature / checksum，避免读代码的人误以为这里有安全性。
+    规范化：sort_keys + 紧凑分隔符，保证同一份 items 得到同一个摘要。
+    """
+    try:
+        canonical = json.dumps(items, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":"))
+    except (TypeError, ValueError):
+        canonical = repr(items)
+    return hashlib.sha256(canonical.encode("utf-8", "replace")).hexdigest()[:16]
+
+
 def _validate_payload(data) -> tuple:
     """校验缓存 payload，返回 (ok, reason)。**只判定，不抛异常。**"""
     if not isinstance(data, dict):
@@ -179,6 +282,23 @@ def _validate_payload(data) -> tuple:
     if _valid_timestamp(data.get("timestamp")) is None:
         return False, "bad-timestamp(%r)" % (data.get("timestamp"),)
 
+    # ── 防事故闸门（**不是安全边界**，见模块 docstring「完整性校验的边界」）──
+    stored_host = data.get("host")
+    if not isinstance(stored_host, str) or not stored_host:
+        return False, "host-missing"
+    current_host = _current_host()
+    if stored_host != current_host:
+        return False, "host-mismatch(file=%r, current=%r)" % (
+            stored_host, current_host)
+
+    stored_version = data.get("probe_version")
+    if not isinstance(stored_version, str) or not stored_version:
+        return False, "version-missing"
+    current_version = _probe_version()
+    if not _version_compatible(stored_version, current_version):
+        return False, "version-mismatch(file=%r, current=%r)" % (
+            stored_version, current_version)
+
     for key in _REQUIRED_DIMENSIONS:
         if not isinstance(data.get(key), dict):
             return False, "missing-dimension(%s)" % key
@@ -192,6 +312,15 @@ def _validate_payload(data) -> tuple:
             return False, "items[%d]-not-an-object" % index
         if not isinstance(entry.get("name"), str) or not entry.get("name"):
             return False, "items[%d]-has-no-name" % index
+
+    # items 摘要：检测写坏 / 被人工编辑 / 被截断（不防有意伪造，见模块 docstring）
+    stored_digest = data.get("items_digest")
+    if not isinstance(stored_digest, str) or not stored_digest:
+        return False, "digest-missing"
+    actual_digest = _items_digest(items)
+    if stored_digest != actual_digest:
+        return False, "digest-mismatch(file=%r, actual=%r)" % (
+            stored_digest, actual_digest)
 
     summary = data.get("summary")
     if summary is not None and not isinstance(summary, dict):
@@ -278,6 +407,14 @@ def save_cache(report: dict) -> bool:
         data["schema_version"] = CACHE_SCHEMA_VERSION
         data["timestamp"] = _report_timestamp(report)
         data["cached_at"] = time.time()
+        # 防事故三件套（**不是安全边界**，见模块 docstring）：
+        #   host          —— 跨机器误用（共享盘/NAS/网盘同步）
+        #   probe_version —— 旧版本残留（升级后别拿旧结构冒充新能力）
+        #   items_digest  —— 写坏/人工编辑/截断（可被重算，不防伪造）
+        items = data.get("items")
+        data["host"] = _current_host()
+        data["probe_version"] = _probe_version()
+        data["items_digest"] = _items_digest(items if isinstance(items, list) else [])
         text = json.dumps(data, ensure_ascii=False, indent=2)   # 先序列化：不落半截
         _atomic_write(_cache_path(), text)
         return True
@@ -345,6 +482,12 @@ def cache_info() -> dict:
         "timestamp": None,
         "age_seconds": None,
         "item_count": None,
+        "host_in_file": None,
+        "host_current": _current_host(),
+        "version_in_file": None,
+        "version_current": _probe_version(),
+        "items_digest_in_file": None,
+        "items_digest_actual": None,
         "valid": False,
         "reason": "",
         "last_reject": _LAST_REJECT,
@@ -364,9 +507,13 @@ def cache_info() -> dict:
     if isinstance(data, dict):
         info["schema_in_file"] = data.get("schema_version")
         info["timestamp"] = data.get("timestamp")
+        info["host_in_file"] = data.get("host")
+        info["version_in_file"] = data.get("probe_version")
+        info["items_digest_in_file"] = data.get("items_digest")
         items = data.get("items")
         if isinstance(items, list):
             info["item_count"] = len(items)
+            info["items_digest_actual"] = _items_digest(items)
     stamp = _valid_timestamp(data.get("timestamp")) if isinstance(data, dict) else None
     if stamp is not None:
         info["age_seconds"] = round(time.time() - stamp, 1)
