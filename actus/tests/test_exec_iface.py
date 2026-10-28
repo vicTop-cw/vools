@@ -178,13 +178,16 @@ class TestExecutorFor:
         with pytest.raises(ValueError):
             executor_for('bogus')
 
-    def test_execute_returns_exec_result(self):
+    def test_execute_returns_exec_result(self, monkeypatch, tmp_path):
         """三路 execute 对坏输入返回统一 ExecResult（不抛），且失败语义要具体。
 
         审计加固：原来只断言 `isinstance(r, ExecResult)` —— 返回一个默认的
         `ExecResult()`（status=ok、无 error）也会绿，等于坏输入被当成功。
         现在断言具体失败契约：ok=False、status=error、error_kind=invalid、错误消息点名动作。
+        测试卫生：真 execute 会按 `ACTUS_REPO_ROOT` 写 `_meta/runs|calls|logs`，
+        这里把仓库根指到 tmp，防止污染真实仓库。
         """
+        monkeypatch.setenv('ACTUS_REPO_ROOT', str(tmp_path))
         ex = executor_for('executor')
         r = ex.execute(_FakeAction(aid='nonexistent.action'), ExecutionContext())
         assert isinstance(r, ExecResult)

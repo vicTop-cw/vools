@@ -9,8 +9,10 @@
   3. **无子命令时静默退出** —— `actus` 什么都不打印就 exit 2，用户看不到用法。
 """
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -23,9 +25,17 @@ def _cli(*args):
     # P1-1：强制子进程从源码树 import，回滚到系统 site-packages 的旧装会
     # 报 0.8.0（与源码 0.7.9 冲突）。actus/vools/ 是源码真源所在。
     env["PYTHONPATH"] = os.path.join(ACTUS, "vools") + os.pathsep + env.get("PYTHONPATH", "")
-    return subprocess.run([sys.executable, "-m", "vools.actus.cli", *args],
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", cwd=ACTUS, timeout=300, env=env)
+    # 测试卫生：CLI 子进程会按 ACTUS_REPO_ROOT 写 `_meta/`（index/runs/call_log/
+    # logs）—— 不隔离就会污染真实仓库。这里给每次调用一个 tmp 空仓库。
+    fake_root = tempfile.mkdtemp(prefix="actus_cli_surface_")
+    os.makedirs(os.path.join(fake_root, "actions"), exist_ok=True)
+    env["ACTUS_REPO_ROOT"] = fake_root
+    try:
+        return subprocess.run([sys.executable, "-m", "vools.actus.cli", *args],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", cwd=ACTUS, timeout=300, env=env)
+    finally:
+        shutil.rmtree(fake_root, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------
