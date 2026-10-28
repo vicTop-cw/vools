@@ -86,6 +86,32 @@ auth() / recover() / rotate() / rollback()
 - **L2/L3 的第二因子**：`seed_key` 仍是 TOTP 种子。本轮解决的是"库文件泄露"场景；
   若要防御"能读 keyring 的本机用户"，需要硬件因子（TPM/HSM，未来档位）。
 - **`key_meta` 里存 passphrase 的 salt/iters（明文）**：salt 本来不需要保密，iters 固定 200k。
+- **懒创建 / 「库不存在 = 没有密钥」契约（第 17 轮）。**
+  `Vault2.__init__` **只算路径，零文件系统操作**；所有写侧初始化（旧库迁移 → `makedirs`
+  → `chmod` → 建库建表 → 密钥保护三连）收敛到幂等的 `_ensure_ready()`，**只有写路径**调它。
+
+  | 场景 | 行为 |
+  |---|---|
+  | 构造 `Vault2()` | 不建目录、不建库、不迁移（真实事故里曾 3 次把空库写进 `~/.actus`） |
+  | `get_secret`（库不存在） | `{"status":"error","message":"凭证不存在"}` —— 与"查不到"**同形** |
+  | `list_secrets`（库不存在） | `{"status":"ok","count":0,"secrets":[],"vault_exists":false}` |
+  | `status()`（库不存在） | `state="missing"`（另有 `empty` / `ok` / `corrupt`） |
+  | `auth` / `delete_secret` / `rotate_secret`（库不存在） | 明确"不存在"，**不建库** |
+  | `register()` | **唯一**建库入口（内部 `_ensure_ready()`） |
+  | `rotate_seed_key(apply=False)` | 干跑：读阶段全验（解密+重加密+回读）后返回统计，**零写** |
+  | `_get_vault2()` | 构造零 FS（懒创建），因此不会再凭空建库 |
+
+  **迁移行为的改变（诚实记录）**：改前"构造即迁移"（`Vault2()` 会把 `cwd/_meta/vault`
+  旧库 `shutil.move` 到新位置 —— "看一眼就搬用户数据"）；现在迁移**只在写路径首次
+  `_ensure_ready()` 时发生**，且可用 `Vault2(migrate_legacy=False)` 显式禁止。
+  评估结果：**没有测试依赖 v2 的"构造即迁移"**（`migrated_from` 的用例全部是 v1
+  `Vault`）；`-k vault` 74 条、全量 1246 条在 serial 与 `-n 4` 下都通过。
+
+  `status()` 三态契约：`missing`（文件不存在）/ `empty`（库在但零身份）/ `ok`（有身份）/
+  `corrupt`（文件在但打不开或表缺失，带 `state_detail`）—— **不把损坏糊成"空库"**。
+
+  验收：`tools/audit/verify_vault2_lazy_init.py`（21 项：构造零 FS / 三读路径不建库 /
+  `_get_vault2()` 不建库 / register 建库 / 三态 status / dry-run 零写）。
 - **密钥轮换（`seed_key` 生命周期）：已实现 —— `Vault2.rotate_seed_key(token)`（第 16 轮）。**
   前置条件（`master_key` 可稳定重算）已由 §6.1 的 P0 修复满足；轮换=换 seed + 用新 master
   **原地重加密**（不需要 PIN、不需要导出重录）。
