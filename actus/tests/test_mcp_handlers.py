@@ -221,6 +221,9 @@ _SAFE_NO_REQUIRED = [
     # 第 28 轮新增：查 LLM 成本账本（month 可选、无必需参数）。纯只读：
     # 空账本时返回 recorded=False + 明确 message，不写盘、不报错。
     "actus_cost",
+    # 第 29 轮新增：校验动作契约（action_id 可选；缺省校验全仓）。纯读：
+    # load_index/get_action + split_validation，空仓返回 status=ok、valid=True。
+    "actus_validate",
 ]
 
 #: 无必需参数但**不在本文件调用**的工具（写操作/会起服务/依赖本机动作），
@@ -241,6 +244,9 @@ _DEFERRED_NO_REQUIRED = {
     "actus_webhook_logs": "同上",
     "actus_project_load": "读项目文件，project 家族归 cmd-engine 测试线",
     "actus_project_detect": "同上",
+    # 第 29 轮新增：系统健康检查（磁盘/网络/编译器/Vault 真探测）。慢且随环境波动，
+    # 不适合放进本文件的"只读可安全调用"批量里；待专门派单补行为用例。
+    "actus_health": "真跑系统健康检查（慢、随环境波动），待 health 专项测试",
     "actus_project_build": "会执行构建命令（写操作）",
     "actus_project_test": "会执行测试命令（写操作）",
     "actus_project_status": "同上",

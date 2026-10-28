@@ -10,8 +10,8 @@
   2. 两种位置都可用（全局 `--json` 在子命令前 / 子命令级 `--json` 在子命令后）；
   3. 人类模式（不加 `--json`）**不是 JSON**（否则这个开关就白加了）。
 
-已知未接线（cmd-engine 说下轮补）：`registry validate` / `registry info` /
-`visibility set` 仍是人类文本 —— 本文件用 xfail 显式记录"待接线"，不假装可用。
+补记：`registry validate` / `registry info` / `visibility set` 的 `--json` 已在
+后续接线，本文件把它们从 xfail 转为正式守卫（再退回文本会直接红）。
 
 隔离：`tmp_path` 假仓库 + HOME/ACTUS_META_DIR/ACTUS_CONFIG_DIR 全指 tmp。
 """
@@ -182,22 +182,25 @@ def test_human_mode_is_not_json(world, argv, marker):
 
 
 # ===========================================================================
-# 4) 已知未接线：显式 xfail（不假装可用）
+# 4) 已接线：registry validate / registry info / visibility set 的 --json
 # ===========================================================================
 
-@pytest.mark.xfail(strict=False, reason=(
-    "已知未接线（cmd-engine 下轮补）：`registry validate` / `registry info` / "
-    "`visibility set` 目前仍打印人类文本，传 --json 不生效。接线后本用例自动 xpass。"))
-@pytest.mark.parametrize("argv", [
-    ["--json", "registry", "validate"],
-    ["--json", "registry", "info"],
-    ["--json", "visibility", "set", "myapp.demo", "--level", "public"],
+@pytest.mark.parametrize("argv,key", [
+    (["--json", "registry", "validate"], "valid"),
+    (["--json", "registry", "info"], "actions"),
+    (["--json", "visibility", "set", "myapp.demo", "--level", "public"], "visibility"),
 ], ids=["registry-validate", "registry-info", "visibility-set"])
-def test_pending_json_wiring_is_documented(world, argv):
-    """记录"待接线"清单：这几个命令带 --json 也应输出扁平 JSON + status=ok；
-    当前是 xfail（人类文本），接线完成后自动 xpass。
+def test_newly_wired_commands_are_flat_json(world, argv, key):
+    """退步了会怎样：这三个命令（cmd-engine 后续接线）又退回人类文本，或输出套
+    `data` 层 —— 脚本无法解析。
 
-    退步了会怎样（接线后）：又退回人类文本 → 本用例从 xpass 变回 xfail，提醒回归。
+    断言：扁平 JSON、status=ok、关键字段存在（validate→valid/invalid；info→actions；
+    visibility set→action_id/visibility/previous）。
     """
-    payload = _expect_flat_json(argv, "status")
-    assert payload["status"] == "ok"
+    payload = _expect_flat_json(argv, key)
+    if key == "valid":
+        assert "invalid" in payload
+    elif key == "actions":
+        assert payload["count"] >= 1
+    else:
+        assert payload["action_id"] == "myapp.demo"

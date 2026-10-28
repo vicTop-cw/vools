@@ -177,6 +177,29 @@ actus registry build /path/to/actions
 actus workflow run my_workflow.yaml
 ```
 
+### 退出码语义（脚本判定依据）
+
+| 退出码 | 含义 | 触发场景 |
+|---|---|---|
+| **0** | 成功 | 命令执行完成，且业务判定成功：`status ∈ {ok, success, modified, skipped, noop, published}`；纯查询/无 `status` 的返回体（如记录列表）视为成功 |
+| **1** | **业务失败** | 命令**已经跑起来**，但结果判定失败：动作校验不通过、执行 `failed`、`refused`（例：未配置 `ACTUS_VAULT_KEY` 时写保险库被拒）、`not_found`、以及被 `main()` 兜底捕获的内部异常 |
+| **2** | **用法错误** | `argparse` 在**执行前**拒绝：未知子命令/未知参数/缺少必需参数/非法枚举值（如 `--level weird`） |
+
+**为什么用法错误用 2 而不是 1**：这是 POSIX/GNU 惯例 —— `argparse` 的
+`parser.error()` 本身就以 2 退出，`git`、`grep`、`python` 等也如此。
+把"命令写错了"（2）与"命令跑了但业务失败"（1）分开，脚本才能区分
+**该修调用方式**还是**该处理业务失败**，两者的人工处置完全不同。
+
+判定逻辑的单一真源是 `vools.actus.errors.is_failure_status()`：CLI 的
+`_out_result()` 与 MCP 的 `text_result()` 共用同一份，不各写一套。
+
+### 机器可读输出（`--json`）
+
+`actus --json <cmd>`（或 `actus <cmd> --json`）输出**扁平** JSON
+（`{status, ...}`，不套 `data` 层），形状与 MCP 工具返回一致，便于脚本解析。
+已接线：`search`、`registry build|validate|info`、`visibility get|set`。
+不加 `--json` 时保持人类可读文本 —— 两种模式互不影响。
+
 ## 路径契约（可移植性）
 
 - 仓库资源（`contracts/`、`actions/`、`_meta/`）随宿主仓库走，**不要用
