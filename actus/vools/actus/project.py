@@ -313,8 +313,16 @@ class ProjectOrchestrator:
     # ── 加载与校验 ──
 
     def load_project(self, project_file: str = ".actus-project.json") -> ProjectConfig:
-        """加载项目定义文件。"""
-        path = os.path.join(self._work_dir, project_file)
+        """加载项目定义文件。
+
+        审计修（路径逃逸）：之前直接把 `project_file` 拼进 `work_dir` —— 传
+        `../../x.json` 就能读**仓外** JSON。现在走 `errors.ensure_within`
+        （与 importsys / bugreport 共用的同一份包含性检查）。
+        """
+        from .errors import ensure_within
+        path = ensure_within(self._work_dir,
+                             os.path.join(self._work_dir, project_file),
+                             what='项目文件路径')
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Project file not found: {path}")
 
@@ -618,10 +626,15 @@ class ProjectOrchestrator:
         ]
 
     def save_project(self, project_file: str = ".actus-project.json"):
-        """保存项目定义到文件。"""
+        """保存项目定义到文件（路径必须落在 work_dir 内）。"""
         if not self._config:
             raise RuntimeError("No project loaded")
-        path = os.path.join(self._work_dir, project_file)
+        # 审计修（路径逃逸）：与 load_project 同款，写侧也必须做包含性校验 ——
+        # 实测 save_project('../ESCAPED.json') 会把文件写到 work_dir 之外。
+        from .errors import ensure_within
+        path = ensure_within(self._work_dir,
+                             os.path.join(self._work_dir, project_file),
+                             what='项目文件路径')
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self._config.to_dict(), f, ensure_ascii=False, indent=2)
 

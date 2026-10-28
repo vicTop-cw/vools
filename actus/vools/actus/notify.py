@@ -85,7 +85,8 @@ class ConsoleSender:
         NotifyLevel.ERROR: "❌",
     }
 
-    def send(self, msg: NotifyMessage):
+    def send(self, msg: NotifyMessage) -> bool:
+        """发到控制台；返回是否成功（供 notify() 判定真实投递结果）。"""
         icon = self.LEVEL_ICONS.get(msg.level, "📌")
         print(f"{icon} [{msg.timestamp}] {msg.title}")
         if msg.body:
@@ -93,13 +94,18 @@ class ConsoleSender:
         if msg.metadata:
             for k, v in msg.metadata.items():
                 print(f"   {k}: {v}")
+        return True
 
 
 class SystemSender:
     """系统级通知。"""
 
-    def send(self, msg: NotifyMessage):
-        """发送系统通知。"""
+    def send(self, msg: NotifyMessage) -> bool:
+        """发送系统通知；返回是否成功。
+
+        审计修：改前这里的异常被内部吞掉（只 logger.warning），`send()` 返回 None
+        ⇒ 上层 `notify()` 无法区分"发出去了"和"发失败了"，只能当成功。现在如实返回。
+        """
         try:
             if os.name == 'nt':
                 self._send_windows(msg)
@@ -107,8 +113,10 @@ class SystemSender:
                 self._send_macos(msg)
             else:
                 self._send_linux(msg)
+            return True
         except Exception as e:
             logger.warning(f"系统通知失败: {e}")
+            return False
 
     def _send_windows(self, msg: NotifyMessage):
         """Windows 系统通知。"""
@@ -162,10 +170,10 @@ class WebhookSender:
         self.url = url
         self.headers = headers or {"Content-Type": "application/json"}
 
-    def send(self, msg: NotifyMessage):
-        """发送 webhook。"""
+    def send(self, msg: NotifyMessage) -> bool:
+        """发送 webhook；返回是否成功（无 url 视为未发送 = False）。"""
         if not self.url:
-            return
+            return False
 
         import urllib.request
         import urllib.error
@@ -186,8 +194,10 @@ class WebhookSender:
             # 直到 GC，反复发通知最终耗尽句柄（2026-10-16 巡检发现）。
             with urllib.request.urlopen(req, timeout=10):
                 pass
+            return True
         except Exception as e:
             logger.warning(f"Webhook 发送失败: {e}")
+            return False
 
 
 class FileSender:
@@ -196,14 +206,15 @@ class FileSender:
     def __init__(self, path: str = ""):
         self.path = path or os.path.join("_meta", "notifications.log")
 
-    def send(self, msg: NotifyMessage):
-        """写入文件。"""
+    def send(self, msg: NotifyMessage) -> bool:
+        """写入文件；返回是否成功（写盘异常不再被上层当成功）。"""
         log_dir = os.path.dirname(self.path)
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
 
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(f"[{msg.timestamp}] [{msg.level.value}] {msg.title}: {msg.body}\n")
+        return True
 
 
 # ── 通知管理器 ──────────────────────────────────────────────────────────────
@@ -247,24 +258,52 @@ class NotificationManager:
     def notify(self, title: str, body: str,
                level: NotifyLevel = NotifyLevel.INFO,
                channel: NotifyChannel = NotifyChannel.CONSOLE,
-               metadata: dict = None):
-        """发送通知。"""
+               metadata: dict = None) -> dict:
+        """发送通知，返回结构化投递结果。
+
+        返回:
+            {'delivered': bool, 'channel': str, 'error': str|None, 'timestamp': str}
+
+        **审计修（假成功）**：改前吞掉发送异常、只 `logger.error`，照样把消息塞进
+        `_history` 并 `return None` —— 于是用 `get_history()` / `stats()` 判断
+        "通知发出去了没"的人得到**假阳性**（`total_sent` 连失败也计入）。
+        现在：失败条目进历史但标 `delivered: False` + 原因；`total_sent` 只统计
+        成功，另加 `total_failed` —— "没发出去"和"发出去了"能区分。
+        """
         msg = NotifyMessage(
             title=title, body=body, level=level,
             channel=channel, metadata=metadata or {},
         )
 
+        delivered = False
+        error = None
         sender = self._senders.get(channel)
-        if sender:
+        if sender is None:
+            error = f'no sender for channel {channel.value}'
+            logger.warning(f"通知未发送（无对应 sender）: {channel.value}")
+        else:
             try:
-                sender.send(msg)
+                # 只有**显式返回 False** 才算投递失败：内置 sender 全部返回 bool；
+                # 第三方自定义 sender 若仍返回 None，保持旧的"不判定"语义（兼容）。
+                result = sender.send(msg)
+                delivered = (result is not False)
+                if not delivered:
+                    error = f'{type(sender).__name__} 报告未投递'
             except Exception as e:
+                error = f'{type(e).__name__}: {e}'
                 logger.error(f"通知发送失败: {e}")
 
-        # 记录历史
-        self._history.append(msg)
+        # 记录历史：**失败也记，但必须标 delivered=False**（不再伪装成功）
+        self._history.append({
+            "message": msg,
+            "delivered": delivered,
+            "error": error,
+        })
         if len(self._history) > self._history_limit:
             self._history = self._history[-self._history_limit:]
+
+        return {'delivered': delivered, 'channel': channel.value,
+                'error': error, 'timestamp': msg.timestamp}
 
     def check_rules(self, context: dict):
         """检查规则并触发通知。"""
@@ -320,22 +359,30 @@ class NotificationManager:
         return False
 
     def get_history(self, limit: int = 20) -> List[dict]:
-        """获取通知历史。"""
-        return [
-            {
-                "title": m.title,
-                "body": m.body,
-                "level": m.level.value,
-                "channel": m.channel.value,
-                "timestamp": m.timestamp,
+        """获取通知历史（每条带真实 `delivered` 标记与失败原因）。"""
+        out = []
+        for entry in self._history[-limit:]:
+            msg = entry.get("message")
+            item = {
+                "title": msg.title,
+                "body": msg.body,
+                "level": msg.level.value,
+                "channel": msg.channel.value,
+                "timestamp": msg.timestamp,
+                "delivered": bool(entry.get("delivered")),
             }
-            for m in self._history[-limit:]
-        ]
+            if entry.get("error"):
+                item["error"] = entry["error"]
+            out.append(item)
+        return out
 
     def stats(self) -> dict:
-        """统计信息。"""
+        """统计信息：**成功/失败分开计数**，total_sent 只算真的发出去了的。"""
+        delivered = sum(1 for e in self._history if e.get("delivered"))
         return {
-            "total_sent": len(self._history),
+            "total_sent": delivered,
+            "total_failed": len(self._history) - delivered,
+            "total_recorded": len(self._history),
             "rules_count": len(self._rules),
             "channels": [c.value for c in self._senders.keys()],
         }
