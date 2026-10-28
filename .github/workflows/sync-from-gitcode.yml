@@ -1,48 +1,73 @@
-name: Sync from GitCode
+name: Check GitCode drift (read-only, auto-sync disabled)
+
+# ⚠️ 本 workflow 已**停用自动同步**（2026-10-28 事故后）。
+#
+# 事故复盘：旧版本这里是「GitCode 为源，force-push 覆盖 GitHub 同名分支」，
+# 并且有 `git push --force gh "master:main"` —— 用 GitCode 的**旧 master** 覆盖
+# GitHub 的 **main**，把 ci.yml 里的 test-actus 整个作业（矩阵 3.8–3.13）和
+# publish.yml 的一部分删掉了；两个 sync workflow 还互相「用对端 workflow 替换本地」，
+# 形成谁跑谁生效的循环。
+#
+# 现在的仓库策略：**GitHub 是源，GitCode 是镜像**（镜像由 sync-to-gitcode.yml
+# 单向快进推送）。本文件只保留"看一眼有没有分叉"的诊断能力，**不写任何东西**：
+#   * 只支持手动触发（workflow_dispatch），没有 cron；
+#   * permissions 只有 contents: read —— 结构上没有推送权限；
+#   * 不 push、不 force、不动分支、不替换 workflow 文件。
+# 如果将来确实需要 GitCode → GitHub 的同步，必须由人重新设计（单向、只快进、
+# 永不交叉映射 master/main），而不是恢复这里的旧逻辑。
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  sync:
+  drift-check:
     runs-on: ubuntu-latest
     steps:
-      - name: Check sync flag on GitCode
-        id: flag
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard — CI must keep the test-actus job and the ruff pin
         run: |
-          git clone --depth 1 --branch master https://gitcode.com/VictorTop/vools.git /tmp/check
-          if [ -f /tmp/check/.sync-to-github ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          # 这条守卫的存在意义：万一有人再次用旧 workflow 覆盖 main，
+          # 这里会立刻变红，而不是等到 PR 上发现没有 CI。
+          grep -q "^  test-actus:" .github/workflows/ci.yml \
+            || { echo "::error title=CI 被破坏::ci.yml 缺少 test-actus 作业"; exit 1; }
+          grep -q "ruff==0.17.0" .github/workflows/ci.yml \
+            || { echo "::error title=CI 被破坏::ci.yml 缺少 ruff==0.17.0 版本钉"; exit 1; }
+          echo "✅ ci.yml 仍含 test-actus 与 ruff==0.17.0"
+
+      - name: Report drift vs GitCode (no writes)
+        run: |
+          set -euo pipefail
+          git remote add gc https://gitcode.com/VictorTop/vools.git
+          git fetch --no-tags gc '+refs/heads/*:refs/remotes/gc/*' || {
+            echo "::warning title=无法访问 GitCode::跳过差异报告（不影响 CI）"
+            exit 0
+          }
+
+          echo "## GitCode 分叉情况（只读报告，不做同步）" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for b in main master; do
+            if git rev-parse --verify --quiet "refs/remotes/gc/$b" >/dev/null; then
+              ahead_behind=$(git rev-list --left-right --count "HEAD...refs/remotes/gc/$b")
+              echo "- \`$b\`: GitHub 独有 / GitCode 独有 = **$ahead_behind**" >> "$GITHUB_STEP_SUMMARY"
+              git log --oneline --left-right "HEAD...refs/remotes/gc/$b" | head -20 >> "$GITHUB_STEP_SUMMARY" || true
+            else
+              echo "- \`$b\`: GitCode 上不存在" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+          # `.sync-to-github` 仍被识别，但它现在只是"GitCode 侧是否请求同步"的信号，
+          # **不再驱动任何写操作**；自动同步已停用，是否同步由人决定。
+          if git cat-file -e "refs/remotes/gc/master:.sync-to-github" 2>/dev/null; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- 📌 GitCode 侧存在 \`.sync-to-github\` 开关（旧的双向同步机制）；**已不生效**，仅作人工参考" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Sync GitCode to GitHub (add-only, GitCode as source)
-        if: steps.flag.outputs.enabled == 'true'
-        run: |
-          set -e
-          git clone --no-single-branch https://gitcode.com/VictorTop/vools.git /tmp/repo
-          cd /tmp/repo
-          git remote add gh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-          git fetch gh
-          git config user.email "actions@github.com"
-          git config user.name "GitHub Actions"
-          # 1) 用 GitHub 版 .github/workflows 完全替换本地（保留 CI 配置，避免创建新 workflow 被 GitHub 安全机制拒绝）
-          git rm -r --cached .github/workflows >/dev/null 2>&1 || true
-          rm -rf .github/workflows
-          git checkout "gh/main" -- .github/workflows >/dev/null 2>&1 || true
-          git add .github/workflows
-          git commit -m "chore: preserve GitHub workflow files (add-only sync)" >/dev/null 2>&1 || true
-          # 2) 推送所有 GitCode 分支：GitCode 为源，覆盖 GitHub 同名分支；GitHub 独有分支保留
-          for b in $(git for-each-ref --format='%(refname:short)' refs/heads); do
-            git push --force gh "$b:$b" 2>&1 || echo "push failed on $b"
-          done
-          # 3) 默认分支映射：GitCode master -> GitHub main
-          git push --force gh "master:main" 2>&1 || echo "push failed on default branch"
-          # 4) 标签只增不删（GitHub 已存在的同名标签会拒绝，保留 GitHub 版）
-          git push gh --tags 2>&1 || true
+          echo "✅ 仅生成差异报告；未推送、未 force、未修改任何分支或 workflow 文件"
