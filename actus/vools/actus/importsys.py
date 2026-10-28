@@ -310,7 +310,9 @@ class ImportResolver:
             pass      # 标记写不了最多导致下次重编译，不影响本次结果
         return True, f"编译成功: {decl.path}", cached
 
-    def resolve_all(self, decls: List[ImportDecl]) -> Tuple[bool, List[str], Dict[str, Path]]:
+    def ensure_all(self, decls: List[ImportDecl]) -> Tuple[bool, List[str], Dict[str, Path]]:
+        """解析并**安装/写入 vendor 目录**的依赖（会写盘；第 14 轮从 `resolve_all`
+        改名，`resolve_all` 保留为 deprecated 别名）。"""
         """解析所有 import 声明 → (全部成功?, 缺失的 alias 列表, {alias: 路径})。
 
         审计修（静默降级）：改前失败只 `logger.warning` 并**丢掉该 alias**，
@@ -329,6 +331,10 @@ class ImportResolver:
                 logger.warning(f"导入失败 [{decl}]: {msg}")
         return (not missing), missing, results
 
+    def resolve_all(self, decls: List[ImportDecl]) -> Tuple[bool, List[str], Dict[str, Path]]:
+        """Deprecated 别名（第 14 轮）：会**写 vendor 目录**，请用 `ensure_all`。"""
+        return self.ensure_all(decls)
+
     def _cache_key(self, source_path: Path) -> str:
         """基于文件内容生成缓存键。"""
         content = source_path.read_bytes()
@@ -343,7 +349,7 @@ def resolve_imports_for_action(action_meta: dict, repo_root: str = ".",
         action_meta: 动作的 meta 字典（含 #!cfg 内容）。
         repo_root: 仓库根目录。
         strict: True 时导入不全直接抛 `ImportError`；默认 False 把结果交回调用方
-            （原来的"只返回字典"会静默丢失败项 —— 见 `ImportResolver.resolve_all`）。
+            （原来的"只返回字典"会静默丢失败项 —— 见 `ImportResolver.ensure_all`）。
 
     返回:
         (全部成功?, 缺失 alias 列表, {alias: 路径})
@@ -357,7 +363,7 @@ def resolve_imports_for_action(action_meta: dict, repo_root: str = ".",
         return True, [], {}
 
     resolver = ImportResolver(repo_root)
-    ok, missing, results = resolver.resolve_all(decls)
+    ok, missing, results = resolver.ensure_all(decls)
     if strict and not ok:
         raise ImportError('import 声明解析失败（缺少 %s）: %s'
                           % (', '.join(missing), action_meta.get('id', '?')))

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Actus Desktop</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+         background: #0d1117; color: #e6edf3; }
+  header { padding: 14px 18px; border-bottom: 1px solid #30363d; display: flex;
+           align-items: baseline; gap: 12px; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .meta { color: #8b949e; font-size: 12px; }
+  main { display: grid; grid-template-columns: 320px 1fr; gap: 0; height: calc(100vh - 52px); }
+  #list { border-right: 1px solid #30363d; overflow: auto; }
+  .action { padding: 9px 12px; border-bottom: 1px solid #21262d; cursor: pointer; }
+  .action:hover { background: #161b22; }
+  .action.active { background: #1f6feb22; border-left: 3px solid #1f6feb; }
+  .action .id { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+  .action .desc { color: #8b949e; font-size: 12px; margin-top: 2px;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #detail { padding: 16px 18px; overflow: auto; }
+  #detail h2 { font-size: 15px; margin: 0 0 8px; }
+  button { background: #238636; color: #fff; border: 0; border-radius: 6px;
+           padding: 7px 14px; font-size: 13px; cursor: pointer; }
+  button:hover { background: #2ea043; }
+  button:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
+  pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+        padding: 12px; overflow: auto; font-size: 12.5px; margin: 12px 0 0; }
+  .err { color: #f85149; }
+  .ok { color: #3fb950; }
+  .hint { color: #8b949e; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Actus Desktop</h1>
+  <span class="meta">动作数: {{ action_count }}</span>
+  <span class="meta" id="msg"></span>
+</header>
+{% if load_error %}
+<div style="padding:10px 18px;background:#4d1f1f;color:#f85149;border-bottom:1px solid #30363d">
+  动作索引加载失败：{{ load_error }}
+</div>
+{% endif %}
+<main>
+  <div id="list">
+    {% for a in actions.values() %}
+    <div class="action" data-id="{{ a.id }}" data-name="{{ a.name }}">
+      <div class="id">{{ a.id }}</div>
+      <div class="desc">{{ a.description or '' }}</div>
+    </div>
+    {% else %}
+    <p class="hint" style="padding:12px">没有可用动作。</p>
+    {% endfor %}
+  </div>
+  <div id="detail">
+    <p class="hint">从左侧选择一个动作。</p>
+  </div>
+</main>
+<script>
+const detail = document.getElementById('detail');
+const msg = document.getElementById('msg');
+let current = null;
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.querySelectorAll('.action').forEach(el => {
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.action').forEach(x => x.classList.remove('active'));
+    el.classList.add('active');
+    current = el.dataset.id;
+    detail.innerHTML = `
+      <h2>${escapeHtml(el.dataset.name || current)}</h2>
+      <div class="hint">id: ${escapeHtml(current)}</div>
+      <p><button id="run">运行</button></p>
+      <pre id="out">（尚未运行）</pre>`;
+    document.getElementById('run').addEventListener('click', run);
+  });
+});
+
+async function run() {
+  const btn = document.getElementById('run');
+  const out = document.getElementById('out');
+  btn.disabled = true;
+  out.textContent = '运行中…';
+  msg.textContent = '';
+  try {
+    const resp = await fetch(`/api/actions/${encodeURIComponent(current)}/run`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({params: {}}),
+    });
+    const body = await resp.json();
+    const inner = body.data || {};
+    const failed = body.status !== 'ok';
+    msg.innerHTML = failed
+      ? `<span class="err">HTTP ${resp.status} · ${escapeHtml(body.status)}</span>`
+      : `<span class="ok">HTTP ${resp.status} · ok</span>`;
+    out.textContent = JSON.stringify(inner, null, 2);
+  } catch (e) {
+    msg.innerHTML = `<span class="err">请求失败: ${escapeHtml(e.message)}</span>`;
+    out.textContent = String(e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>

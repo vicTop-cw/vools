@@ -489,7 +489,22 @@ class MCPServer:
         tools = []
         if with_dynamic:
             import vools.actus as actuscore
-            idx = actuscore.load_index()
+            # 第 14 轮审计修复：tools/list 是**只读 RPC**，冷启动（索引缺失）时
+            # 旧实现 load_index() 会 build_index 并落盘 actions.index.json /
+            # actions.mtimes.json / 审计日志 —— 只读 FS/容器只读挂载直接失败。
+            # 现在：先 build=False 读；缺失则在**内存**构建（write=False,
+            # write_cache=False），落盘只由显式命令（registry build/validate）触发。
+            idx = actuscore.load_index(build=False)
+            if not idx.get('actions'):
+                # 内存扫描（validate=False：校验会写安全审计日志；这里只求
+                # 工具清单可用，非法动作由显式 validate/build 负责下架）
+                from vools.actus.indexer import scan_actions
+                try:
+                    scanned = scan_actions(validate=False, write_cache=False)
+                    idx = {'actions': {aid: dict(action.brief(), status='valid')
+                                       for aid, action in scanned.items()}}
+                except Exception:
+                    idx = {'actions': {}}
             for aid, brief in idx['actions'].items():
                 if aid.startswith('_invalid:') or brief.get('status') != 'valid':
                     continue  # docs/05 §5.1：不合规动作自动下架

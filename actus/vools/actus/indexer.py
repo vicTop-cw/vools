@@ -93,7 +93,7 @@ action_roots = _action_roots
 _MTIMES_CACHE = 'actions.mtimes.json'  # mtime 缓存（_meta/ 下）
 
 def scan_actions(actions_dir: str = None, validate: bool = True,
-                 use_cache: bool = True) -> Dict[str, Action]:
+                 use_cache: bool = True, write_cache: bool = True) -> Dict[str, Action]:
     """递归扫描动作根下所有 .actus.md / .actus.schema.md，生成动作清单。
 
     - 文件后缀双轨：.actus.md（形式 A #!cfg JSON）+ .actus.schema.md（形式 B YAML）；
@@ -218,7 +218,9 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
         actions[aid] = action
 
     # ── 保存 mtime 缓存 ──
-    if use_cache and new_mtimes:
+    # 第 13/14 轮审计：读命令（info/tools/list/executor 解析）也会走这里，
+    # write_cache=False 让只读路径不写 _meta/actions.mtimes.json（只读 FS 可用）。
+    if use_cache and write_cache and new_mtimes:
         # 同上：跟随 paths.meta_dir()，让 ACTUS_META_DIR 能真正隔离缓存
         from .paths import meta_dir as _paths_meta_dir
         meta_dir = _paths_meta_dir()
@@ -247,7 +249,11 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
     return actions
 
 
-def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
+def build_index(actions_dir: str = None, meta_dir: str = None,
+                write: bool = True, write_cache: bool = True) -> dict:
+    """`write=False`：**只在内存构建索引**（不落盘、不写 mtimes 缓存）——
+    供只读 RPC（MCP tools/list）冷启动使用；显式命令（registry build/validate）
+    仍用默认 write=True 落盘。"""
     """扫描 + 全量校验 + 依赖图校验 + 索引落盘 _meta/actions.index.json。
 
     扫描默认走全部动作根（用户项目 + 包内种子，见 _action_roots）；
@@ -267,7 +273,8 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
     # 默认跟随 ACTUS_META_DIR > repo_root()/_meta。
     from .paths import meta_dir as _paths_meta_dir
     meta = meta_dir or _paths_meta_dir()
-    actions = scan_actions(actions_dir, validate=False)
+    actions = scan_actions(actions_dir, validate=False,
+                           write_cache=write_cache)
 
     # 每动作校验一次（`runtime:` 提示与真实错误分开，见 validate.split_validation）
     validation = {}
@@ -396,7 +403,7 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
     _is_default_target = (
         actions_dir is None
         or os.path.abspath(actions_dir) == os.path.abspath(_default_actions))
-    if meta_dir or _is_default_target:
+    if write and (meta_dir or _is_default_target):
         os.makedirs(meta, exist_ok=True)
         with open(os.path.join(meta, 'actions.index.json'), 'w', encoding='utf-8') as f:
             json.dump(index, f, ensure_ascii=False, indent=2)
@@ -404,22 +411,35 @@ def build_index(actions_dir: str = None, meta_dir: str = None) -> dict:
     return index
 
 
-def load_index(meta_dir: str = None) -> dict:
-    """读取索引；不存在时先构建。"""
+def load_index(meta_dir: str = None, build: bool = True) -> dict:
+    """读取索引；不存在时默认先构建（`build=False` 时**返回空索引、不落盘**）。
+
+    第 13/14 轮审计：`load_index` 被只读入口（MCP tools/list、resolve_target 等）
+    调用，索引缺失时 `build_index` 会落盘 `_meta/actions.index.json` +
+    `actions.mtimes.json` —— 只读 FS 上直接失败。只读路径应传 `build=False`，
+    需要建索引的显式命令仍用默认 `build=True`。
+    """
     # 审计修（`_meta` 手写 → paths.meta_dir()）：显式 meta_dir 优先，
     # 默认跟随 ACTUS_META_DIR > repo_root()/_meta。
     from .paths import meta_dir as _paths_meta_dir
     meta = meta_dir or _paths_meta_dir()
     path = os.path.join(meta, 'actions.index.json')
     if not os.path.exists(path):
+        if not build:
+            return {'actions': {}, 'problems': {}, 'built': False}
         return build_index(meta_dir=meta)
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
-def get_action(action_id: str, actions_dir: str = None) -> Action:
-    """按 id 取动作（实时解析文件，保证最新内容）；不存在抛 action_not_found。"""
-    actions = scan_actions(actions_dir, validate=False)
+def get_action(action_id: str, actions_dir: str = None,
+               write_cache: bool = False) -> Action:
+    """按 id 取动作（实时解析文件，保证最新内容）；不存在抛 action_not_found。
+
+    `write_cache=False`（默认）：只读命令（info/preview/run 解析）不写 mtimes
+    缓存；只有显式扫描/构建（build_index / scan_actions(use_cache=True)）才写。
+    """
+    actions = scan_actions(actions_dir, validate=False, write_cache=write_cache)
     if action_id not in actions:
         raise ActionError('action_not_found', f'动作不存在: {action_id}',
                           {'known': sorted(actions.keys())})

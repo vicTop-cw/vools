@@ -429,9 +429,14 @@ class RegistryManager:
         """列出所有注册表（按优先级排序）。"""
         return sorted(self._registries.values(), key=lambda r: r.priority)
 
-    def get_private_dir(self) -> str:
-        """获取私有目录路径。"""
-        os.makedirs(self._private_dir, exist_ok=True)
+    def get_private_dir(self, create: bool = False) -> str:
+        """获取私有目录路径（第 14 轮：只读路径不再 makedirs）。
+
+        `create=False`（默认）只返回路径；`makedirs` 移到显式写入口
+        （准备写入的调用方传 `create=True`），避免只读命令/只读 FS 失败。
+        """
+        if create:
+            os.makedirs(self._private_dir, exist_ok=True)
         return self._private_dir
 
 
