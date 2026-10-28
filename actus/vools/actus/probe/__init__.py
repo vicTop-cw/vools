@@ -176,8 +176,15 @@ def probe(*, force_refresh: bool = False, max_age: int = 3600,
             items=[ProbeItem(**item) for item in cached.get("items", [])],
             summary=cached.get("summary", {}),
             timings=cached.get("timings"),
+            report_source="cache",
             **_cached_timing_extras(cached)
         )
+        # 缓存里的 summary 不可信（它是本地文件里的普通字段，手写一份就能改）：
+        # 用刚重建的 items 重算一遍，保证「available + unavailable == total」
+        # 与「total == len(items)」这类自洽性由数据本身保证，而不是信缓存里的数。
+        # 这也是 schema=4 起缓存命中路径的固定动作（改前曾实测渲染出
+        # `Available: 999 (99900%) / Unavailable: -998`）。
+        report.build_summary()
         if verbose:
             print("[probe] loaded from cache")
         return report
