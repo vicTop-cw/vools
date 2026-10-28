@@ -471,8 +471,10 @@ def publish_to_repo(paths: List[str], repo_ref: str, push: bool = False,
         result.update({'status': 'failed',
                        'error': {'code': 'action_not_found',
                                  'message': (f'本地没有该仓的克隆：{local_root}。'
-                                             f'先 `actus repo create` 建本地仓，或手动 clone '
-                                             f'{repo_url(ref["owner"], ref["name"])}'),
+                                             f'请先手动 clone '
+                                             f'{repo_url(ref["owner"], ref["name"])}'
+                                             f'（CLI 当前没有 `actus repo create` 子命令；'
+                                             f'库内入口是 repo.create_repo）'),
                                  'details': {'local_root':
                                              local_root.replace(os.sep, '/')}}})
         return result

@@ -334,19 +334,6 @@ class ImportResolver:
         content = source_path.read_bytes()
         return hashlib.md5(content).hexdigest()[:12]
 
-    def clear_cache(self):
-        """清空编译缓存。"""
-        if self.cache_dir.exists():
-            shutil.rmtree(self.cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-
-    def list_available_backends(self) -> Dict[str, bool]:
-        """列出所有后端及其可用状态。"""
-        return {lang: b.is_available() for lang, b in self._backends.items()}
-
-
-# ── 便捷函数 ───────────────────────────────────────────────────────────────
-
 def resolve_imports_for_action(action_meta: dict, repo_root: str = ".",
                                strict: bool = False
                                ) -> Tuple[bool, List[str], Dict[str, Path]]:

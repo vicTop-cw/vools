@@ -526,7 +526,3 @@ def resolve_secrets(secrets_config: List[dict], meta_dir: str = '') -> Dict[str,
     return vault.resolve_secrets(secrets_config)
 
 
-def reset_vault_singleton():
-    """测试用：重置单例。"""
-    global _vault_singleton
-    _vault_singleton = None

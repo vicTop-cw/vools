@@ -226,7 +226,37 @@ class IntentRouter:
                     "reason": f"关键词匹配: {keyword}"
                 }
 
-        # 2. 标签匹配
+        # 2. 工作流匹配（第 11 轮接线：此前 `_workflows` 注册后 route() 从不读 ——
+        # `register_workflow` 注册了永远不触发。工作流按 tags/description/id 匹配，
+        # 命中返回 match='workflow' + workflow_id；action_id 置 None，避免调用方
+        # 误把工作流当动作执行）。
+        best_wf = None
+        best_wf_score = 0
+        best_wf_reason = ''
+        for wf in self._workflows:
+            score = 0
+            for tag in wf.get('tags') or []:
+                if str(tag).lower() in query_lower:
+                    score += 0.4
+            wf_desc = str(wf.get('description') or '').lower()
+            if wf_desc and wf_desc in query_lower:
+                score += 0.3
+            elif wf_desc and any(w in wf_desc for w in query_lower.split() if len(w) > 2):
+                score += 0.15
+            wf_id = str(wf.get('id') or '').lower()
+            if wf_id and wf_id in query_lower:
+                score += 0.2
+            if score > best_wf_score:
+                best_wf_score = score
+                best_wf = wf['id']
+                best_wf_reason = '工作流匹配: %s' % wf['id']
+        if best_wf and best_wf_score > 0.15:
+            return {'match': 'workflow', 'workflow_id': best_wf,
+                    'action_id': None,
+                    'confidence': min(best_wf_score, 1.0),
+                    'reason': best_wf_reason}
+
+        # 3. 标签匹配
         best_match = None
         best_score = 0
         best_reason = ""

@@ -17,7 +17,17 @@
 - `static_assign(mapping, default=None)`：按节点 goal 的子串匹配。
 - `leaf_assign(nodes, actions)`：把动作按**叶子顺序**依次绑定（调用方已持有节点表）。
 - `order_assign(actions)`：按**执行先后**依次绑定，无需预知节点表——`ActionWorker.from_plan(plan)`
-  即走这条，是 CLI `actus selfdrive run --plan` 与 MCP `actus_selfdrive_run{plan}` 的接入点。
+  即走这条。
+
+现状（第 11 轮审计修正后的事实）
+---------------------------------
+- **有什么**：真实执行链路已实现并被 CLI 接线 ——
+  `actus selfdrive run <goal> [--plan JSON] [--plan-file FILE] [--worker action]`
+  走 `ActionWorker.from_plan(...)`（`--worker action`），`--worker echo`（默认）
+  仍是不触碰引擎的确定性空跑；`actus selfdrive status [run_id]` 读快照。
+- **没有什么**：**MCP 仍无 selfdrive 入口**（`grep actus_selfdrive mcp_server.py`
+  0 命中）；旧 docstring 曾把"MCP 接入点"写成既成事实，属不实描述（已修正）。
+- **计划中（未实现）**：MCP `actus_selfdrive_run{plan}`。
 
 用法
 ----

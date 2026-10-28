@@ -551,7 +551,8 @@ def check_scattered(path: str, authorized_root: Optional[str] = None,
                     with_deps: bool = True) -> Dict[str, Any]:
     """C2.2 + C2.3：解析 + 规范校验 +（可选）路径依赖检查。
 
-    只校验不执行（docs/41 §C2 的 `actus check`）。返回结构化报告；
+    只校验不执行（docs/41 §C2；CLI 入口是 `actus validate` —— 旧文档里的
+    `actus check` 子命令不存在）。返回结构化报告；
     `valid=False` 时 `errors` 逐项列出，不用一句"校验失败"盖掉细节。
     """
     report: Dict[str, Any] = {'path': path, 'valid': False, 'errors': [],

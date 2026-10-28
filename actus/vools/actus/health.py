@@ -204,7 +204,7 @@ def check_meta_directory(repo_root: str = ".") -> HealthCheckResult:
         meta_dir = Path(repo_root) / "_meta"
 
     if not meta_dir.exists():
-        return HealthCheckResult("meta_directory", "warn", "_meta 目录不存在", time.time() - start, "运行 `actus init` 初始化项目")
+        return HealthCheckResult("meta_directory", "warn", "_meta 目录不存在", time.time() - start, "运行任意 actus 命令会自动创建 _meta，也可手动 mkdir -p _meta")
 
     return HealthCheckResult("meta_directory", "ok", "元数据目录存在", time.time() - start)
 

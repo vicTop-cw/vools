@@ -16,10 +16,15 @@
   强验证模式下缺 spec 视为失败（`omega_spec_missing`），杜绝"静默通过"。
 - **call_log**：每个节点的执行/验证落一条调用日志（caller='selfdrive'），
   失败可 `report_bug` 关联。
-- **可插拔 worker**：默认 worker 为确定性 echo（便于测试，不触碰引擎）；真实执行
-  由 `selfdrive_worker.ActionWorker` 承担，公共入口已接通——CLI
-  `actus selfdrive run <goal> --plan/--plan-file`，MCP `actus_selfdrive_run{plan}`；
-  两处返回值都用 `worker.kind` 明示本次是 `echo` 还是 `action`。
+- **可插拔 worker / 入口（现状如实说明）**：
+  * **有什么**：默认 worker = 确定性 echo（只跑通流程，**不做真实动作执行**）；
+    真实执行 worker `selfdrive_worker.ActionWorker`（含 `from_plan`）可经
+    **CLI 入口**使用：`actus selfdrive run <goal> [--plan JSON] [--plan-file FILE]
+    [--worker echo|action]`，以及 `actus selfdrive status [run_id]` 查看快照。
+    第 11 轮接线（此前 docstring 声称"入口已接通"但实测 CLI/MCP 均 0 命中，
+    属不实描述；CLI 入口本轮补齐）。
+  * **没有什么**：**MCP 仍无入口**（`grep actus_selfdrive mcp_server.py` 为 0 命中）。
+  * **计划中（未实现）**：MCP `actus_selfdrive_run{plan}`。
 - **持久化**：运行态写 `_meta/selfdrive/<run_id>.json`，支持断点查看（status）。
 
 自驱语义：控制器不依赖人类逐步指令——给定目标后自主规划、执行、验证、在失败

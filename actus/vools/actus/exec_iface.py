@@ -380,7 +380,7 @@ class _ScatteredIface:
     """零散动作执行器（scattered.py 的统一接口适配，惰性导入防循环依赖）。
 
     scattered.run_scattered(path, params, confirmed) 是真源入口；
-    confirmed=False 时只校验不执行（docs/41 §C2 的 actus check 语义），
+    confirmed=False 时只校验不执行（docs/41 §C2 的"只校验不执行"语义；CLI 入口是 `actus validate`，旧文档里的 `actus check` 子命令不存在），
     统一接口层映射 dry_run=True → confirmed=False。
     """
 

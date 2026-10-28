@@ -2664,9 +2664,6 @@ class SigmaEngine(_ExprEvaluator):
                 raise SpecValidationError("each operation needs a 'name'")
             self.operations[op['name']] = op
 
-    def register_builtin(self, name: str, fn: Callable) -> None:
-        self.builtin_fns[name] = fn
-
     def eval(self, op_name: str, args: List[Any]) -> Any:
         """按 spec 求值操作：签名元数校验 → 前置条件 → definition 求值。"""
         op = self.operations.get(op_name)

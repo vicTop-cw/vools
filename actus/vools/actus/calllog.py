@@ -28,7 +28,7 @@ from .paths import meta_dir
 
 __all__ = [
     'CallLogStore', 'get_store', 'write_call_log', 'recent_call_logs',
-    'instrument', 'log_path', 'reset_store',
+    'instrument', 'log_path',
     'write_action_metric', 'aggregate_metrics', 'popular_actions',
     'trending_actions', 'metrics_path',
 ]
@@ -221,20 +221,6 @@ class CallLogStore:
         with self._lock:
             return list(reversed(self._mem[-limit:]))
 
-    def count(self) -> int:
-        if self._use_sql:
-            try:
-                with self._lock:
-                    db = self._connect()
-                    try:
-                        return int(db.execute(
-                            "SELECT COUNT(*) FROM call_log").fetchone()[0])
-                    finally:
-                        db.close()
-            except Exception:
-                pass
-        return len(self._mem)
-
     def close(self) -> None:
         """兼容旧接口；短连接模式下无常驻资源可释放。"""
         return None
@@ -254,16 +240,6 @@ def get_store(meta_dir: Optional[str] = None) -> CallLogStore:
             _store = CallLogStore(meta_dir)
             _store_key = key
         return _store
-
-
-def reset_store() -> None:
-    """测试用：丢弃并关闭当前单例。"""
-    global _store, _store_key
-    with _store_lock:
-        if _store is not None:
-            _store.close()
-        _store = None
-        _store_key = None
 
 
 def write_call_log(tool: str, params: Any = None, result: Any = None,

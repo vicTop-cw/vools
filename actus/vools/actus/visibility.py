@@ -81,7 +81,7 @@ class GatedKeyStore:
       * 支持**动作级**与**仓级**两档粒度：仓级密钥对该仓全部 gated 动作共用，
         对同仓的 public/unlisted 动作无任何影响。
       * **轮换即撤销**：同一作用域再次 grant 会整体替换旧摘要集合，旧密钥当场失效，
-        已安装方必须重新 `actus install --key`/`actus update` 拿新钥续期。
+        已安装方必须重新 `actus install --key`（或 `actus sync`）拿新钥续期。
       * 比对用 `hmac.compare_digest`（定长摘要，避免按位早退的时间侧信道）。
       * 授权记录（谁在何时的哪个作用域上通过）另记审计行，**不含密钥值**。
     """
