@@ -39,6 +39,25 @@ class DepType(Enum):
     MCP = "mcp"             # MCP server
     ACTION = "action"       # 其他动作
     CS_BUILD = "cs_build"   # C# 构建产物
+    RUNTIME = "runtime"     # 语言运行时（PROBE_PLAN.md §4.7 的 runtime:<name>）
+
+    # 为什么补 RUNTIME：§4.7 把 `runtime:python` 列为合法依赖写法，但本解析器
+    # 此前没有这个前缀 —— 裸字符串会 fallthrough 成 ACTION 依赖，于是
+    # "runtime:python" 被当成一个名为 "runtime:python" 的动作，永远找不到、
+    # 永远判 blocked（probe 侧实测到该缺口）。补齐后与既有前缀同一套风格。
+
+
+# 运行时「抽象名 → 可执行文件候选」展开表（只服务 `runtime:<name>` 依赖）。
+# 为什么需要：runtime:shell 不是一个命令（要展开成 bash/sh/...），
+# runtime:rust 对应 rustc/cargo。同名命令**优先**（runtime:python 直接命中
+# python 就不再往下找）。probe 侧 runtimes 探测器有自己的 `_CMD_MAP`（它还含
+# "rust"→[…]，用于探测项命名），两处口径一致、各服务各自的层。
+_RUNTIME_COMMAND_ALIASES = {
+    "shell": ("bash", "sh", "powershell", "pwsh", "cmd"),
+    "python": ("python3", "py"),
+    "node": ("nodejs",),
+    "rust": ("rustc", "cargo"),
+}
 
 
 @dataclass
@@ -63,6 +82,8 @@ class Dependency:
             return f"pip install {self.name}"
         elif self.type == DepType.SYSTEM:
             return f"安装系统工具: {self.name}"
+        elif self.type == DepType.RUNTIME:
+            return f"安装运行时: {self.name}"
         return ""
 
     @property
@@ -154,6 +175,7 @@ class DependencyResolver:
         格式：
         - "builtin:xxx" → 引擎内依赖
         - "system:pandoc" → 系统命令
+        - "runtime:python" → 语言运行时（PROBE_PLAN.md §4.7）
         - "pip:requests" → Python 包（lang 类型）
         - "npm:shiki" → npm 包（lang 类型）
         - "mcp:server" → MCP server
@@ -164,6 +186,8 @@ class DependencyResolver:
             return Dependency(name=dep_str[8:], type=DepType.BUILTIN)
         elif dep_str.startswith("system:"):
             return Dependency(name=dep_str[7:], type=DepType.SYSTEM, strategy=DepStrategy.HINT)
+        elif dep_str.startswith("runtime:"):
+            return Dependency(name=dep_str[8:], type=DepType.RUNTIME, strategy=DepStrategy.HINT)
         elif dep_str.startswith("pip:"):
             return Dependency(name=dep_str[4:], type=DepType.LANG, lang_manager="pip", strategy=DepStrategy.EPHEMERAL)
         elif dep_str.startswith("npm:"):
@@ -215,6 +239,8 @@ class DependencyResolver:
             return self._check_lang_pkg(dep)
         elif dep.type == DepType.SYSTEM:
             return self._check_system_cmd(dep)
+        elif dep.type == DepType.RUNTIME:
+            return self._check_runtime(dep)
         elif dep.type == DepType.ACTION:
             return self._check_action(dep)
         elif dep.type == DepType.BUILTIN:
@@ -223,6 +249,36 @@ class DependencyResolver:
             return self._check_mcp(dep)
         else:
             return DepCheckResult(dep.name, False, f"unknown dep type: {dep.type}")
+
+    def _check_runtime(self, dep: Dependency) -> DepCheckResult:
+        """检查语言运行时（PROBE_PLAN.md §4.7 的 `runtime:<name>`）。
+
+        判据：PATH 里有没有对应的可执行文件（与 system 依赖同源，但多一层
+        抽象名展开 —— `runtime:shell` 不是一个命令，得展开成 bash/sh/...；
+        `runtime:rust` 对应 rustc/cargo）。同名命令优先。
+        """
+        candidates = [dep.name]
+        for alias in _RUNTIME_COMMAND_ALIASES.get(dep.name, ()):
+            if alias not in candidates:
+                candidates.append(alias)
+
+        for candidate in candidates:
+            try:
+                found = shutil.which(candidate)
+            except Exception:
+                found = None
+            if found:
+                return DepCheckResult(
+                    dep.name, True,
+                    f"运行时 {dep.name} 可用: {found}",
+                    strategy=dep.strategy,
+                )
+        return DepCheckResult(
+            dep.name, False,
+            "运行时 %s 未找到（PATH 中无 %s）" % (
+                dep.name, "/".join(candidates)),
+            strategy=dep.strategy,
+        )
 
     def _check_cs_build(self, dep: Dependency) -> DepCheckResult:
         """检查 C# 构建产物。"""

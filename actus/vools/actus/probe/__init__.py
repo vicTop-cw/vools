@@ -45,8 +45,24 @@ try:
 except ImportError:          # 平台司令尚未交付时不影响本体
     PlatformToolsProber = None
 
-# 并行度上限：8 线程（PROBE_PLAN.md §9 Phase 2「线程池并行探测（8 线程）」）
-_MAX_PROBE_WORKERS = 8
+# 并行度上限：10 线程（= 当前探测器总数，一次全放开）。
+#
+# PROBE_PLAN.md §9 Phase 2 原定 8 线程，那是探测器只有 8 个时的数；后来加到 10 个
+# （platform_tools / actions 陆续落地）而常量没跟着涨，于是外层池恒定有 2 个探测器
+# 排队等空位。实测（20 核，冷进程 8 轮成对对比，见交付报告）：
+#   * 排队确实存在但**不构成墙钟成本**：actions 等 permissions 腾位（~30ms），
+#     platform_tools 等 platform/resources 腾位（~100-165ms）；两者 own-duration
+#     仅 0.3s / 0.7-0.9s，而 system_tools 单条就要 1.5-2.1s —— 排队的那两条有
+#     600-900ms 富余，没顶到墙。
+#   * 8 → 10 的墙钟差 = 成对均值 +15ms（0.8%），落在 run-to-run 噪声（±100ms）内；
+#     峰值线程数 68-71 → 69-71，几乎不变（排队的那两条没有大的内层线程池：
+#     platform_tools 无 ThreadPoolExecutor，actions 是短任务）。
+#   * 但 10 去掉的是 platform_tools 启动上那 100-165ms 的**人为延迟**：等 system_tools
+#     被优化到 1s 以内，platform_tools 就会成为新的尾巴，那时这 100ms 直接进墙钟。
+# 所以取 10（而不是更大）：`_MAX_PROBE_WORKERS` 只需覆盖探测器总数，
+# 线程数在下面按 `min(常量, len(probers))` 现算 —— 填 12 与填 10 **完全等价**，
+# 是个不生效的死旋钮，反而让人误以为还有更大的并行度。
+_MAX_PROBE_WORKERS = 10
 
 # 四个「维度」section：探测器把 get_*_info() 的结果原样放进 ProbeItem.extra，
 # 因此并行段其实已经算过一份，组装报告时优先复用（见模块 docstring「四维度去重」）。

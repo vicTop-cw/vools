@@ -12,6 +12,7 @@
 │          │ package_manager — apt/dnf/pacman/zypper/apk 家族判定 + 版本 │
 ├──────────┼──────────────────────────────────────────────────────────────┤
 │ macOS    │ xcode_clt       — xcode-select -p + clang --version 实证    │
+│          │ homebrew        — brew 可执行（PATH + 双前缀）+ 版本 + prefix│
 └──────────┴──────────────────────────────────────────────────────────────┘
 
 设计约束（对应 PROBE_PLAN.md §4.1/§4.2 与任务要求）：
@@ -22,7 +23,12 @@
 2. **跨平台安全**：非当前平台的探测组直接跳过（不执行外部命令、不抛异常、不进
    报告条目）；即使被直接调用，单个探测函数也只会在该平台找不到东西，
    收敛成 unavailable 而不是异常。
-3. **短超时**：所有外部命令都有超时（默认 5s，上限也是 5s，见 `_clamp_timeout`）。
+3. **短超时 + 整组硬截止**：所有外部命令都有超时（默认 5s，上限也是 5s，见
+   `_clamp_timeout`）；整组再套两层硬截止——整组 `_GROUP_BUDGET` = 1.8s、其中 WSL
+   单独 `_WSL_TOTAL_BUDGET` = 1.7s（分条上限见 `_WSL_*_TIMEOUT`）。「每条各等 5s」
+   会在服务无响应时叠成 10s 尖峰（实测证据见
+   `build/probe_evidence/wsl_timing_before.out.txt`）。超时必须有信号
+   （`extra["timed_out"]` / `degraded` / `error`），不许静默当成「未安装」。
 4. **复用现有能力**：工具查找/版本探测复用 `system_tools._find_tool` /
    `_get_version`（PATH + well-known 路径 + version 的单一真源），不重写。
 5. **零新增依赖**：只用 stdlib（subprocess / glob / json / os / re / shutil）。
@@ -53,6 +59,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 from .base import Prober, ProbeItem
 
@@ -78,6 +85,21 @@ _KIND_META = "meta"
 _CMD_TIMEOUT = 5.0
 _MAX_CMD_TIMEOUT = 5.0
 
+# 整组硬截止：**本探测器对外的时间承诺**（不是单条命令的上限）。
+# 实测（build/probe_evidence/wsl_timing_before.out.txt）：机器有负载时 wsl -l -v
+# 会从 0.1s 飙到 1.9-3.8s（旧实现每条各等 5s → 10s 尖峰），vswhere 也会从 0.15s
+# 涨到 0.59s。逐条累加不可控，所以整组共享 1.8s 预算：前面的慢，后面的自动收窄。
+# 取 1.8 而不是 2.0：预算是「纯命令时间」，还要留 ~0.1s 的 Python/调度开销，
+# 这样**最坏含开销也落在 ~1.9s**（实测 G 全挂场景 2.03s → 收紧后 ~1.85s）。
+_GROUP_BUDGET = 1.8
+# 预算耗尽时仍要跑（条目必须在，信号必须在），这是留给它的最小额度
+_MIN_PROBE_TIMEOUT = 0.05
+# vswhere 单条限时：实测常态 0.06-0.28s，给 1.2s（4 倍余量）；超时退默认布局扫描
+_VS_TIMEOUT = 1.2
+# 超时 kill 之后**有限**回收等待（见 `_run` docstring）：不跟着孙进程无限期等管道 EOF。
+# 这也是「超时上限」真正生效的前提 —— 否则实测会把 0.5s 拖成 4.9s。
+_REAP_TIMEOUT = 0.1
+
 
 # ---------------------------------------------------------------------------
 # 通用小工具（跨平台安全：任何异常都收敛成 None / 空值，不往外抛）
@@ -98,15 +120,42 @@ def _run(argv: list, timeout: float = _CMD_TIMEOUT):
     """跑外部命令，返回 (returncode, raw_stdout_bytes)，永不抛异常。
 
     返回 (None, b"") 表示命令没跑起来（不存在 / 无权限 / 超时）。
+
+    **为什么不用 `subprocess.run`（这里是尖峰的第二个根源，实测量化过）**：
+    CPython 的 `run()` 在 Windows 上超时后是 ``kill()`` + **再次 communicate()**
+    （该调用没有 timeout）——也就是「等 stdout/stderr 管道 EOF」。而 `wsl.exe`
+    这类会拉起子进程的命令，孙进程可能继承了那两个管道句柄，于是**上限形同虚设**：
+
+      * 实测 cold 场景：`-l -v` 上限 0.8s，实际耗时 1.174s（多出的 0.37s 是等 EOF）
+      * 合成复现（`build/probe_evidence/pipe_eof_repro.py`）：上限 0.5s，
+        `subprocess.run` 实测 **4.932s**（等孙进程退出），有界实现 0.681s
+
+    所以这里改成 Popen + kill + **有限**回收等待（`_REAP_TIMEOUT`）：到点就走人。
+    宁可留下一个正在退出的子进程，也不让「探测耗时」跟着别人的孙进程走。
+    契约不变：超时/起不来一律 (None, b"")，调用方（含 tests 对 `_run` 的打桩）无需改。
     """
+    limit = _clamp_timeout(timeout)
     try:
-        completed = subprocess.run(
+        proc = subprocess.Popen(
             argv,
-            capture_output=True,
-            timeout=_clamp_timeout(timeout),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
-        return completed.returncode, completed.stdout or b""
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
+    except (FileNotFoundError, OSError, ValueError):
+        return None, b""
+
+    try:
+        stdout, _stderr = proc.communicate(timeout=limit)
+        return proc.returncode, stdout or b""
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.communicate(timeout=_REAP_TIMEOUT)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            pass
         return None, b""
 
 
@@ -263,7 +312,14 @@ def _msvc_toolsets(install_path: str) -> list:
 
 
 def _probe_windows_vs_build_tools(timeout: float = _CMD_TIMEOUT) -> dict:
-    """Windows：Visual Studio / VS Build Tools（含 MSVC 工具集）。"""
+    """Windows：Visual Studio / VS Build Tools（含 MSVC 工具集）。
+
+    vswhere 查询单独限时 `_VS_TIMEOUT`（实测常态 0.06-0.28s；机器有负载时会和
+    WSL 探测一起变慢，实测到过 0.59s）。超时**不是失败**：立即退到默认布局扫描
+    （`_glob_vs_installs`，毫秒级），并用 `extra["timed_out"]` / `degraded` 标出来，
+    免得「查询超时」被读成「没装 VS」。
+    """
+    budget = min(_VS_TIMEOUT, _clamp_timeout(timeout))
     program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
     program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
 
@@ -275,13 +331,21 @@ def _probe_windows_vs_build_tools(timeout: float = _CMD_TIMEOUT) -> dict:
 
     method = None
     installs = None
+    vswhere_elapsed = 0.0
+    vswhere_timed_out = False
     if vswhere:
-        installs = _vswhere_installs(vswhere, timeout)
+        started = time.monotonic()
+        installs = _vswhere_installs(vswhere, budget)
+        vswhere_elapsed = time.monotonic() - started
+        # 超时旁证：没拿到结果 + 耗时逼近上限（与 `_run_budgeted` 同一判据）
+        vswhere_timed_out = (installs is None
+                             and vswhere_elapsed >= max(0.05, budget * 0.9))
         if installs is not None:
             method = "vswhere"
 
     if installs is None:
-        # vswhere 不存在或查询失败 → 只认默认布局（自定义路径必然漏，method 如实标注）
+        # vswhere 不存在 / 查询失败 / 查询超时 → 只认默认布局（自定义路径必然漏，
+        # method 如实标注）；超时这一档另记 timed_out，不冒充「未安装」
         installs = [
             {"display_name": "", "version": "", "path": path,
              "product_id": "", "complete": True}
@@ -308,11 +372,18 @@ def _probe_windows_vs_build_tools(timeout: float = _CMD_TIMEOUT) -> dict:
     available = bool(detail)
     has_cpp = any(entry["msvc_toolsets"] or entry["vcvars64"] for entry in detail)
     first = detail[0] if detail else {}
+    if available:
+        error = None
+    elif vswhere_timed_out:
+        error = ("vswhere.exe 在 %.2fs 内未响应（超时），且默认安装布局下没有 "
+                 "Visual Studio 实例" % budget)
+    else:
+        error = "vswhere.exe 未找到，且默认安装布局下没有 Visual Studio 实例"
     return {
         "available": available,
         "path": first.get("path") or None,
         "version": first.get("version") or None,
-        "error": None if available else "vswhere.exe 未找到，且默认安装布局下没有 Visual Studio 实例",
+        "error": error,
         "extra": {
             "method": method,
             "vswhere": vswhere,
@@ -322,6 +393,11 @@ def _probe_windows_vs_build_tools(timeout: float = _CMD_TIMEOUT) -> dict:
                 "检测到 VS 实例但没找到 MSVC 工具集（未安装「使用 C++ 的桌面开发」工作负载）"
                 if available else "无"
             ),
+            # —— 限时 / 降级信号（与 WSL 探测同一套口径）——
+            "vswhere_timeout_s": budget,
+            "vswhere_elapsed_s": round(vswhere_elapsed, 3),
+            "timed_out": ["vswhere"] if vswhere_timed_out else [],
+            "degraded": bool(vswhere_timed_out),
         },
     }
 
@@ -367,8 +443,57 @@ def _parse_wsl_distros(text: str) -> list:
     return deduped
 
 
+# WSL 探测的**整组硬截止 + 分条上限**（不是「每条都等 5s」）。
+#
+# 为什么要有这层（实测归因，证据在 build/probe_evidence/wsl_timing_before.out.txt）：
+#   wsl --version  0.06-0.28s（稳）
+#   wsl -l -v      常态 0.06-0.20s；但 WSL 服务刚被唤醒 / 机器有负载时会飙到
+#                  1.9-3.8s，极端时 >5s —— **这一条就是尖峰来源**
+#   wsl -l -q      0.065-0.10s（稳，且不查 distro 状态）
+# 旧实现给每条命令都套 5s 上限且串行：`-l -v` 与兜底 `-l -q` 都吃满 = 10s 尖峰
+# （cmd-pool 实测 10012ms 正是 5+5+0.012 的形态）。这里改成：
+#   * 整组共享 `_WSL_TOTAL_BUDGET` 硬截止 → 最坏也能在 1.7s 内给出结论（带超时信号）
+#   * `--version` 先跑（最便宜最稳）：先把它拿到手，后面无论哪条超时都不影响该字段
+#   * `-l -v` 给 0.8s（常态 0.1s，8 倍余量），超时才用 0.4s 的 `-l -q` 兜名字
+#   * 三个上限之和（0.5+0.8+0.4=1.7）刚好等于预算，全挂时不会互相挤掉
+_WSL_TOTAL_BUDGET = 1.7
+_WSL_VERSION_TIMEOUT = 0.5
+_WSL_LIST_TIMEOUT = 0.8
+_WSL_QUIET_TIMEOUT = 0.4
+
+
+def _run_budgeted(argv: list, cap: float, deadline: float):
+    """在「整组硬截止」下跑一条外部命令（WSL 探测专用）。
+
+    返回 (returncode, raw, elapsed, timed_out, skipped)：
+      * ``skipped=True``  —— 组预算已耗尽，**这条根本没跑**（调用方不得当成「失败」）
+      * ``timed_out=True`` —— 跑了但吃满本条上限
+
+    为什么要靠耗时旁证判超时：``_run`` 的契约是 (None, b"") 同时表示「超时」与
+    「起不来」，而 tests 打的就是模块级 ``_run``（不 patch subprocess.run，因为那会
+    连 stdlib platform 自己的子进程一起打坏）。所以这里不能自建 runner，
+    只能在 ``_run`` 的返回值上加「耗时是否逼近上限」这层旁证 —— 快速失败
+    （spawn 失败，毫秒级返回 None）不会被误判成超时。
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0.02:
+        return None, b"", 0.0, False, True
+    limit = min(float(cap), remaining)
+    started = time.monotonic()
+    code, raw = _run(argv, limit)
+    elapsed = time.monotonic() - started
+    timed_out = code is None and elapsed >= max(0.05, limit * 0.9)
+    return code, raw, elapsed, timed_out, False
+
+
 def _probe_windows_wsl(timeout: float = _CMD_TIMEOUT) -> dict:
-    """Windows：WSL（可执行文件 + 已装发行版 + WSL 版本）。"""
+    """Windows：WSL（可执行文件 + 已装发行版 + WSL 版本）。
+
+    时间预算是**整组硬截止**（见上方 `_WSL_TOTAL_BUDGET` 注释与实测数据）：
+    最坏 2.0s 一定出结论，热路径仍是两三百毫秒。超时**必有信号**：
+    ``extra["timed_out"]`` 列出吃满上限的命令、``extra["degraded"]`` 标降级、
+    全都失败时 ``error`` 明说「存在但预算内未响应」，绝不静默当成「未安装」。
+    """
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
     exe = _find_tool("wsl", [], {"win32": [
         os.path.join(system_root, "System32", "wsl.exe"),
@@ -380,21 +505,53 @@ def _probe_windows_wsl(timeout: float = _CMD_TIMEOUT) -> dict:
             "path": None,
             "version": None,
             "error": "wsl.exe 未找到（WSL 未安装或未启用）",
-            "extra": {"exe": None},
+            "extra": {"exe": None, "budget_s": _WSL_TOTAL_BUDGET},
         }
 
-    # WSL 自身版本（WSL 2.x 才支持 --version，旧版返回错误 → version 留空，不算失败）
-    version_code, version_raw = _run([exe, "--version"], timeout)
+    # 取整：预算值会进报告/JSON，1.6493885999952909 这种浮点尾巴对读的人没意义
+    budget = round(min(_WSL_TOTAL_BUDGET, _clamp_timeout(timeout)), 3)
+    deadline = time.monotonic() + budget
+    timings = {}
+    timed_out_calls = []
+    skipped_calls = []
+
+    # 1) WSL 自身版本（WSL 2.x 才支持 --version；旧版返回错误 → version 留空，不算失败）
+    version_code, version_raw, version_elapsed, version_timeout, version_skipped = (
+        _run_budgeted([exe, "--version"], _WSL_VERSION_TIMEOUT, deadline))
+    timings["version"] = round(version_elapsed, 3)
+    if version_timeout:
+        timed_out_calls.append("--version")
+    if version_skipped:
+        skipped_calls.append("--version")
     version_text = _decode_output(version_raw) if version_code == 0 else ""
     wsl_version = _version_number(version_text)
 
-    # 发行版列表：UTF-16LE 输出，必须有编码处理
-    list_code, list_raw = _run([exe, "-l", "-v"], timeout)
+    # 2) 发行版列表（UTF-16LE 输出，必须有编码处理；也是最易飙的一条）
+    list_code, list_raw, list_elapsed, list_timeout, list_skipped = _run_budgeted(
+        [exe, "-l", "-v"], _WSL_LIST_TIMEOUT, deadline)
+    timings["list"] = round(list_elapsed, 3)
+    if list_timeout:
+        timed_out_calls.append("-l -v")
+    if list_skipped:
+        skipped_calls.append("-l -v")
     distros = _parse_wsl_distros(_decode_output(list_raw))
+    distro_source = "list" if distros else None
+
     list_error = None
     if list_code != 0 or not distros:
-        # 兜底：-l -q 只列名字（-l -v 在老版本/异常状态可能失败）
-        quiet_code, quiet_raw = _run([exe, "-l", "-q"], timeout)
+        list_error = (
+            "wsl.exe -l -v 超时（上限 %.2fs，%s）" % (_WSL_LIST_TIMEOUT, "整组预算内未返回")
+            if list_timeout else
+            "wsl.exe -l -v 失败（returncode=%s）" % (list_code,)
+        )
+        # 兜底：-l -q 只列名字（老版本/异常状态下 -l -v 可能失败或超时）
+        quiet_code, quiet_raw, quiet_elapsed, quiet_timeout, quiet_skipped = (
+            _run_budgeted([exe, "-l", "-q"], _WSL_QUIET_TIMEOUT, deadline))
+        timings["quiet"] = round(quiet_elapsed, 3)
+        if quiet_timeout:
+            timed_out_calls.append("-l -q")
+        if quiet_skipped:
+            skipped_calls.append("-l -q")
         if quiet_code == 0:
             names = [
                 line.strip().lstrip("\ufeff").lstrip("*").strip()
@@ -405,18 +562,36 @@ def _probe_windows_wsl(timeout: float = _CMD_TIMEOUT) -> dict:
             if names and not distros:
                 distros = [{"name": name, "state": None, "version": None,
                             "default": False} for name in names]
-        elif list_code != 0:
-            list_error = "wsl.exe -l -v 失败（returncode=%s）" % list_code
+                distro_source = "quiet"
+    else:
+        quiet_code = None
 
     default_distro = next(
         (distro["name"] for distro in distros if distro["default"]), None
     )
-    available = list_code == 0
+
+    # 判定「可用」：wsl.exe 存在 **且至少有一条查询应答**。
+    # 旧实现写的是 `available = list_code == 0` —— 那会把「-l -v 超时但 -l -q
+    # 成功拿到发行版名」这种部分可用错报成整个 WSL 不可用（信息白丢）。
+    responded = any(
+        code == 0 for code in (version_code, list_code, quiet_code)
+    )
+    available = bool(responded)
+    if available:
+        error = None
+    elif timed_out_calls:
+        error = "wsl.exe 存在但 %.1fs 预算内未响应（超时：%s）" % (
+            budget, ", ".join(timed_out_calls))
+    else:
+        error = list_error or "wsl.exe 存在但不可用"
+
+    degraded = bool(timed_out_calls or skipped_calls or (
+        distro_source == "quiet" and list_code != 0))
     return {
         "available": available,
         "path": exe,
         "version": wsl_version,
-        "error": None if available else (list_error or "wsl.exe 存在但不可用"),
+        "error": error,
         "extra": {
             "exe": exe,
             "wsl_version": wsl_version,
@@ -425,6 +600,20 @@ def _probe_windows_wsl(timeout: float = _CMD_TIMEOUT) -> dict:
             "default_distro": default_distro,
             "has_distro": bool(distros),
             "wsl2_capable": any(distro.get("version") == 2 for distro in distros),
+            # —— 预算 / 降级信号（消费方据此区分「没装」「没响应」「部分可用」）——
+            "budget_s": budget,
+            "timings": timings,
+            "distro_source": distro_source,
+            "timed_out": list(timed_out_calls),
+            "skipped": list(skipped_calls),
+            "degraded": degraded,
+            "note": (
+                None if not degraded else (
+                    "WSL 探测在 %.1fs 预算内降级：超时=%s 跳过=%s 发行版来源=%s"
+                    % (budget, timed_out_calls or "无", skipped_calls or "无",
+                       distro_source or "无")
+                )
+            ),
         },
     }
 
@@ -604,7 +793,7 @@ def _probe_linux_package_manager(timeout: float = _CMD_TIMEOUT) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# macOS × 1
+# macOS × 2
 # ---------------------------------------------------------------------------
 
 def _probe_macos_xcode_clt(timeout: float = _CMD_TIMEOUT) -> dict:
@@ -664,6 +853,112 @@ def _probe_macos_xcode_clt(timeout: float = _CMD_TIMEOUT) -> dict:
     }
 
 
+# Homebrew 的两个**固定安装前缀**（官方布局，不是猜的）：
+#   /opt/homebrew  — Apple Silicon（arm64）默认前缀
+#   /usr/local     — Intel（x86_64）默认前缀
+# 为什么要写死这两个：agent / CI / 非交互 shell **不跑 shell 初始化脚本**
+# （`.zprofile` / `.zshrc`），`eval "$(brew shellenv)"` 追加的那截 PATH 正好缺席，
+# 只看 `shutil.which("brew")` 会把**确实装了**的 Homebrew 报成没装。
+# 用字面量而不是 os.path.join：本函数即使被在 Windows 上直接调用（测试会这么干），
+# 也仍然是 macOS 的 posix 路径，不能被 ntpath 改写成反斜杠。
+_BREW_WELL_KNOWN = (
+    "/opt/homebrew/bin/brew",   # Apple Silicon
+    "/usr/local/bin/brew",      # Intel
+)
+
+
+def _probe_macos_homebrew(timeout: float = _CMD_TIMEOUT) -> dict:
+    """macOS：Homebrew（brew 可执行存在性 + `brew --version` + `brew --prefix`）。
+
+    判据分三层，**逐层都要有证据，不拿上一层冒充下一层**：
+
+    1. **装了没有**（`available`）：`brew` 可执行真的存在 —— 先 PATH（`which`），
+       再两个固定前缀 `/opt/homebrew/bin/brew`（Apple Silicon）、
+       `/usr/local/bin/brew`（Intel）。**只看 PATH 会漏**：非交互 shell（agent 常驻
+       的场景）拿不到 shellenv 追加的 PATH，工具装了却报没装，是假阴性。
+    2. **能不能真跑**（`extra["can_run"]`）：`brew --version` 首行形如
+       `Homebrew 4.3.2`。文件在但跑不出结论（Cellar 半删 / 权限坏 / 依赖的 ruby
+       被拆）时 version 留空，note 里如实写「装上了但跑不起来」——
+       不拿「文件存在」冒充「能用」。
+    3. **装在哪、prefix 对不对**（`extra["prefix"]`）：`brew --prefix` 的**命令输出**
+       最可信；拿不到才从可执行路径推导（`…/bin/brew` → `…`），并用
+       `prefix_source` 标明来源，别把推导值当成命令结果。顺带按本机 arch 给出
+       `arch_expected_prefix` 与 `prefix_matches_arch`（Rosetta 下的 brew 会出现
+       arm64 机器配 /usr/local 前缀这种组合，是事实就报，不判对错）。
+
+    探测不到（或非 macOS 上被直接调用）→ available=False + 明确 error，不抛异常。
+    """
+    timeout = _clamp_timeout(timeout)
+    brew = _find_tool("brew", [], {"darwin": list(_BREW_WELL_KNOWN)})
+
+    version_line = ""
+    prefix = None
+    prefix_source = None
+
+    if brew:
+        version_line = _get_version(brew, ["--version"], timeout)
+        prefix_code, prefix_raw = _run([brew, "--prefix"], timeout)
+        if prefix_code == 0:
+            candidate = _first_line(_decode_output(prefix_raw))
+            # 只认绝对路径：出错时 brew 会往 stdout 打提示语，不能当 prefix
+            if candidate.startswith("/"):
+                prefix = candidate.rstrip("/") or "/"
+                prefix_source = "brew --prefix"
+
+    if not prefix and brew:
+        # 推导：/opt/homebrew/bin/brew → /opt/homebrew（dirname 两次）
+        derived = os.path.dirname(os.path.dirname(brew))
+        if derived and derived.startswith("/"):
+            prefix = derived.rstrip("/") or "/"
+            prefix_source = "derived_from_exe_path"
+
+    arch = platform.machine()
+    expected_prefix = "/opt/homebrew" if arch in ("arm64", "aarch64") else "/usr/local"
+    prefix_exists = bool(prefix and os.path.isdir(prefix))
+    cellar = (prefix.rstrip("/") + "/Cellar") if prefix else None
+
+    available = bool(brew)
+    can_run = bool(version_line)
+    return {
+        "available": available,
+        "path": brew,
+        "version": version_line or None,
+        "error": None if available else (
+            "brew 未找到：PATH 与 %s 下均无 brew（Homebrew 未安装）"
+            % ", ".join(_BREW_WELL_KNOWN)
+        ),
+        "extra": {
+            "exe": brew,
+            "checked_paths": list(_BREW_WELL_KNOWN),
+            "version_line": version_line or None,
+            "version_number": _version_number(version_line),
+            # 可执行存在 ≠ 能用：这一档区分「装了」与「装好了」
+            "can_run": can_run,
+            "prefix": prefix,
+            "prefix_source": prefix_source,
+            "prefix_exists": prefix_exists,
+            "cellar": cellar,
+            "cellar_exists": bool(cellar and os.path.isdir(cellar)),
+            "arch": arch,
+            "arch_expected_prefix": expected_prefix,
+            "prefix_matches_arch": None if not prefix else prefix == expected_prefix,
+            "on_apple_silicon_prefix": prefix == "/opt/homebrew",
+            # brew shellenv 导出的环境（若当前进程有，直接摊开，便于对照 PATH 假阴性）
+            "env": {
+                "HOMEBREW_PREFIX": os.environ.get("HOMEBREW_PREFIX"),
+                "HOMEBREW_CELLAR": os.environ.get("HOMEBREW_CELLAR"),
+            },
+            "note": (
+                None if can_run else (
+                    "brew 可执行存在，但 `brew --version` 没给出可用版本号"
+                    "（可能 Cellar 损坏 / 权限异常 / ruby 依赖缺失）：只能确认「装了」，"
+                    "不能确认「能用」"
+                )
+            ) if available else "无（未安装）",
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # 平台 → 探测组（不在表里的平台直接跳过，不执行任何外部命令）
 # ---------------------------------------------------------------------------
@@ -680,6 +975,7 @@ _PROBES_BY_PLATFORM = {
     ),
     "darwin": (
         ("xcode_clt", _probe_macos_xcode_clt),
+        ("homebrew", _probe_macos_homebrew),
     ),
 }
 
@@ -750,7 +1046,7 @@ class PlatformToolsProber(Prober):
     条目构成 = 1 个 `platform_scope`（**元信息**，`extra["kind"] == "meta"`）
     + 当前平台的各**能力**条目（`extra["kind"] == "capability"`：
       Windows: vs_build_tools / wsl / windows_terminal；
-      Linux: systemd / package_manager；macOS: xcode_clt）。
+      Linux: systemd / package_manager；macOS: xcode_clt / homebrew）。
 
     `platform_scope.available=True` 只表示「范围探测成功」，**不是一项可用能力**；
     问「哪些平台工具可用」请用 `is_capability_item()` 过滤（或直接用
@@ -767,9 +1063,21 @@ class PlatformToolsProber(Prober):
         timeout = _clamp_timeout(self.timeout)
         current = _current_platform()
 
+        # 整组硬截止：本探测器对外承诺「平台工具结论在 `_GROUP_BUDGET` 内给出」。
+        # 为什么需要它（实测，见 build/probe_evidence/wsl_timing_before.out.txt）：
+        # 机器有负载时**不止 WSL** 慢 —— 同一轮里 vswhere 也从 0.15s 涨到 0.59s。
+        # 逐条各等上限会累加，所以这里让后跑的探测只拿到「剩余预算」：
+        # 前面的探测慢了，后面的自动收窄上限（并在 extra 里标 timed_out/degraded），
+        # 而不是让整组越拖越长。
+        deadline = time.monotonic() + min(_GROUP_BUDGET, timeout)
+
         for name, probe_func in _PROBES_BY_PLATFORM.get(current, ()):
+            remaining = deadline - time.monotonic()
+            # 预算耗尽也**照跑**（给最小额度）：条目必须存在且带「超时」信号，
+            # 不能因为预算用光就少一条 item（那会让「没响应」变成「没这一项」）
+            probe_timeout = max(_MIN_PROBE_TIMEOUT, min(timeout, remaining))
             try:
-                data = probe_func(timeout)
+                data = probe_func(probe_timeout)
             except Exception as exc:  # 单条探测失败不影响其它项（探测不抛异常约定）
                 results.append(ProbeItem(
                     name=name,
@@ -778,7 +1086,14 @@ class PlatformToolsProber(Prober):
                     error="%s: %s" % (type(exc).__name__, exc),
                 ))
                 continue
-            results.append(_to_item(name, data))
+            item = _to_item(name, data)
+            try:
+                # 本条探测从整组预算里分到的额度（诊断用：整组 1.8s 被谁吃掉了）
+                item.extra["group_budget_s"] = round(
+                    max(0.0, min(timeout, remaining)), 3)
+            except (AttributeError, TypeError):
+                pass
+            results.append(item)
 
         return results
 

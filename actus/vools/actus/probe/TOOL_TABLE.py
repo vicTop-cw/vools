@@ -39,7 +39,14 @@ TOOL_TABLE = [
     ("yarn", [], ["--version"], {}, 5),
     ("pnpm", [], ["--version"], {}, 5),
     ("cargo", [], ["--version"], {}, 5),
-    ("brew", [], ["--version"], {}, 5),
+    # Homebrew：两个官方固定前缀都要查。/opt/homebrew 是 Apple Silicon、/usr/local
+    # 是 Intel；非交互 shell（agent / CI）不跑 `.zprofile`，`brew shellenv` 追加的
+    # PATH 常常缺席，只靠 which 会把装了的 Homebrew 报成没装。
+    # 组合判据（--prefix / Cellar / arch 期望前缀）在 platform_tools.py 的
+    # homebrew 条目里做，这里只给「存在性 + 版本」这一档的原始数据。
+    ("brew", [], ["--version"], {
+        "darwin": ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"],
+    }, 5),
     ("apt", ["apt-get"], ["--version"], {}, 5),
     ("dnf", [], ["--version"], {}, 5),
     ("pacman", [], ["--version"], {}, 5),
