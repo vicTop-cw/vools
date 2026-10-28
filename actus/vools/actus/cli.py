@@ -35,17 +35,14 @@ import sys
 import io
 from pathlib import Path
 
+from .errors import is_failure_status   # 成败判据单一真源（MCP 侧共用同一份）
+
 __all__ = ['main']
 
 
 def _out(obj):
     _ensure_utf8_stdout()
     print(json.dumps(obj, ensure_ascii=False, indent=2))
-
-
-# 子结果里算「成功」的 status 取值。刻意不包含 'partial' / 'needs_fix' /
-# 'failed' / 'error'：对脚本来说顶层 status 是权威信号，业务未完成就不该是 ok。
-_OPERATION_OK_STATUSES = ('ok', 'success', 'modified', 'skipped', 'noop')
 
 
 def _out_result(result, status_field='status'):
@@ -58,7 +55,8 @@ def _out_result(result, status_field='status'):
     顶层照样写 `status: ok` + exit 0，脚本据此判定"成功"。
 
     判定优先级：
-      1. 结果体有 status 字段 → 在 `_OPERATION_OK_STATUSES` 里才算成功；
+      1. 结果体有 status 字段 → `errors.is_failure_status()` 判定
+         （成功集合与 MCP 侧共用同一份，不在这里重复实现）；
       2. 没有 status 但有 `validation.valid`（scaffold 的形状）→ 以其为准；
       3. 两者都没有（纯数据返回）→ 视为成功（查询本身没出错）。
     未知 status 一律按失败处理 —— 宁可让脚本看到非 0，也不假装成功。
@@ -76,7 +74,7 @@ def _out_result(result, status_field='status'):
     elif status_field is None:
         ok = True
     elif status_field in result:
-        ok = str(result.get(status_field) or '').lower() in _OPERATION_OK_STATUSES
+        ok = not is_failure_status(result.get(status_field))
     elif isinstance(result.get('validation'), dict):
         ok = bool(result['validation'].get('valid'))
     else:
@@ -807,7 +805,9 @@ def _dispatch(args) -> int:
         if r['status'] == 'awaiting_confirmation':
             print(f"待人类确认：再次执行并加 --confirm / --yes 放行（exec: {r['exec_id']}）",
                   file=sys.stderr)
-        return 0 if r['status'] == 'ok' else 1
+        # 判据与 MCP 共用 errors.is_failure_status：只有 ok 类状态算成功；
+        # awaiting_confirmation / failed / 未知状态都返回非 0。
+        return 0 if not is_failure_status(r.get('status')) else 1
 
     if args.command == 'status':
         from vools.actus import records as rec
