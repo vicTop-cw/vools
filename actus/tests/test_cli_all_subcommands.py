@@ -27,8 +27,9 @@
    exit ∈ {0,1,2}、输出**不含**崩溃特征串、且不是「静默无输出」。
 4. 危险路径只跑 --help（`SKIP_EXECUTE` 逐条写了理由）；`publish --dry-run` 与
    `webhook --status` 是危险命令的安全形态，单独执行，用来覆盖这两条 handler。
-5. **反向自检**：临时 ``del cli.os`` 复现 P0-1 的 NameError，断言崩溃探测器确实报红
-   （证明这套断言不是空转）；另有一条纯文本单测证明特征串探测本身有效。
+5. **反向自检**：**合成注入** NameError / ImportError（让 dispatch 直接抛），断言崩溃
+   探测器确实报红（证明这套断言不是空转）。不再用 `del cli.os` 之类「删真实模块属性」
+   的办法 —— 那会把测试绑死到某个 handler 恰好用了哪个符号（实现细节，非契约）。
 
 隔离（绝不污染仓库）
 --------------------
@@ -50,6 +51,7 @@ py3.6 兼容：只用标准库，% 格式化，不用 f-string。
 import argparse
 import contextlib
 import io
+import json
 import os
 import sys
 
@@ -408,40 +410,58 @@ def test_crash_marker_detector_is_sensitive():
 
 
 def test_detector_catches_nameerror_regression(monkeypatch):
-    """复现 P0-1（cli.py 少 `import os`）并断言探测器报红 —— 反向验证非空转。
+    """反向自检：main() 的异常兜底 + 崩溃探测器都不是空转（合成 NameError）。
 
-    做法：临时删掉 cli 模块的 `os` 名字（等价于「忘了 import os」），
-    跑 `publish --dry-run`（handler 里第一处 os 使用）；main() 会把它吞成
-    exit 1 的 JSON 错误，输出里的 "is not defined" 必须被 _crash_markers 抓到。
+    审计修（测试耦合实现）：旧做法是 `del cli.os` 再跑 `publish --dry-run`，
+    强依赖「publish handler 恰好用了模块级 os」—— 另一司令把 `os.getcwd()` 换成
+    `repo_root()` 后这条就红（而修复本身是对的）。这是**实现细节**不是契约，
+    下次任何重构都会再撞。
+
+    现在改为**合成注入**：直接让 dispatch 抛一个必然的 NameError（等价于任意
+    handler 里少 import 某个符号），完全不依赖哪个真实 handler 用了什么符号。
+    断言：main() 兜底成 rc=1 + `{"status":"failed"}` JSON，且输出里的
+    "is not defined"/"NameError" 必须被 `_crash_markers` 抓到。
     """
-    monkeypatch.delattr(cli, "os", raising=False)
+    def broken_dispatch(args):
+        raise NameError("name 'undefined_name_xyz' is not defined")
+
+    monkeypatch.setattr(cli, "_dispatch", broken_dispatch)
 
     rc, out, err = _invoke(["publish", "--dry-run"])
     markers = _crash_markers(out + err)
-    assert rc == 1, "模拟缺 import os 后 publish 应 rc=1，实得 %r" % (rc,)
+    assert rc == 1, "合成 NameError 应被 main() 兜成 rc=1，实得 %r" % (rc,)
     assert "is not defined" in markers, (
-        "崩溃探测器没抓到 NameError 回归（rc=%r，输出前 300 字: %r）"
+        "崩溃探测器没抓到 NameError（rc=%r，输出前 300 字: %r）"
         % (rc, (out + err)[:300]))
+    payload = json.loads(out)
+    assert payload["status"] == "failed"
+    assert payload["error"]["message"] == "name 'undefined_name_xyz' is not defined"
 
 
 def test_detector_catches_missing_api_regression(monkeypatch):
-    """复现 P0-2（引用不存在的导出名）并断言探测器报红。
+    """反向自检：合成 ImportError（等价于 cli.py 引用了不存在的导出名）。
 
-    做法：把 `records.list_run_records` 从模块上摘掉（等价于 cli.py 写错导出名，
-    这正是 P0-2 的形态 —— 真实导出名是 list_run_records，而 cli 曾 import
-    load_records）。`records list` 在调用时 import 该名字 → ImportError，被
-    main() 吞成 exit 1 的 JSON 错误，输出里的 "cannot import name" 必须被抓到。
+    审计修（同族耦合）：旧做法是 `del records.list_run_records` 再跑
+    `records list`，依赖「该命令恰好 import 这个符号」。现在直接让 dispatch 抛
+    ImportError，不再依赖任何真实 handler/真实导出名的实现细节。
+
+    断言：rc=1 + failed JSON，输出里的 "cannot import name" 必须被探测器抓到。
     """
-    import vools.actus.records as records_mod
+    def broken_dispatch(args):
+        raise ImportError(
+            "cannot import name 'load_records' from 'vools.actus.records'")
 
-    monkeypatch.delattr(records_mod, "list_run_records", raising=False)
+    monkeypatch.setattr(cli, "_dispatch", broken_dispatch)
 
     rc, out, err = _invoke(["records", "list"])
     markers = _crash_markers(out + err)
-    assert rc == 1, "模拟导出名缺失后 records list 应 rc=1，实得 %r" % (rc,)
+    assert rc == 1, "合成 ImportError 应被 main() 兜成 rc=1，实得 %r" % (rc,)
     assert "cannot import name" in markers, (
-        "崩溃探测器没抓到 ImportError 回归（rc=%r，输出前 300 字: %r）"
+        "崩溃探测器没抓到 ImportError（rc=%r，输出前 300 字: %r）"
         % (rc, (out + err)[:300]))
+    payload = json.loads(out)
+    assert payload["status"] == "failed"
+    assert "cannot import name" in payload["error"]["message"]
 
 
 def test_audit_p0_commands_are_covered():

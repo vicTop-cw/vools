@@ -418,7 +418,7 @@ def test_load_from_repo_does_not_create_registry_file(tmp_path):
 
 
 # ===========================================================================
-# registry —— 8) write_index 幂等（原子性是已知缺口，单列 xfail）
+# registry —— 8) write_index 幂等 / 原子性（产品已修复，原子性现在是正式守卫）
 # ===========================================================================
 
 def test_write_index_is_idempotent(tmp_path):
@@ -448,13 +448,9 @@ def test_write_index_is_idempotent(tmp_path):
     assert set(after) - set(before) == {".actus.registry.json"}
 
 
-@pytest.mark.xfail(strict=False, reason=(
-    "审计发现：write_index() 直接 open(...,'w') 截断原文件后 json.dump —— 写入中途"
-    "失败/进程被杀会把**已有有效索引**清成空/半截（非原子写）。已上报，产品改为"
-    "临时文件 + os.replace 后本用例自动 xpass。"))
 def test_write_index_is_atomic_on_write_failure(tmp_path, monkeypatch):
-    """退步了会怎样（当前就是）：索引写入不是原子的 —— 磁盘满/进程被杀时，
-    原本有效的索引被截断，仓库从「索引可用」变成「索引损坏」。
+    """退步了会怎样（产品已修复，本用例现在是**守卫**）：索引写入不是原子的 ——
+    磁盘满/进程被杀时，原本有效的索引被截断，仓库从「索引可用」变成「索引损坏」。
 
     断言正确契约：一次失败的写入不得破坏旧索引内容（临时文件 + os.replace）。
     """
@@ -493,13 +489,10 @@ def test_load_missing_index_returns_empty_actions(tmp_path):
     assert index.get("actions") == [], index
 
 
-@pytest.mark.xfail(strict=False, reason=(
-    "审计发现：旁边存在损坏的 .actus.registry.json 时，load_from_file 直接抛"
-    "json.JSONDecodeError —— 没有「不崩溃 + 明确信号」的降级路径。已上报，产品"
-    "改为返回空索引+problems/invalid 标记后本用例自动 xpass。"))
 def test_corrupt_index_reports_explicit_signal_not_crash(tmp_path):
-    """退步了会怎样（当前就是）：索引被写坏后 `actus search/list` 直接冒
-    JSONDecodeError 堆栈，用户不知道是索引坏了、也不知道怎么修。
+    """退步了会怎样（产品已修复，本用例现在是**守卫**）：索引被写坏后
+    `actus search/list` 直接冒 JSONDecodeError 堆栈，用户不知道是索引坏了、
+    也不知道怎么修。
 
     断言正确契约：损坏索引 → 不抛、返回空索引 + 明确信号（problems/invalid 标记）。
     """

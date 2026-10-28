@@ -306,11 +306,14 @@ def test_timeout_marks_worker_may_still_run_and_keeps_late_result(server, monkey
     断言：timeout 调小后轮询 → `status='timeout'`、`worker_may_still_run=True`、
     `timed_out=True`；worker 迟到结束后再轮询仍是 timeout，且迟到结果挂
     `late_result`（不覆盖超时结论）。
+
+    注意：假 handler 故意 sleep 1.0s（远大于 timeout 0.05s）—— 机器慢/负载高时
+    worker 若在第一次轮询前就结束，快照会是 ok，测不到 timeout 路径（曾实际 flake）。
     """
     monkeypatch.setattr(mcp_server, "_TASK_GRACE_SEC", 0.01)
     monkeypatch.setattr(mcp_server, "_TASK_TIMEOUT_SEC", 0.05)
     _patch_action_tools(monkeypatch)
-    _patch_handler(monkeypatch, {"slow_tool": 0.3})
+    _patch_handler(monkeypatch, {"slow_tool": 1.0})
 
     is_error, handle_payload = _payload(
         server._call_tool_async({"name": "slow_tool", "arguments": {}}))
@@ -324,7 +327,7 @@ def test_timeout_marks_worker_may_still_run_and_keeps_late_result(server, monkey
     assert snap["timeout_sec"] == 0.05
 
     # 等 worker 真正结束（迟到），再轮询：超时结论不能被迟到结果改写
-    time.sleep(0.4)
+    time.sleep(1.2)
     later = _poll(server, task_id)
     assert later["status"] == "timeout", later
     assert later.get("late_result") is not None, "迟到结果应挂在 late_result，而不是覆盖状态"
