@@ -53,10 +53,16 @@ AUTH_REQUIRED = "auth_required"
 
 
 def is_internal_path(path: str) -> bool:
-    """路径是否落在 internal 目录（`.../system/_internal/...`）。"""
+    """路径是否落在 internal 目录（`.../system/_internal/...`）。
+
+    审计修复（越权绕过）：改前按**大小写敏感**比较，而 Windows/macOS 文件系统
+    不区分大小写 —— 把动作放进 `.../system/_INTERNAL/` 就能让 `_internal` 判定
+    返回 False（实测 `system/_INTERNAL/x` → False），从而绕过 executor 的
+    「internal 动作仅引擎内部可执行」门禁。现在统一小写后再比对（fail-closed）。
+    """
     if not path:
         return False
-    norm = os.path.abspath(path).replace("\\", "/")
+    norm = os.path.abspath(path).replace("\\", "/").lower()
     return f"/{INTERNAL_DIR_MARKER}/" in norm
 
 
@@ -445,7 +451,11 @@ class TeamManager:
                 team = TeamConfig.from_dict(data)
                 self._teams[team_name] = team
                 return team
-            except (json.JSONDecodeError, KeyError):
+            except (ValueError, KeyError):
+                # 审计修复：TeamConfig.from_dict 对非法成员会抛 ValueError
+                # （空 id / 非法 role），改前只 catch JSONDecodeError/KeyError
+                # → 团队文件一旦被写坏，get_team/check_visibility 直接崩（拒绝服务）。
+                # 现在统一降级为 None（调用方按"团队不存在"处理 = fail-closed）。
                 return None
         return None
 
@@ -472,7 +482,17 @@ class TeamManager:
 
     def add_member(self, team_name: str, user_id: str, role: str = "member",
                    public_key: str = "") -> bool:
-        """添加团队成员。"""
+        """添加团队成员（写侧校验与 from_dict 对齐）。
+
+        审计修复：改前不校验 user_id/role —— 实测 `add_member(t, '')` 返回 True
+        并把空 id 写进团队文件，之后 `TeamConfig.from_dict` 抛 ValueError，
+        `get_team`/`check_visibility` 全部崩溃（团队级动作永远判定失败）；
+        `role='superadmin'` 同样能写进去。现在写侧直接拒绝（fail-closed）。
+        """
+        if not isinstance(user_id, str) or not user_id.strip():
+            return False
+        if role not in MEMBER_ROLES:
+            return False
         team = self.load_team(team_name)
         if not team:
             return False
@@ -560,9 +580,18 @@ class VisibilityEngine:
             json.dump(self._private_actions, f, ensure_ascii=False, indent=2)
 
     def add_private_action(self, action_id: str, metadata: dict):
-        """添加私有动作到索引。"""
+        """添加私有动作到索引。
+
+        审计修复（配合 check_visibility 的 fail-closed）：
+        写入时**补全 author**（缺省 = 当前用户）—— 否则条目没有归属者，
+        访问判定只能一律拒绝（作者自己也进不去）；补全后"仅作者可见"才成立，
+        而手工/外部写坏的索引（无 author）仍会被拒绝（不 fail-open）。
+        """
+        meta = dict(metadata or {})
+        if not str(meta.get("author") or "").strip():
+            meta["author"] = self._current_user
         self._private_actions[action_id] = {
-            **metadata,
+            **meta,
             "action_id": action_id,
             "visibility": VISIBILITY_PRIVATE,
             "added_at": time.time(),
@@ -621,7 +650,15 @@ class VisibilityEngine:
             if not action:
                 return False, f"Private action not found: {action_id}"
             author = action.get("author", "")
-            if author and author != user:
+            # 审计修复（fail-open）：改前 `if author and author != user` ——
+            # 私有动作元数据**没有 author 字段**（或 author 为空串）时直接
+            # `return True`，等于对所有人放行。实测：add_private_action('x', {})
+            # 后 check_visibility('x', private, user='bob') → (True, '')。
+            # 私有语义是"仅作者可见"，作者缺失时无法确认 → 拒绝（fail-closed）。
+            if not isinstance(author, str) or not author.strip():
+                return False, (f"Action '{action_id}' is private 但缺少 author 元数据，"
+                               f"无法确认归属（已按拒绝处理）")
+            if author != user:
                 return False, f"Action '{action_id}' is private (author: {author})"
             return True, ""
 

@@ -9,12 +9,69 @@ import json
 import os
 import re
 import shutil
+import stat
 import time
 from typing import Optional, Tuple, List
 
 from . import registry as registry_mod
 from ._proc import run_cmd_safe
 from .constants import is_action_file
+
+# 安装目录里由**用户/前一次安装**留下的配置文件。重装会 rmtree 整个目标目录，
+# 所以这两个文件必须在删除前快照、复制后还原 —— 否则用户手改的 scope/可见性
+# 会连同目录一起消失（不是"被覆盖"，是"整个目录被删了重建"）。
+_PRESERVED_CONFIG_FILES = ('.actus.scope', '.actus.visibility')
+
+
+def _snapshot_user_configs(target_dir: str) -> dict:
+    """在 rmtree 之前读取目标目录里的配置文件内容。"""
+    saved = {}
+    for name in _PRESERVED_CONFIG_FILES:
+        path = os.path.join(target_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as handle:
+                saved[name] = handle.read()
+        except OSError:
+            continue
+    return saved
+
+
+def _restore_user_configs(target_dir: str, saved: dict) -> List[str]:
+    """把快照里的配置写回新目录，返回还原了的文件名列表。"""
+    restored = []
+    for name, text in (saved or {}).items():
+        try:
+            with open(os.path.join(target_dir, name), 'w', encoding='utf-8') as handle:
+                handle.write(text)
+            restored.append(name)
+        except OSError:
+            continue
+    return restored
+
+
+def _rmtree_force(path: str) -> None:
+    """删除目录；遇到只读文件先去掉只读位再删。
+
+    审计修：Windows 上 `git clone` 出来的对象文件是**只读**的，而安装会把这些
+    `.git` 一起 copytree 进安装目录 —— 于是重装/卸载时的 `shutil.rmtree` 直接抛
+    `PermissionError`（实测重装必然踩到），而且**删到一半才失败**，安装目录被留成
+    半成品（旧安装已残缺、新安装还没拷）。这里先试一次普通删除，失败则清掉剩余
+    文件的只读位再删。
+    """
+    try:
+        shutil.rmtree(path)
+        return
+    except OSError:
+        pass
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                os.chmod(os.path.join(root, name), stat.S_IWRITE)
+            except OSError:
+                continue
+    shutil.rmtree(path)
 
 
 class ActionInstaller:
@@ -132,7 +189,8 @@ class ActionInstaller:
     def install(self, repo_url: str, branch: str = "main",
                 tag: str = None, commit: str = None,
                 scope: str = None, key: str = None,
-                action_id: str = None) -> dict:
+                action_id: str = None,
+                overwrite_config: bool = False) -> dict:
         """从 Git 仓库安装动作。
 
         参数:
@@ -143,6 +201,9 @@ class ActionInstaller:
             scope: 权限范围（如 'sandbox', 'trusted'）。
             key: gated 动作的授权密钥（docs/41 §B2.3）；未带或无效 ⇒ auth_required。
             action_id: 只装这一个动作（`<owner>/<name>.actus:<action_id>` 形态）。
+            overwrite_config: 是否覆盖已有的 `.actus.scope` / `.actus.visibility`。
+                **默认 False = 保留用户手改**（审计修：改前重装会 rmtree 整个目录，
+                用户手改的配置连同目录一起消失，等于静默丢失）。
 
         返回:
             安装结果 {'status': 'ok', 'path': '...', 'actions': [...]}
@@ -183,10 +244,27 @@ class ActionInstaller:
 
         # 复制到安装目录
         install_name = self._url_to_install_name(repo_url)
+        # ── 审计修（P0：写侧越界）──
+        # `_url_to_install_name` 的正则只认 `/` 和 `:`：传 Windows 本地路径
+        # （`C:\Users\me\projects\myrepo`）时会把**整串带反斜杠的路径**当名字，
+        # `os.path.join(install_dir, name)` 于是跳出 install_dir —— 紧接着的
+        # `shutil.rmtree(target_dir)` 会删掉仓外的树（实测 rmtree 打到了源仓的
+        # .git，被 Windows 只读属性拦下才没造成更大破坏）。
+        # 这里两层防护：①名字只取最后一段（本地路径也能装成 `install/myrepo`）；
+        # ②沿用 uninstall 那把尺子 `_inside_install_dir` 做兜底拒绝。
+        install_name = os.path.basename(
+            str(install_name).replace('\\', '/').rstrip('/')) or 'repo'
+        if not self._inside_install_dir(install_name):
+            return {"status": "error",
+                    "message": f"安装名会越出安装目录，已拒绝: {install_name}"}
         target_dir = os.path.join(self._install_dir, install_name)
+        # 重装 = rmtree + copytree：用户手改的 scope/可见性必须先快照，
+        # 否则它们随目录一起消失（默认还原；overwrite_config=True 时不还原）。
+        saved_configs = {} if overwrite_config else _snapshot_user_configs(target_dir)
         if os.path.exists(target_dir):
-            shutil.rmtree(target_dir)
+            _rmtree_force(target_dir)      # 只读 .git 对象：普通 rmtree 会半途 PermissionError
         shutil.copytree(repo_registry_path, target_dir)
+        restored_configs = _restore_user_configs(target_dir, saved_configs)
 
         # 记录安装清单
         manifest = reg.record_installation(
@@ -194,9 +272,11 @@ class ActionInstaller:
             branch=branch, tag=tag, commit=commit
         )
 
-        # 写入 scope 配置
+        # 写入 scope 配置（已有用户配置时默认保留，写入与否见返回值）
+        scope_written = False
         if scope:
-            self._write_scope_config(target_dir, scope)
+            scope_written = self._write_scope_config(
+                target_dir, scope, overwrite=overwrite_config)
 
         return {
             "status": "ok",
@@ -208,7 +288,10 @@ class ActionInstaller:
             "commit": commit,
             "scope": scope,
             "actions": [a["id"] for a in index.get("actions", [])],
-            "action_count": len(index.get("actions", []))
+            "action_count": len(index.get("actions", [])),
+            # 诚实信号：哪些配置是**沿用用户既有值**（没被这次安装修改）
+            "config_preserved": restored_configs,
+            "scope_written": scope_written,
         }
 
     def _inside_install_dir(self, install_name: str) -> bool:
@@ -247,7 +330,7 @@ class ActionInstaller:
         if not os.path.isdir(target_dir):
             return {"status": "error", "message": f"Not installed: {install_name}"}
 
-        shutil.rmtree(target_dir)
+        _rmtree_force(target_dir)          # 只读 .git 对象：普通 rmtree 会 PermissionError
 
         # 移除安装清单
         if repo_url:
@@ -570,16 +653,57 @@ class ActionInstaller:
 
         return repo_name
 
-    def _write_scope_config(self, target_dir: str, scope: str):
-        """写入 scope 配置文件。"""
+    def _write_scope_config(self, target_dir: str, scope: str,
+                            overwrite: bool = False) -> bool:
+        """写入 scope 配置文件；返回是否真的写了。
+
+        **审计修（配置覆盖保护）**：改前无条件 `open(..., 'w')` —— 用户手工改过
+        `.actus.scope` 后，重装/update 会静默覆盖回默认值（实测 hand-edit
+        `trusted` 后重装变回 `sandbox`，且没有任何提示）。
+        现在的语义：
+          * 文件不存在 → 写（首次安装）；
+          * 内容相同 → 不写（幂等）；
+          * 内容不同且 overwrite=False（默认）→ **保留用户的**，返回 False，
+            由调用方把「配置被保留」报给用户（不静默）；
+          * overwrite=True → 显式覆盖（调用方明确要求时）。
+        """
         scope_path = os.path.join(target_dir, ".actus.scope")
+        if not overwrite and os.path.isfile(scope_path):
+            try:
+                with open(scope_path, "r", encoding="utf-8") as f:
+                    existing = f.read()
+            except OSError:
+                existing = None
+            if existing is not None:
+                if existing == scope:
+                    return False          # 幂等：内容一致，不必重写
+                return False              # 保留用户手改，绝不静默覆盖
         with open(scope_path, "w", encoding="utf-8") as f:
             f.write(scope)
+        return True
 
     def _write_visibility_config(self, target_dir: str, visibility: str,
-                                  author: str = "", team: str = ""):
-        """写入可见性配置文件。"""
+                                  author: str = "", team: str = "",
+                                  overwrite: bool = False) -> bool:
+        """写入可见性配置文件；返回是否真的写了（保护语义同 `_write_scope_config`）。
+
+        改前同样无条件覆盖：用户手改 `.actus.visibility`（例如改成 private）
+        后重装会静默回退成 public —— 对私有动作是**权限语义被悄悄放宽**。
+        """
         vis_path = os.path.join(target_dir, ".actus.visibility")
+        if not overwrite and os.path.isfile(vis_path):
+            try:
+                with open(vis_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except (OSError, ValueError):
+                existing = None
+            if isinstance(existing, dict):
+                same = (existing.get("visibility") == visibility
+                        and existing.get("author", "") == author
+                        and existing.get("team", "") == team)
+                if same:
+                    return False          # 幂等
+                return False              # 保留用户手改
         with open(vis_path, "w", encoding="utf-8") as f:
             json.dump({
                 "visibility": visibility,
@@ -587,6 +711,7 @@ class ActionInstaller:
                 "team": team,
                 "configured_at": time.time()
             }, f, indent=2)
+        return True
 
     def install_with_visibility(self, repo_url: str, branch: str = "main",
                                  tag: str = None, commit: str = None,
@@ -595,7 +720,8 @@ class ActionInstaller:
                                  author: str = "",
                                  team: str = "",
                                  registry_name: str = "public",
-                                 current_user: str = "") -> dict:
+                                 current_user: str = "",
+                                 overwrite_config: bool = False) -> dict:
         """从指定注册表安装动作（支持可见性检查）。"""
         # 1) 可见性检查
         if visibility == "private":
@@ -608,7 +734,8 @@ class ActionInstaller:
 
         # 2) 执行标准安装
         result = self.install(repo_url, branch=branch, tag=tag,
-                              commit=commit, scope=scope)
+                              commit=commit, scope=scope,
+                              overwrite_config=overwrite_config)
 
         if result.get("status") != "ok":
             return result
@@ -619,10 +746,12 @@ class ActionInstaller:
         result["team"] = team
         result["registry_name"] = registry_name
 
-        # 4) 写入可见性配置
+        # 4) 写入可见性配置（已有用户配置时默认保留，不当静默覆盖）
         local_path = result.get("path", "")
         if local_path:
-            self._write_visibility_config(local_path, visibility, author, team)
+            result["visibility_written"] = self._write_visibility_config(
+                local_path, visibility, author, team,
+                overwrite=overwrite_config)
 
         return result
 
