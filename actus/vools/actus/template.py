@@ -371,7 +371,15 @@ def create_action_from_template(template_id: str, action_id: str, name: str,
         ext = ".py"
 
     # 写入文件
-    out_path = Path(output_dir) / f"{action_id}{ext}"
+    # 审计修（路径逃逸）：action_id 之前直接拼进文件名 —— 传 `../../ESCAPED`
+    # 会把文件写到 **output_dir 之外**（实测写到临时目录上层）。这里只取最后一段
+    # 并拒绝 . / ..；非法输入显式报错（CLI 侧 ValueError 会被映射成 param_invalid），
+    # 不再静默写到任意位置。
+    safe_id = str(action_id or '').replace('\\', '/').rstrip('/')
+    safe_id = safe_id.rsplit('/', 1)[-1] if safe_id else ''
+    if not safe_id or safe_id in ('.', '..'):
+        raise ValueError(f'action_id 非法（不能为空或含路径逃逸）: {action_id!r}')
+    out_path = Path(output_dir) / f"{safe_id}{ext}"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     content = f"#!cfg\n```json\n{cfg_json}\n```\n\n{code}"

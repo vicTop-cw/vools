@@ -118,13 +118,19 @@ class SystemSender:
             toaster.show_toast(msg.title, msg.body, duration=5)
         except ImportError:
             # 回退到 PowerShell
+            # 审计修（命令注入）：title/body 会被拼进 `CreateTextNode('...')` 的
+            # **单引号字符串**里；之前原样插值 ⇒ 标题里带 `x')); <语句>; #` 就能
+            # 在 Windows 上执行任意 PowerShell（实测写文件成功）。PowerShell 单引号
+            # 字符串里转义单引号的方式是把 `'` 写成 `''`，这里补上。
+            ps_title = str(msg.title).replace("'", "''")
+            ps_body = str(msg.body).replace("'", "''")
             cmd = [
                 "powershell", "-Command",
                 f"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null;"
                 f"$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
                 f"$text = $template.GetElementsByTagName('text');"
-                f"$text[0].AppendChild($template.CreateTextNode('{msg.title}'));"
-                f"$text[1].AppendChild($template.CreateTextNode('{msg.body}'));"
+                f"$text[0].AppendChild($template.CreateTextNode('{ps_title}'));"
+                f"$text[1].AppendChild($template.CreateTextNode('{ps_body}'));"
                 f"$toast = [Windows.UI.Notifications.ToastNotification]::new($template);"
                 f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Actus').Show($toast)"
             ]
@@ -132,9 +138,14 @@ class SystemSender:
 
     def _send_macos(self, msg: NotifyMessage):
         """macOS 系统通知。"""
+        # 审计修（同类注入）：AppleScript 字符串是**双引号**语义，title/body 里的
+        # `"` 与 `\` 会提前闭合字符串 ⇒ 可注入 AppleScript 语句。先转义再拼接。
+        def _as_quote(value):
+            return str(value).replace('\\', '\\\\').replace('"', '\\"')
         cmd = [
             "osascript", "-e",
-            f'display notification "{msg.body}" with title "{msg.title}"'
+            'display notification "%s" with title "%s"'
+            % (_as_quote(msg.body), _as_quote(msg.title))
         ]
         run_cmd_safe(cmd, timeout=10)
 
