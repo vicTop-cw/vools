@@ -127,8 +127,9 @@ async def api_action_run(action_id: str, request: Request):
     try:
         sys.path.insert(0, str(ENGINE_DIR))
         from vools.actus.executor import execute
-        repo_root = _get_repo_root()
-        result = execute(action_id, params=params, repo_root=repo_root)
+        # executor.execute() **没有** repo_root 参数（改前传了它 → 本端点对任何
+        # 动作都 500: TypeError）。仓库根由 ACTUS_REPO_ROOT/indexer 决定，无需传。
+        result = execute(action_id, params=params)
         return JSONResponse({"status": "ok", "data": result})
     except Exception as e:
         return JSONResponse({"status": "error", "error": str(e)}, status_code=500)

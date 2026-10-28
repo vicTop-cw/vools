@@ -183,7 +183,9 @@ class PanelApp:
             self.root.after(0, lambda: self._on_result(aid, r))
 
         try:
-            sys.path.insert(0, os.path.join(_REPO_ROOT, 'engine'))
+            engine_path = os.path.join(_REPO_ROOT, 'engine')
+            if engine_path not in sys.path:        # 幂等：重复执行不再堆积重复项
+                sys.path.insert(0, engine_path)
             work()
         except Exception as e:  # noqa: BLE001
             self.root.after(0, lambda: self._log(f'❌ {aid}: {e}'))
@@ -243,8 +245,12 @@ def _register_global_hotkey(root: tk.Tk, hotkey: str, callback) -> bool:
         msg = wintypes.MSG()
 
         def poll():
+            # 过滤区间是 **message 号**，不是 hotkey id：0xB00B 是 RegisterHotKey 的
+            # id，而热键消息是 WM_HOTKEY(0x0312)。改前写 [0xB00B, 0xB00B]，0x0312
+            # 落在区间外 → PeekMessageW 永远取不到热键、回调永不触发（静态可证）。
+            WM_HOTKEY = 0x0312
             while user32.PeekMessageW(ctypes.byref(msg), None,
-                                      0xB00B, 0xB00B, PM_REMOVE):
+                                      WM_HOTKEY, WM_HOTKEY, PM_REMOVE):
                 callback()
             root.after(120, poll)
 
