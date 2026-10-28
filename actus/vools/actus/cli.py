@@ -797,7 +797,12 @@ def _dispatch(args) -> int:
                    if a.get('status') != 'valid'}
             _out({'status': 'ok', 'data': {'valid': not bad, 'invalid': bad}})
             return 0 if not bad else 1
-        action = actuscore.get_action(args.action_id)
+        # 第 17 轮：单动作校验接 resolver（id/name/md5/本地路径；URL 拒绝）
+        kind, value = _resolve_cli_target(args.action_id)
+        if kind == 'error':
+            _out({'status': 'failed', 'error': value})
+            return 1
+        action = value if kind == 'path' else actuscore.get_action(value)
         errs = actuscore.validate_action(action)
         real_errors, runtime_notes = split_validation(errs)
         for note in runtime_notes:
@@ -806,14 +811,20 @@ def _dispatch(args) -> int:
         # 环境提示只进 `data.warnings`。改前两者都塞进 errors，而 status 又按
         # split_validation 判 ok —— 返回体自相矛盾（"errors 非空却 status=ok"），
         # 调用方无从判断该不该拦。
-        payload_data = {'id': args.action_id, 'errors': real_errors}
+        payload_data = {'id': action.meta.get('id') or args.action_id,
+                        'errors': real_errors}
         if runtime_notes:
             payload_data['warnings'] = runtime_notes
         _out({'status': 'ok' if not real_errors else 'failed', 'data': payload_data})
         return 0 if not real_errors else 1
 
     if args.command == 'info':
-        action = actuscore.get_action(args.action_id)
+        # 第 17 轮：接 resolver（id/name/md5/本地路径；URL 明确拒绝）
+        kind, value = _resolve_cli_target(args.action_id)
+        if kind == 'error':
+            _out({'status': 'failed', 'error': value})
+            return 1
+        action = value if kind == 'path' else actuscore.get_action(value)
         _out({'status': 'ok', 'data': action.brief()})
         return 0
 
@@ -826,8 +837,18 @@ def _dispatch(args) -> int:
             print(result)
             return 0
 
-        # 动作预览 + 代码高亮
-        p = actuscore.preview(args.action_id, _parse_params(args.params))
+        # 动作预览（第 17 轮：接 resolver；URL 明确拒绝）
+        kind, value = _resolve_cli_target(args.action_id)
+        if kind == 'error':
+            _out({'status': 'failed', 'error': value})
+            return 1
+        if kind == 'path':
+            action = value
+            p = actuscore.preview(action.meta.get('id'),
+                                  _parse_params(args.params),
+                                  actions_dir=os.path.dirname(action.path))
+        else:
+            p = actuscore.preview(value, _parse_params(args.params))
         if args.html:
             from vools.actus.highlight import highlight_code
             # 对预览结果中的代码块进行高亮
@@ -1589,6 +1610,41 @@ def _gen_config(client: str) -> int:
     print()
     print('提示：配置生效可能需要重启 AI 客户端。')
     return 0
+
+
+def _resolve_cli_target(raw: str):
+    """info / preview / validate 的目标解析（第 17 轮）。
+
+    支持 `run` 的六形态中四种：id / name / md5 / 本地零散路径；
+    **URL 明确拒绝**（这三个命令不提供隐式下载；远程请用 `run --allow-host`）。
+    返回 `(kind, value)`：
+      * `('id', action_id)`：交给后续 get_action / preview / validate_action；
+      * `('path', Action)`：本地零散动作已解析成 Action（避免重复扫盘）；
+      * `('error', {'code','message','details'})`：结构化错误（调用方转 failed）。
+    """
+    from vools.actus.resolver import resolve_target
+    try:
+        r = resolve_target(raw, allow_hosts=[])
+    except Exception as exc:  # noqa: BLE001 —— 解析失败统一结构化
+        return ('error', {'code': getattr(exc, 'code', 'param_invalid'),
+                          'message': str(exc)})
+    if r.ambiguous:
+        return ('error', {'code': 'ambiguous',
+                          'message': '目标 %r 命中多个动作，请用完整 id 指定' % raw,
+                          'details': {'candidates': r.ambiguous}})
+    if r.source == 'url':
+        return ('error', {'code': 'param_invalid',
+                          'message': ('info/preview/validate 不支持 URL 目标'
+                                      '（不提供隐式下载）；请用 actus run --allow-host，'
+                                      '或先把动作下载到本地（零散路径）')})
+    if r.source == 'path' and r.path:
+        from vools.actus.scattered import resolve_scattered, _apply_scattered_defaults
+        from vools.actus.model import parse_cfg_from_file
+        sc = resolve_scattered(r.path)
+        action = parse_cfg_from_file(sc.path)
+        _apply_scattered_defaults(action, sc)
+        return ('path', action)
+    return ('id', r.action_id or raw)
 
 
 def _parse_params(s: str) -> dict:

@@ -279,7 +279,8 @@ def build_index(actions_dir: str = None, meta_dir: str = None,
     # 每动作校验一次（`runtime:` 提示与真实错误分开，见 validate.split_validation）
     validation = {}
     for aid, action in actions.items():
-        validation[aid] = split_validation(validate_action(action))
+        # build 阶段索引正被重建：md5/link-target 这类"依赖索引"的检查跳过
+        validation[aid] = split_validation(validate_action(action, check_index=False))
 
     # 依赖图按节点分析：只标记真正受坏边/环影响的动作（属主 + 其下游锥），
     # 不再「一条坏依赖连坐整个动作市场」（历史上 validate_graph 首错即抛后
@@ -296,6 +297,14 @@ def build_index(actions_dir: str = None, meta_dir: str = None,
         if issue is not None:
             errs.append(f"dependency graph: {issue['message']}")
         brief = action.brief()
+        # 索引扩展（ACTUS_REFACTOR_PLAN §3.5）：从代码块语言提取 languages，
+        # 供按语言检索/展示；空清单不写键（保持旧索引形状，增量字段）。
+        languages = sorted({
+            str(block.get('language') or '').strip().lower()
+            for block in (getattr(action, 'blocks', None) or [])
+            if str(block.get('language') or '').strip()})
+        if languages:
+            brief['languages'] = languages
         brief['status'] = 'invalid' if errs else 'valid'
         if errs:
             brief['errors'] = errs

@@ -195,8 +195,95 @@ def _load_schema() -> dict:
     return schema
 
 
-def validate_action(action: Action) -> List[str]:
+def _known_action_ids(meta_dir: str = None) -> dict:
+    """只读索引里的 action id 集合（**build=False**，索引缺失返回 {}）。
+
+    绝不因为"校验"而建索引/落盘 —— 与第 13/14 轮只读路径修复一致。
+    """
+    try:
+        from .indexer import load_index
+        idx = load_index(meta_dir, build=False)
+        return dict(idx.get('actions') or {})
+    except Exception:  # noqa: BLE001 —— 静态校验失败不应打断主校验
+        return {}
+
+
+def check_md5_consistency(action: Action, meta_dir: str = None) -> List[str]:
+    """索引 md5 vs 文件实际 md5 的一致性（**warning 级，不影响 valid**）。
+
+    第 17 轮（ACTUS_REFACTOR_PLAN §3.6「指纹一致性校验」）：索引 `by_md5` 存在，
+    但此前没有"索引里的 md5 与文件实际内容不符"的检查。
+    区分两种不一致（lead 裁决）：
+      * **索引 mtime 晚于文件** → 索引认为自己是新的，md5 仍不符 = 真异常
+        （文件被改 / 索引写坏），warning 文案偏"篡改/异常"；
+      * **索引 mtime 早于文件** → 正常现象（文件改过、索引待重建），
+        warning 中性提示"索引可能陈旧"。
+    两种都只是提示：`warning:` 前缀由 split_validation 归入 warnings，不影响 valid。
+    """
+    from .paths import meta_dir as _paths_meta_dir
+    try:
+        from .indexer import load_index
+    except Exception:  # noqa: BLE001
+        return []
+    meta = meta_dir or _paths_meta_dir()
+    index_path = os.path.join(meta, 'actions.index.json')
+    if not os.path.isfile(index_path):
+        return []                          # 索引不存在 = 冷启动，不告警
+    try:
+        index_mtime = os.path.getmtime(index_path)
+        action_mtime = os.path.getmtime(action.path)
+    except OSError:
+        return []
+    entry = (_known_action_ids(meta) or {}).get(action.meta.get('id') or '')
+    if not entry:
+        return []                          # 索引里没这个动作：不是一致性问题的范围
+    index_md5 = str(entry.get('md5') or '').strip().lower()
+    actual_md5 = str(getattr(action, 'md5', '') or '').strip().lower()
+    if not index_md5 or not actual_md5 or index_md5 == actual_md5:
+        return []
+    if index_mtime >= action_mtime:
+        return ["warning: 索引 md5 与文件不一致（索引较新：可能文件被篡改或索引写入异常；"
+                "索引 %s… ≠ 实际 %s…）；如需确认请重建索引" %
+                (index_md5[:8], actual_md5[:8])]
+    return ["warning: 索引 md5 与文件不一致（索引 mtime 早于动作文件，属正常陈旧："
+            "重建索引即可；索引 %s… ≠ 实际 %s…）" %
+            (index_md5[:8], actual_md5[:8])]
+
+
+def check_link_target(action: Action, check_index: bool = True,
+                      meta_dir: str = None) -> List[str]:
+    """kind=link/alias 的 target 静态校验（ACTUS_REFACTOR_PLAN §3.6）。
+
+    * target 缺失 → **error**（无源码转发动作没有 target = 声明错误，运行期必炸）；
+    * target 存在但索引里找不到 → **warning**（静态校验无法确认：可能是远端/
+      延迟注册/索引陈旧；运行期 executor 仍会再解析）。索引缺失时跳过存在性
+      检查（避免冷启动全员误报）。
+    `check_index=False`（build_index 阶段）只做"target 缺失"检查。
+    """
+    kind = str(action.meta.get('kind') or 'exec').lower()
+    if kind not in ('link', 'alias'):
+        return []
+    target = str(action.meta.get('target') or '').strip()
+    if not target:
+        return ["semantic: kind=%s 的动作缺少 target 字段（link/alias 必须指向另一个动作）"
+                % kind]
+    if not check_index:
+        return []
+    known = _known_action_ids(meta_dir)
+    if not known:
+        return []                          # 索引缺失/未构建：静态无法确认，运行期解析
+    if target not in known:
+        return ["warning: kind=%s 的 target %r 未在索引中找到（静态校验无法确认："
+                "可能是远端/延迟注册/索引陈旧；运行期可能仍可解析）" % (kind, target)]
+    return []
+
+
+def validate_action(action: Action, check_index: bool = True) -> List[str]:
     """校验单个动作，返回错误列表（空 = 通过）。
+
+    `check_index=False`：跳过**依赖索引**的检查（md5 一致性 / link target 存在性）。
+    `build_index` 在重建索引时必须传 False —— 否则新 md5 还没写盘，会把旧索引
+    当成"当前事实"产生大量假告警。target 缺失这种与索引无关的错误仍检查。
 
     覆盖 docs/03 §6 全部五条基准校验 + §7.3 契约自检 + docs/10 新增字段校验。
 
@@ -275,6 +362,13 @@ def validate_action(action: Action) -> List[str]:
     errors.extend(check_ai_meta(meta))
 
     # ── 资产化治理（future_plan §3 修订落地）─────────────────────
+    # 10) 无源码动作 target 静态校验（target 缺失恒为 error；存在性依赖索引）
+    errors.extend(check_link_target(action, check_index=check_index))
+
+    # 11) 索引 md5 一致性（仅提示；依赖索引，build 阶段跳过）
+    if check_index:
+        errors.extend(check_md5_consistency(action))
+
     # 9) 单文件自包含：entry 不得引用动作目录内同名模块（docs/47 §3）
     errors.extend(check_self_contained(action))
 
@@ -1513,8 +1607,23 @@ def check_security(action: Action) -> List[str]:
 
     action_id = str(action.meta.get('id') or '')
     try:
-        result = get_security_scanner().scan_action(
-            action_id, action.meta, action.raw or action.body or '')
+        scanner = get_security_scanner()
+        # 第 17 轮（零写要求）：validate/preview 这类**纯检查**路径不应因为
+        # 安全扫描而写 `_meta/audit/audit_*.jsonl`（SecurityScanner.scan_action
+        # 每次都会 audit.log）。这里用 no-op 代理临时屏蔽该校验审计；
+        # 执行期的 run record 才是真正的执行留痕，安全结果仍随返回值给出。
+        class _NullAudit:
+            def log(self, *a, **k):
+                return None
+            def summary(self):
+                return {}
+        _orig_audit = getattr(scanner, 'audit', None)
+        scanner.audit = _NullAudit()
+        try:
+            result = scanner.scan_action(
+                action_id, action.meta, action.raw or action.body or '')
+        finally:
+            scanner.audit = _orig_audit
     except Exception as exc:  # noqa: BLE001
         return ['warning: 安全扫描异常（%s: %s）' % (type(exc).__name__, exc)]
 
