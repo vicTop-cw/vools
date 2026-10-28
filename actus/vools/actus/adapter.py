@@ -19,6 +19,7 @@ import shutil
 import logging
 import urllib.request
 import urllib.error
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from vools.core.dataclass_compat import dataclass, field
@@ -27,6 +28,37 @@ from enum import Enum
 from ._proc import run_cmd_safe
 
 logger = logging.getLogger(__name__)
+
+
+class AdapterSpecError(ValueError):
+    """适配器**配置**不合法（缺 command/url/action 等）。
+
+    携带 `issues` 与 `install_hint`，让上层给出可行动信息，而不是一句
+    "适配器不存在" —— 后者会把"配置错"伪装成"没这个适配器"（本仓库反复出现的
+    一类假象）。按审计裁决：校验闸门放在 `create_adapter`，`discover` 只记警告。
+    """
+
+    def __init__(self, adapter_id: str, issues: List[str], install_hint: str = ''):
+        self.adapter_id = adapter_id
+        self.issues = list(issues or [])
+        self.install_hint = install_hint or ''
+        message = '适配器配置不合法: %s —— %s' % (adapter_id, '; '.join(self.issues))
+        if self.install_hint:
+            message += '（%s）' % self.install_hint
+        super().__init__(message)
+
+
+class AdapterUnavailableError(RuntimeError):
+    """适配器**依赖**不可用（命令没装 / Quicker 缺失 / MCP 未配置 等）。"""
+
+    def __init__(self, adapter_id: str, reason: str, install_hint: str = ''):
+        self.adapter_id = adapter_id
+        self.reason = reason or ''
+        self.install_hint = install_hint or ''
+        message = '适配器不可用: %s —— %s' % (adapter_id, self.reason)
+        if self.install_hint:
+            message += '（%s）' % self.install_hint
+        super().__init__(message)
 
 try:
     import jsonschema
@@ -84,6 +116,9 @@ class AdapterSpec:
     headers: Dict[str, str] = field(default_factory=dict)
     body: Dict = field(default_factory=dict)
     timeout: int = 30
+    # 审计（第 25 轮）：HTTP 适配器的可用性探测是**网络副作用**（HEAD 往返），
+    # 只有作者显式声明 preflight: true 才在创建时探测；其余场景延迟到真实请求。
+    preflight: bool = False
     starter: str = ""
     action: str = ""
     mcp_server: str = ""
@@ -115,6 +150,7 @@ class AdapterSpec:
             headers=adapter.get("headers", {}),
             body=adapter.get("body", {}),
             timeout=adapter.get("timeout", 30),
+            preflight=bool(adapter.get("preflight", False)),
             starter=adapter.get("starter", ""),
             action=adapter.get("action", ""),
             mcp_server=adapter.get("mcp_server", ""),
@@ -569,6 +605,15 @@ class AdapterRegistry:
 
                 if cfg and "adapter" in cfg:
                     spec = AdapterSpec.from_dict(cfg)
+                    # 审计（第 25 轮）：discover 只**登记 + 记警告**，绝不静默丢弃。
+                    # 丢弃会让 `get()` 返回 None → 报"适配器不存在"，把"配置错"
+                    # 伪装成"没这个适配器"；真正的校验闸门在 create_adapter。
+                    ok, issues = validate_adapter_spec(spec)
+                    if not ok:
+                        spec.issues = list(issues)          # 挂到 spec 上供展示/排障
+                        logger.warning(
+                            '适配器配置不合法（仍登记，使用时会被拒绝）: %s —— %s',
+                            spec.id, '; '.join(issues))
                     specs.append(spec)
                     self._adapters[spec.id] = spec
             except Exception as e:
@@ -583,7 +628,22 @@ class AdapterRegistry:
         return self._adapters.get(adapter_id)
 
     def create_adapter(self, spec: AdapterSpec):
-        """创建适配器实例。"""
+        """创建适配器实例。
+
+        审计（第 25 轮）：**这里才是校验闸门**。`validate_adapter_spec` 此前写好
+        但产品零调用 —— 缺 command/url/action 的 spec 能一路被实例化，直到
+        `run()` 才返回"未指定 command"。现在在校验不过时抛
+        `AdapterSpecError`（带 issues + install_hint），让失败发生在动作开始之前。
+        """
+        ok, issues = validate_adapter_spec(spec)
+        if not ok:
+            hint = ''
+            try:
+                hint = self._install_hint_for(spec)
+            except Exception:                   # noqa: BLE001 —— 提示拿不到不影响拒绝
+                hint = ''
+            raise AdapterSpecError(spec.id, issues, hint)
+
         if spec.type == AdapterType.CLI:
             return CLIAdapter(spec)
         elif spec.type == AdapterType.QUICKER:
@@ -592,18 +652,108 @@ class AdapterRegistry:
             return HTTPAdapter(spec)
         elif spec.type == AdapterType.MCP:
             return MCPAdapter(spec)
-        raise ValueError(f"未知适配器类型: {spec.type}")
+        raise AdapterSpecError(spec.id, ['未知适配器类型: %r' % (spec.type,)])
+
+    @staticmethod
+    def _install_hint_for(spec: AdapterSpec) -> str:
+        """按类型构造安装提示（复用各适配器的 install_hint，避免重写一份）。"""
+        try:
+            if spec.type == AdapterType.CLI:
+                return CLIAdapter(spec).install_hint()
+            if spec.type == AdapterType.QUICKER:
+                return QuickerAdapter(spec).install_hint()
+            if spec.type == AdapterType.HTTP:
+                return HTTPAdapter(spec).install_hint()
+            if spec.type == AdapterType.MCP:
+                return MCPAdapter(spec).install_hint()
+        except Exception:                       # noqa: BLE001
+            return ''
+        return ''
+
+    def ensure_available(self, adapter_id: str, spec: AdapterSpec,
+                         adapter=None) -> None:
+        """执行前探测依赖可用性；不可用 → 抛 `AdapterUnavailableError`（带安装提示）。
+
+        探测策略（审计裁决，按成本分级）：
+          * **CLI**：`shutil.which`/isfile（毫秒级）恒做；作者显式声明 `check`
+            才真跑那条检查命令（timeout 10s，但结果按 key 缓存）；
+          * **Quicker / MCP**：`check_available` 只是本地文件/`which` 查询，恒做；
+          * **HTTP**：**只有 spec.preflight=True 才探测**（HEAD 是网络副作用，
+            无条件探测会让每次执行多一次往返，最坏 +5s）。
+        结果按 `(id, command, url, check, starter, mcp_server)` **进程内缓存**，
+        避免重复开销。需要重新探测时调用 `clear_availability_cache()`。
+        """
+        if adapter is None:
+            adapter = self.create_adapter(spec)
+        ok, reason = _probe_available(
+            # `str(AdapterType.CLI)` 在 Python 3.11+ 是 'AdapterType.CLI'（Enum 不是
+            # str 子类），必须取 `.value`，否则缓存键与类型判断全部对不上。
+            adapter_id, getattr(spec.type, 'value', str(spec.type)), spec.command,
+            spec.url, spec.check, spec.starter, spec.mcp_server, spec.action,
+            bool(spec.preflight))
+        if not ok:
+            hint = ''
+            try:
+                hint = adapter.install_hint()
+            except Exception:                   # noqa: BLE001
+                hint = self._install_hint_for(spec)
+            raise AdapterUnavailableError(adapter_id, reason or '不可用', hint)
 
 
 # ── 便捷函数 ──────────────────────────────────────────────────────────────
 
+@lru_cache(maxsize=256)
+def _probe_available(adapter_id: str, type_name: str, command: str, url: str,
+                     check: str, starter: str, mcp_server: str, action: str,
+                     preflight: bool) -> Tuple[bool, str]:
+    """探测适配器可用性（进程内缓存，按 spec 关键字段做 key）。
+
+    审计（第 25 轮）：`check_available`×4 与 `install_hint`×4 此前**产品零调用**，
+    适配器缺依赖时只能等运行期炸、且不给"该装什么"。这里按成本分级接线：
+    CLI 恒做 `which`（毫秒级）、声明了 `check` 才真跑（10s）；Quicker/MCP 是本地
+    查询；HTTP 仅在 `preflight` 时做 HEAD（否则每次执行多一次网络往返）。
+    """
+    try:
+        atype = AdapterType(type_name)
+    except ValueError:
+        return False, '未知适配器类型: %s' % (type_name,)
+
+    spec = AdapterSpec(id=adapter_id, type=atype, command=command, url=url,
+                       check=check, starter=starter, mcp_server=mcp_server,
+                       action=action, preflight=preflight)
+    adapter = {
+        AdapterType.CLI: CLIAdapter,
+        AdapterType.QUICKER: QuickerAdapter,
+        AdapterType.HTTP: HTTPAdapter,
+        AdapterType.MCP: MCPAdapter,
+    }[atype](spec)
+
+    # HTTP 的探测有网络副作用（HEAD 往返）—— 只在作者显式 preflight 时才做
+    if atype is AdapterType.HTTP and not preflight:
+        return True, ''
+    try:
+        return adapter.check_available()
+    except Exception as exc:                # noqa: BLE001 —— 探测本身异常按不可用处理
+        return False, '%s: %s' % (type(exc).__name__, exc)
+
+
+def clear_availability_cache() -> None:
+    """清空可用性探测缓存（装完依赖后调用，或测试隔离用）。"""
+    _probe_available.cache_clear()
+
+
 def run_adapter(adapter_id: str, params: Dict = None, cwd: str = None) -> AdapterResult:
-    """便捷函数：运行适配器。"""
+    """运行适配器（执行前校验配置 + 探测依赖，失败带安装提示）。"""
     registry = AdapterRegistry()
     spec = registry.get(adapter_id)
     if not spec:
         return AdapterResult(False, stderr=f"适配器不存在: {adapter_id}", returncode=-1)
-    adapter = registry.create_adapter(spec)
+    try:
+        adapter = registry.create_adapter(spec)
+        registry.ensure_available(adapter_id, spec, adapter)
+    except (AdapterSpecError, AdapterUnavailableError) as exc:
+        # 配置错/依赖缺都在**动作开始之前**拦下，并带上可行动信息
+        return AdapterResult(False, stderr=str(exc), returncode=-1)
     return adapter.run(params, cwd)
 
 
@@ -695,11 +845,14 @@ __all__ = [
     'AdapterRegistry',
     'AdapterResult',
     'AdapterSpec',
+    'AdapterSpecError',
     'AdapterType',
+    'AdapterUnavailableError',
     'CLIAdapter',
     'HTTPAdapter',
     'MCPAdapter',
     'QuickerAdapter',
+    'clear_availability_cache',
     'logger',
     'run_adapter',
     'validate_adapter_spec'
