@@ -21,6 +21,11 @@ import re
 import sys
 from typing import Optional
 
+# 成败判据单一真源：与 CLI `_out_result` 共用同一份（errors.is_failure_status）。
+# 改前 MCP 侧各处各写 `r.get('status') == 'failed'`，于是 author 的 needs_fix、
+# workflow 的 partial、execute 的 awaiting_confirmation 全被当成"成功"。
+from vools.actus.errors import is_failure_status
+
 PROTOCOL_VERSION = '2024-11-05'
 SERVER_INFO = {'name': 'actus-mcp', 'version': '0.1.0'}
 
@@ -35,12 +40,27 @@ def _tool_name(action_id: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_]', '_', action_id)
 
 
-def text_result(payload: dict, is_error: bool = False) -> dict:
-    """统一 MCP tool 调用返回格式。"""
+def text_result(payload: dict, is_error: bool = None) -> dict:
+    """统一 MCP tool 调用返回格式。
+
+    Args:
+        payload: 返回体。
+        is_error: True/False 显式指定；**None（默认）时由 payload['status']
+            经 `errors.is_failure_status` 推导** —— 与 CLI 的判定共用同一份，
+            避免"MCP 只认 failed、CLI 认 needs_fix"这类漂移。
+            纯查询类工具（返回的是被查对象的状态，如 workflow_status）请**显式
+            传 False**：记录里的 status 描述被查对象，不代表这次查询失败。
+
+    判据（与 CLI 一致）：'ok'/'success'/'modified'/'skipped'/'noop'/'published'
+    算成功；其余（含 needs_fix / partial / awaiting_confirmation / 未知值）算失败。
+    """
+    if is_error is None:
+        status = payload.get('status') if isinstance(payload, dict) else None
+        is_error = is_failure_status(status)
     return {
         'content': [{'type': 'text',
                      'text': json.dumps(payload, ensure_ascii=False, indent=2)}],
-        'isError': is_error,
+        'isError': bool(is_error),
     }
 
 
@@ -1067,12 +1087,11 @@ class MCPServer:
         args = params.get('arguments') or {}
         import vools.actus as actuscore
 
-        def text_result(payload: dict, is_error: bool = False) -> dict:
-            return {
-                'content': [{'type': 'text',
-                             'text': json.dumps(payload, ensure_ascii=False, indent=2)}],
-                'isError': is_error,
-            }
+        # 审计修复：这里原本又定义了一份 `text_result`（旧语义：isError 恒默认
+        # False），把模块级那份整个遮住了 —— 于是所有 tool 调用的成败判定都走
+        # 本地副本，模块级的"统一返回格式"实际是死代码，MCP/CLI 判据也无从统一。
+        # 现在删掉本地副本，全部走模块级 `text_result`（内部复用
+        # errors.is_failure_status，与 CLI `_out_result` 同一份判据）。
 
         if name == 'actus_list':
             idx = actuscore.load_index()
@@ -1217,7 +1236,22 @@ class MCPServer:
                 r = actuscore.confirm(eid)
             except actuscore.ActionError as e:
                 return text_result({'status': 'failed', 'error': e.to_payload()}, True)
-            return text_result(r)
+            except AttributeError:
+                # 审计发现：`vools.actus` 根本没有 `confirm()` 这个 API
+                # （grep 全库 `def confirm` 零命中），改前这里必然
+                # `AttributeError: module 'vools.actus' has no attribute 'confirm'`
+                # —— 即 `actus_confirm` 工具从上线起就不可用，而且报的是内部异常。
+                # 本版本的确认机制是「用 confirmed=true 重跑动作」（CLI 侧
+                # `--confirm/--yes` 走同一条路，见 cli.run 的 awaiting_confirmation
+                # 提示），没有 exec_id 级确认接口。这里降级为**诚实的结构化错误**，
+                # 不伪造成功；真正的 exec_id 确认能力需要单独设计（已上报）。
+                return text_result({'status': 'failed', 'error': {
+                    'code': 'internal',
+                    'message': ('actus_confirm 未实现：本版本没有按 exec_id 的确认接口。'
+                                '请改用带 confirmed=true 的动作执行工具重新执行。'),
+                    'details': {'exec_id': eid,
+                                'supported_alternative': 'confirmed=true'}}}, True)
+            return text_result(r, is_failure_status(r.get('status')))
 
         if name == 'actus_scaffold':
             from vools.actus.scaffold import scaffold_action
@@ -1236,7 +1270,9 @@ class MCPServer:
             root = os.environ.get('ACTUS_REPO_ROOT')
             try:
                 r = author_action(aid, instruction, repo_root=root)
-                return text_result(r, r.get('status') == 'failed')
+                # needs_fix（AI 改了但校验不过）与 failed（未接 AI）都算失败 ——
+                # 判据与 CLI 共用 errors.is_failure_status，不再只认 'failed'。
+                return text_result(r, is_failure_status(r.get('status')))
             except actuscore.ActionError as e:
                 return text_result({'status': 'failed', 'error': e.to_payload()}, True)
 
@@ -1247,7 +1283,9 @@ class MCPServer:
             root = os.environ.get('ACTUS_REPO_ROOT')
             try:
                 r = publish_action(aid, repo_root=root, force=force)
-                return text_result(r, r.get('status') != 'published')
+                # 'published' 才成功；'needs_human_confirm' / 'rejected' 都是失败
+                # （与 CLI 判据一致：OPERATION_OK_STATUSES 里含 published）。
+                return text_result(r, is_failure_status(r.get('status')))
             except actuscore.ActionError as e:
                 return text_result({'status': 'failed', 'error': e.to_payload()}, True)
 
@@ -1262,7 +1300,9 @@ class MCPServer:
             try:
                 r = run_workflow(wf_id, meta_dir=meta_dir,
                                  max_workers=max_workers, confirmed=confirmed)
-                return text_result(r, r.get('status') == 'failed')
+                # partial（部分节点失败）也算失败 —— 改前只认 'failed'，
+                # 于是"跑了一半"在 MCP 调用方看来是成功。
+                return text_result(r, is_failure_status(r.get('status')))
             except actuscore.ActionError as e:
                 return text_result({'status': 'failed', 'error': e.to_payload()}, True)
 
@@ -1276,7 +1316,8 @@ class MCPServer:
                                     'message': f'工作流执行记录不存在: {wf_id}'}, True)
             with open(wf_path, 'r', encoding='utf-8') as f:
                 record = json.load(f)
-            return text_result(record)
+            # 查询语义：record['status'] 是那次执行的状态，不是本次查询的成败
+            return text_result(record, False)
 
         if name == 'actus_vault_set':
             from vools.actus.vault import Vault
@@ -1489,7 +1530,10 @@ class MCPServer:
             r = actuscore.execute(target, inner or {})
         except actuscore.ActionError as e:
             return text_result({'status': 'failed', 'error': e.to_payload()}, True)
-        return text_result(r, r.get('status') == 'failed')
+        # 执行结果：ok 才是成功；failed / awaiting_confirmation（还没真跑，
+        # 等人类确认）/ 其它未知状态一律按错误回给 MCP 调用方 —— 改前只认
+        # 'failed'，于是"待确认"在模型看来是"执行成功"。
+        return text_result(r, is_failure_status(r.get('status')))
 
 
 # ── Visibility 处理函数 ──
