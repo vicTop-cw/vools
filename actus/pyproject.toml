@@ -78,6 +78,14 @@ serialize = [
     "msgpack>=1.0",
     "orjson>=3.9",
 ]
+# vault2 的 seed_key 不再明文落库（docs/vault2-hardening.md 已实施）：
+# 默认保护方式是 **OS keyring**（Windows Credential Manager / macOS Keychain /
+# Linux Secret Service）。keyring 是**可选依赖** —— 没装时 vault2 在默认目录上
+# fail-closed 拒绝打开，并提示两条备选路径：设置 ACTUS_VAULT2_PASSPHRASE，
+# 或装本 extra。显式传 vault_dir 的嵌入式/测试用法用随库密钥文件（0600），不依赖它。
+keyring = [
+    "keyring>=24.0",
+]
 # vools.actus.desktop 在【模块顶层】import fastapi（uvicorn 在 start() 内），
 # 此前这三样在 dependencies / 任何 extra 里都没声明（2026-10-17 审计：全文件
 # grep fastapi|uvicorn|jinja = 0）——`pip install vools-actus` 之后

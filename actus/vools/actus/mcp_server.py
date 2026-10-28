@@ -19,6 +19,11 @@ import json
 import os
 import re
 import sys
+import threading
+import time
+import uuid
+from concurrent.futures import (
+    ThreadPoolExecutor, TimeoutError as FutureTimeout)
 from typing import Optional
 
 # 成败判据单一真源：与 CLI `_out_result` 共用同一份（errors.is_failure_status）。
@@ -38,6 +43,140 @@ ADMIN_TOOLS = ('actus_list', 'actus_info', 'actus_status', 'actus_preview',
 def _tool_name(action_id: str) -> str:
     """actus.hello → actus_hello（docs/06 §1 规范化）。"""
     return re.sub(r'[^a-zA-Z0-9_]', '_', action_id)
+
+# ── 异步任务表（MCP 慢工具不再串行阻塞；审计第 9 轮）─────────────────────
+# 背景：`serve_forever` 是 read→handle→write 的**单线程**循环，一个慢工具会把
+# 整个服务拖住 —— 实测 GUI 动作 `actus_basics_calculator` 单次阻塞 188s，期间
+# 所有请求都拿不到响应，客户端看起来像"服务挂了"。
+#
+# 方案（spike 已验证：加写锁后多线程写 stdout 不会写坏行，10/10 响应 id 正确配对）：
+#   * **只对动作工具**异步化 —— 它们才是已知慢路径（GUI / 长任务）；
+#     其它工具（list/info/preview/vault/…）**完全同步**，行为与改前逐字一致。
+#   * 动作工具先**同步等** `ACTUS_MCP_ASYNC_GRACE` 秒（默认 2s）：
+#       - grace 内跑完 → 直接返回结果（快动作行为不变，不会变成两段式）；
+#       - 超过 grace → 后台继续跑，立刻回 `{"status":"running","task_id":...}`。
+#   * 轮询**复用既有工具** `actus_status(task_id=...)`，不新造工具。
+#   * 并发有界：有界 worker 池 + 运行中上限，超限**明确拒绝**（task_capacity），
+#     不无限开线程。
+#   * 结果存**进程内存**：任务表是调度状态，跨重启无意义（真正的执行留痕
+#     executor 已落 `_meta/runs/<exec_id>.json`，磁盘再存一份是重复）。
+#     代价：server 重启后 task_id 失效 —— 已写进工具描述。
+_TASK_GRACE_SEC = float(os.environ.get('ACTUS_MCP_ASYNC_GRACE', '2.0'))
+_TASK_TIMEOUT_SEC = float(os.environ.get('ACTUS_MCP_TASK_TIMEOUT', '600'))
+_TASK_WORKERS = max(1, int(os.environ.get('ACTUS_MCP_TASK_WORKERS', '4')))
+_TASK_RUNNING_MAX = max(1, int(os.environ.get('ACTUS_MCP_TASK_RUNNING_MAX', '32')))
+_TASK_KEEP = max(4, int(os.environ.get('ACTUS_MCP_TASK_KEEP', '200')))
+
+_TASKS = {}
+_TASKS_LOCK = threading.Lock()
+_TASK_POOL = None
+_TASK_POOL_LOCK = threading.Lock()
+_TASK_SEQ = 0
+_ACTION_TOOLS_CACHE = {'map': None, 'ts': 0.0}
+
+
+def _task_pool():
+    """有界 worker 池（进程内单例）。**不用 `with`**：退出时会 shutdown(wait=True)。"""
+    global _TASK_POOL
+    with _TASK_POOL_LOCK:
+        if _TASK_POOL is None:
+            _TASK_POOL = ThreadPoolExecutor(max_workers=_TASK_WORKERS,
+                                            thread_name_prefix='actus-mcp-task')
+        return _TASK_POOL
+
+
+def _evict_tasks_locked():
+    """只淘汰**已结束**的旧任务（运行中的永不淘汰），最多保留 _TASK_KEEP 条。"""
+    if len(_TASKS) <= _TASK_KEEP:
+        return
+    finished = sorted((t['finished'] or 0, tid) for tid, t in _TASKS.items()
+                      if t['status'] != 'running')
+    for _, tid in finished[:len(_TASKS) - _TASK_KEEP]:
+        _TASKS.pop(tid, None)
+
+
+def _new_task(name: str, arguments: dict) -> str:
+    global _TASK_SEQ
+    with _TASKS_LOCK:
+        _TASK_SEQ += 1
+        task_id = 'task-%s-%d' % (uuid.uuid4().hex[:10], _TASK_SEQ)
+        _TASKS[task_id] = {
+            'task_id': task_id,
+            'tool': name,
+            'arguments': arguments,
+            'status': 'running',
+            'started': time.time(),
+            'finished': None,
+            'elapsed_ms': None,
+            'result': None,
+            'error': None,
+        }
+        _evict_tasks_locked()
+        return task_id
+
+
+def _finish_task(task_id: str, status: str, result=None, error=None) -> None:
+    with _TASKS_LOCK:
+        task = _TASKS.get(task_id)
+        if task is None:
+            return
+        now = time.time()
+        task['finished'] = now
+        task['elapsed_ms'] = round((now - task['started']) * 1000.0, 1)
+        # 超时判定必须落在**结束时**也生效：只在轮询时判，会漏掉「没人轮询且
+        # worker 在超时后才跑完」的情形（那条路径会悄悄报 ok，等于假绿灯）。
+        if now - task['started'] > _TASK_TIMEOUT_SEC:
+            task['over_deadline'] = True
+            task['timeout_sec'] = _TASK_TIMEOUT_SEC
+        task['result'] = result
+        if error:
+            task['error'] = error
+        # 超时之后 worker 才结束：**不改写** timeout 结论，只把迟到结果如实挂上
+        if task.get('timed_out'):
+            task['late_result'] = result
+            task['late_finished'] = now
+            return
+        task['status'] = status
+
+
+def _task_snapshot(task_id: str):
+    with _TASKS_LOCK:
+        task = _TASKS.get(task_id)
+        if task is None:
+            return None
+        snap = dict(task)
+    if snap['status'] == 'running' and time.time() - snap['started'] > _TASK_TIMEOUT_SEC:
+        # Python 线程无法强杀：如实标 timeout，并明说 worker 可能仍在跑（不假装已停）
+        with _TASKS_LOCK:
+            live = _TASKS.get(task_id)
+            if live is not None and live['status'] == 'running':
+                live['timed_out'] = True
+        snap['status'] = 'timeout'
+        snap['timed_out'] = True
+        snap['worker_may_still_run'] = True
+        snap['timeout_sec'] = _TASK_TIMEOUT_SEC
+    return snap
+
+
+def _running_task_count() -> int:
+    with _TASKS_LOCK:
+        return sum(1 for t in _TASKS.values() if t['status'] == 'running')
+
+
+def _action_tool_map(ttl: float = 5.0) -> dict:
+    """{MCP 工具名: action_id}，与 `_call_tool` 的动作分支同一份推导（`_tool_name`）。
+
+    带 5s TTL 缓存：非动作工具的每次调用**不必**付一次索引查找；新 scaffold 的
+    动作最多晚 5s 进入异步白名单（在此之前走同步路径，行为仍然正确）。
+    """
+    now = time.time()
+    if _ACTION_TOOLS_CACHE['map'] is not None and now - _ACTION_TOOLS_CACHE['ts'] < ttl:
+        return _ACTION_TOOLS_CACHE['map']
+    import vools.actus as actuscore
+    mapping = {_tool_name(aid): aid for aid in actuscore.load_index()['actions']}
+    _ACTION_TOOLS_CACHE['map'] = mapping
+    _ACTION_TOOLS_CACHE['ts'] = now
+    return mapping
 
 
 def text_result(payload: dict, is_error: bool = None) -> dict:
@@ -120,6 +259,10 @@ class MCPServer:
         self.stdout = stdout or sys.stdout.buffer
         self._log_level = 'info'
         self._required_map = None      # 懒加载：{tool 名: 声明的 required 元组}
+        # 写锁：后台任务线程与读循环都会写 stdout。`_write` 是「写 JSON + 写换行 +
+        # flush」三步，不加锁时两条消息可能在步骤之间交错 → 半行 JSON（spike 复现过
+        # 不加锁的写法确实会坏行）。锁粒度必须是**整条消息**。
+        self._write_lock = threading.Lock()
         self._setup_event_forwarding()
 
     def _setup_event_forwarding(self):
@@ -185,9 +328,12 @@ class MCPServer:
             yield raw
 
     def _write(self, obj: dict) -> None:
-        self.stdout.write(json.dumps(obj, ensure_ascii=False).encode('utf-8'))
-        self.stdout.write(b'\n')
-        self.stdout.flush()
+        # 整条消息一把锁：并发时（读循环的响应 + 后台任务的响应/通知）不允许
+        # 两条消息在「JSON」「换行」「flush」之间交错，否则客户端会读到半行。
+        line = json.dumps(obj, ensure_ascii=False).encode('utf-8') + b'\n'
+        with self._write_lock:
+            self.stdout.write(line)
+            self.stdout.flush()
 
     def _notify(self, method: str, params: dict):
         """发送 MCP notification 到客户端。"""
@@ -231,12 +377,12 @@ class MCPServer:
                     self._notify('notifications/message', {
                         'level': 'info',
                         'logger': 'actus-mcp',
-                        'data': '正在执行工具 %s …（本服务串行执行，若该动作是 GUI/'
-                                '长任务会阻塞其它请求直到它结束）'
-                                % (params or {}).get('name', '?')})
+                        'data': '正在执行工具 %s …（动作工具超过 %.1fs 会自动转后台，'
+                                '用 actus_status(task_id=...) 轮询；其它工具保持同步）'
+                                % ((params or {}).get('name', '?'), _TASK_GRACE_SEC)})
                 except Exception:
                     pass          # 通知失败不影响调用本身
-                result = self._call_tool(params)
+                result = self._call_tool_async(params)
             elif method == 'prompts/list':
                 result = {'prompts': self._list_prompts()}
             elif method == 'prompts/get':
@@ -335,9 +481,14 @@ class MCPServer:
                              'properties': {'id': {'type': 'string',
                                                    'description': TARGET_FORMS_HINT}}}},
             {'name': 'actus_status',
-             'description': '查询执行状态（缺省 = 最近汇总；可传 exec_id）',
+             'description': ('查询执行状态：可传 exec_id（执行留痕）或 task_id'
+                             '（慢工具转后台后的任务句柄，返回 running/ok/failed/timeout）。'
+                             '缺省 = 最近汇总。任务表在进程内存中，server 重启后失效。'),
              'inputSchema': {'type': 'object',
-                             'properties': {'exec_id': {'type': 'string'}}}},
+                             'properties': {
+                                 'exec_id': {'type': 'string'},
+                                 'task_id': {'type': 'string',
+                                             'description': '异步任务 id（tools/call 返回的 running 句柄里）'}}}},
             {'name': 'actus_preview',
              'description': '干跑：展示将执行的块/指令/依赖，不执行。' + TARGET_FORMS_HINT + 
                             '；args 为入参 JSON object',
@@ -1123,6 +1274,75 @@ class MCPServer:
                 self._required_map = {}
         return self._required_map.get(tool_name, ())
 
+    def _call_tool_async(self, params: dict) -> dict:
+        """动作工具「先同步等 grace 秒，超时转后台」；其它工具完全同步（行为不变）。"""
+        name = (params or {}).get('name', '') or ''
+        try:
+            action_map = _action_tool_map()
+        except Exception:
+            action_map = {}
+        if name not in action_map:
+            # 非动作工具：**保持内核同步**，改前怎么走现在还怎么走
+            return self._call_tool(params)
+
+        running = _running_task_count()
+        if running >= _TASK_RUNNING_MAX:
+            return text_result({'status': 'failed', 'error': {
+                'code': 'task_capacity',
+                'message': ('后台任务已满（运行中 %d ≥ 上限 %d），本次未执行；'
+                            '请先用 actus_status(task_id=...) 轮询已有任务或稍后重试'
+                            % (running, _TASK_RUNNING_MAX)),
+                'details': {'running': running,
+                            'running_max': _TASK_RUNNING_MAX}}}, True)
+
+        task_id = _new_task(name, (params or {}).get('arguments') or {})
+        started = time.time()
+        future = _task_pool().submit(self._run_task, task_id, params)
+        try:
+            # 快动作：在 grace 内就跑完，直接返回结果（调用方看到的形状与改前一致）
+            return future.result(timeout=_TASK_GRACE_SEC)
+        except FutureTimeout:
+            elapsed_ms = round((time.time() - started) * 1000.0, 1)
+            # 慢：立刻回句柄。**isError=False** —— 这是"还在跑"，不是失败。
+            return text_result({
+                'status': 'running',
+                'task_id': task_id,
+                'action': action_map.get(name),
+                'grace_sec': _TASK_GRACE_SEC,
+                'elapsed_ms': elapsed_ms,
+                'poll': {'tool': 'actus_status', 'arguments': {'task_id': task_id}},
+                'note': ('工具执行超过 %.1fs，已转后台继续（不阻塞其它请求）。'
+                         '用 actus_status(task_id="%s") 轮询：running / ok（带结果）/ '
+                         'failed（带错误）/ timeout。任务表在进程内存中，server 重启后 '
+                         'task_id 失效；执行留痕仍会落在 _meta/runs/。'
+                         % (_TASK_GRACE_SEC, task_id)),
+            }, False)
+
+    def _run_task(self, task_id: str, params: dict) -> dict:
+        """后台任务体：跑完写任务表 + 发完成通知；异常收敛为 failed（不静默）。"""
+        try:
+            result = self._call_tool(params)
+            status = 'failed' if (result or {}).get('isError') else 'ok'
+            _finish_task(task_id, status=status, result=result)
+        except BaseException as exc:  # noqa: BLE001 —— 后台线程的异常必须留在任务表里
+            payload = {'status': 'failed', 'error': {
+                'code': 'internal',
+                'message': '%s: %s' % (type(exc).__name__, exc)}}
+            result = text_result(payload, True)
+            _finish_task(task_id, status='failed', result=result,
+                         error=str(exc))
+        snap = _task_snapshot(task_id) or {}
+        try:
+            self._notify('notifications/message', {
+                'level': 'info',
+                'logger': 'actus-mcp',
+                'data': '后台任务 %s 结束: %s（%.0fms）' % (
+                    task_id, snap.get('status'), snap.get('elapsed_ms') or 0),
+            })
+        except Exception:
+            pass          # 通知失败不影响任务本身
+        return result
+
     def _call_tool(self, params: dict) -> dict:
         name = params.get('name', '')
         args = params.get('arguments') or {}
@@ -1275,6 +1495,17 @@ class MCPServer:
 
         if name == 'actus_status':
             from vools.actus import records as rec
+            tid = args.get('task_id')
+            if tid:
+                snap = _task_snapshot(tid)
+                if snap is None:
+                    return text_result({'status': 'failed', 'error': {
+                        'code': 'task_not_found',
+                        'message': ('任务不存在或已过期: %s（任务表在进程内存中，'
+                                    'server 重启后失效；要看历史留痕请用 exec_id）' % tid),
+                        'details': {'task_id': tid}}}, True)
+                # 查询本身成功（被查任务可能是 failed/timeout），与 workflow_status 同口径
+                return text_result({'status': 'ok', 'data': snap}, False)
             eid = args.get('exec_id')
             if eid:
                 r = rec.load_run_record(None, eid)
@@ -1814,6 +2045,13 @@ def _handle_preview(args):
 
 def serve() -> None:
     """入口：stdio 服务（Ctrl/Closed stdin 退出）。"""
+    # 后台预热动作工具映射：第一次「慢工具转后台」若现场加载索引要多花 ~2.8s，
+    # 预热后句柄能在 grace 到点即返回。用守护线程，**不阻塞** initialize/handshake。
+    try:
+        threading.Thread(target=_action_tool_map, name='actus-mcp-warmup',
+                         daemon=True).start()
+    except Exception:
+        pass
     MCPServer().serve_forever()
 
 

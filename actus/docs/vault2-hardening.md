@@ -1,85 +1,110 @@
-# vault2 密钥库加固设计决策（L1 无第二因子问题）
+# vault2 密钥库加固（seed_key 不再明文落库）
 
-> 状态：**已决定**（2026-10-28，第 8 轮安全审计产出）
+> 状态：**已实施**（2026-10-28，第 9 轮；第 8 轮的设计决策保留在 §5，实施结果见 §6）
 > 适用模块：`actus/vools/actus/vault2.py`
-> 结论先说：**本轮做"最小加固"，长期方案选「外置 passphrase / OS keyring 二选一，以 keyring 为默认候选」。**
-> 详见文末 §5。
+> 结论：`identities.seed_key` 现在**只存密文**（`enc:v1:<fernet>`），
+> 默认保护方式是 **OS keyring**；无头环境用 **外置 passphrase**；
+> 两者都不可用时 **fail-closed 拒绝打开**（绝不退回明文）。
 
-## 1. 现状与已实测的风险
+## 1. 原风险（第 8 轮实测，保留作背景）
 
-审计时用隔离目录复现（不碰真实 `~/.actus`），以下三条是**实测**而非推断：
+1. **库文件与密钥材料同库**：改前 `identities.seed_key`（TEXT）与 `key_salt` 都是明文；
+   `master_key = PBKDF2(seed_key, dynamic_code, key_salt)`，L1 身份 `dynamic_code` 为空串。
+   ⇒ 只拿到 `vault2.db`、不知道 PIN、不登录，就能派生出 `master_key` → 解出全部 secrets
+   （实测解出 `sk-SUPER-SECRET-123`）。
+2. **旧默认目录是进程 cwd**：改前 `DEFAULT_VAULT_DIR = os.getcwd()/_meta/vault` —— 已改为
+   `~/.actus/vault2/`（可用 `ACTUS_VAULT2_DIR` 覆盖），旧位置首次打开时自动迁移。
+3. **无文件权限加固**：改前实测 db 权限位 `0o666` —— 已加目录 `0700` / 库与审计文件 `0600`
+   （best-effort，POSIX 生效）。
 
-1. **库文件与密钥材料同库**：`identities` 表里 `seed_key`（TEXT）与 `key_salt`（TEXT）都是明文；
-   `master_key = PBKDF2(seed_key, dynamic_code, key_salt)`，L1 身份的 `dynamic_code` 为空串。
-   ⇒ **只拿到 `vault2.db` 文件、不知道 PIN、不登录**，就能派生出 `master_key` → 行级 `row_key` → 解出明文。
-   实测：解密出 `'sk-SUPER-SECRET-123'`。
-2. **旧默认目录是进程 cwd**：改前 `DEFAULT_VAULT_DIR = os.getcwd()/_meta/vault`（import 时绑定）——
-   在哪个仓库里运行，密钥库就落在那个仓库的 `_meta/vault/`（极易被 git/同步盘/打包带走）。
-   本轮已改为 `~/.actus/vault2/`（可用 `ACTUS_VAULT2_DIR` 覆盖）并做旧位置自动迁移。
-3. **无文件权限加固**：改前全模块无 `chmod`，实测 db 权限位 `0o666`。
-   本轮已加目录 `0700` / 库与审计文件 `0600`（best-effort，POSIX 生效）。
+## 2. 本轮的实现（数据流）
 
-**L1 的真实威胁模型**：L1 = "无动态码的第二层"。PIN 只用于 `auth` 取 session，
-**不参与 master_key 派生** —— 所以 PIN 强度（6 位数字）对"库文件泄露"这个威胁**完全无缓解作用**。
-L2/L3 多一道 TOTP，但 `seed_key` 也在库里，**拿到库 + 能读时钟就能自算动态码**；
-真正的差别只剩"攻击者是否必须在本机/是否触发 used_codes 防重放"。
+```
+register()
+  seed_key = 32B 随机
+  stored   = "enc:v1:" + Fernet(KEK).encrypt(seed_key.hex())
+  db       : identities.seed_key = stored ; key_protection = <方式> ; key_meta = <JSON|null>
+  KEK 来源 : keyring 条目 / PBKDF2(passphrase, salt) / 随库密钥文件（0600）
 
-## 2. 候选方案
+auth() / recover() / rotate() / rollback()
+  读 seed_key 列（密文） → _decode_seed_hex() 按 key_protection 取 KEK 解回 hex
+  → 后续派生/比较逻辑与改前完全一致（PIN、动态码、master_key、backup_key 均不变）
+```
 
-| # | 方案 | 做法 | 跨平台可行性 | 迁移成本 | 离线可用 |
-|---|---|---|---|---|---|
-| A | **OS keyring**（`keyring` 库 → macOS Keychain / Windows Credential Manager / Linux Secret Service） | 把 `seed_key` 用 keyring 封装；库里只留 `keyring_ref` + 密文 | mac/Windows/Linux 桌面均可；**无头 Linux（CI/容器）常无 Secret Service**，需文件后端兜底 | 中：新增可选依赖 + 无 keyring 时的降级策略 + 迁移旧库 | 是（密钥在本地） |
-| B | **DPAPI**（Windows Data Protection API，`CryptProtectData`） | `seed_key` 用当前用户 DPAPI 封装后落库/落旁路文件 | **仅 Windows**；对 mac/Linux 需另配方案（等于 A+C 双实现） | 中低（单平台） | 是（绑定当前用户） |
-| C | **外置 passphrase**（用户额外输入一个高熵口令，PBKDF2/Argon2 派生 KEK 封装 seed_key） | 库启动时要求 `VAULT2_PASSPHRASE` 或交互输入；无 passphrase 则拒绝解密（fail-closed） | 全平台，零依赖；CI 里可用环境变量/secret 注入 | 中：多一次输入/环境变量约定；忘记 passphrase = 库不可恢复 | 是 |
-| D | 硬件（TPM/HSM/安全芯片） | 密钥不出芯片 | 平台差异极大、驱动/权限复杂 | 高 | 视实现 |
+新增列（老库用 `ALTER TABLE ... ADD COLUMN` 自动补，**不动既有列**）：
+`identities.key_protection TEXT`、`identities.key_meta TEXT`（passphrase 模式的 salt/iters）。
 
-## 3. 评估维度（按本项目的实际约束）
+## 3. 三种保护方式与选择顺序
 
-- **本项目要跑在**：Windows 桌面（主）、Linux（WSL/CI）、macOS（少量）；MCP server / CLI / 动作执行都可能**无交互**运行。
-- **无交互场景**（AI 调用、CI、MCP tool）决定了：
-  - 方案 C（passphrase）在无人值守时必须靠环境变量注入 → 与"库文件泄露"的威胁模型只差一步（环境变量也会进日志/进程表）；
-  - 方案 A 的 keyring 在无头 Linux 上不可用 → 必须有降级；
-  - 方案 B 只覆盖 Windows。
-- **迁移成本**：现有库 `_meta/vault` → 新位置已经在本轮做了目录级迁移；若再加"密钥再封装"，需要
-  一次性把 `seed_key` 用新 KEK 重封装（读旧库 → 解 seed_key → 封装 → 写回），属于**可控的一次性迁移**。
+| 方式 | 适用 | KEK 存放 | `status().key_protection` |
+|---|---|---|---|
+| **keyring** | 桌面（Windows Credential Manager / macOS Keychain / Linux Secret Service） | OS 凭据库，service=`vools-actus-vault2`，username=`<identity_id>` | `keyring` |
+| **passphrase** | 无头/CI/容器（无 keyring 时兜底） | `ACTUS_VAULT2_PASSPHRASE`（或交互式输入）→ PBKDF2-SHA256 200k | `passphrase` |
+| **file-key** | 显式传 `vault_dir` 的嵌入式/测试用法 | 随库密钥文件 `.vault2.key`（0600） | `file-key` |
 
-## 4. 推荐执行路径（分两步，不一次做完）
+解析顺序（`Vault2.__init__`）：
 
-**步骤 1（本轮已做，最小加固）**
-- 默认目录迁到 `~/.actus/vault2/` + `0700/0600` 权限；
-- `status()` 在存在 L1 身份时给出明确告警（"L1 无第二因子：拿到 db 即可解出全部 secrets，建议升级 L2/L3"）；
-- 文档（本文件）把风险与决策写清；
-- **不改密钥派生算法**（避免破坏现有库可解性）。
+1. 设了 `ACTUS_VAULT2_PASSPHRASE` → **passphrase**（强制 keyring 时例外，见第 2 条）
+2. `ACTUS_VAULT2_KEY_PROTECTION=keyring|passphrase|file-key` → 强制指定
+3. 显式 `vault_dir`（嵌入式/测试）→ **file-key**
+4. 默认目录 `~/.actus/vault2` → **keyring**；keyring 不可用 → **抛 `Vault2KeyProtectionError`（拒绝打开）**
 
-**步骤 2（下一轮设计落地，推荐 A 为主 + C 为无头兜底）**
-1. 抽象 `KeyUnwrap` 接口：`wrap(seed_key) -> envelope` / `unwrap(envelope) -> seed_key`。
-2. **默认实现 = OS keyring**（`keyring` 作为可选依赖）：
-   - Windows → Credential Manager；macOS → Keychain；Linux 桌面 → Secret Service；
-   - **keyring 不可用时**（无头 CI/容器/无 DBus）→ 要求 `ACTUS_VAULT2_PASSPHRASE`（方案 C），
-     两者都不可用 → **拒绝打开库并明确报错**（fail-closed，不降级成明文/弱封装）。
-3. 库结构加 `key_envelope`（JSON：`{"kind":"keyring","ref":...}` 或 `{"kind":"passphrase","salt":...,"kdf":"argon2id",...}`），
-   `seed_key` 字段在迁移后只存密文。
-4. 迁移：读到旧格式（`seed_key` 明文）→ 成功 auth 一次时用当前 KEK 封装并写回（与既有 lazy migrate 同策略），
-   迁移失败必须**显式报错**（不能静默保留明文；应提示用户手动执行 `vault2 migrate-key`）。
-5. 兼容：`status()` 增 `key_protection` 字段（`none` / `keyring` / `passphrase`），让消费方知道当前保护等级。
+> `ACTUS_VAULT2_NO_PROMPT=1` 可禁用交互式口令输入（无头环境防挂起）。
 
-## 5. 结论（决策）
+### keyring 可用性探测（不是只看 import）
 
-1. **本轮不做** keyring/DPAPI/TPM 封装 —— 它们跨平台差异大、需要无头降级策略，
-   属于独立设计项目；本轮只做"目录/权限/告警/文档"这四项最小加固。
-2. **下一轮首选方案 A（OS keyring）+ 方案 C（外置 passphrase）作为无头兜底**，理由：
-   - A 是唯一"密钥不落在用户可见文件系统里"的跨平台主流方案，且无需用户每次输入；
-   - C 是唯一"零依赖、全平台、CI 可用"的方案，正好补 A 在无头环境的缺口；
-   - B（DPAPI）只在 Windows 可用，会迫使同一功能有三套实现，**不选**；
-   - D（TPM/HSM）成本过高，作为未来高安全档位预留，**不作为默认**。
-3. **不做"静默降级"**：keyring 与 passphrase 都不可用时必须拒绝打开库（fail-closed），
-   绝不回退到"明文 seed_key"或"固定密钥"。
-4. **L1 的定位要在文档与告警里说清**：L1 = "本机可用性优先、不含第二因子"，
-   只适合低价值凭据；高价值密钥必须用 L2/L3。
+`probe_keyring()` 会：懒导入 → 检查后端不是 `fail`/`null`（无桌面会话/容器常见）→
+**实写一条探针凭据并读回**（"能写不能读"的后端也会被识破）→ 删掉探针。
+探针失败的原因会原样进 fail-closed 报错，便于排查。
 
-## 6. 验收口径（步骤 2 完成后应满足）
+## 4. fail-closed（硬要求）
 
-- `vault2.db` 泄露给其他用户/被提交进仓库时，**无法**在没有 keyring/passphrase 的情况下解出任何 secret；
-- 无头 CI 用 `ACTUS_VAULT2_PASSPHRASE` 可正常 auth/读写（有自动化测试）；
-- 两种 KEK 都不可用时，`Vault2()` 拒绝打开并给出可操作的错误信息；
-- `status()` 的 `key_protection` 字段能反映当前保护等级。
+- 默认目录 + keyring 不可用 + 无口令 → `Vault2(...)` **直接抛错**，消息里给出 3 条解决路径
+  （装 keyring / 设 passphrase / 显式指定保护方式），并说明现有库不会丢（配好后首次打开自动迁移）。
+- 库已用某种方式保护，但本次解析到别的方式（例如换机器没带走 keyring 条目、忘了设口令）→
+  抛 "该密钥库用 X 保护，但本次解析到 Y —— 拒绝以错误方式打开"，**绝不猜测/降级**。
+- keyring 条目丢失 → `auth()` 返回可读错误（`vault_key_protection_unavailable`），不返回空值。
+- 迁移（明文 → 密文）**要么全成、要么不改**：keyring 条目先写，任一失败则删除已写条目并抛错；
+  db 侧用单事务 UPDATE。
+
+## 5. 设计决策（第 8 轮结论，仍然有效）
+
+1. 上一轮只做最小加固（目录/权限/告警/文档）；**本轮实施 keyring + passphrase**。
+2. 首选 OS keyring（A），passphrase（C）作无头兜底；**不选 DPAPI**（仅 Windows，会逼出三套实现）、
+   TPM 仅作未来高安全档位。
+3. **禁止静默降级**：keyring 与 passphrase 都不可用 → 拒绝打开，绝不回退明文或弱封装。
+4. L1 定位：本机可用性优先、无第二因子；高价值凭据用 L2/L3。
+
+## 6. 实施后的边界与已知取舍（诚实记录）
+
+- **file-key 模式的边界**：显式传 `vault_dir`（嵌入式/测试）时用随库密钥文件（0600）。
+  攻击者只拿到 `vault2.db` 文件解不出 secrets；但**能同时读该目录的用户**可以解密。
+  需要 OS 级隔离（凭据库按登录用户隔离）请用默认目录或设置 passphrase / 强制 keyring。
+  `status().key_protection_warning` 会说明这一点，不静默。
+- **没有做 keyring 的跨机器同步**：库文件拷到另一台机器后，keyring 条目不存在 → 拒绝解密（符合预期）。
+  迁移/备份场景请显式用 passphrase 模式。
+- **L2/L3 的第二因子**：`seed_key` 仍是 TOTP 种子。本轮解决的是"库文件泄露"场景；
+  若要防御"能读 keyring 的本机用户"，需要硬件因子（TPM/HSM，未来档位）。
+- **`key_meta` 里存 passphrase 的 salt/iters（明文）**：salt 本来不需要保密，iters 固定 200k。
+- 未实现：密钥轮换（`seed_key` 生命周期）。现有 `recover()` 不改变 `seed_key`，因此 KEK 也无需轮换。
+
+## 7. 验收（第 9 轮实测）
+
+| 验收项 | 结果 |
+|---|---|
+| 新库（keyring 模式）：db 里 `seed_key` = `enc:v1:…`，keyring 有条目，`get_secret` 正常 | ✅ |
+| 删除 keyring 条目 → `auth` 返回明确错误（不返回空值） | ✅ |
+| 旧库（明文 seed_key）→ 首次打开自动迁移；迁移后明文消失、**旧 secrets 仍可读** | ✅（file-key 与 keyring 两种方式都验过） |
+| fail-closed：模拟无 keyring 后端 + 无口令 → 拒绝打开 + 可读指引 | ✅（默认目录与显式目录都验过） |
+| passphrase 模式：可读写；换环境无口令 → 明确拒绝（不猜明文） | ✅ |
+| `status()` 三种方式都如实报告 | ✅（`keyring` / `passphrase` / `file-key`） |
+
+测试隔离：所有验证都在 `HOME` 指向临时目录的进程里跑；验证写入的真实 keyring 条目在脚本末尾删除。
+
+## 8. 运维提示
+
+- 桌面用户：`pip install vools-actus[keyring]`（Windows/macOS 系统自带凭据库，无需额外服务）。
+- 无头/CI：`export ACTUS_VAULT2_PASSPHRASE='<口令>'`（口令丢失 = 库不可恢复，请与备份一起保管）。
+- 只想在受控目录里试用/测试：显式传 `vault_dir`（file-key 模式，`status()` 会标注边界）。
+- 升级已有库：**先配好 keyring 或 passphrase，再让任意入口打开一次**；打开时自动迁移并清掉明文。
+  若暂时无法配置，库仍保持原样（打开会被拒绝，数据不丢）。

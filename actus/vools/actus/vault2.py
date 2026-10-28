@@ -21,7 +21,9 @@ API:
 > 它只依赖标准库 + `vools.security.otp`，没有反向依赖 Actus，所以能安全上移。
 """
 
+import base64
 import contextlib
+import getpass
 import hashlib
 import hmac
 import json
@@ -30,6 +32,7 @@ import secrets
 import shutil
 import sqlite3
 import struct
+import sys
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -109,6 +112,107 @@ DEFAULT_ROW_ITERS = 1000
 DEFAULT_ROW_DKLEN = 32
 DEFAULT_CIPHER_ALG = "fernet"
 CIPHER_ALG_WHITELIST = {"fernet", "xor-hmac"}  # aes-gcm 后续加入
+
+
+# ── 密钥保护：seed_key 不再明文落库（docs/vault2-hardening.md 的实施）────────
+#
+# 无论哪种保护方式，`identities.seed_key` 列里都只存 `enc:v1:<fernet 密文>`
+# （Fernet KEK 来自 keyring / passphrase / 随库密钥文件），因此**攻击者只拿到
+# vault2.db 文件解不出任何 secrets**。
+#
+# 三种保护方式（可用 ACTUS_VAULT2_KEY_PROTECTION 强制指定）：
+#   keyring     OS 凭据库：Windows Credential Manager / macOS Keychain /
+#               Linux Secret Service（可选依赖 `pip install vools-actus[keyring]`）
+#   passphrase  外置口令：ACTUS_VAULT2_PASSPHRASE 或交互式输入（无头环境兜底）
+#   file-key    随库密钥文件（0600）：显式传 vault_dir 的嵌入式/测试用法
+#
+# 保护方式解析顺序（fail-closed，**绝不退回明文**）：
+#   1) 设置了 ACTUS_VAULT2_PASSPHRASE → passphrase
+#   2) 强制 ACTUS_VAULT2_KEY_PROTECTION=keyring|passphrase|file-key
+#   3) 显式 vault_dir（嵌入式）→ file-key（并会在 status() 里说明其边界）
+#   4) 默认目录（~/.actus/vault2）→ keyring；keyring 不可用 → 拒绝打开并给排查指引
+KEYRING_SERVICE = "vools-actus-vault2"
+PASSPHRASE_ENV = "ACTUS_VAULT2_PASSPHRASE"
+PROTECTION_ENV = "ACTUS_VAULT2_KEY_PROTECTION"
+NO_PROMPT_ENV = "ACTUS_VAULT2_NO_PROMPT"
+FILE_KEY_NAME = ".vault2.key"
+ENVELOPE_PREFIX = "enc:v1:"
+PASSPHRASE_ITERS = 200000
+PROTECTION_KEYRING = "keyring"
+PROTECTION_PASSPHRASE = "passphrase"
+PROTECTION_FILE = "file-key"
+PROTECTION_LEGACY = "legacy-plaintext"
+PROTECTION_UNAVAILABLE = "unavailable"
+PROTECTION_KINDS = (PROTECTION_KEYRING, PROTECTION_PASSPHRASE, PROTECTION_FILE)
+
+
+class Vault2KeyProtectionError(RuntimeError):
+    """密钥保护不可用 / 迁移失败。**fail-closed**：绝不退回明文存储。"""
+
+    code = "vault_key_protection_unavailable"
+
+
+#: keyring 探测结果缓存：(module_or_None, reason_or_None)。进程内只探一次。
+_KEYRING_PROBE_CACHE = None
+
+
+def probe_keyring():
+    """探测 OS keyring 是否**真的可用**（懒导入 + 写/读/删探针）。
+
+    只看 `import keyring` 不够：无桌面会话 / 容器 / 无 Secret Service 时，
+    keyring 会装出一个 `fail`（或 `null`）后端，任何读写都抛 NoKeyringError；
+    还有"能写不能读"的异常后端。所以这里实打实写一条探针再读回。
+
+    Returns:
+        (module_or_None, reason_or_None)。不可用时 reason 是给人看的原因。
+    """
+    global _KEYRING_PROBE_CACHE
+    if _KEYRING_PROBE_CACHE is not None:
+        return _KEYRING_PROBE_CACHE
+    try:
+        import keyring
+    except Exception as exc:      # ImportError / 依赖损坏
+        _KEYRING_PROBE_CACHE = (None, "未安装 keyring（pip install keyring）：%s" % exc)
+        return _KEYRING_PROBE_CACHE
+    try:
+        backend = keyring.get_keyring()
+        module_name = type(backend).__module__
+        if module_name.endswith(".fail") or module_name.endswith(".null"):
+            _KEYRING_PROBE_CACHE = (
+                None,
+                "系统没有可用的 keyring 后端（无桌面会话/容器/未装 Secret Service？）：%s"
+                % type(backend).__name__)
+            return _KEYRING_PROBE_CACHE
+        probe_user = "__probe__" + uuid.uuid4().hex
+        probe_value = secrets.token_urlsafe(8)
+        keyring.set_password(KEYRING_SERVICE, probe_user, probe_value)
+        ok = keyring.get_password(KEYRING_SERVICE, probe_user) == probe_value
+        try:
+            keyring.delete_password(KEYRING_SERVICE, probe_user)
+        except Exception:
+            pass
+        if not ok:
+            _KEYRING_PROBE_CACHE = (None, "keyring 写入后读不回（后端异常），不能作为可信存储")
+            return _KEYRING_PROBE_CACHE
+        _KEYRING_PROBE_CACHE = (keyring, None)
+    except Exception as exc:
+        _KEYRING_PROBE_CACHE = (
+            None, "keyring 不可用（%s: %s）" % (type(exc).__name__, exc))
+    return _KEYRING_PROBE_CACHE
+
+
+def _key_protection_unavailable_message(reason):
+    """fail-closed 时的可读报错（含三种可操作的解决路径）。"""
+    return (
+        "vault2 无法安全保护 seed_key，已拒绝打开密钥库（fail-closed，绝不退回明文）\n"
+        "原因：%s\n"
+        "任选其一后重试：\n"
+        "  1) 安装/启用 OS keyring：pip install keyring（桌面会话自动使用 "
+        "Credential Manager / Keychain / Secret Service）\n"
+        "  2) 无头环境设置外置口令：export %s='<你的口令>'\n"
+        "  3) 显式指定保护方式：%s=keyring|passphrase|file-key\n"
+        "现有库不会丢：配置好保护方式后首次打开会自动迁移（seed_key 明文会被清除）。"
+        % (reason, PASSPHRASE_ENV, PROTECTION_ENV))
 
 
 # ── 加密后端 ──
@@ -198,6 +302,7 @@ def _make_backend(cipher_alg: str, row_key: bytes):
 class Vault2:
     def __init__(self, vault_dir: str = None):
         explicit = vault_dir is not None
+        self._explicit_dir = explicit
         self.vault_dir = os.path.abspath(vault_dir or default_vault_dir())
         self.db_path = os.path.join(self.vault_dir, "vault2.db")
         self.audit_path = os.path.join(self.vault_dir, "audit.log")
@@ -212,6 +317,17 @@ class Vault2:
         self._harden_permissions()
         self._sessions: Dict[str, dict] = {}
         self._audit_mode_set = False
+        # ── seed_key 保护（docs/vault2-hardening.md）──
+        self.key_protection: str = PROTECTION_UNAVAILABLE
+        self.key_protection_warning: Optional[str] = None
+        self.migrated_key_protection: int = 0
+        self._passphrase: Optional[str] = None
+        self._keyring = None
+        self._file_key_cached: Optional[bytes] = None
+        self._ensure_identity_key_columns()
+        self._resolve_key_protection()
+        self._check_existing_key_protection()
+        self._migrate_key_protection()
 
     def _maybe_migrate_legacy(self) -> None:
         """把旧位置（`<cwd>/_meta/vault`）的库迁到新位置（**移动**，不复制）。
@@ -261,6 +377,244 @@ class Vault2:
                 os.chmod(path, mode)
             except OSError:
                 pass
+
+    # ── seed_key 保护（keyring / passphrase / file-key）────────────────────
+
+    def _ensure_identity_key_columns(self) -> None:
+        """老库补列 `key_protection` / `key_meta`（不动既有列，向后兼容）。"""
+        with self._db() as conn:
+            columns = {row[1] for row in
+                       conn.execute("PRAGMA table_info(identities)").fetchall()}
+            for name in ("key_protection", "key_meta"):
+                if name not in columns:
+                    conn.execute("ALTER TABLE identities ADD COLUMN %s TEXT" % name)
+
+    def _prompt_passphrase(self) -> Optional[str]:
+        """交互式取口令（仅在真终端；`ACTUS_VAULT2_NO_PROMPT` 可禁用）。"""
+        if os.environ.get(NO_PROMPT_ENV):
+            return None
+        try:
+            if not sys.stdin or not sys.stdin.isatty():
+                return None
+        except Exception:
+            return None
+        try:
+            value = getpass.getpass("vault2 口令（%s）: " % PASSPHRASE_ENV)
+        except (EOFError, KeyboardInterrupt):
+            return None
+        return value.strip() or None
+
+    def _resolve_key_protection(self) -> None:
+        """决定本次会话用哪种方式保护 seed_key（fail-closed）。"""
+        forced = (os.environ.get(PROTECTION_ENV) or "").strip().lower()
+        if forced and forced not in PROTECTION_KINDS:
+            raise Vault2KeyProtectionError(
+                "%s=%r 非法（可选：%s）"
+                % (PROTECTION_ENV, forced, ", ".join(PROTECTION_KINDS)))
+        passphrase = (os.environ.get(PASSPHRASE_ENV) or "").strip() or None
+        if not passphrase and forced in (None, PROTECTION_PASSPHRASE):
+            # 无头环境只认环境变量；有真终端时允许交互输入（仅 passphrase 模式）
+            passphrase = self._prompt_passphrase()
+        if passphrase and forced != PROTECTION_KEYRING:
+            self.key_protection = PROTECTION_PASSPHRASE
+            self._passphrase = passphrase
+            return
+        if forced == PROTECTION_PASSPHRASE:
+            raise Vault2KeyProtectionError(
+                "要求 passphrase 保护但没有口令：请设置 %s（或交互式运行）" % PASSPHRASE_ENV)
+        if forced == PROTECTION_KEYRING:
+            module, reason = probe_keyring()
+            if module is None:
+                raise Vault2KeyProtectionError(_key_protection_unavailable_message(reason))
+            self.key_protection = PROTECTION_KEYRING
+            self._keyring = module
+            return
+        if forced == PROTECTION_FILE:
+            self.key_protection = PROTECTION_FILE
+            return
+        if self._explicit_dir:
+            # 调用方自管目录（嵌入式/测试）：用随库密钥文件，避免污染 OS 凭据库，
+            # 也避免 CI 里"没有 keyring 就全红"。边界写进 status().key_protection_warning。
+            self.key_protection = PROTECTION_FILE
+            self.key_protection_warning = (
+                "file-key 模式（显式 vault_dir）：密钥文件与库同目录（0600）。"
+                "单独泄露 vault2.db 不足以解密，但能同时读到该目录的用户仍可解密；"
+                "需要 OS 级隔离请用默认目录（~/.actus/vault2）、设置 %s 或 %s=keyring"
+                % (PASSPHRASE_ENV, PROTECTION_ENV))
+            return
+        module, reason = probe_keyring()
+        if module is None:
+            raise Vault2KeyProtectionError(_key_protection_unavailable_message(reason))
+        self.key_protection = PROTECTION_KEYRING
+        self._keyring = module
+
+    def _check_existing_key_protection(self) -> None:
+        """库里已有受保护身份时，本次解析到的保护方式必须一致（否则解不开）。"""
+        with self._db() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT key_protection FROM identities "
+                "WHERE key_protection IS NOT NULL AND key_protection != ''").fetchall()
+        existing = sorted({row[0] for row in rows if row[0] in PROTECTION_KINDS})
+        if existing and self.key_protection not in existing:
+            raise Vault2KeyProtectionError(
+                "该密钥库用 %s 保护 seed_key，但本次解析到 %s —— 拒绝以错误方式打开。\n"
+                "请设置 %s（口令）或卸载/恢复对应 keyring 条目后重试。"
+                % ("/".join(existing), self.key_protection, PASSPHRASE_ENV))
+
+    def _file_key(self) -> bytes:
+        """随库密钥文件（0600）；首次调用时创建。"""
+        if self._file_key_cached is not None:
+            return self._file_key_cached
+        path = os.path.join(self.vault_dir, FILE_KEY_NAME)
+        if os.path.isfile(path):
+            with open(path, "rb") as handle:
+                raw = handle.read().strip()
+            try:
+                key = base64.b64decode(raw)
+            except Exception:
+                raise Vault2KeyProtectionError(
+                    "随库密钥文件损坏（base64 解码失败）：%s" % path)
+            if len(key) != 32:
+                raise Vault2KeyProtectionError(
+                    "随库密钥文件长度异常（%d != 32）：%s" % (len(key), path))
+            self._file_key_cached = key
+            return key
+        key = secrets.token_bytes(32)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:      # 并发创建：重读已有文件
+            return self._file_key()
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(base64.b64encode(key))
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        self._file_key_cached = key
+        return key
+
+    def _kek_for(self, identity_id: str, key_meta: Optional[str]) -> bytes:
+        """取该身份的 KEK（keyring 条目 / passphrase 派生 / 随库密钥文件）。"""
+        if self.key_protection == PROTECTION_KEYRING:
+            stored = self._keyring.get_password(KEYRING_SERVICE, identity_id)
+            if not stored:
+                raise Vault2KeyProtectionError(
+                    "keyring 中找不到身份 %s 的密钥条目（service=%s）—— 换机器/换用户/"
+                    "凭据被删除都会这样；请从备份恢复该库或重新注册身份"
+                    % (identity_id, KEYRING_SERVICE))
+            try:
+                kek = base64.b64decode(stored)
+            except Exception as exc:
+                raise Vault2KeyProtectionError(
+                    "keyring 条目损坏（身份 %s）：%s" % (identity_id, exc))
+            if len(kek) != 32:
+                raise Vault2KeyProtectionError(
+                    "keyring 条目长度异常（身份 %s，%d != 32）" % (identity_id, len(kek)))
+            return kek
+        if self.key_protection == PROTECTION_PASSPHRASE:
+            meta = {}
+            if key_meta:
+                try:
+                    meta = json.loads(key_meta)
+                except ValueError:
+                    raise Vault2KeyProtectionError(
+                        "身份 %s 的 key_meta 不是合法 JSON" % identity_id)
+            salt_hex = meta.get("salt") or ""
+            if not salt_hex:
+                raise Vault2KeyProtectionError(
+                    "身份 %s 缺少 passphrase 派生盐（key_meta.salt）" % identity_id)
+            iters = int(meta.get("iters") or PASSPHRASE_ITERS)
+            return hashlib.pbkdf2_hmac(
+                "sha256", self._passphrase.encode("utf-8"),
+                bytes.fromhex(salt_hex), iters, 32)
+        return self._file_key()
+
+    def _encrypt_seed_hex(self, identity_id: str, seed_hex: str):
+        """加密 seed_key（hex 字符串），返回 (stored, protection, key_meta)。
+
+        keyring 模式会顺带写入一条 keyring 条目；
+        返回的 stored 一定带 `enc:v1:` 前缀（库里永不落明文）。
+        """
+        if self.key_protection == PROTECTION_KEYRING:
+            kek = secrets.token_bytes(32)
+            self._keyring.set_password(
+                KEYRING_SERVICE, identity_id,
+                base64.b64encode(kek).decode("ascii"))
+            return (ENVELOPE_PREFIX + _FernetBackend(kek).encrypt(seed_hex),
+                    PROTECTION_KEYRING, None)
+        if self.key_protection == PROTECTION_PASSPHRASE:
+            salt = secrets.token_bytes(16)
+            kek = hashlib.pbkdf2_hmac(
+                "sha256", self._passphrase.encode("utf-8"), salt, PASSPHRASE_ITERS, 32)
+            meta = json.dumps({"kdf": "pbkdf2-sha256", "salt": salt.hex(),
+                               "iters": PASSPHRASE_ITERS})
+            return (ENVELOPE_PREFIX + _FernetBackend(kek).encrypt(seed_hex),
+                    PROTECTION_PASSPHRASE, meta)
+        kek = self._file_key()
+        return (ENVELOPE_PREFIX + _FernetBackend(kek).encrypt(seed_hex),
+                PROTECTION_FILE, None)
+
+    def _decode_seed_hex(self, identity_id: str, stored: str,
+                         protection: Optional[str], key_meta: Optional[str]) -> str:
+        """把库里的 seed_key 字段解回 hex 明文（仅在内存中使用）。"""
+        stored = stored or ""
+        if not stored.startswith(ENVELOPE_PREFIX):
+            if protection in (None, "", PROTECTION_LEGACY):
+                raise Vault2KeyProtectionError(
+                    "身份 %s 的 seed_key 仍是旧库明文、且本次未能自动迁移 —— "
+                    "请配置 keyring 或 %s 后重新打开（fail-closed，不使用明文）"
+                    % (identity_id, PASSPHRASE_ENV))
+            raise Vault2KeyProtectionError(
+                "身份 %s 的 seed_key 格式未知（protection=%r）" % (identity_id, protection))
+        token = stored[len(ENVELOPE_PREFIX):]
+        kek = self._kek_for(identity_id, key_meta)
+        try:
+            return _FernetBackend(kek).decrypt(token)
+        except Exception as exc:
+            raise Vault2KeyProtectionError(
+                "seed_key 解密失败（身份 %s，保护方式 %s）：%s —— "
+                "请确认 keyring 条目/口令与建库时一致"
+                % (identity_id, self.key_protection, exc))
+
+    def _migrate_key_protection(self) -> None:
+        """把旧库里的**明文** seed_key 迁到当前保护方式（要么全成、要么不改）。"""
+        with self._db() as conn:
+            rows = conn.execute(
+                "SELECT id, seed_key, key_protection FROM identities").fetchall()
+        pending = [(ident, stored) for (ident, stored, protection) in rows
+                   if stored and not str(stored).startswith(ENVELOPE_PREFIX)
+                   and protection in (None, "", PROTECTION_LEGACY)]
+        if not pending:
+            return
+        if self.key_protection not in PROTECTION_KINDS:
+            raise Vault2KeyProtectionError(
+                _key_protection_unavailable_message("当前没有可用的密钥保护方式"))
+        prepared = []
+        keyring_written = []
+        try:
+            for ident, plain_hex in pending:
+                stored, protection, meta = self._encrypt_seed_hex(ident, plain_hex)
+                prepared.append((stored, protection, meta, ident))
+                if protection == PROTECTION_KEYRING:
+                    keyring_written.append(ident)
+            with self._db() as conn:      # 单事务：全部 UPDATE 或全部回滚
+                for stored, protection, meta, ident in prepared:
+                    conn.execute(
+                        "UPDATE identities SET seed_key=?, key_protection=?, key_meta=? "
+                        "WHERE id=?", (stored, protection, meta, ident))
+        except Exception as exc:
+            for ident in keyring_written:     # 回滚已写入的 keyring 条目
+                try:
+                    self._keyring.delete_password(KEYRING_SERVICE, ident)
+                except Exception:
+                    pass
+            raise Vault2KeyProtectionError(
+                "seed_key 明文迁移失败，库未改动（fail-closed）：%s: %s"
+                % (type(exc).__name__, exc))
+        self.migrated_key_protection = len(prepared)
+        self._audit("key_migrate", None, None, target=PROTECTION_LEGACY,
+                    success=True, reason="%d 个身份迁移到 %s"
+                    % (len(prepared), self.key_protection))
 
     @contextlib.contextmanager
     def _db(self):
@@ -410,24 +764,39 @@ class Vault2:
         salt = secrets.token_bytes(16)
         pin_hash = hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt, 100000)
         seed_key = generate_seed_key(32)
+        seed_hex = seed_key.hex()
         key_salt = secrets.token_bytes(16)  # 主密钥派生盐，recover 不变
         fingerprint = self._machine_fingerprint()
         recovery_key = self._generate_recovery_key()
-        recovery_key_hash = self._hash_recovery_key(recovery_key, seed_key.hex())
+        recovery_key_hash = self._hash_recovery_key(recovery_key, seed_hex)
+        # seed_key **不再明文入库**：加密后落库（keyring / passphrase / file-key）
+        stored_seed, seed_protection, seed_meta = self._encrypt_seed_hex(
+            identity_id, seed_hex)
 
-        with self._db() as conn:
-            conn.execute(
-                "INSERT INTO identities (id, name, pin_hash, salt, seed_key, security_level, "
-                "recovery_key_hash, key_salt, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (identity_id, identity_name, pin_hash.hex(), salt.hex(), seed_key.hex(),
-                 security_level, recovery_key_hash, key_salt.hex(), int(time.time())),
-            )
-            conn.execute(
-                "INSERT INTO machines (id, identity_id, fingerprint, name, registered_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (machine_id, identity_id, fingerprint, machine_name or "default", int(time.time())),
-            )
+        try:
+            with self._db() as conn:
+                conn.execute(
+                    "INSERT INTO identities (id, name, pin_hash, salt, seed_key, "
+                    "security_level, recovery_key_hash, key_salt, created_at, "
+                    "key_protection, key_meta) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (identity_id, identity_name, pin_hash.hex(), salt.hex(), stored_seed,
+                     security_level, recovery_key_hash, key_salt.hex(), int(time.time()),
+                     seed_protection, seed_meta),
+                )
+                conn.execute(
+                    "INSERT INTO machines (id, identity_id, fingerprint, name, registered_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (machine_id, identity_id, fingerprint, machine_name or "default", int(time.time())),
+                )
+        except Exception:
+            # 入库失败 → 回滚刚写的 keyring 条目，避免留下孤儿密钥
+            if seed_protection == PROTECTION_KEYRING and self._keyring is not None:
+                try:
+                    self._keyring.delete_password(KEYRING_SERVICE, identity_id)
+                except Exception:
+                    pass
+            raise
         self._audit("register", identity_id, machine_id, success=True)
         return {
             "status": "ok",
@@ -445,14 +814,25 @@ class Vault2:
         now = int(time.time())
         with self._db() as conn:
             row = conn.execute(
-                "SELECT pin_hash, salt, seed_key, security_level, failed_attempts, locked_until, key_salt "
+                "SELECT pin_hash, salt, seed_key, security_level, failed_attempts, "
+                "locked_until, key_salt, key_protection, key_meta "
                 "FROM identities WHERE id=?", (identity_id,)
             ).fetchone()
             if not row:
                 self._audit("auth", identity_id, machine_id, success=False, reason="identity_not_found")
                 return {"status": "error", "message": "身份不存在"}
 
-            pin_hash_hex, salt_hex, seed_key_hex, level, failed, locked, key_salt_hex = row
+            (pin_hash_hex, salt_hex, seed_key_stored, level, failed, locked,
+             key_salt_hex, seed_protection, seed_meta) = row
+            # seed_key 在库里是密文，按保护方式（keyring/passphrase/file-key）现场解回
+            try:
+                seed_key_hex = self._decode_seed_hex(
+                    identity_id, seed_key_stored, seed_protection, seed_meta)
+            except Vault2KeyProtectionError as exc:
+                self._audit("auth", identity_id, machine_id, success=False,
+                            reason="key_protection_failed: %s" % exc)
+                return {"status": "error", "message": str(exc),
+                        "error": {"code": exc.code, "message": str(exc)}}
             if locked and now < locked:
                 self._audit("auth", identity_id, machine_id, success=False, reason="locked")
                 return {"status": "error", "message": f"账户已锁定，请 {locked - now} 秒后重试"}
@@ -554,14 +934,23 @@ class Vault2:
 
         with self._db() as conn:
             row = conn.execute(
-                "SELECT salt, seed_key, recovery_key_hash, security_level "
+                "SELECT salt, seed_key, recovery_key_hash, security_level, "
+                "key_protection, key_meta "
                 "FROM identities WHERE id=?", (identity_id,)
             ).fetchone()
             if not row:
                 self._audit("recover", identity_id, success=False, reason="identity_not_found")
                 return {"status": "error", "message": "身份不存在"}
 
-            salt_hex, seed_key_hex, rk_hash, level = row
+            salt_hex, seed_key_stored, rk_hash, level, seed_protection, seed_meta = row
+            try:
+                seed_key_hex = self._decode_seed_hex(
+                    identity_id, seed_key_stored, seed_protection, seed_meta)
+            except Vault2KeyProtectionError as exc:
+                self._audit("recover", identity_id, success=False,
+                            reason="key_protection_failed: %s" % exc)
+                return {"status": "error", "message": str(exc),
+                        "error": {"code": exc.code, "message": str(exc)}}
             if not rk_hash:
                 self._audit("recover", identity_id, success=False, reason="no_recovery_key")
                 return {"status": "error", "message": "该身份未启用恢复密钥"}
@@ -857,9 +1246,11 @@ class Vault2:
             now = int(time.time())
             backup_id = str(uuid.uuid4())
             seed_row = conn.execute(
-                "SELECT seed_key FROM identities WHERE id=?", (identity_id,)
+                "SELECT seed_key, key_protection, key_meta FROM identities WHERE id=?",
+                (identity_id,)
             ).fetchone()
-            seed_key_bytes = bytes.fromhex(seed_row[0]) if seed_row else b""
+            seed_key_bytes = (b"" if not seed_row else bytes.fromhex(
+                self._decode_seed_hex(identity_id, seed_row[0], seed_row[1], seed_row[2])))
             backup_key = self._derive_backup_key(seed_key_bytes)
             backup_backend = _FernetBackend(backup_key)
             encrypted_backup = backup_backend.encrypt(old_plaintext)
@@ -934,9 +1325,11 @@ class Vault2:
 
             # 用 seed_key 派生的 backup_key 解密备份（与 rotate 时一致）
             seed_row = conn.execute(
-                "SELECT seed_key FROM identities WHERE id=?", (identity_id,)
+                "SELECT seed_key, key_protection, key_meta FROM identities WHERE id=?",
+                (identity_id,)
             ).fetchone()
-            seed_key_bytes = bytes.fromhex(seed_row[0]) if seed_row else b""
+            seed_key_bytes = (b"" if not seed_row else bytes.fromhex(
+                self._decode_seed_hex(identity_id, seed_row[0], seed_row[1], seed_row[2])))
             backup_key = self._derive_backup_key(seed_key_bytes)
             backup_backend = _FernetBackend(backup_key)
 
@@ -1157,13 +1550,22 @@ class Vault2:
             计数必须带有效 session token。
           * token 有效时额外返回 L1 身份告警（③）：L1 没有动态码第二因子，
             拿到 db 文件即可解出全部 secrets（审计实测），建议升级 L2/L3。
+
+        `key_protection`（keyring / passphrase / file-key / legacy-plaintext /
+        unavailable）无需认证即可看 —— 它是"这库现在靠什么保护"的诊断信息，
+        不含密钥本身；`key_protection_warning` 说明该方式的边界。
         """
         exists = os.path.isfile(self.db_path)
         base = {
             "status": "ok",
             "initialized": exists,
             "vault_dir": self.vault_dir,
+            "key_protection": self.key_protection,
         }
+        if self.key_protection_warning:
+            base["key_protection_warning"] = self.key_protection_warning
+        if self.migrated_key_protection:
+            base["migrated_key_protection"] = self.migrated_key_protection
         if self.migrated_from:
             base["migrated_from"] = self.migrated_from
         if self.migration_conflict:
