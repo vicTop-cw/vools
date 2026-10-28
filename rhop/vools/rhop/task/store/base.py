@@ -26,6 +26,11 @@ from ..errors import TaskNotFound, StoreUnavailable
 from ..models import TaskRecord, TaskState, iso_add_seconds, utcnow_iso
 
 
+#: 租约过期回收时写入 ``last_err`` 的说明（「为什么又重试了」的运维线索）。
+#: 放在契约面而不是各后端里：sqlite / pg 共用同一句话，避免两份文案漂移。
+LEASE_RECLAIM_LAST_ERR = "租约过期回收（worker 失联 / 进程崩溃未正常收尾）"
+
+
 class TaskStore(abc.ABC):
     """任务存储抽象基类（**真 ABC**：契约受强制）。
 
@@ -150,7 +155,24 @@ class TaskStore(abc.ABC):
     @abc.abstractmethod
     def clean_stale_locks(self, now: Optional[str] = None,
                           lock_timeout_sec: Optional[float] = None) -> int:
-        """回收失效锁：LOCKED 超时→PENDING；RUNNING 超时→RETRY_PENDING（worker 崩溃后任务不丢）。
+        """回收失效锁：LOCKED 超时→PENDING；RUNNING 超时→RETRY_PENDING / FAILED。
+
+        两条路径的**语义不同**（BUG-366 收口，勿合并）：
+
+        * ``LOCKED`` 到期 ⇒ ``PENDING``，**不计重试**。LOCKED 只存在于
+          ``claim_next`` → ``set_state(RUNNING)`` 这中间的一瞬（``queue.run_once``
+          里两行紧邻），到期说明 worker 在「领到」和「开始执行」之间就没了，
+          **用户代码一行都没跑**。把基础设施抖动记到任务账上只会白烧重试预算。
+        * ``RUNNING`` 到期 ⇒ ``retry_count + 1``（计入 ``max_retries`` 预算）：
+          ``retry_count < max_retries`` 时落 ``RETRY_PENDING``，否则落 ``FAILED``，
+          并写 ``last_err``（``LEASE_RECLAIM_LAST_ERR``）说明是租约回收。
+          这正是「毒任务无限重跑」的收口点——worker 在 RUNNING 期间被 kill
+          （OOM / 段错误 / 死循环直到被回收）时，行内状态就停在 RUNNING，
+          不计数就会被无限重领。
+
+        回收**不额外退避**（不动 ``scheduled_at``）：租约到期本身（默认 900s）已是
+        天然延迟，回到 ``PENDING`` / ``RETRY_PENDING`` 后即可再次领取
+        （``test_task_e2e.test_crash_recovery_reclaims_running_task`` 依赖该语义）。
 
         Returns:
             int: 被回收的行数。
@@ -268,4 +290,5 @@ def require_shared_root(ctx: Dict[str, Any]) -> str:
     return str(root)
 
 
-__all__ = ["TaskStore", "resolve_path_template", "require_shared_root"]
+__all__ = ["TaskStore", "resolve_path_template", "require_shared_root",
+           "LEASE_RECLAIM_LAST_ERR"]

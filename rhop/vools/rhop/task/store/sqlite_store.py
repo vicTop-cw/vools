@@ -34,7 +34,8 @@ from ..models import (
     iso_add_seconds,
     utcnow_iso,
 )
-from .base import TaskStore, require_shared_root, resolve_path_template
+from .base import (LEASE_RECLAIM_LAST_ERR, TaskStore, require_shared_root,
+                   resolve_path_template)
 
 #: 表名/列名安全校验（动态表名必须挡住注入）
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -406,7 +407,6 @@ CREATE INDEX IF NOT EXISTS {ip}_queue       ON {table}(queue);
         """原子领取：事务内选行（依赖门控在 Python 侧做，兼容无 JSON1 的老 SQLite）。"""
         now_iso = now or utcnow_iso()
         ttl = float(lock_ttl_sec if lock_ttl_sec is not None else self.lock_ttl_sec)
-        expire = iso_add_seconds(now_iso, ttl)
 
         def _do():
             with self._write_tx() as conn:
@@ -485,10 +485,16 @@ CREATE INDEX IF NOT EXISTS {ip}_queue       ON {table}(queue);
 
     def clean_stale_locks(self, now: Optional[str] = None,
                           lock_timeout_sec: Optional[float] = None) -> int:
-        """回收失效锁（LOCKED→PENDING，RUNNING→RETRY_PENDING）。
+        """回收失效锁（LOCKED→PENDING，RUNNING→RETRY_PENDING / FAILED）。
 
         判定优先用每行自己的 ``expire_time``（领取时按该任务 timeout_min 定的），
         只在 expire_time 为空时退回 ``lock_time < now - lock_timeout_sec`` 的兜底口径。
+
+        BUG-366：``RUNNING`` 回收**计入重试预算**——否则「worker 在 RUNNING 期间被
+        kill」的毒任务（OOM / 段错误 / 死循环直到被回收）会被无限重领
+        （``retry_count`` 恒为 0、永远不落 FAILED）。``LOCKED`` 回收不计数：
+        那是「领到了但还没开始跑」，用户代码一行都没执行
+        （契约见 ``base.TaskStore.clean_stale_locks``）。
         """
         now_iso = now or utcnow_iso()
         timeout = abs(float(lock_timeout_sec if lock_timeout_sec is not None else self.lock_ttl_sec))
@@ -496,14 +502,34 @@ CREATE INDEX IF NOT EXISTS {ip}_queue       ON {table}(queue);
 
         def _do():
             with self._write_tx() as conn:
+                # SET 子句里的 ``state`` 读的都是**更新前**的行值（SQL 标准语义），
+                # 因此四个 CASE 都能各自基于「旧状态」判断，不必拆成多条语句。
                 cur = conn.execute(
-                    "UPDATE %s SET state = CASE WHEN state = ? THEN ? ELSE ? END, "
+                    "UPDATE %s SET "
+                    # ① 新状态：LOCKED 回 PENDING（不计数）；RUNNING 看预算 → RETRY_PENDING / FAILED
+                    "state = CASE "
+                    "  WHEN state = ? THEN ? "
+                    "  WHEN retry_count < max_retries THEN ? "
+                    "  ELSE ? END, "
+                    # ② 只有 RUNNING 算一次执行尝试（BUG-366 的计数点）
+                    "retry_count = retry_count + CASE WHEN state = ? THEN 1 ELSE 0 END, "
+                    # ③ 只有 RUNNING 回收是「异常终止」，写 last_err；LOCKED 不背这个锅
+                    "last_err = CASE WHEN state = ? THEN ? ELSE last_err END, "
+                    # ④ RUNNING 结束了一次执行尝试，记 end_time（与 _finish_failure 口径一致）
+                    "end_time = CASE WHEN state = ? THEN ? ELSE end_time END, "
                     "lock_time = NULL, worker_id = NULL, updated_at = ?, version = version + 1 "
                     "WHERE state IN (?, ?) AND ("
                     "  (expire_time IS NOT NULL AND expire_time < ?) OR "
-                    "  (expire_time IS NULL AND lock_time IS NOT NULL AND lock_time < ?))" % self.table,
-                    (TaskState.LOCKED, TaskState.PENDING, TaskState.RETRY_PENDING,
-                     now_iso, TaskState.LOCKED, TaskState.RUNNING, now_iso, cutoff),
+                    "  (expire_time IS NULL AND lock_time IS NOT NULL AND lock_time < ?))"
+                    % self.table,
+                    (TaskState.LOCKED, TaskState.PENDING,
+                     TaskState.RETRY_PENDING, TaskState.FAILED,
+                     TaskState.RUNNING,
+                     TaskState.RUNNING, LEASE_RECLAIM_LAST_ERR,
+                     TaskState.RUNNING, now_iso,
+                     now_iso,
+                     TaskState.LOCKED, TaskState.RUNNING,
+                     now_iso, cutoff),
                 )
                 return cur.rowcount
 

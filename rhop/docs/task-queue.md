@@ -1,7 +1,7 @@
 # rhop 通用任务队列（A 提交加密 JSON 指令 → B 解密执行）
 
 > **模块路径**：`vools.rhop.task`（存储抽象 `vools.rhop.task.store`，密文工具 `vools.rhop.secret`）
-> **状态**：已实现并验证（2026-10-21，`rhop/tests` 456 passed）
+> **状态**：已实现并验证（2026-10-28，`rhop/tests` 604 passed / 40 skipped）
 > **参照**：表结构与流转对齐 `vools.pyk.look_upon`；**去掉了 P0..P3 跳板角色**，改为配置驱动的方向 A/B/C。
 
 ---
@@ -212,8 +212,9 @@ register_store("postgres", _build_postgres)   # 之后配置里 kind 填 "postgr
 - 宿主依赖 `psycopg2`：`pip install psycopg2-binary`（运行期才 import；未安装时 `create_store`
   抛可读的 `StoreUnavailable`，不会静默失败）；
 - 配置 `"queue": {"store": {"kind": "postgres", ...}}` + 一台可达的 PostgreSQL 服务；
-- 该后端自己的 38 条用例（`tests/test_pg_store.py`）需要真实 PG，故默认从全量回归里排除
-  （见 §16）。
+- 该后端自己的 40 条用例（`tests/test_pg_store.py`）需要真实 PG：Windows 侧默认 **skip**
+  （PG 绑在 WSL 回环上，Windows 的 `127.0.0.1:5432` 连不上），要跑请在 WSL 内执行
+  （实测 40/40 通过，见 §16）。
 
 `TaskStore` 契约（`task/store/base.py`）：`init_schema` / `insert_tasks`（幂等）/ `claim_next`（原子、依赖门控）/
 `set_state` / `update_fields` / `clean_stale_locks` / `reset_failed` / `requeue` / `set_cancel_requested` /
@@ -292,6 +293,9 @@ RUNNING ──cancel──▶ （打 cancel_requested，收尾后 CANCELLED）
 - **不可重试的确定性失败**：载荷解密失败、白名单拒绝、无法识别指令、workdir 不存在等，直接 `FAILED`（重试没意义）。
 - **失效锁回收**（worker 崩溃不丢任务）：`clean_stale_locks` 优先按每行自己的 `expire_time` 判定
   （`LOCKED → PENDING`、`RUNNING → RETRY_PENDING`），`expire_time` 为空时退回 `lock_time < now - lock_ttl_sec`。
+  **两条路径的重试语义不同（BUG-366）**：`LOCKED` 到期不扣重试（用户代码一行未跑）；
+  `RUNNING` 到期计入 `max_retries`（`retry_count+1`，耗尽落 `FAILED`，`last_err` 记「租约过期回收…」），
+  回收不额外退避（不动 `scheduled_at`）。详见 §15「任务租约与续期」。
   领取时 `expire_time = now + max(store.lock_ttl_sec, 任务 timeout_min*60)`，避免长任务被别的 worker 误判为失效。
 
 ---
@@ -526,7 +530,7 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 | 本地库模式的运维操作 | `requeue` / `retry_failed` 在 A 端**只登记重置意图**（`TaskSync.resets` 通道），由 B 端真正重跑并回推状态，双方版本始终对齐——不会发散（BUG-280 已修复，回归用例见 `tests/test_task_sync.py::TestRequeueConvergence`） |
 | 长任务与锁 | `expire_time` 按任务自己的 `timeout_min` 取大者；仍建议 `timeout_min` 与真实耗时匹配 |
 | 结果大小 | `result_max_bytes` 是**落库文本硬上限**（BUG-283 已修）：先裁 `stdout`/`stderr`，仍超限退化为紧凑摘要（`result_chars`/`result_head`），加密路径预留约 600B 信封开销；大结果请写文件并用引用路径回传 |
-| 任务租约与续期 | 领取后任务是 `LOCKED`（先锁后置 `RUNNING`），租约 = `max(lock_ttl_sec, timeout_min×60)`。**默认不续期**：租约到期后 `clean_stale_locks` 会回收重跑（`LOCKED→PENDING`、`RUNNING→RETRY_PENDING`），因此**任务实际执行时长必须短于租约**，否则会被重复执行（BUG-289）。长任务请显式开 `queue.renew_lock=true`（执行期间后台线程按 `renew_interval_sec` 刷新 `lock_time`/`expire_time`，默认关闭以保持零回归），或给该任务设置足够的 `timeout_min`。**`timeout_min` 同时是命令执行的硬超时**（BUG-324 收口）：`run_once` 把它换算成 `timeout_sec` 传给执行器，超时命令被截断并归为 `RETRY_PENDING`（可重试）——否则会出现「租约按 `timeout_min` 算、命令却跑到 `exec.timeout_sec`（默认 1 小时）」的错配，导致租约先过期、命令还在跑、被重复领取执行 |
+| 任务租约与续期 | 领取后任务是 `LOCKED`（先锁后置 `RUNNING`，`run_once` 里是紧邻两行），租约 = `max(lock_ttl_sec, timeout_min×60)`。**默认不续期**：租约到期后 `clean_stale_locks` 会回收，两条路径语义**不同**（BUG-366 收口，勿合并）：① `LOCKED→PENDING`，**不扣重试**——到期说明 worker 死在「领到」和「开始执行」之间，用户代码一行没跑，把基础设施抖动记到任务账上只会白烧预算；② `RUNNING` 到期**计入 `max_retries`**：`retry_count+1`，未耗尽落 `RETRY_PENDING`，耗尽落 `FAILED` 并写 `last_err`（「租约过期回收…」）——这是「毒任务（OOM / 段错误 / 死循环被回收）无限重跑」的收口点，否则 `retry_count` 永远为 0、永远不落 FAILED。回收**不额外退避**（不动 `scheduled_at`）：租约到期本身（默认 900s）就是延迟，回收后即可被再次领取。因此**任务实际执行时长必须短于租约**，否则会被重复执行（BUG-289）。长任务请显式开 `queue.renew_lock=true`（执行期间后台线程按 `renew_interval_sec` 刷新 `lock_time`/`expire_time`，默认关闭以保持零回归），或给该任务设置足够的 `timeout_min`。**`timeout_min` 同时是命令执行的硬超时**（BUG-324 收口）：`run_once` 把它换算成 `timeout_sec` 传给执行器，超时命令被截断并归为 `RETRY_PENDING`（可重试）——否则会出现「租约按 `timeout_min` 算、命令却跑到 `exec.timeout_sec`（默认 1 小时）」的错配，导致租约先过期、命令还在跑、被重复领取执行 |
 | 双方共享介质 | `shared.write` 指向**双方共同可达**的介质（本地目录 / UNC / 盘符 / `file://`；`http(s)` 与只有 SFTP/Git 在线通道时请改用 `sqlite-local`）。**相对 `store.path` 一律相对共享根解析**，落点必须在共享根之内（越界抛 `StoreUnavailable`，BUG-302 收口）；显式绝对路径无需 shared 配置 |
 | 大载荷文件 | `file_channel` 默认关闭。开启后结果超阈值会落文件、信封只回 `file_ref`；**落点目录需双方共享**（否则 B 端按引用读不到），且会校验落点必须落在 `base_dir`/shared 之内（越界直接 `SecretError` 拒绝开启，BUG-295）；`keep_days` 过期由 `rhop-task file-clean` 清理，**只删本通道写出的结果文件**（BUG-296），引用失效时返回可区分标记而非抛错 |
 | 时钟偏差 | 心跳判死与 `scheduled_at` 都依赖系统时间；跨机请对时。心跳为微秒级时间戳（BUG-282 已修），且配置层校验 `stale_after_sec ≥ interval_sec + 1s`，不合规直接报错 |
@@ -541,19 +545,30 @@ python -m vools.rhop.task --config <cfg.json> [--json] [--strict-secrets] [--no-
 
 ```bash
 cd rhop && python -m pytest -q
-        # 598 passed（600 collected；2 failed 来自并行开发中的 clipboard / watch 测试）
+        # 604 passed（644 collected；40 skipped：40 条全部来自 test_pg_store.py
+        #   ——Windows 侧连不上 PG，见下）
 ```
 
-> 全量 598 条**包含** `test_pg_store.py` 的 38 条（PostgreSQL 后端）。
-> 本机 PG 在 **WSL Ubuntu 22.04** 里运行，Windows 侧通过 `127.0.0.1:5432` 可达，
-> 连接串 `postgres / 123456`（与测试里硬编码一致），因此默认命令**不再需要**排除它。
-> 早先写的「需真实 PG 服务、故默认排除」是**没去连**得出的结论，已更正。
+> 全量 644 条**包含** `test_pg_store.py` 的 40 条（PostgreSQL 后端）与
+> `test_pg_store_schema_migration.py` 的 12 条、`test_pg_store_explicit_columns.py` 的 7 条。
+> **PG 只监听 WSL 的回环**（`listen_addresses = 'localhost'`，绑定 WSL 内 127.0.0.1）：
+> WSL2 的 localhost 转发不转发 loopback 绑定，因此 **Windows 侧 `127.0.0.1:5432` 是
+> `Connection refused`**，这 40 条在 Windows 上按 `skip` 处理（不是失败）。
+> 要真正跑它们，在 WSL 里执行（实测 **40/40 通过**）：
+>
+> ```bash
+> wsl -d Ubuntu-22.04 -- bash -lc \
+>   "cd /mnt/e/IDEProjects/AI/vools/rhop && python3 -m pytest -q tests/test_pg_store.py"
+> ```
+>
+> ⚠️ 早先写的「Windows 侧通过 `127.0.0.1:5432` 可达、默认命令不再需要排除它」是**错的**
+> （只 `connect()` 过一次就下结论，没看 `psycopg2` 的真实连接结果），已按实测更正。
 > 下表的计数**以实测为准**，可用稽核仪器随时自校：
 > `cd rhop && python tests/audit_api_doc.py <实测 passed 数>`（退出码 = 不一致条数，0 表示文档与实现一致）。
 
 | 测试文件 | 用例数 | 覆盖点 |
 |---|---|---|
-| `test_task_store.py` | 53 | schema/索引、幂等写入、状态机、乐观锁、优先级、依赖门控、计划时间、取消标记、跨连接原子领取、失效锁回收、版本同步、后端注册与未知 kind、**TaskStore 真 ABC 契约面（含契约面与文档逐字一致）、租约续期 touch_lock（BUG-289）、共享库落点校验（BUG-302）** |
+| `test_task_store.py` | 53 | schema/索引、幂等写入、状态机、乐观锁、优先级、依赖门控、计划时间、取消标记、跨连接原子领取、失效锁回收（**含 BUG-366 的两条路径分工：RUNNING 计入重试、LOCKED 只回 PENDING**）、版本同步、后端注册与未知 kind、**TaskStore 真 ABC 契约面（含契约面与文档逐字一致）、租约续期 touch_lock（BUG-289）、共享库落点校验（BUG-302）** |
 | `test_task_config.py` | 45 | 方向归一（含拒绝 P0..P3）、默认值、`exec` 默认拒绝任意命令、存储 kind、路径模板、介质校验（http 不当目录）、主密钥四种来源、明文告警、严格模式、掩码、**心跳判死阈值必须 ≥ 写间隔 + 1s（BUG-282）** |
 | `test_task_secrets.py` | 31 | 明文优先、密文解密、秘密节点、path/env 取值、告警文案含命令与回填指引、严格模式、字段发现、打码 |
 | `test_task_exec.py` | 60 | 白名单（默认拒绝 cli、`.exe` 归一、shell 闸门、allow_any）、语言映射、CLI 执行（stdin/env/workdir/timeout/check/退出码）、处理器注册与派发、通道识别、**命中条目读回（matched_pattern）与 cli 审计行（BUG-281，含执行失败/超时也留痕）** |
@@ -562,6 +577,10 @@ cd rhop && python -m pytest -q
 | `test_task_sync.py` | 22 | 两库收敛、幂等拉取、依赖顺序、状态回流、取消传播、旧定义不覆盖新状态、介质上只有密文、坏密钥降级、缺 shared 报错、**A 端 `requeue`/`retry_failed` 走 resets 通道后双方收敛（BUG-280）、cancel/reset 意图裁决：两种顺序都收敛到重置后的状态（BUG-290）** |
 | `test_task_cli.py` | 28 | 各子命令与退出码、纯 JSON stdout、全局选项前后位置、严格模式卡口、本地库全流程 |
 | `test_task_e2e.py` | 16 | A 提交→B 执行→A 看状态（两种拓扑）、长任务期间心跳照跳、运维 `closed` 停机、优雅停机、判死与从未启动、崩溃回收重跑、接线与角色分派 |
+| `test_task_resilience.py` | 10 | 常驻健壮性回归：**BUG-365**（执行期间被 requeue → 收尾写终态不抛 `StoreError`，返回 `discarded`；单轮 `StoreError` 不打死常驻循环）、**BUG-366**（RUNNING 租约回收 `retry_count+1` 并写 `last_err`，耗尽 `max_retries` 落 `FAILED`；对照面：LOCKED 回收只回 `PENDING`、不扣重试）、**BUG-367**（`renew_interval_sec` 受管 + 越界拒绝） |
+| `test_pg_store.py` | 40 | PostgreSQL 后端契约对齐 + PG 特有行为（临时表自建自删；**Windows 侧默认 skip，WSL 内 40/40 通过**） |
+| `test_pg_store_explicit_columns.py` | 7 | PG 显式列写入/读回（不依赖 `SELECT *` 的列序） |
+| `test_pg_store_schema_migration.py` | 12 | PG 旧库自愈（BUG-362）：31 列逐条幂等 `ADD COLUMN IF NOT EXISTS`、身份列（task_id/task_name）跳过、NOT NULL 列补 `DEFAULT ''`、补列类型与建表同源、失败回滚、schema 版本元数据表（只前向推进）、`init_schema` 语句顺序 |
 | `test_html_fernet.py` | 15 | 页面结构/离线自包含/无跳板角色选项、JS↔Python 双向密文互通、派生密钥一致、错密钥失败、页面密文直接喂给 `TaskConfig` 与 `secret` CLI |
 
 任务队列之外的 15 个测试文件合计 151 条：`test_actions.py` 19、`test_mirror.py` 15、`test_endpoint.py` 16、

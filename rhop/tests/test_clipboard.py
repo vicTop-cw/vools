@@ -24,6 +24,24 @@ from vools.rhop.clipboard import (
 )
 
 
+def _clipboard_usable(backend=None) -> bool:
+    """真机剪贴板是否**确实**可用（探针写一次）。
+
+    后端能探测到不等于能用：无交互桌面 / 剪贴板被其他进程占用时，
+    PowerShell 的 Set-Clipboard 会抛 ExternalException，write 返回 False。
+    这类是「机器不可用」而非「代码回归」——协议层已由假 backend 用例覆盖，
+    真机冒烟在没有可用剪贴板时应跳过而不是把全量测试染红。
+    """
+    if backend is None:
+        backend = get_clipboard_backend()
+    if backend is None:
+        return False
+    try:
+        return bool(backend[1]("rhop-clip-probe"))
+    except Exception:
+        return False
+
+
 class FakeClip:
     """内存假剪贴板（测试注入）。"""
 
@@ -53,6 +71,8 @@ class TestBackendDetection:
         pair = get_clipboard_backend()
         if pair is None:
             pytest.skip("本机无可用剪贴板后端")
+        if not _clipboard_usable(pair):
+            pytest.skip("剪贴板存在但不可写（无交互桌面/被占用），真机冒烟跳过")
         marker = "rhop-clip-smoke-%d" % os.getpid()
         assert write_clipboard(marker) is True
         assert read_clipboard() == marker
@@ -66,6 +86,8 @@ class TestBackendDetection:
         ps = _powershell_backend()
         if ps is None:
             pytest.skip("无 powershell.exe")
+        if not _clipboard_usable(ps):
+            pytest.skip("PowerShell 剪贴板不可写（无交互桌面/被占用），回环跳过")
         marker = "rhop-ps-regression-中文-\u00e9"
         assert write_clipboard(marker, backend=ps) is True
         assert read_clipboard(backend=ps) == marker  # 尾部 \r\n 已剥离

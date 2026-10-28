@@ -238,6 +238,16 @@ for _name, _declared in _rows:
 check("DOCCOUNT", "§16 逐文件用例数与实测一致", not drifted,
       "漂移: %s" % "; ".join(drifted) if drifted else "%d 行逐文件计数全部一致" % len(_rows))
 
+# ---------------------------------------------------------------- 10c. 文档头状态行自校
+# BUG-359 的后半：状态行与 §16 是两处独立声明，只校验 §16 会让头部一路漂移却无人发现。
+_hdr = re.search(r"已实现并验证（(\d{4}-\d{2}-\d{2})[^）]*?(\d+)\s*passed", doc)
+check("DOCCOUNT", "文档头状态行记录了验证日期与用例数", _hdr is not None,
+      "头部状态行: %s" % (_hdr.group(0) if _hdr else "未匹配"))
+if _hdr is not None and doc_total is not None:
+    _hdr_total = int(_hdr.group(2))
+    check("DOCCOUNT", "文档头状态行用例数与 §16 一致", _hdr_total == doc_total,
+          "状态行=%d §16=%d（差异 %d）" % (_hdr_total, doc_total, _hdr_total - doc_total))
+
 # ---------------------------------------------------------------- 汇总
 mismatch = [r for r in RESULTS if r[0] != "INFO" and not r[2]]
 print("=" * 86)
