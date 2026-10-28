@@ -218,6 +218,9 @@ _SAFE_NO_REQUIRED = [
     "actus_list", "actus_status", "actus_runtimes", "actus_records_list",
     "actus_artifacts_list", "actus_triggers_list", "actus_triggers_status",
     "actus_registry_list", "actus_private_list", "actus_team_list",
+    # 第 28 轮新增：查 LLM 成本账本（month 可选、无必需参数）。纯只读：
+    # 空账本时返回 recorded=False + 明确 message，不写盘、不报错。
+    "actus_cost",
 ]
 
 #: 无必需参数但**不在本文件调用**的工具（写操作/会起服务/依赖本机动作），
@@ -585,3 +588,88 @@ def test_author_and_publish_real_call_never_raise_through(world):
     assert "pipeline" in payload, payload
     if "status" in payload:
         assert is_error is is_failure_status(payload["status"])
+
+
+# ===========================================================================
+# 7) 第 28 轮新增：actus_run_code（旧名 actus_execute 为 deprecated 别名）
+#    与 actus_list 的 tool 字段 / actus_cost 只读契约
+# ===========================================================================
+
+def test_run_code_and_deprecated_alias_share_behavior(world):
+    """退步了会怎样：`actus_execute` 改名 `actus_run_code` 时旧名被删/变成空壳 ——
+    已接入的 Agent/脚本按旧名调用会 404 或拿到不一致结果。
+
+    断言：两个名字都能跑 `print(42)`，isError=False、stdout 含 42、exit_code=0，
+    且两者返回体**完全一致**（同一 handler，不是两套实现）。
+    """
+    run_error, run_payload, _raw = _call(
+        world, "actus_run_code", {"language": "python", "code": "print(42)"})
+    alias_error, alias_payload, _raw = _call(
+        world, "actus_execute", {"language": "python", "code": "print(42)"})
+
+    for label, is_error, payload in (
+            ("actus_run_code", run_error, run_payload),
+            ("actus_execute(deprecated)", alias_error, alias_payload)):
+        assert is_error is False, (label, payload)
+        assert payload["status"] == "ok", (label, payload)
+        assert payload["language"] == "python"
+        assert "42" in payload["stdout"], (label, payload)
+        assert payload["stderr"] == ""
+        assert payload["exit_code"] == 0
+
+    assert run_payload == alias_payload, \
+        "旧名与主名返回体不一致（应复用同一个 handler）"
+
+
+def test_tool_inventory_registers_run_code_and_deprecated_alias(world):
+    """退步了会怎样：工具清单里只出现主名或只出现旧名 —— AI 客户端按清单调用
+    旧名会"工具不存在"；别名也没有任何提示说明它将被移除。
+
+    断言：tools/list 同时含 `actus_run_code` 与 `actus_execute`；两者 required 都是
+    ['language','code']；旧名 description 明确标注 deprecated/已改名。
+    """
+    tools = _tools(world)
+    assert "actus_run_code" in tools
+    assert "actus_execute" in tools, "deprecated 别名必须仍在工具清单里（不能是空壳）"
+
+    for name in ("actus_run_code", "actus_execute"):
+        required = (tools[name].get("inputSchema") or {}).get("required") or []
+        assert required == ["language", "code"], (name, required)
+
+    alias_desc = tools["actus_execute"].get("description") or ""
+    assert ("已改名" in alias_desc) or ("deprecated" in alias_desc.lower()), \
+        "旧名 description 必须说明已改名/即将移除: %r" % (alias_desc,)
+
+
+def test_actus_list_rows_expose_tool_field(world):
+    """退步了会怎样：`actus_list` 只给动作 id 不给工具名 —— AI 客户端无法把
+    "有哪些动作"映射到"该调哪个 MCP tool"（第 28 轮新增 tool 字段的契约）。
+
+    断言：每行都有非空 `tool`，且等于 `_tool_name(id)`；至少包含动作 demo 的那行。
+    """
+    is_error, payload, _raw = _call(world, "actus_list", {})
+    assert is_error is False, payload
+    rows = payload["data"]["actions"]
+    assert rows, payload
+
+    for row in rows:
+        assert row.get("tool"), "actus_list 行缺少 tool 字段: %r" % (row,)
+        assert row["tool"] == mcp_server._tool_name(row["id"]), row
+
+
+def test_cost_tool_reports_unrecorded_honestly(world):
+    """退步了会怎样：空账本返回 `spend_usd=0` 却不说明"没有记账" —— 调用方会把
+    "没数据"误读成"本月免费"。
+
+    断言：`actus_cost{}` → isError=False、`recorded=False`、message 明说暂无记账、
+    附带 budget 字段（不伪造已消费数据）。
+    """
+    is_error, payload, _raw = _call(world, "actus_cost", {})
+    data = payload["data"]
+
+    assert is_error is False, payload
+    assert payload["status"] == "ok"
+    assert data["recorded"] is False
+    assert "暂无记账" in data["message"]
+    assert data["calls"] == 0
+    assert "budget" in data and data["budget"]["spent_usd"] == 0
