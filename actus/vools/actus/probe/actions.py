@@ -48,8 +48,10 @@ PROBE_PLAN.md §4.7 规划了 `analyze_actions(actions_dir, probe_report)`，§9
 * **探测不到 = blocked**，绝不因为"没查到问题"就默认 ready；
 * 报告无法判定的依赖类型（npm / mcp / cs_build）同样判 blocked，并在
   `unverifiable` 里点名「为什么无法判定」，不做静默放行；
-* `deps` 字段缺失 → 不计为"依赖满足"，而是单独列进 `undeclared` 并在每个
-  动作的 verdict 里带 `deps_declared: false`（**明确信号，不静默当 ready**）；
+* `deps` 字段缺失 **或值为 null** → 不计为"依赖满足"，而是单独列进 `undeclared`
+  并在每个动作的 verdict 里带 `deps_declared: false`（**明确信号，不静默当 ready**）；
+  `null` 与「键缺失」语义相同、标签不同（`<deps:null>` vs `<deps>`），
+  而 `deps: []` 是作者**明确声明**"我没有依赖"，属于有效信息，保持 ready 且无信号；
 * `deps` 类型错误 / 动作文件解析失败 / 依赖成环 → 都有各自的 signal。
 
 两类能力来源（都标注在 `index_source` 里，不混为一谈）
@@ -178,6 +180,12 @@ def _scan_actions_with_deps(actions_dir: str = None) -> dict:
                     "root": root,
                     "deps_raw": None,
                     "deps_declared": False,
+                    # deps 字段的**形态**（三种必须可区分）：
+                    #   missing = 键整块没有        → 未声明
+                    #   null    = 键在但值是 None   → 也是未声明（作者没填）
+                    #   list    = 作者明确写了列表（含 []，是有效信息：我没依赖）
+                    #   invalid = 键在但类型不对    → 交给 invalid_deps_field 信号
+                    "deps_field": "missing",
                     "parse_error": None,
                 }
                 try:
@@ -186,8 +194,19 @@ def _scan_actions_with_deps(actions_dir: str = None) -> dict:
                     meta = action.meta or {}
                     entry["id"] = meta.get("id") or rel
                     if "deps" in meta:
-                        entry["deps_declared"] = True
-                        entry["deps_raw"] = meta.get("deps")
+                        raw_deps = meta.get("deps")
+                        if raw_deps is None:
+                            # 字段存在但没填：信息量与「键缺失」完全一样（作者都没写依赖），
+                            # 不能静默当成「已声明、无依赖」—— 否则 null 就绕过了 undeclared 信号。
+                            entry["deps_field"] = "null"
+                        elif isinstance(raw_deps, (list, tuple)):
+                            entry["deps_field"] = "list"
+                            entry["deps_declared"] = True
+                            entry["deps_raw"] = raw_deps
+                        else:
+                            entry["deps_field"] = "invalid"
+                            entry["deps_declared"] = True   # 作者写了东西，只是类型错
+                            entry["deps_raw"] = raw_deps
                 except Exception as exc:
                     entry["parse_error"] = "%s: %s" % (type(exc).__name__, exc)
 
@@ -498,8 +517,8 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
     返回 dict:
         total / ready / blocked / missing_deps  ← §4.7 契约字段
         verdicts:      {action_id: {verdict, deps, missing_deps, blocked_reasons,
-                                    deps_declared, path, parse_error}}
-        undeclared:    [action_id ...]   声明里没有 deps 的动作（明确信号）
+                                    deps_declared, deps_field, path, parse_error}}
+        undeclared:    [action_id ...]   没声明 deps 的动作（键缺失或值为 null；明确信号）
         parse_failed:  [action_id ...]   连文件都解析不了的动作
         unverifiable:  {action_id: [dep ...]}  报告无法判定的依赖
         duplicate_ids: [{id, kept, ignored}]   同 id 多份的动作文件
@@ -526,6 +545,7 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
             "missing_deps": [],
             "blocked_reasons": [],
             "deps_declared": bool(entry["deps_declared"]),
+            "deps_field": entry.get("deps_field", "missing"),
             "path": entry["path"],
             "parse_error": entry["parse_error"],
         }
@@ -570,14 +590,25 @@ def analyze_actions(actions_dir: str = None, probe_report=None) -> dict:
         if blocked:
             record["verdict"] = "blocked"
         elif not entry["deps_declared"]:
-            # 没声明 deps：判 ready 但**明确标出**「依赖未声明，未做任何核实」
+            # 没声明 deps（键缺失 或 值为 null）：判 ready 但**明确标出**未做核实。
+            # 两者语义相同、标签不同，保证「null 绕过 undeclared 信号」不再发生，
+            # 同时 `deps: []`（作者明确声明"我没有依赖"）不受影响。
             record["verdict"] = "ready"
-            record["blocked_reasons"].append({
-                "dep": "<deps>",
-                "status": "undeclared",
-                "reason": "动作没有声明 deps：ready 仅表示「没有声明未满足的依赖」，"
-                          "不代表运行所需能力已核实",
-            })
+            if entry.get("deps_field") == "null":
+                record["blocked_reasons"].append({
+                    "dep": "<deps:null>",
+                    "status": "undeclared",
+                    "reason": "deps 字段为 null（存在但没填，语义等同未声明）："
+                              "ready 仅表示「没有声明未满足的依赖」，"
+                              "不代表运行所需能力已核实",
+                })
+            else:
+                record["blocked_reasons"].append({
+                    "dep": "<deps>",
+                    "status": "undeclared",
+                    "reason": "动作没有声明 deps：ready 仅表示「没有声明未满足的依赖」，"
+                              "不代表运行所需能力已核实",
+                })
         elif pending_action_deps:
             record["verdict"] = "pending"
         else:
