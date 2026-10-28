@@ -1,12 +1,15 @@
 """author.py —— AI 修改已有动作 + 7 步自动校验流水线（docs/10 §D.3）。
 
 职责：
-1. `author_action(id, instruction)` —— 根据自然语言指令修改动作的代码块或元数据；
+1. `author_action(id, instruction, ai_edit=None)` —— 记录修改指令，并在**注入了
+   `ai_edit` 回调**时真正改代码；未注入时只记录指令，并**如实返回 status='failed'**
+   （reason='ai_not_connected'），不再假装"已修改"；
 2. `publish_action(id)` —— 校验通过 → 入索引 → 上 MCP；
 3. 7 步自动校验流水线（parse → schema → entry → args → graph → dry_run → sandbox_trial）。
 
 本模块是"薄壳"——修改逻辑由 AI 调用方实现（此处提供程序化修改接口），
-本模块负责驱动校验流水线和留痕。
+本模块负责驱动校验流水线和留痕。**没有 AI 回调就没有真正的代码修改**，
+这一点由 `status` / `reason` / `ai_applied` 三个字段如实表达。
 """
 
 __all__ = ['author_action', 'publish_action', 'Pipeline', 'run_pipeline']
@@ -20,6 +23,23 @@ from .errors import ActionError
 from .model import Action, parse_cfg_from_file
 from .validate import validate_action
 from .constants import is_action_file
+
+# 修改留痕行的前缀。`author_action` 每次只保留**最新一条**，改前是纯追加，
+# 连跑 N 次会攒 N 行注释（实测 2 次留 2 行）。
+_AI_MODIFIED_PREFIX = '# AI-MODIFIED ['
+
+
+def _collapse_ai_modified_marks(text: str) -> str:
+    """删掉历史 AI-MODIFIED 留痕行（保留其余内容原样）。
+
+    为什么替换而不是追加：这行是"最近一次修改指令"的快照，不是审计日志
+    （审计走 `_meta/`）；无限追加只会让动作文件越来越脏。
+    """
+    if not text or _AI_MODIFIED_PREFIX not in text:
+        return text
+    kept = [line for line in text.splitlines(keepends=True)
+            if not line.lstrip().startswith(_AI_MODIFIED_PREFIX)]
+    return ''.join(kept)
 
 
 class Pipeline:
@@ -191,8 +211,9 @@ def author_action(action_id: str, instruction: str,
                   ai_edit: Optional[Callable[[str, str, str], str]] = None) -> dict:
     """根据自然语言指令修改已有动作。
 
-    当前实现：将 instruction 写入动作文件的 TODO 注释区，
-              调用 AI 回调（由上层注入，或默认只记录指令）。
+    **没有 `ai_edit` 回调时不会改任何代码**：只把 instruction 记到动作文件的
+    注释区，并返回 ``status='failed'`` + ``reason='ai_not_connected'``
+    （改前这里返回 modified/needs_fix，调用方无法知道代码根本没动）。
 
     ``ai_edit`` 是上层注入的编辑回调（docs/10 §D.2 的注入点，此前文档宣称
     可注入但签名上从未存在）：
@@ -220,7 +241,8 @@ def author_action(action_id: str, instruction: str,
             'file_path': 动作文件路径,
             'pipeline': 7 步流水线结果,
             'ai_applied': 是否应用了 ai_edit 编辑,
-            'status': 'modified' | 'failed',
+            'status': 'modified' | 'needs_fix' | 'failed',
+            'reason': 仅 AI 未接入时出现（'ai_not_connected'）,
             'message': 说明,
         }
     """
@@ -245,7 +267,10 @@ def author_action(action_id: str, instruction: str,
     action = parse_cfg_from_file(file_path)
     entry = action.meta.get('entry', '')
 
-    modified = original
+    # 先清掉上一次的 AI-MODIFIED 记录行（只保留最新一条）。改前是纯追加：
+    # 连续跑 `actus author` N 次会在动作文件里攒 N 行注释（实测 2 次留 2 行），
+    # 越用越脏且没有任何信息增量。
+    modified = _collapse_ai_modified_marks(original)
     if entry:
         # 找到 entry 块的 ``` 开头后第一行，插入注释
         tag_pattern = f'#!run tag={entry}'
@@ -279,14 +304,33 @@ def author_action(action_id: str, instruction: str,
     pipeline = Pipeline(new_action, repo_root=repo_root)
     result = pipeline.run(dry_run_only=True)  # author 只做 dry_run，不实际试跑
 
+    # 如实区分三种结局（改前无论有没有真的改代码，都只说 modified / needs_fix，
+    # 调用方无法知道"AI 压根没接上"）：
+    #   modified    —— ai_edit 真的改了文件，且流水线通过
+    #   needs_fix   —— ai_edit 改了文件，但流水线不通过
+    #   failed      —— 没接 AI（ai_edit is None）：只记录了指令，**代码未修改**
+    if not ai_applied:
+        return {
+            'action_id': action_id,
+            'instruction': instruction,
+            'file_path': os.path.abspath(file_path),
+            'pipeline': result,
+            'ai_applied': False,
+            'status': 'failed',
+            'reason': 'ai_not_connected',
+            'message': ('未接 AI（无 ai_edit）：只把修改指令记录到文件注释区，'
+                        '代码未被修改。要真正改代码，请通过 MCP actus_author '
+                        '工具（会注入 ai_edit）或直接编辑动作文件。'),
+        }
+
     return {
         'action_id': action_id,
         'instruction': instruction,
         'file_path': os.path.abspath(file_path),
         'pipeline': result,
-        'ai_applied': ai_applied,
+        'ai_applied': True,
         'status': 'modified' if result['valid'] else 'needs_fix',
-        'message': '修改已记录，校验通过' if result['valid'] else f'校验需修复: {[s for s in result["steps"] if not s["ok"]]}',
+        'message': '修改已应用，校验通过' if result['valid'] else f'校验需修复: {[s for s in result["steps"] if not s["ok"]]}',
     }
 
 
