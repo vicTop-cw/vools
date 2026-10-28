@@ -341,7 +341,17 @@ def _is_hex(value) -> bool:
 
 # ── Vault2 ──
 class Vault2:
-    def __init__(self, vault_dir: str = None):
+    def __init__(self, vault_dir: str = None, migrate_legacy: bool = None):
+        """**懒创建**：构造只算路径 + 默认值，**零文件系统操作**。
+
+        改前 `__init__` 做四件写事（迁移旧库/`makedirs`/chmod/建库建表 + 密钥保护三连），
+        于是"看一眼密钥库"（`status()`、只读诊断、`resolver_status()`、甚至只是
+        `Vault2()` 拿路径）都会**凭空建库** —— 真实事故里 3 次把空
+        `~/.actus/vault2/vault2.db` 写进用户目录。
+
+        现在：所有写动作收敛到 `_ensure_ready()`（幂等），只有**写路径**调它；
+        读路径遇到"库不存在"按「**库不存在 = 没有密钥**」处理，绝不建库。
+        """
         explicit = vault_dir is not None
         self._explicit_dir = explicit
         self.vault_dir = os.path.abspath(vault_dir or default_vault_dir())
@@ -350,12 +360,8 @@ class Vault2:
         # 迁移状态（status() 会如实回报；None = 无需迁移）
         self.migrated_from: Optional[str] = None
         self.migration_conflict: Optional[str] = None
-        if not explicit:
-            self._maybe_migrate_legacy()
-        os.makedirs(self.vault_dir, exist_ok=True)
-        self._harden_permissions()
-        self._init_schema()
-        self._harden_permissions()
+        # migrate_legacy: None=自动（写路径首次 ready 时尝试）/ True=允许 / False=禁止
+        self.migrate_legacy = migrate_legacy
         self._sessions: Dict[str, dict] = {}
         self._audit_mode_set = False
         # ── seed_key 保护（docs/vault2-hardening.md）──
@@ -365,10 +371,33 @@ class Vault2:
         self._passphrase: Optional[str] = None
         self._keyring = None
         self._file_key_cached: Optional[bytes] = None
+        self._ready = False
+
+    # ── 懒创建 ────────────────────────────────────────────────────────
+    def _exists(self) -> bool:
+        """库文件是否存在（纯 stat，不建任何东西）。"""
+        return os.path.isfile(self.db_path)
+
+    def _ensure_ready(self) -> "Vault2":
+        """幂等地完成所有**写侧**初始化（迁移 → makedirs → chmod → 建库 → 密钥保护）。
+
+        **只有写路径可以调它**。读路径一律走 `_exists()` 判断，不调本方法 ——
+        否则"读一下就建库"的历史问题会回来。
+        """
+        if self._ready:
+            return self
+        if not self._explicit_dir and self.migrate_legacy is not False:
+            self._maybe_migrate_legacy()
+        os.makedirs(self.vault_dir, exist_ok=True)
+        self._harden_permissions()
+        self._init_schema()
+        self._harden_permissions()
         self._ensure_identity_key_columns()
         self._resolve_key_protection()
         self._check_existing_key_protection()
         self._migrate_key_protection()
+        self._ready = True
+        return self
 
     def _maybe_migrate_legacy(self) -> None:
         """把旧位置（`<cwd>/_meta/vault`）的库迁到新位置（**移动**，不复制）。
@@ -817,6 +846,8 @@ class Vault2:
             return {"status": "error", "message": "PIN 必须是 6 位数字"}
         if security_level not in ("L1", "L2", "L3"):
             return {"status": "error", "message": "security_level 必须是 L1/L2/L3"}
+        # **唯一**允许建库的入口：注册就是要新建密钥库
+        self._ensure_ready()
 
         identity_id = str(uuid.uuid4())
         machine_id = str(uuid.uuid4())
@@ -870,6 +901,12 @@ class Vault2:
     # ── auth ──
     def auth(self, identity_id: str, machine_id: str, pin: str,
              hardware_token: str = None) -> dict:
+        if not self._exists():
+            # 库不存在 = 没有身份（**绝不建库**：改前构造就建）
+            return {"status": "error", "message": "身份不存在"}
+        # 库存在 → 补齐 schema + 解析密钥保护（改前由 __init__ 做；现在懒加载）。
+        # 对已存在的库 _ensure_ready() 是幂等的：不新建目录、不新建表。
+        self._ensure_ready()
         now = int(time.time())
         with self._db() as conn:
             row = conn.execute(
@@ -1079,6 +1116,10 @@ class Vault2:
         `legacy: true` 让上层自行决定（显式迁移走 `migrate_legacy_rows()` 或写路径）。
         默认 `read_only=False` 完全保持旧行为（审计 + 懒迁移），兼容既有调用方。
         """
+        if not self._exists():
+            # 库不存在 = 没有密钥（与"查不到"同形，且**不建库**）
+            return {"status": "error", "message": "凭证不存在"}
+        self._ensure_ready()          # 已存在的库：补齐 schema / 解析密钥保护（幂等）
         ok, sess = self._verify_token(token)
         if not ok:
             return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
@@ -1248,6 +1289,10 @@ class Vault2:
 
     # ── list_secrets ──
     def list_secrets(self, token: str) -> dict:
+        if not self._exists():
+            # 库不存在 = 一个密钥都没有（空列表，**不建库**）
+            return {"status": "ok", "count": 0, "secrets": [], "vault_exists": False}
+        self._ensure_ready()
         ok, sess = self._verify_token(token)
         if not ok:
             return {"status": "error", "message": "会话无效或已过期"}
@@ -1277,6 +1322,9 @@ class Vault2:
 
     # ── delete_secret ──
     def delete_secret(self, token: str, name: str, caller: str = None) -> dict:
+        if not self._exists():
+            return {"status": "error", "message": "凭证不存在"}
+        self._ensure_ready()
         ok, sess = self._verify_token(token)
         if not ok:
             return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
@@ -1327,7 +1375,7 @@ class Vault2:
         # 旧 TOTP 随 seed 失效；留着只会在极小概率下与新码撞上而误判"重放"
         conn.execute("DELETE FROM used_codes WHERE identity_id=?", (identity_id,))
 
-    def rotate_seed_key(self, token: str, caller: str = None) -> dict:
+    def rotate_seed_key(self, token: str, caller: str = None, apply: bool = True) -> dict:
         """轮换身份的 `seed_key`：换新 seed + 用新 master 重加密**所有**相关密文。
 
         为什么值得做：`master_key` 不含 PIN ⇒ `seed_key` 是**唯一的密码学根**。轮换
@@ -1349,6 +1397,10 @@ class Vault2:
         失败语义（lead 裁决）：**任一条解不开就中止**，绝不"跳过坏的继续" ——
         轮换是重大操作，半途状态比失败更糟。
         """
+        if not self._exists():
+            return {"status": "error", "code": "vault_not_found",
+                    "message": "密钥库不存在，没有可轮换的数据（本方法绝不建库）"}
+        self._ensure_ready()
         ok, sess = self._verify_token(token)
         if not ok:
             return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
@@ -1429,6 +1481,17 @@ class Vault2:
                     "message": ("轮换中止（磁盘未改动，旧 seed 与全部密文保持原样）：%s: %s"
                                 % (type(exc).__name__, exc))}
 
+        # ── 干跑（apply=False）：读阶段已经把"能解开/能重加密/回读一致"全验证过了，
+        #    到这里直接返回统计 —— **不进写阶段、也不调 _ensure_ready()**（绝不建库）。
+        if not apply:
+            return {"status": "ok", "dry_run": True,
+                    "identity_id": identity_id,
+                    "would_rotate_secrets": len(secret_updates),
+                    "would_rotate_backups": len(backup_updates),
+                    "recovery_key_would_be_invalidated": bool(recovery_hash_old),
+                    "note": ("干跑：读阶段已完成解密 + 重加密 + 回读验证，"
+                             "但**未写入任何数据**；正式执行请传 apply=True")}
+
         # ── 写阶段（零写直到这里；单事务，抛错即整体回滚）──
         try:
             with self._db() as conn:
@@ -1452,7 +1515,7 @@ class Vault2:
         self._audit("rotate_seed_key", identity_id, success=True,
                     target="secrets=%d backups=%d" % (len(secret_updates), len(backup_updates)),
                     caller=caller)
-        return {"status": "ok",
+        return {"status": "ok", "dry_run": False,
                 "identity_id": identity_id,
                 "rotated_secrets": len(secret_updates),
                 "rotated_backups": len(backup_updates),
@@ -1476,6 +1539,11 @@ class Vault2:
             与 master/时间无关（seed 不变 ⇒ 备份仍可解密）。
           * 无 `key_salt` 的旧身份需要 PIN 才能派生旧 master ⇒ 跳过并如实报告。
         """
+        if not self._exists():
+            return {"status": "ok", "migrated": 0, "already": 0,
+                    "skipped_legacy": [], "vault_exists": False,
+                    "note": "密钥库不存在，没有可迁移的数据（本方法绝不建库）"}
+        self._ensure_ready()
         identities = []
         with self._db() as conn:
             if identity_id:
@@ -1580,6 +1648,9 @@ class Vault2:
 
     def rotate_secret(self, token: str, name: str, new_value: str = None,
                       caller: str = None) -> dict:
+        if not self._exists():
+            return {"status": "error", "message": "凭证不存在"}
+        self._ensure_ready()
         ok, sess = self._verify_token(token)
         if not ok:
             return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
@@ -1947,13 +2018,37 @@ class Vault2:
         unavailable）无需认证即可看 —— 它是"这库现在靠什么保护"的诊断信息，
         不含密钥本身；`key_protection_warning` 说明该方式的边界。
         """
+        # 三种状态必须能区分（lead 第 17 轮硬要求）：
+        #   missing —— 库文件不存在（= 没有密钥；**本方法绝不建库**）
+        #   corrupt —— 文件在但打不开/表缺失（不能当成"空库"糊过去）
+        #   empty   —— 库在且可读，但零身份（已初始化、还没注册）
+        #   ok      —— 库在、可读、有身份
         exists = os.path.isfile(self.db_path)
+        if exists:
+            try:
+                self._ensure_ready()      # 幂等：只为解析 key_protection（不新建库）
+            except Exception:             # noqa: BLE001 —— 损坏库交给下面的 corrupt 分支
+                pass
+        state = "missing"
+        state_detail = ""
+        if exists:
+            try:
+                with self._db() as conn:
+                    row = conn.execute("SELECT COUNT(*) FROM identities").fetchone()
+                state = "ok" if (row and row[0]) else "empty"
+            except Exception as exc:                       # noqa: BLE001
+                state = "corrupt"
+                state_detail = "%s: %s" % (type(exc).__name__, exc)
         base = {
             "status": "ok",
             "initialized": exists,
+            "exists": exists,
+            "state": state,
             "vault_dir": self.vault_dir,
             "key_protection": self.key_protection,
         }
+        if state_detail:
+            base["state_detail"] = state_detail
         if self.key_protection_warning:
             base["key_protection_warning"] = self.key_protection_warning
         if self.migrated_key_protection:
@@ -2068,10 +2163,19 @@ class Vault2:
 _vault2_singleton: Optional[Vault2] = None
 
 
-def _get_vault2() -> Vault2:
+def _get_vault2(create: bool = False) -> Vault2:
+    """进程内单例。**构造本身零文件系统操作**（懒创建，见 `Vault2.__init__`），
+    所以这里返回实例**不会**凭空建库 —— 建库只发生在写路径（`register()` 或
+    首次 `_ensure_ready()`）。
+
+    `create=True` 仅表达"这个调用方是注册流程"，保留给显式语义；实际建库仍由
+    `register()` 内部的 `_ensure_ready()` 完成（单一入口，避免两套建库逻辑）。
+    """
     global _vault2_singleton
     if _vault2_singleton is None:
         _vault2_singleton = Vault2()
+    if create:
+        _vault2_singleton._ensure_ready()
     return _vault2_singleton
 
 
