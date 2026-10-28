@@ -12,7 +12,8 @@
   * `record_installation` 原子写 + `manifest_dir`/`ACTUS_INSTALLED_DIR` 可配；
   * `omega_strong._validate_task_id` / `_ledger_path` —— 4 种逃逸全拒；
   * 账本损坏 → `.corrupt-<ts>` 备份 + **粘性拒写**；
-  * `check_record` 必须 `cmd` + `exit_code`（`{'ok': True}` 不再放行）；
+  * `record_check`（旧名 `check_record` 为 deprecated 别名）必须 `cmd` + `exit_code`
+    （`{'ok': True}` 不再放行）；旧名仍可用（见 `test_record_check_deprecated_alias_still_works`）；
   * `_ledger_lock` 并发读改写不丢记录；
   * `filter_by_quality(repo_dir)` 必填（缺 → ValueError，不返回 `[]`）；
   * `check_gate` datetime 新鲜度（跨时区正确）。
@@ -34,9 +35,11 @@ import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
 _ai_local_bootstrap.install()
 
 from vools.actus import cli  # noqa: E402
+from vools.actus import indexer  # noqa: E402
 from vools.actus import omega_strong as omega  # noqa: E402
 from vools.actus import registry as registry_mod  # noqa: E402
 from vools.actus.errors import ActionError  # noqa: E402
+from vools.actus.importsys import ImportResolver  # noqa: E402
 from vools.actus.registry import ActionRegistry, RegistryEntry  # noqa: E402
 
 _ACTION_TEXT = """# Demo
@@ -428,7 +431,7 @@ def test_validate_task_id_rejects_escapes(world, bad_id):
 
 
 # ===========================================================================
-# 9) check_record 必须 cmd + exit_code（{'ok': True} 不放行）
+# 9) record_check 必须 cmd + exit_code（第 14 轮从 check_record 改名）（{'ok': True} 不放行）
 # ===========================================================================
 
 @pytest.mark.parametrize("bad_check", [
@@ -438,22 +441,22 @@ def test_validate_task_id_rejects_escapes(world, bad_id):
     {"cmd": "", "exit_code": 0},
     {"exit_code": 0},
 ])
-def test_check_record_rejects_incomplete_check(world, bad_check):
+def test_record_check_rejects_incomplete_check(world, bad_check):
     """退步了会怎样（P2 假通过）：门禁状态由调用方 `check['ok']` 直接决定 ——
-    实测 `check_record({'ok': True})` 就能记成 passed 并让 check_gate 放行，
+    实测 `record_check({'ok': True})`（旧名 check_record）就能记成 passed 并让 check_gate 放行，
     记录里连 cmd/exit_code 都没有（"不跑命令即过门禁"）。
 
     断言：缺 cmd / 缺整数 exit_code / 类型不对 → param_invalid，不写任何记录。
     """
     oms = omega.OmegaStrong("task-check", meta_dir=str(world.meta))
     with pytest.raises(ActionError) as excinfo:
-        oms.check_record(bad_check)
+        oms.record_check(bad_check)
     assert excinfo.value.code == "param_invalid"
 
     assert oms.records(omega.T_CHECK) == [], "非法 check 不应留下记录"
 
 
-def test_check_record_derives_status_from_exit_code_only(world):
+def test_record_check_derives_status_from_exit_code_only(world):
     """退步了会怎样：`ok` 字段能覆盖 exit_code（`{'ok': True, 'exit_code': 1}`
     仍算 passed），门禁被假数据放行。
 
@@ -462,9 +465,9 @@ def test_check_record_derives_status_from_exit_code_only(world):
     """
     oms = omega.OmegaStrong("task-status", meta_dir=str(world.meta))
 
-    passed = oms.check_record({"cmd": "true", "exit_code": 0, "ok": False})
+    passed = oms.record_check({"cmd": "true", "exit_code": 0, "ok": False})
     assert passed["status"] == "passed"
-    failed = oms.check_record({"cmd": "false", "exit_code": 1, "ok": True})
+    failed = oms.record_check({"cmd": "false", "exit_code": 1, "ok": True})
     assert failed["status"] == "failed", "ok=True 不得覆盖 exit_code=1"
 
     recs = oms.records(omega.T_CHECK)
@@ -475,43 +478,107 @@ def test_check_record_derives_status_from_exit_code_only(world):
 
 
 # ===========================================================================
-# 10) 账本损坏：备份 + 粘性拒写
+# 10) 账本损坏：**默认读只读**（不备份/不改名）、显式 repair=True 才备份、
+#     写路径（带 repair=True）保留 fail-closed 粘性拒写
 # ===========================================================================
 
-def test_corrupt_ledger_backup_and_sticky_refusal(world):
-    """退步了会怎样（P2 静默清空）：损坏账本被当成"没有记录" -> 下一次 append
-    落盘把原历史（approved 语料/复验记录）覆盖掉，且用户毫无感知。
-
-    断言：损坏 → `load_ledger` 返回 corrupt=True 且原文件被改名为 `.corrupt-<ts>`；
-    写路径 fail-closed（check_record 抛 internal 拒写）；备份未删除前**持续** corrupt；
-    删掉备份后恢复可写（记录从空账本重新开始）。
-    """
+def _corrupt_ledger_dir(world, task_id="task-corrupt"):
     ledger_dir = world.meta / "omega_strong"
-    ledger_dir.mkdir(parents=True)
-    ledger_path = ledger_dir / "task-corrupt.json"
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+    ledger_path = ledger_dir / (task_id + ".json")
     ledger_path.write_text("{ broken ledger", encoding="utf-8")
+    return ledger_dir, ledger_path
+
+
+def test_corrupt_ledger_read_is_readonly_by_default(world):
+    """退步了会怎样（第 14 轮语义）：`load_ledger` 默认又在**读路径**把损坏账本
+    `os.replace` 改名 —— 读 API 改用户数据目录（只读 FS 直接失败），且"读一下"
+    就产生副作用。
+
+    断言：默认 `repair=False` → `corrupt=True`、`corrupt_backup is None`、
+    原因里明说 repair=False 未自动备份、**原文件仍在且内容不变**、目录里没有
+    `.corrupt-*` 文件。
+    """
+    ledger_dir, ledger_path = _corrupt_ledger_dir(world)
     original_text = ledger_path.read_text(encoding="utf-8")
 
     broken = omega.load_ledger("task-corrupt", meta_dir=str(world.meta))
-    assert broken["corrupt"] is True
-    backup = broken.get("corrupt_backup")
-    assert backup and os.path.isfile(backup), broken
+
+    assert broken["corrupt"] is True, broken
+    assert broken.get("corrupt_backup") is None, broken
+    assert "repair=False" in (broken.get("corrupt_reason") or ""), broken
+    assert ledger_path.is_file(), "默认读把损坏账本改名了（读路径不应写）"
+    assert ledger_path.read_text(encoding="utf-8") == original_text
+    backups = [n for n in os.listdir(str(ledger_dir)) if ".corrupt-" in n]
+    assert backups == [], "默认读生成了 .corrupt-* 备份: %r" % (backups,)
+
+
+def test_corrupt_ledger_repair_true_backs_up_and_moves(world):
+    """退步了会怎样：显式 `repair=True` 也不备份 —— 写路径失去"把损坏历史留证再
+    重建"的能力（旧历史可能被静默覆盖）。
+
+    断言：repair=True → 备份存在（`.corrupt-<ts>`）且内容 == 原文件；
+    原文件已被移走（不应同时存在新旧两份）。
+    """
+    _ledger_dir, ledger_path = _corrupt_ledger_dir(world, "task-repair")
+    original_text = ledger_path.read_text(encoding="utf-8")
+
+    repaired = omega.load_ledger("task-repair", meta_dir=str(world.meta), repair=True)
+
+    assert repaired["corrupt"] is True
+    backup = repaired.get("corrupt_backup")
+    assert backup and os.path.isfile(backup), repaired
     with open(backup, "r", encoding="utf-8") as handle:
         assert handle.read() == original_text, "备份必须是原文件内容"
+    assert not ledger_path.exists(), "repair=True 应把原文件改名（move），不能留下坏文件"
 
-    oms = omega.OmegaStrong("task-corrupt", meta_dir=str(world.meta))
+
+def test_corrupt_ledger_write_path_is_sticky_refusal(world):
+    """退步了会怎样：写路径没有 fail-closed —— `_append` 拿着"空账本"把原历史
+    （approved 语料/复验记录）覆盖掉，用户毫无感知。
+
+    断言：显式备份后（存在 .corrupt-*）写路径 `record_check` 抛 ActionError
+    （code=internal，拒绝写入）；备份未删前持续 corrupt；人工删备份后恢复可写。
+    """
+    _ledger_dir, _ledger_path = _corrupt_ledger_dir(world, "task-sticky")
+    repaired = omega.load_ledger("task-sticky", meta_dir=str(world.meta), repair=True)
+    backup = repaired["corrupt_backup"]
+    assert backup and os.path.isfile(backup)
+
+    oms = omega.OmegaStrong("task-sticky", meta_dir=str(world.meta))
     with pytest.raises(ActionError) as excinfo:
-        oms.check_record({"cmd": "true", "exit_code": 0})
+        oms.record_check({"cmd": "true", "exit_code": 0})
     assert excinfo.value.code == "internal"
 
-    assert omega.load_ledger("task-corrupt", meta_dir=str(world.meta))["corrupt"] is True, \
+    assert omega.load_ledger("task-sticky", meta_dir=str(world.meta))["corrupt"] is True, \
         "存在 .corrupt-* 备份时必须持续拒绝（粘性），不能悄悄重建空账本"
 
     os.remove(backup)
-    clean = omega.load_ledger("task-corrupt", meta_dir=str(world.meta))
+    clean = omega.load_ledger("task-sticky", meta_dir=str(world.meta))
     assert clean.get("corrupt") is None, clean
-    oms.check_record({"cmd": "true", "exit_code": 0})
+    oms.record_check({"cmd": "true", "exit_code": 0})
     assert len(oms.records(omega.T_CHECK)) == 1, "人工清理备份后应恢复可写"
+
+
+def test_record_check_deprecated_alias_still_works(world):
+    """退步了会怎样：`record_check` 改名后旧名 `check_record` 被删 —— 既有调用方/
+    脚本 AttributeError（改名应当是"加新名 + 旧名保留"）。
+
+    断言：新旧两个名字都能写记录、结果一致（status/exit_code 字段），旧名对非法入参
+    也抛同样的 param_invalid（证明是真委托而不是空壳）。
+    """
+    oms = omega.OmegaStrong("task-alias", meta_dir=str(world.meta))
+
+    new_result = oms.record_check({"cmd": "true", "exit_code": 0})
+    old_result = oms.check_record({"cmd": "false", "exit_code": 1})
+
+    assert new_result["status"] == "passed" and old_result["status"] == "failed"
+    assert new_result["exit_code"] == 0 and old_result["exit_code"] == 1
+    assert len(oms.records(omega.T_CHECK)) == 2
+
+    with pytest.raises(ActionError) as excinfo:
+        oms.check_record({"ok": True})
+    assert excinfo.value.code == "param_invalid"
 
 
 # ===========================================================================
@@ -584,3 +651,53 @@ def test_check_gate_compares_datetime_across_timezones(world):
     later = oms.check_gate("[gate:required]", "2026-01-01T00:00:01+08:00")
     assert later[0] is False
     assert "早于任务最后更新" in later[1], later
+
+
+# ===========================================================================
+# 13) 第 14 轮读 API 契约：`get_action` 默认不写 `_meta`；`load_index(build=False)` 不建索引
+# ===========================================================================
+
+def test_get_action_default_does_not_write_meta(world, monkeypatch):
+    """退步了会怎样（读 API 写盘）：`get_action` 默认又写
+    `_meta/actions.mtimes.json` —— `info`/`preview`/`run` 的解析路径在只读 FS 上
+    直接失败，且一次"查动作"就改了用户数据目录。
+
+    断言：默认 `get_action` 能解析动作、但 `_meta` 里**没有** mtimes 缓存；
+    `load_index(build=False)` 返回空索引且**不创建** actions.index.json；
+    对照组：显式 `write_cache=True` 才写 mtime 缓存（证明开关真的接线）。
+    """
+    repo = world.repo
+    monkeypatch.setenv("ACTUS_REPO_ROOT", str(repo))
+
+    mtimes_path = os.path.join(str(world.meta), "actions.mtimes.json")
+    index_path = os.path.join(str(world.meta), "actions.index.json")
+    assert not os.path.isfile(mtimes_path)
+    assert not os.path.isfile(index_path)
+
+    action = indexer.get_action("myapp.demo")
+    assert action.meta.get("id") == "myapp.demo"
+    assert not os.path.isfile(mtimes_path), \
+        "get_action 默认写了 mtimes 缓存（读 API 不应写 _meta）"
+
+    empty = indexer.load_index(build=False)
+    assert empty == {"actions": {}, "problems": {}, "built": False}
+    assert not os.path.isfile(index_path), "load_index(build=False) 落盘了索引"
+
+    # 对照组：显式写缓存开关仍生效（否则"默认不写"可能只是整个缓存功能坏了）
+    indexer.get_action("myapp.demo", write_cache=True)
+    assert os.path.isfile(mtimes_path), "write_cache=True 没有写 mtime 缓存（开关注线失效）"
+
+
+def test_import_resolver_ensure_all_and_deprecated_alias(world):
+    """退步了会怎样：`resolve_all` 改名 `ensure_all` 后旧名被删（既有调用方崩），
+    或两名字语义分叉（一个写 vendor、一个不写）。
+
+    断言：`ensure_all([])` 与 deprecated 别名 `resolve_all([])` 返回一致
+    `(True, [], {})`，两个方法都存在（旧名真委托给新实现）。
+    """
+    resolver = ImportResolver(repo_root=str(world.root))
+
+    assert hasattr(resolver, "ensure_all")
+    assert hasattr(resolver, "resolve_all")
+    assert resolver.ensure_all([]) == (True, [], {})
+    assert resolver.resolve_all([]) == resolver.ensure_all([])
