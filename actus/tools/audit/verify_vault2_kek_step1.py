@@ -186,22 +186,26 @@ def main():
     check('5) 回滚后数据仍可读', (v3.get_secret(tok3, 'X') or {}).get('value') == 'XV')
     check('5) 回滚后 status().kek_gen 仍 0', v3.status().get('kek_gen') == 0)
 
-    # ── 6) 非 passphrase 模式 → 明确拒绝 + 零写 ──
-    # 注：本机装了 keyring，因此"无口令"会解析成 **keyring** 模式（不是 file-key）；
-    # 两种都属于第 2/3 步的范围，这里断言的是"非 passphrase 一律明确拒绝"。
-    for mode, env_setter in (('keyring(无口令)', 'file'),):
-        v2m, vd, sb = fresh(mode, protection='file-key')
-        vm = v2m.Vault2()
-        regm = vm.register('fk-u', '111111', security_level='L2')
-        am = vm.auth(regm['identity_id'], regm['machine_id'], '111111')
-        before = snap(sb)
-        rej = vm.rotate_kek(am['session_token'])
-        after = snap(sb)
-        check('6) %s → kek_rotation_unsupported' % mode,
-              rej.get('code') == 'kek_rotation_unsupported', str(rej.get('code')))
-        check('6) %s 被拒绝时**零写**' % mode, before == after)
-        check('6) 拒绝消息指明需要第 2/3 步', '第 2/3 步' in (rej.get('message') or ''),
-              (rej.get('message') or '')[:60])
+    # ── 6) file-key 模式 → 明确拒绝（第 2 步已实现 keyring；file-key 属第 3 步）──
+    # 注意：第 22 轮落地 keyring 后，本项从"keyring 被拒绝"改为"file-key 被拒绝"。
+    # 这是**收紧**（原来断言 keyring 不支持，现在它支持了，就用仍不支持的 file-key 验拒绝路径）。
+    v2m, vd, sb = fresh('file-key', protection='file-key')
+    os.environ['ACTUS_VAULT2_KEY_PROTECTION'] = 'file-key'
+    os.environ.pop('ACTUS_VAULT2_PASSPHRASE', None)
+    import importlib as _il
+    import vools.actus.vault2 as _v2
+    _il.reload(_v2)
+    vm = _v2.Vault2()
+    regm = vm.register('fk-u', '111111', security_level='L2')
+    am = vm.auth(regm['identity_id'], regm['machine_id'], '111111')
+    before = snap(sb)
+    rej = vm.rotate_kek(am['session_token'])
+    after = snap(sb)
+    check('6) file-key 模式 → kek_rotation_unsupported',
+          rej.get('code') == 'kek_rotation_unsupported', str(rej.get('code')))
+    check('6) file-key 模式被拒绝时**零写**', before == after)
+    check('6) 拒绝消息指明需要第 3 步', '第 3 步' in (rej.get('message') or ''),
+          (rej.get('message') or '')[:70])
 
     # ── 7) 新 passphrase ──
     v2p, vdp, sbp = fresh('newpass')

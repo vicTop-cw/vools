@@ -209,7 +209,7 @@ GC 重试）；步骤 5 中崩溃 → 幂等（安全）。
 |---|---|---|
 | **0 ✅ 已完成（第 19 轮）** | `key_meta` 兼容字段 + `kek_retired` 表 + `status()` 诊断（**不改任何 KEK**） | 旧库打开/注册/轮换 seed 全部回归绿；旧行 `kek_gen` **按 0 视为**（见 §4.4.1，不迁移不回填） |
 | **1 ✅ 已完成（第 20 轮）** | **passphrase 模式**轮换（单事务，`rotate_kek(new_passphrase=None)`） | 换 salt 后旧数据可读、旧信封无法再解；故障注入：UPDATE 抛错 → 全回滚 |
-| 2 | **keyring 模式**：双代 + 日志 + GC；新 CLI/MCP 命令 | 6 个崩溃点注入（step1 前/后、commit 前/后、GC 前/后）均可恢复；孤儿条目不阻塞 |
+| **2 ✅ 已完成（第 22 轮）** | **keyring 模式**：双代 + 日志 + GC（CLI/MCP 入口仍待第 4 步） | 6 个崩溃点注入（step1 前/后、commit 前/后、GC 前/后）均可恢复；孤儿条目不阻塞 |
 | 3 | **file-key 模式**（同骨架；`O_EXCL`/0600；GC 扫目录回收孤儿） | 同上；目录里旧 key 文件按日志删除 |
 | 4 | CLI `actus vault rotate-kek [--dry-run] [--all]` + MCP `actus_vault_rotate_kek` + 文档 | `--dry-run` 零写；失败 `failed_names` 不静默 |
 
@@ -300,6 +300,55 @@ audit: rotate_kek（成功/失败都记）
 **验收**：`actus/tools/audit/verify_vault2_kek_step1.py`（29 项：轮换成功 / seed 与 secrets
 密文未变 / 新实例重开可解 / status 代数 / 连续两次 / 写阶段故障全回滚 / 非 passphrase 拒绝且
 零写 / 换口令后旧口令失效、新口令可用）。
+
+#### 4.4.3 第 2 步已完成的内容（第 22 轮实测）
+
+**实现**：`Vault2._rotate_kek_keyring()`（由 `rotate_kek` 按保护模式委派）。骨架
+（§4.4.2 之前）先落地一轮，再搬进产品代码 —— 顺序是"先能验证，再实现"。
+
+**locator 约定（向后兼容）**
+```
+第 0 代（旧库）：keyring user = identity_id            ← 不迁移、不动旧条目
+第 N 代（N≥1） ：keyring user = "{identity_id}#g{N}"
+```
+`_keyring_locator()` 优先读 `key_meta.kek_locator.user`，否则按 `kek_gen` 推导；
+`_kek_for()` 先按 locator 找，找不到再回落到旧规则 `identity_id`。
+
+**算法（双代并存，跨崩溃窗口安全）**
+```
+old_kek = _get_keyring_kek(locator_old)              # 旧代
+seed    = decrypt(old_kek, envelope)
+C1  ──────────────────────────────────────────────  写新代之前
+_put_keyring_kek(locator_new, new_kek)               # 外部写
+C2  ──────────────────────────────────────────────  写后、提交前
+readback = _get_keyring_kek(locator_new)             # ★ 回读自检（不能用 new_kek 自证）
+if readback != new_kek: abort（不提交）
+BEGIN; UPDATE identities SET seed_key=enc(new_kek,seed), key_meta={gen+1, locator_new}
+       INSERT kek_retired(gen_old, locator_old, cleaned=0); COMMIT
+C3  ──────────────────────────────────────────────  GC 之前
+C4  ──────────────────────────────────────────────  删旧代之前
+delete_password(locator_old)                         # 可能抛（fail_delete）
+still = _get_keyring_kek(locator_old)                # ★ 删后回读确认（delete_lag）
+if still is None: UPDATE kek_retired SET cleaned=1   # 只有确认不在才标 1
+C5  ──────────────────────────────────────────────  删后、未标 cleaned
+C6  ──────────────────────────────────────────────  GC 后
+```
+
+**两条硬规则（`kek_retired` 日志可信的全部意义）**
+1. **写后回读自检**：`set_password` 没抛 ≠ 后端存对了（`stale_read` 场景）→ 不一致就**不提交**；
+2. **删后回读确认**：`delete_password` 没抛 ≠ 条目没了（`delete_lag` 场景）→ 只有回读**确认不在**
+   才置 `cleaned=1`，否则保留 `cleaned=0` 等下次重试，并在返回值 `gc` 里如实报告。
+
+**已知局限（诚实记录）**：若 OS 凭据库**丢失了 DB 正在引用的那一代**（`restart_drop`：
+凭据库被清 / 云同步回滚），seed 将永久不可解 —— DB 侧任何设计都救不了，只能靠备份/多副本。
+骨架矩阵里这条被标为"已记录局限"，断言的是"它确实会失败"，而不是假装通过。
+
+**验收**
+- `actus/tools/audit/kek_crash_matrix.py`：6 崩溃点 × 4 不变式矩阵 + 6 类 store 故障模式，
+  实跑"正确实现 6/6 通过 / 错误实现被 C1、C2 抓住"。
+- `actus/tests/test_kek_rotation_crash_matrix.py`：**24 passed, 0 xfailed**（含真实实现的
+  keyring 轮换 / `delete_lag` 不标 cleaned / `stale_read` 中止不提交）。
+- 骨架的 `test_wrong_impl_passes_after_danger_window` 与灵敏度自检**保留**（落地后仍守护骨架本身）。
 
 **测试重点**（对应我们第 18 轮审计的盲区谱系）：每个阶段都必须有"**跨崩溃窗口**"
 用例（用故障注入/可 替换的 keyring 替身），不能只测 happy path；`--dry-run` 必须

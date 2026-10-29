@@ -158,15 +158,12 @@ def test_matrix_spec_is_complete():
 # ---------------------------------------------------------------------------
 # 5) 落地位：真实 API 的 keyring 轮换（**待实现**）
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason=(
-    "待实现（第 2 步）：keyring 模式需要双代并存 + 轮换日志 + GC。"
-    "实现正确后本用例 XPASS —— strict 会让它变红，提示把本标记删掉。"))
 def test_vault2_rotate_kek_keyring_mode(tmp_path, monkeypatch):
-    """退步了会怎样：keyring 模式实现了但只过 happy path —— 崩溃矩阵（上面 1/2/3）
-    才是真正验收；本用例只锁"入口 + 代数 + seed 仍可解"。
+    """真实实现的 keyring KEK 轮换（第 2 步）：入口 + 双代 + GC + 代数 + 数据可读。
 
-    当前状态：`rotate_kek` 对非 passphrase 模式返回 `kek_rotation_unsupported`
-    → 断言失败 → xfail（预期）。
+    **不再 xfail**（第 22 轮落地）。骨架的价值不因落地而消失：上面 6×4 矩阵、
+    灵敏度自检、`test_wrong_impl_passes_after_danger_window` 全部保留 ——
+    它们是"骨架本身没坏"的证明（lead 明确要求不许删）。
     """
     store = fk.FakeKeyring()
     monkeypatch.setattr(vault2, 'probe_keyring', lambda: (fk.FakeKeyringModule(store), 'ok'))
@@ -175,13 +172,95 @@ def test_vault2_rotate_kek_keyring_mode(tmp_path, monkeypatch):
 
     v = vault2.Vault2(vault_dir=str(tmp_path / 'v2'))
     reg = v.register('kek-u', '123456', security_level='L2')
-    auth = v.auth(reg['identity_id'], reg['machine_id'], '123456')
+    ident = reg['identity_id']
+    auth = v.auth(ident, reg['machine_id'], '123456')
     assert auth['status'] == 'ok', auth
-    v.set_secret(auth['session_token'], 'K', 'V')
+    tok = auth['session_token']
+    v.set_secret(tok, 'K', 'V')
 
-    res = v.rotate_kek(auth['session_token'])
-    assert res['status'] == 'ok', 'keyring 轮换尚未实现：%s' % res
-    assert res['kek_gen'] == 1
-    assert v.status()['kek_gen'] == 1
-    # 新 KEK 写入后，原会话读数据仍应正常（KEK 只换信封，不换 master）
-    assert v.get_secret(auth['session_token'], 'K')['value'] == 'V'
+    old_locator = ident          # 第 0 代 locator = 旧规则的 identity_id（向后兼容）
+    assert store.has(old_locator), '注册时应按旧规则写入第 0 代 KEK'
+
+    res = v.rotate_kek(tok)
+    assert res['status'] == 'ok', res
+    assert res['mode'] == 'keyring'
+    assert (res['kek_gen_old'], res['kek_gen']) == (0, 1), res
+    # 新代写入且被 DB 引用
+    assert store.has('%s#g1' % ident), '新代 KEK 必须写进 keyring'
+    assert res['locator_new'] == '%s#g1' % ident
+    # GC：旧代真的删掉 + 日志置 cleaned=1（I2/I3）
+    assert not store.has(old_locator), 'GC 后旧代 KEK 必须不在'
+    assert res['gc']['cleaned'] == 1, res['gc']
+    assert res['kek_retired_written'] is True
+    # status 诊断：清理完的旧代不该算 pending
+    st = v.status()
+    assert st['kek_gen'] == 1, st
+    assert st['kek_retired_count'] == 0, st
+    # KEK 只换信封：seed 未变 ⇒ 原会话仍可读
+    assert v.get_secret(tok, 'K')['value'] == 'V'
+
+    # 连续第二次：1 → 2，且上一代被清理
+    res2 = v.rotate_kek(tok)
+    assert res2['status'] == 'ok', res2
+    assert res2['kek_gen'] == 2
+    assert store.has('%s#g2' % ident) and not store.has('%s#g1' % ident)
+    assert v.get_secret(tok, 'K')['value'] == 'V'
+
+
+def test_vault2_rotate_kek_keyring_delete_lag_keeps_pending(tmp_path, monkeypatch):
+    """**delete_lag**：`delete_password` 没抛异常但条目仍在 → 绝不许标 cleaned=1（I3）。
+
+    这是 lead 附加要求 ① 的可执行断言：只判"没抛异常"的实现会在这里红。
+    """
+    store = fk.FakeKeyring()
+    monkeypatch.setattr(vault2, 'probe_keyring', lambda: (fk.FakeKeyringModule(store), 'ok'))
+    monkeypatch.setenv(vault2.PROTECTION_ENV, vault2.PROTECTION_KEYRING)
+    monkeypatch.delenv(vault2.PASSPHRASE_ENV, raising=False)
+
+    v = vault2.Vault2(vault_dir=str(tmp_path / 'v2'))
+    reg = v.register('lag-u', '123456', security_level='L2')
+    ident = reg['identity_id']
+    auth = v.auth(ident, reg['machine_id'], '123456')
+    tok = auth['session_token']
+    v.set_secret(tok, 'K', 'V')
+
+    store.delete_lag = True                       # 删除"成功"但条目仍在
+    res = v.rotate_kek(tok)
+    assert res['status'] == 'ok', res
+    assert res['gc']['delete'] == 'lagged', res['gc']
+    assert res['gc']['cleaned'] == 0, 'delete_lag 下绝不能标 cleaned=1'
+    assert store.has(ident), 'lag 场景旧代确实还在'
+    # 日志保留 pending，等下次 GC 重试
+    assert v.status()['kek_retired_count'] == 1, v.status()
+    # 数据仍可读（DB 已指向新代）
+    assert v.get_secret(tok, 'K')['value'] == 'V'
+
+
+def test_vault2_rotate_kek_keyring_stale_read_aborts_without_commit(tmp_path, monkeypatch):
+    """**stale_read_once**：写后回读拿到旧值 → 必须中止、不提交 DB（旧代与信封不变）。
+
+    这是 lead 附加要求 ② 的可执行断言："我刚写成功了" ≠ "后端真的存了"。
+    """
+    store = fk.FakeKeyring()
+    monkeypatch.setattr(vault2, 'probe_keyring', lambda: (fk.FakeKeyringModule(store), 'ok'))
+    monkeypatch.setenv(vault2.PROTECTION_ENV, vault2.PROTECTION_KEYRING)
+    monkeypatch.delenv(vault2.PASSPHRASE_ENV, raising=False)
+
+    v = vault2.Vault2(vault_dir=str(tmp_path / 'v2'))
+    reg = v.register('stale-u', '123456', security_level='L2')
+    ident = reg['identity_id']
+    auth = v.auth(ident, reg['machine_id'], '123456')
+    tok = auth['session_token']
+    v.set_secret(tok, 'K', 'V')
+
+    # 定点到**新代 locator**：否则这个"一次性 stale"会被前面"读旧代 KEK"那一步消耗掉
+    # （那是测试替身的语义细节，不是实现问题）
+    store.stale_read_once = True
+    store.stale_targets = {'%s#g1' % ident}
+    res = v.rotate_kek(tok)
+    assert res['status'] == 'error', res
+    assert res['code'] == 'kek_readback_mismatch', res
+    # DB 未提交：代数仍是 0，旧代仍在，数据可读
+    assert v.status()['kek_gen'] == 0, v.status()
+    assert store.has(ident), '旧代 KEK 必须还在'
+    assert v.get_secret(tok, 'K')['value'] == 'V'
