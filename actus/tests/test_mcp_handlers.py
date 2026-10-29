@@ -217,6 +217,7 @@ _REQUIRED_TOOLS_BASELINE = frozenset([
     'actus_vault_delete',
     'actus_vault_get',
     'actus_vault_rotate_seed',
+    'actus_vault_rotate_kek',
     'actus_vault_set',
     'actus_visibility_get',
     'actus_visibility_set',
