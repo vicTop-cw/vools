@@ -339,6 +339,39 @@ def _build_parser():
     p_vault_migrate.add_argument('--all', action='store_true',
                                  help='迁移当前身份全部 legacy 行（默认即全部；保留兼容）')
 
+    # bug 子命令组（T0r2：bugreport.py 接线；账本 = {project_dir}/memory/bugs.md）
+    p_bug = sub.add_parser('bug', help='运行时 bug 账本（memory/bugs.md）')
+    bug_sub = p_bug.add_subparsers(dest='bug_command')
+
+    p_bug_list = bug_sub.add_parser('list', help='列出 bug 账本')
+    p_bug_list.add_argument('--status', default=None,
+                            help='按状态过滤（OPEN / FIXED / CLOSED / ...，大小写不敏感）')
+    p_bug_list.add_argument('--severity', default=None,
+                            choices=['critical', 'high', 'medium', 'low'],
+                            help='按级别过滤')
+    p_bug_list.add_argument('--json', action='store_true', dest='as_json',
+                            help='JSON 输出（扁平：bugs/count/path 直接在本层）')
+    p_bug_list.add_argument('--project-dir', default=None, dest='project_dir',
+                            help='账本所属项目根（缺省 = paths.repo_root()；'
+                                 '显式值时连同该项目的 _meta/call_log.db 一起使用）')
+
+    p_bug_report = bug_sub.add_parser('report', help='登记一条 OPEN bug')
+    p_bug_report.add_argument('summary', help='一句话摘要')
+    p_bug_report.add_argument('--detail', default=None, help='详细描述')
+    p_bug_report.add_argument('--severity', default='medium',
+                              choices=['critical', 'high', 'medium', 'low'])
+    p_bug_report.add_argument('--ref-call-id', type=int, default=None,
+                              dest='ref_call_id', help='关联 call_log seq（与 --source 至少一个）')
+    p_bug_report.add_argument('--source', default=None,
+                              help='可核实出处：项目根内真实文件（与 --ref-call-id 至少一个）')
+    p_bug_report.add_argument('--reported-by', default='cli', dest='reported_by')
+    p_bug_report.add_argument('--project-dir', default=None, dest='project_dir')
+    p_bug_report.add_argument('--json', action='store_true', dest='as_json')
+
+    p_bug_stats = bug_sub.add_parser('stats', help='账本统计（状态/级别分布）')
+    p_bug_stats.add_argument('--json', action='store_true', dest='as_json')
+    p_bug_stats.add_argument('--project-dir', default=None, dest='project_dir')
+
     # runtimes 子命令
     sub.add_parser('runtimes', help='列出可用多语言运行时')
 
@@ -1191,6 +1224,10 @@ def _dispatch(args) -> int:
     if args.command == 'selfdrive':
         return _cmd_selfdrive(args)
 
+    # bug 账本（T0r2：bugreport.py 接线）
+    if args.command == 'bug':
+        return _dispatch_bug(args)
+
     # Probe 命令（环境探测器，PROBE_PLAN.md §9 Phase 3）
     if args.command == 'probe':
         return _cmd_probe(args)
@@ -1445,6 +1482,122 @@ def _delete_secret_merged(meta_dir, key, scope, include_v1: bool = False) -> dic
         result['hint'] = ('默认只删 v2（权威来源）；旧库 v1 若也有副本，'
                           '请显式加 --all（破坏性）')
     return result
+
+
+def _bug_project_dir(raw):
+    """`--project-dir` 解析：显式值按 cwd 解析为绝对路径；缺省返回 None。
+
+    **缺省必须是 None（而不是 repo_root()）**：bugreport.bugs_path(None) 用
+    `paths.repo_root()` 定位账本、_resolve_ref_call_id(None) 用 `paths.meta_dir()`
+    定位 call_log（尊重 ACTUS_META_DIR 隔离）。若在这里先替换成 repo_root，
+    call_log 就会改读 <repo>/_meta，绕过 ACTUS_META_DIR（第 30 轮同族坑）。
+    """
+    if not raw:
+        return None
+    return os.path.abspath(os.path.expanduser(raw))
+
+
+def _bug_rows(project_dir, status=None, severity=None):
+    """复用 bugreport.bug_list()，在 CLI 层做 status/severity 过滤（不重写解析）。"""
+    from vools.actus.bugreport import bug_list
+    rows = bug_list(project_dir=project_dir)
+    if status:
+        rows = [r for r in rows
+                if str(r.get('status') or '').upper() == str(status).upper()]
+    if severity:
+        rows = [r for r in rows
+                if str(r.get('severity') or '').lower() == str(severity).lower()]
+    return rows
+
+
+def _dispatch_bug(args) -> int:
+    """`actus bug list|report|stats`：接线 bugreport.py（不重写账本逻辑）。"""
+    from vools.actus.bugreport import (BugreportError, bug_list, bugs_path,
+                                       report_bug)
+    import sys as _sys
+
+    command = getattr(args, 'bug_command', None)
+    project_dir = _bug_project_dir(getattr(args, 'project_dir', None))
+    if command is None:
+        print('用法: actus bug <list|report|stats>', file=_sys.stderr)
+        return 2
+
+    if command == 'list':
+        rows = _bug_rows(project_dir, getattr(args, 'status', None),
+                         getattr(args, 'severity', None))
+        path = bugs_path(project_dir)
+        if getattr(args, 'as_json', False):
+            # 扁平输出（硬要求）：不包 data 层
+            _out({'status': 'ok', 'bugs': rows, 'count': len(rows),
+                  'path': path.replace(os.sep, '/')})
+            return 0
+        if not rows:
+            print('📭 暂无 bug 记录（%s）' % path)
+            return 0
+        print('%-10s %-10s %-9s %-6s %-4s %s' %
+              ('ID', '状态', '级别', '命中', 'SEQ', '摘要'))
+        for row in rows:
+            print('%-10s %-10s %-9s %-6s %-4s %s' % (
+                row.get('id', ''), row.get('status', ''),
+                row.get('severity', ''), row.get('hits', 1),
+                row.get('seq', ''), (row.get('summary') or '')[:60]))
+        print('（共 %d 条，账本 %s）' % (len(rows), path))
+        return 0
+
+    if command == 'stats':
+        rows = bug_list(project_dir=project_dir)
+        by_status, by_severity = {}, {}
+        for row in rows:
+            status = str(row.get('status') or 'UNKNOWN').upper()
+            severity = str(row.get('severity') or 'unknown').lower()
+            by_status[status] = by_status.get(status, 0) + 1
+            by_severity[severity] = by_severity.get(severity, 0) + 1
+        data = {'status': 'ok', 'total': len(rows),
+                'open': by_status.get('OPEN', 0),
+                'by_status': by_status, 'by_severity': by_severity,
+                'path': bugs_path(project_dir).replace(os.sep, '/')}
+        if getattr(args, 'as_json', False):
+            _out(data)
+            return 0
+        print('bug 账本统计（%s）' % data['path'])
+        print('  总数: %d | OPEN: %d' % (data['total'], data['open']))
+        print('  按状态: %s' % (by_status or '{}'))
+        print('  按级别: %s' % (by_severity or '{}'))
+        return 0
+
+    if command == 'report':
+        try:
+            result = report_bug(
+                args.summary, detail=getattr(args, 'detail', None),
+                severity=getattr(args, 'severity', 'medium'),
+                ref_call_id=getattr(args, 'ref_call_id', None),
+                reported_by=getattr(args, 'reported_by', 'cli'),
+                project_dir=project_dir,
+                source=getattr(args, 'source', None))
+        except BugreportError as exc:
+            _out({'status': 'failed', 'error': {
+                'code': 'param_invalid', 'message': str(exc)}})
+            return 1
+        # 写操作：把落账路径明确打到 stderr（人类看得到；JSON 消费方看 path 字段）
+        print('[bug] 已写入账本: %s' % result['path'], file=_sys.stderr)
+        if getattr(args, 'as_json', False):
+            payload = dict(result)
+            payload['bug_status'] = payload.pop('status', 'OPEN')
+            payload['status'] = 'ok'
+            payload['path'] = str(payload.get('path', '')).replace(os.sep, '/')
+            _out(payload)
+            return 0
+        if result.get('duplicate'):
+            print('↺ 已存在同键记录：%s（命中累加为 %d）' %
+                  (result['id'], result.get('hits', 2)))
+        else:
+            print('✅ 已登记 %s [%s] OPEN  %s' %
+                  (result['id'], result.get('severity'), result['summary']))
+        print('   账本: %s' % result['path'])
+        return 0
+
+    print('用法: actus bug <list|report|stats>', file=_sys.stderr)
+    return 2
 
 
 def _dispatch_triggers(args) -> int:
