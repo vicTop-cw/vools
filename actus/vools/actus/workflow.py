@@ -64,7 +64,11 @@ class DAGScheduler:
 
         unknown: Dict[str, List[str]] = {}
         for nid, node in self.nodes.items():
-            for dep in (node.get('depends') or node.get('deps') or []):
+            # #2：依赖先去重。adj 是 set（一条边），in_degree 却按列表元素累加，
+            # 重复依赖 [a,a] 会让入度永远减不到 0 → 误报 dag_cycle。
+            deps = list(dict.fromkeys(
+                node.get('depends') or node.get('deps') or []))
+            for dep in deps:
                 if dep in self.nodes:
                     self.adj[dep].add(nid)
                     self.in_degree[nid] += 1
@@ -429,7 +433,15 @@ class WorkflowExecutor:
                 self._note_unparsable(
                     unparsable, where, value, '引用根不是本工作流的节点')
                 return value
-            return self._dereference(value, where, unparsable)
+            got = self._dereference(value, where, unparsable)
+            if got is None:
+                # #8：整串形态此前直接返回 None 且不留痕（内嵌形态则保留 token
+                # + unparsable）；两条路径语义必须一致，否则下游拿到 None 还
+                # 以为"取到了 null"，审计面也看不见。
+                self._note_unparsable(
+                    unparsable, where, value,
+                    '整串引用解析结果为 None（字段不存在或值为 null）')
+            return got
         if '$' not in value:
             return value
 

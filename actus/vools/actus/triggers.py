@@ -24,11 +24,14 @@ __all__ = [
 ]
 
 import json
+import logging
 import os
 import re
 import sys
 import threading
 import time
+
+logger = logging.getLogger(__name__)
 from typing import Callable, Dict, List, Optional
 
 
@@ -143,22 +146,85 @@ class CronExpr:
         ]
         return all(checks)
 
-    def next_fire(self, after: Optional[float] = None) -> float:
-        """计算下一次触发时间（Unix 时间戳）。"""
+    #: 硬保底：最多向前搜 1 年（分钟数）。超限返回 None，绝不无限扫。
+    _MAX_NEXT_FIRE_MINUTES = 366 * 24 * 60
+
+    def _calendar_possible(self) -> bool:
+        """快速判定"日期组合在日历上是否可能出现"。
+
+        `0 0 31 2 *`（2 月 31 日）这类表达式**永远**不匹配，旧实现仍会
+        扫 4 年 × 2.1M 次（实测 3.68s，public API 卡调用方线程）。这里先做
+        廉价判别：只要存在一个合法 (month, day) 组合就继续搜；2 月按 29 天
+        算（闰年可能出现），不误杀 `0 0 29 2 *`。
+        """
+        max_days = {1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30,
+                    7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
+        return any(day <= max_days[month]
+                   for month in self.fields[3] for day in self.fields[2])
+
+    def next_fire(self, after: Optional[float] = None) -> Optional[float]:
+        """计算下一次触发时间（Unix 时间戳）；搜索上限 1 年，超限返回 None。
+
+        返回 None 的两种情形（调用方必须显式处理，别再当"下一分钟"）：
+          1. 日期组合在日历上不可能（如 2 月 31 日）；
+          2. 1 年内没有匹配点（极稀疏表达式/星期错位）。
+        """
         if after is None:
             after = time.time()
+        if not self._calendar_possible():
+            return None
         t = time.localtime(after + 1)  # 至少 1 秒后
-
-        # 向前搜索，最多 4 年
-        for _ in range(366 * 24 * 60 * 4):
+        for _ in range(self._MAX_NEXT_FIRE_MINUTES):
             if self.matches(t):
                 return time.mktime(t)
-            # 增加 1 分钟
             t = time.localtime(time.mktime(t) + 60)
-        return after + 60  # 兜底
+        return None
 
 
 # ── 触发器模型 ──
+
+def _default_watch_root() -> str:
+    """watch 路径的默认根：仓库根（`ACTUS_REPO_ROOT > __file__ 推导`）。"""
+    from .paths import repo_root
+    return repo_root()
+
+
+def validate_watch_path(path, root: Optional[str] = None,
+                        allow_outside_root: bool = False) -> Optional[str]:
+    """校验 watch 触发器 path 是否被约束在 root 下。
+
+    返回 None 表示通过，否则返回可读错误串（调用方拼接/上报，不在这里抛）。
+    规则（第 41 轮 #9，默认严格；跨根必须显式 `allow_outside_root: true`）：
+      * `../` 上跳、绝对路径（Windows 盘符/UNC/`\\` 开头）一律拒绝；
+      * `realpath` 后逃出 root（含 symlink 间接逃逸）拒绝；
+      * 相对路径按 root 解析；**不要求路径已存在**（watch 可先注册后创建）；
+      * 含 `${...}` 模板占位符时注册期跳过——运行时解析成具体路径后，
+        `FileWatcher.add` 会再走一次本校验（消费点复查，防绕过）。
+    """
+    if allow_outside_root:
+        return None
+    if not isinstance(path, str) or not path.strip():
+        return 'watch 路径为空'
+    raw = path.strip()
+    if '${' in raw:
+        return None  # 模板占位符：注册期无法判定，运行时解析后再校验
+    if os.path.isabs(raw) or raw.startswith(('/', '\\')) \
+            or os.path.splitdrive(raw)[0]:
+        return f'watch 路径必须是相对路径（收到绝对路径: {path!r}）'
+    norm = raw.replace('\\', '/')
+    if any(seg == '..' for seg in norm.split('/')):
+        return f'watch 路径不允许 `..` 上跳: {path!r}'
+    root_real = os.path.realpath(root or _default_watch_root())
+    target = os.path.realpath(os.path.join(root_real, norm))
+    try:
+        common = os.path.commonpath([os.path.normcase(root_real),
+                                     os.path.normcase(target)])
+    except ValueError:
+        return f'watch 路径与根不在同一盘符: {path!r}'
+    if os.path.normcase(common) != os.path.normcase(root_real):
+        return f'watch 路径逃出允许根 {root_real!r}: {path!r}'
+    return None
+
 
 class Trigger:
     """单个触发器定义。"""
@@ -175,6 +241,8 @@ class Trigger:
         self.method = config.get('method', 'POST')
         self.key = config.get('key', '')
         self.args = config.get('args', {})
+        # #9 逃生阀：跨根监控必须显式声明（默认严格）
+        self.allow_outside_root = bool(config.get('allow_outside_root', False))
 
     def __repr__(self):
         return f'Trigger({self.action_id}, type={self.ttype})'
@@ -244,8 +312,9 @@ class CronScheduler:
                                 args=(job['trigger'],),
                                 daemon=True
                             ).start()
-                        except Exception:
-                            pass  # 触发失败不影响调度器
+                        except Exception as exc:
+                            logger.warning('cron 触发失败 %s: %s',
+                                           job['trigger'].action_id, exc)
 
             # 睡眠到下一分钟
             time.sleep(60 - time.localtime().tm_sec)
@@ -259,8 +328,9 @@ class FileWatcher:
     使用轮询 + mtime 检测文件变化（跨平台，零依赖）。
     """
 
-    def __init__(self, poll_interval: float = 1.0):
+    def __init__(self, poll_interval: float = 1.0, watch_root: Optional[str] = None):
         self._poll_interval = poll_interval
+        self._watch_root = watch_root
         self._watches: List[dict] = []
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -268,7 +338,20 @@ class FileWatcher:
         self._file_states: Dict[str, float] = {}  # path -> mtime
 
     def add(self, trigger: Trigger, callback: Callable):
-        """添加监控任务。"""
+        """添加监控任务。
+
+        消费点复查（#9）：注册期可能用模板占位符跳过校验，运行时若已是具体
+        路径，必须在真正 `os.scandir` 前再校验一次；同时把相对路径按 watch_root
+        展开，避免「校验的是 root/rel、实际扫的是 cwd/rel」两套真源。
+        """
+        if trigger.ttype == 'watch':
+            err = validate_watch_path(trigger.path, self._watch_root,
+                                      trigger.allow_outside_root)
+            if err:
+                raise ValueError(f'watch 触发器 path 非法: {err}')
+            if '${' not in trigger.path and not os.path.isabs(trigger.path):
+                trigger.path = os.path.join(
+                    self._watch_root or _default_watch_root(), trigger.path)
         with self._lock:
             self._watches.append({
                 'trigger': trigger,
@@ -310,14 +393,21 @@ class FileWatcher:
                     else:
                         self._file_states[path] = self._get_mtime(path)
 
-    def _scan_dir(self, dir_path: str, recursive: bool):
-        """扫描目录获取所有文件的 mtime。"""
+    def _scan_dir(self, dir_path: str, recursive: bool,
+                  out: Optional[dict] = None):
+        """扫描目录获取所有文件的 mtime。
+
+        `out` 允许传入一次性快照字典（`_detect_changes` 用）；不传则写
+        `self._file_states`（`_init_states` 用）。**只增不删是 #1 的根因**：
+        删除检测必须基于"本次快照"，不能基于从未清理过的全局状态。
+        """
+        target = self._file_states if out is None else out
         try:
             for entry in os.scandir(dir_path):
                 if entry.is_file():
-                    self._file_states[entry.path] = entry.stat().st_mtime
+                    target[entry.path] = entry.stat().st_mtime
                 elif recursive and entry.is_dir():
-                    self._scan_dir(entry.path, recursive)
+                    self._scan_dir(entry.path, recursive, target)
         except PermissionError:
             pass
 
@@ -355,8 +445,9 @@ class FileWatcher:
                             args=(trigger, changes),
                             daemon=True
                         ).start()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning('watch 触发失败 %s: %s',
+                                       trigger.action_id, exc)
 
     def _detect_changes(self, trigger: Trigger) -> List[dict]:
         """检测文件变化，返回变化列表。"""
@@ -367,9 +458,9 @@ class FileWatcher:
         old_states = dict(self._file_states)
 
         if os.path.isdir(path):
-            # 扫描更新 _file_states
-            self._scan_dir(path, trigger.recursive)
-            current_states = dict(self._file_states)
+            # 本次快照（不读全局 _file_states：它只增不删，会让删除检测失效）
+            current_states = {}
+            self._scan_dir(path, trigger.recursive, current_states)
         elif os.path.isfile(path):
             mtime = self._get_mtime(path)
             current_states = {path: mtime}
@@ -384,14 +475,25 @@ class FileWatcher:
             elif mtime > old_mtime and 'modify' in trigger.events:
                 changes.append({'type': 'modify', 'path': fp})
 
-        # 检测删除
+        # 删除检测只在本 watch 根下进行（防止 A watch 删除 B watch 的文件时
+        # 给 A 误报；此前用全局 old_states 判会把别人的文件也算进来）。
+        root_abs = os.path.normcase(os.path.abspath(path))
+
+        def _under_watch(fp: str) -> bool:
+            fp_abs = os.path.normcase(os.path.abspath(fp))
+            return fp_abs == root_abs or fp_abs.startswith(root_abs + os.sep)
+
         if 'delete' in trigger.events:
             for fp in list(old_states.keys()):
-                if fp not in current_states and not os.path.exists(fp):
+                if _under_watch(fp) and fp not in current_states \
+                        and not os.path.exists(fp):
                     changes.append({'type': 'delete', 'path': fp})
                     self._file_states.pop(fp, None)
 
-        # 更新状态
+        # 更新状态：本 watch 根下的陈旧项也清掉，避免 _file_states 无限增长
+        for fp in list(self._file_states):
+            if _under_watch(fp) and fp not in current_states:
+                self._file_states.pop(fp, None)
         self._file_states.update(current_states)
         return changes
 
@@ -543,13 +645,20 @@ class HotkeyListener:
         def _run():
             try:
                 e['callback'](e['trigger'])
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning('hotkey 触发失败 %s: %s',
+                               e['trigger'].action_id, exc)
             finally:
                 with self._lock:
                     self._inflight[idx] = False
 
-        threading.Thread(target=_run, daemon=True).start()
+        try:
+            threading.Thread(target=_run, daemon=True).start()
+        except Exception as exc:
+            with self._lock:
+                self._inflight[idx] = False
+            logger.warning('hotkey 触发线程启动失败 %s: %s',
+                           e['trigger'].action_id, exc)
 
 
 class TriggerEngine:
@@ -563,37 +672,52 @@ class TriggerEngine:
         engine.stop()
     """
 
-    def __init__(self, executor: Callable, meta_dir: str = ''):
+    def __init__(self, executor: Callable, meta_dir: str = '',
+                 watch_root: Optional[str] = None):
         """
         参数:
             executor: 回调函数 (trigger, event) -> None
             meta_dir: 仓库 _meta 目录。
+            watch_root: watch 触发器允许的根（缺省 paths.repo_root()；#9）。
         """
         self._executor = executor
         self._meta_dir = meta_dir
+        self._watch_root = watch_root
         self._cron = CronScheduler()
-        self._watcher = FileWatcher()
+        self._watcher = FileWatcher(watch_root=watch_root)
         self._hotkeys = HotkeyListener()
         self._webhooks = None  # lazy: WebhookServer 创建时注入
+        self._webhook_error: Optional[str] = None  # #5：依赖缺失原因，供 add_trigger 报错
         self._triggers: Dict[str, List[Trigger]] = {}
 
     def add_trigger(self, trigger: Trigger, _persist: bool = True):
-        """添加单个触发器（默认持久化到注册表；内部加载传 _persist=False）。"""
-        if trigger.action_id not in self._triggers:
-            self._triggers[trigger.action_id] = []
-        self._triggers[trigger.action_id].append(trigger)
+        """添加单个触发器（默认持久化到注册表；内部加载传 _persist=False）。
 
+        **顺序很关键（#4）**：先让子调度器注册/校验，全部成功后才写入
+        `self._triggers`。旧实现先 append 再校验，非法 cron 抛错后会留下
+        "幽灵触发器"（status 计数含它、后续 save_registry 还会把非法配置写盘）。
+        """
         if trigger.ttype == 'cron':
             self._cron.add(trigger, self._executor)
         elif trigger.ttype == 'watch':
+            # #9：注册期先校验（load_registry/load_from_index 也走这里，防绕过
+            # validate_trigger）；越界直接拒绝，必须显式 allow_outside_root。
+            err = validate_watch_path(trigger.path, self._watch_root,
+                                      trigger.allow_outside_root)
+            if err:
+                raise ValueError(f'watch 触发器 path 非法: {err}')
             self._watcher.add(trigger, self._executor)
         elif trigger.ttype == 'hotkey':
             self._hotkeys.add(trigger, self._executor)
         elif trigger.ttype == 'webhook':
             if self._webhooks is None:
                 self._init_webhooks()
+            if self._webhooks is None:
+                raise RuntimeError(self._webhook_error
+                                   or 'webhook 支持不可用（依赖缺失）')
             self._webhooks.add(trigger, self._executor)
         # on_startup 由 start() 处理
+        self._triggers.setdefault(trigger.action_id, []).append(trigger)
         if _persist:
             self.save_registry()
 
@@ -658,11 +782,15 @@ class TriggerEngine:
             index = json.load(f)
 
         for aid, info in index.get('actions', {}).items():
-            triggers_raw = info.get('triggers', [])
-            if triggers_raw:
-                for t_config in triggers_raw:
-                    trigger = Trigger(aid, t_config)
-                    self.add_trigger(trigger)
+            triggers_raw = info.get('triggers', []) or []
+            for t_config in triggers_raw:
+                # 单条坏配置只跳过自己并留 warning；旧实现一条坏就中止全部，
+                # 且中止前已部分载入（幽灵项）—— 与 load_registry 的逐条语义不一致。
+                try:
+                    self.add_trigger(Trigger(aid, t_config))
+                except Exception as exc:
+                    logger.warning('load_from_index: 跳过非法触发器 %s: %s',
+                                   aid, exc)
 
     def _init_webhooks(self):
         """懒初始化 WebhookServer（首次注册 webhook 触发器时创建）。"""
@@ -671,8 +799,13 @@ class TriggerEngine:
         try:
             from .webhook_server import WebhookServer
             self._webhooks = WebhookServer()
-        except Exception:
-            pass  # webhook 依赖缺失时不阻断引擎
+            self._webhook_error = None
+        except Exception as exc:
+            # 依赖缺失时不阻断引擎，但**必须保留可读原因**：add_trigger 要用它
+            # 抛 RuntimeError，而不是让调用方撞 None.add 的 AttributeError。
+            self._webhooks = None
+            self._webhook_error = f'webhook 支持不可用：{exc}'
+            logger.warning(self._webhook_error)
 
     def start(self):
         """启动引擎。"""
@@ -692,8 +825,9 @@ class TriggerEngine:
                             args=(t,),
                             daemon=True
                         ).start()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning('on_startup 触发失败 %s: %s',
+                                       t.action_id, exc)
 
     def stop(self):
         """停止引擎。"""
@@ -722,8 +856,12 @@ def parse_triggers(action_meta: dict, action_id: str = '') -> List[Trigger]:
     return [Trigger(action_id, t) for t in raw]
 
 
-def validate_trigger(config: dict) -> List[str]:
-    """校验单个触发器配置。"""
+def validate_trigger(config: dict, root: Optional[str] = None) -> List[str]:
+    """校验单个触发器配置。
+
+    root：watch 路径允许的根（缺省 paths.repo_root()）；显式传 tmp 根即可
+    在隔离环境里验证 #9 的越界规则。
+    """
     errors = []
     ttype = config.get('type', '')
     valid_types = ('cron', 'watch', 'webhook', 'hotkey', 'on_startup')
@@ -743,6 +881,12 @@ def validate_trigger(config: dict) -> List[str]:
     elif ttype == 'watch':
         if 'path' not in config:
             errors.append('watch 触发器缺少 path')
+        else:
+            err = validate_watch_path(
+                config.get('path'), root,
+                bool(config.get('allow_outside_root', False)))
+            if err:
+                errors.append(f'watch 路径非法: {err}')
 
     elif ttype == 'hotkey':
         if 'key' not in config:
