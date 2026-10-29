@@ -374,6 +374,18 @@ def kek_gen_of_meta(key_meta) -> int:
         return KEK_GEN_DEFAULT
 
 
+def _validate_secret_name(name) -> str:
+    """secret 名必须是**非空、非纯空白**字符串；否则抛 ValueError。
+
+    审计修复（第 32 轮）：改前 `set_secret/get_secret` 无校验，空名 `""` 也能
+    存/读 —— 空名条目在列表/审计里与"缺字段"难区分，也容易与调用方拼错的名字
+    碰撞。这里只校验"名字是否可用"，不改变合法名字的语义。
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError('secret 名必须是非空字符串（不能为空或纯空白）：%r' % (name,))
+    return name
+
+
 # ── Vault2 ──
 class Vault2:
     def __init__(self, vault_dir: str = None, migrate_legacy: bool = None):
@@ -1298,6 +1310,7 @@ class Vault2:
         `legacy: true` 让上层自行决定（显式迁移走 `migrate_legacy_rows()` 或写路径）。
         默认 `read_only=False` 完全保持旧行为（审计 + 懒迁移），兼容既有调用方。
         """
+        _validate_secret_name(name)
         if not self._exists():
             # 库不存在 = 没有密钥（与"查不到"同形，且**不建库**）
             return {"status": "error", "message": "凭证不存在"}
@@ -1414,6 +1427,7 @@ class Vault2:
                    security_level: str = None, expires_at: int = None,
                    rotate_interval_days: int = None, metadata: dict = None,
                    caller: str = None, cipher_alg: str = None) -> dict:
+        _validate_secret_name(name)
         ok, sess = self._verify_token(token)
         if not ok:
             return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
@@ -2919,8 +2933,10 @@ def rotate_kek(token: str, new_passphrase: str = None,
                                     apply=apply, mode=mode)
 
 
-def rotate_seed_key(token: str, caller: str = None) -> dict:
-    return _get_vault2().rotate_seed_key(token, caller)
+def rotate_seed_key(token: str, caller: str = None, apply: bool = False) -> dict:
+    """模块级快捷入口：默认**干跑**（apply=False），与 CLI/MCP 的确认语义对齐；
+    显式 apply=True 才真正轮换（不可逆操作不因缺省参数发生）。"""
+    return _get_vault2().rotate_seed_key(token, caller, apply=apply)
 
 
 def rotate_secret(token: str, name: str, new_value: str = None, caller: str = None) -> dict:
