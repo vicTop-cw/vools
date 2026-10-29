@@ -306,6 +306,22 @@ def _build_parser():
     p_vault_rotate.add_argument(
         '--yes', action='store_true',
         help='确认执行（破坏性操作，必须显式给出；缺省只打印警告并 rc=1）')
+    p_vault_rotate_kek = vault_sub.add_parser(
+        'rotate-kek',
+        help='轮换 KEK（包裹 seed 信封的钥匙；破坏性：需 --yes；--dry-run 零写）')
+    p_vault_rotate_kek.add_argument(
+        '--yes', action='store_true',
+        help='确认执行（破坏性操作，必须显式给出；--dry-run 不需要）')
+    p_vault_rotate_kek.add_argument(
+        '--dry-run', dest='dry_run', action='store_true',
+        help='干跑：只算参数、**零写**（不写 DB / keyring / 文件），不需要 --yes')
+    p_vault_rotate_kek.add_argument(
+        '--mode', choices=['passphrase', 'keyring', 'file-key'], default=None,
+        help='断言当前保护方式（与库不一致会明确拒绝；切换保护方式不是轮换）')
+    p_vault_rotate_kek.add_argument(
+        '--json', dest='json_output', action='store_true',
+        default=argparse.SUPPRESS,
+        help='机器可读输出：扁平 JSON（形状与 MCP 一致）')
     p_vault_rotate.add_argument(
         '--json', dest='json_output', action='store_true',
         default=argparse.SUPPRESS,
@@ -1358,6 +1374,26 @@ def _dispatch_vault(args) -> int:
         return _out_result(_delete_secret_merged(
             meta_dir, args.key, args.scope,
             include_v1=bool(getattr(args, 'all', False))))
+    if args.vault_command == 'rotate-kek':
+        dry = getattr(args, 'dry_run', False)
+        # 破坏性操作：非干跑必须显式 --yes；**干跑是只读的，不需要 --yes**
+        # （要求 --yes 才能干跑只会让人干脆跳过干跑）
+        if not dry and not getattr(args, 'yes', False):
+            msg = ('轮换 KEK 是破坏性操作：会更换包裹 seed 信封的钥匙（旧代进入清理流程）。'
+                   '确认执行请加 --yes；只想看会做什么请用 --dry-run（零写、不需要 --yes）。')
+            if getattr(args, 'json_output', False):
+                _out({'status': 'refused', 'code': 'confirmation_required',
+                      'message': msg})
+            else:
+                print('⚠️  ' + msg, file=sys.stderr)
+            return 1
+        from vools.actus.vault import rotate_kek_v2
+        r = rotate_kek_v2(dry_run=dry, mode=getattr(args, 'mode', None),
+                          caller='cli.vault')
+        for warning in (r.get('warnings') or []):
+            print('⚠️  ' + warning, file=sys.stderr)
+        return _out_result(r)
+
     if args.vault_command == 'rotate-seed':
         # 破坏性操作：**必须显式 --yes**。缺省只警告 + rc=1 ——
         # 不静默等 stdin（脚本里会挂住），也不悄悄执行。

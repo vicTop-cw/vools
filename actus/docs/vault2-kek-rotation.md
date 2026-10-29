@@ -211,7 +211,7 @@ GC 重试）；步骤 5 中崩溃 → 幂等（安全）。
 | **1 ✅ 已完成（第 20 轮）** | **passphrase 模式**轮换（单事务，`rotate_kek(new_passphrase=None)`） | 换 salt 后旧数据可读、旧信封无法再解；故障注入：UPDATE 抛错 → 全回滚 |
 | **2 ✅ 已完成（第 22 轮）** | **keyring 模式**：双代 + 日志 + GC（CLI/MCP 入口仍待第 4 步） | 6 个崩溃点注入（step1 前/后、commit 前/后、GC 前/后）均可恢复；孤儿条目不阻塞 |
 | **3 ✅ 已完成（第 23 轮）** | **file-key 模式**（同骨架；`O_EXCL`/0600；GC 扫目录**只报告**孤儿） | 同上；目录里旧 key 文件按日志删除，孤儿只报告不删 |
-| 4 | CLI `actus vault rotate-kek [--dry-run] [--all]` + MCP `actus_vault_rotate_kek` + 文档 | `--dry-run` 零写；失败 `failed_names` 不静默 |
+| **4 ✅ 已完成（第 24 轮）** | CLI `actus vault rotate-kek [--yes] [--dry-run] [--mode]` + MCP `actus_vault_rotate_kek` + 文档（**未加 `--all`**，理由见 §4.4.5） | `--dry-run` 三模式**三件套零写**（db / keyring / 目录文件数）；失败不静默 |
 
 #### 4.4.1 第 0 步已完成的内容（第 19 轮实测）
 
@@ -384,6 +384,54 @@ key_meta.kek_locator = {"kind": "file", "name": ".vault2.key#g1"}
   实跑 **6/6 符合预期**；6 崩溃点 × 不变式矩阵对 file-key 同样成立。
 - `tests/test_kek_rotation_crash_matrix.py`：**29 passed, 0 xfailed**，新增 5 条真实实现断言
   （happy path + `O_EXCL` 拒绝覆盖 + `unlink_lag` 保持 pending + 孤儿只报告不删 + 共享旧代不删）。
+
+#### 4.4.5 第 4 步已完成的内容（第 24 轮实测）
+
+**CLI**：`actus vault rotate-kek [--yes] [--dry-run] [--mode passphrase|keyring|file-key] [--json]`
+**MCP**：`actus_vault_rotate_kek`（`required: ['confirm']`；`dry_run` / `mode` 可选）
+**薄包装**：`vault.rotate_kek_v2(dry_run=False, mode=None, caller=None)`
+
+| 语义 | 行为 |
+|---|---|
+| 非干跑必须 `--yes` | 缺省：只打警告 + `rc=1`，**不执行**（不静默等 stdin） |
+| **干跑不需要 `--yes`** | `--dry-run` 是只读的；要求 `--yes` 才能干跑只会让人干脆跳过干跑 |
+| MCP `confirm` | `dry_run=true` 时忽略；否则必须 `true`，否则 `isError=True` + `code='confirmation_required'` |
+| `--mode` | **断言**当前保护方式；与库实际不符 → `mode_mismatch` 明确拒绝（**切换保护方式不是轮换**） |
+| warnings | CLI 打 stderr + 留在 JSON 体；MCP 留在返回体 |
+
+**`--dry-run` 三模式 = 三件套零写（实测断言）**
+```
+dry_run=true 时：
+  db 的 sha256 + mtime_ns          不变   ← 三种模式都验
+  目录文件数                       不变   ← passphrase / file-key（file-key 不出现 .vault2.key#g{N}）
+  keyring 条目数                   不变   ← keyring 模式（用可替换替身计数）
+  返回体 has dry_run:true / would_* 统计 / wrote_db:false / wrote_keyring:false / wrote_files:false
+```
+实现方式：`rotate_kek(apply=False)` 在**读阶段之后**直接返回（`_kek_dry_run`）——
+passphrase 的新 salt/新信封只在内存里算并回读验证；keyring **不** `set_password`；
+file-key **不**创建文件。
+
+⚠️ **测试口径说明**：`_v2_session()` 的 **auth 本身会写** `used_codes`/`last_auth_at`
+（那是登录，不是轮换）。所以"零写"断言必须先 prime 一次会话再测，
+否则会把登录的写算到 dry-run 头上 —— 这是测量口径问题，不是实现问题。
+
+**为什么**没加 `--all`（判断 + 理由）
+
+语义说不清，且没有好的失败答案：
+1. **"轮换一次"还是"每个身份各一次"？** KEK 是**每身份**的（`key_meta.kek_gen`），
+   所以 `--all` 只能是"逐身份各轮换一次"；
+2. **file-key 下 `.vault2.key` 可能被多个身份共享**（见 §4.4.4 的 `gc.delete='shared'`）——
+   逐身份轮换会让共享的第 0 代文件在"还没轮到的身份"那里仍然被引用，
+   轮换完成后它变成**孤儿**（按保守策略只报告不删）⇒ 目录里会积累文件；
+3. **部分失败没有好答案**：3 个身份里第 2 个失败时，KEK 层面要么继续（留下混合代数）、
+   要么回滚（但第 1 个已经换了，回滚要再换一次）。两种都不可取。
+
+⇒ **少一个语义模糊的参数，好过多一个需要解释的参数**。需要批量时由调用方自己循环，
+并对每个身份单独处理失败（返回值已带 `kek_gen_old/new`、`gc`、`warnings`，足以驱动重试）。
+
+**验收**：`tools/audit/verify_vault_kek_entry.py` — **41 passed, 0 failed**
+（三模式 × 无 `--yes`／干跑三件套零写／真执行字段与代数／`mode` 不符；
+MCP `confirm=false`、`dry_run` 免 confirm、`confirm=true`、工具 `required=['confirm']`）。
 
 **测试重点**（对应我们第 18 轮审计的盲区谱系）：每个阶段都必须有"**跨崩溃窗口**"
 用例（用故障注入/可 替换的 keyring 替身），不能只测 happy path；`--dry-run` 必须
