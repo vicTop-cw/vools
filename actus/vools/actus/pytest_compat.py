@@ -104,8 +104,16 @@ class _Mark:
 
     @staticmethod
     def xfail(condition=None, reason: str = None, strict: bool = False):
+        # C1：裸 `@pytest.mark.xfail`（无括号）时 condition 收到的是被装饰函数；
+        # 此时必须直接应用 mark 并返回原函数，而不是返回内部 deco（否则调用即 TypeError）。
+        if callable(condition) and not isinstance(condition, bool):
+            fn = condition
+            fn._mdtest_xfail = (True, strict, reason)
+            return fn
+
         def deco(fn):
-            fn._mdtest_xfail = (bool(condition if condition is not None else True), strict, reason)
+            fn._mdtest_xfail = (bool(condition if condition is not None else True),
+                                strict, reason)
             return fn
         return deco
 
@@ -149,6 +157,15 @@ def fixture(fn=None, **kwargs):
     return deco
 
 
+def finalize_fixtures(env: Dict[str, Any]) -> None:
+    """C3：结束 yield fixture 生命周期（next() 触发 teardown；幂等）。"""
+    for gen in env.pop('_fixture_generators', []):
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
 def resolve_fixture(name: str, env: Dict[str, Any]) -> Any:
     """按名解析夹具值：内建 > 注册夹具（递归解析其参数，记忆化）。"""
     memo: Dict[str, Any] = env.setdefault('_fixture_memo', {})
@@ -164,13 +181,28 @@ def resolve_fixture(name: str, env: Dict[str, Any]) -> Any:
         return cap
     if name in _FIXTURE_REGISTRY:
         fn = _FIXTURE_REGISTRY[name]
-        memo[name] = None  # 环路护栏
-        kwargs = {p: resolve_fixture(p, env)
-                  for p in inspect.signature(fn).parameters
-                  if p != 'self'}  # 类级 fixture 的 self 不是夹具
-        val = fn(**kwargs)
-        memo[name] = val
-        return val
+        # C5：显式检测依赖环（旧实现用 memo=None 静默兜底，环不会被报告）。
+        stack = env.setdefault('_fixture_resolving', [])
+        if name in stack:
+            chain = ' → '.join(stack + [name])
+            raise RuntimeError(f'fixture 依赖环: {chain}')
+        stack.append(name)
+        try:
+            kwargs = {p: resolve_fixture(p, env)
+                      for p in inspect.signature(fn).parameters
+                      if p != 'self'}  # 类级 fixture 的 self 不是夹具
+            # C3：yield fixture 必须驱动到第一个 yield 取值；teardown 由
+            # finalize_fixtures(env) 在用例结束时 next() 触发。
+            if inspect.isgeneratorfunction(fn):
+                gen = fn(**kwargs)
+                val = next(gen)
+                env.setdefault('_fixture_generators', []).append(gen)
+            else:
+                val = fn(**kwargs)
+            memo[name] = val
+            return val
+        finally:
+            stack.pop()
     raise LookupError(f'未知夹具: {name}（mdtest 内建: tmp_path/monkeypatch/capsys + @pytest.fixture）')
 
 
@@ -235,9 +267,16 @@ def call_method(cls, mname: str, env: Dict[str, Any]) -> None:
     inst = cls(**kwargs)
     sm = getattr(inst, 'setup_method', None)
     if callable(sm):
+        # C4：先看签名再决定传不传 method，**不要** catch TypeError 后重试 ——
+        # setup_method 体内抛的 TypeError 会被误判成"签名不匹配"而重复调用。
         try:
+            sm_params = [p for p in inspect.signature(sm).parameters.values()
+                         if p.name != 'self']
+        except (TypeError, ValueError):
+            sm_params = []
+        if sm_params:
             sm(getattr(inst, mname))
-        except TypeError:
+        else:
             sm()
     call(getattr(inst, mname), env)
 
@@ -294,9 +333,11 @@ class MonkeyPatch:
 
     def delattr(self, obj, name):
         old = getattr(obj, name, _MISSING)
+        if old is _MISSING:
+            # C2：与 pytest 一致 —— 删不存在的属性必须报错，不能静默 no-op。
+            raise AttributeError(name)
         self._undo.append((obj, name, old))
-        if old is not _MISSING:
-            delattr(obj, name)
+        delattr(obj, name)
 
     def setenv(self, name, value):
         old = os.environ.get(name, _MISSING)
