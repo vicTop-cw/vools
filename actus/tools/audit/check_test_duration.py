@@ -40,6 +40,22 @@ DEFAULT_BASELINE = os.path.join(HERE, 'test_duration_baseline.json')
 
 _DUR = re.compile(r'\s*([0-9.]+)s\s+(call|setup|teardown)\s+(tests[\\/]\S+)')
 
+# ── 耗时**不可比**的测试（第 23 轮实证）────────────────────────────────────
+# `test_readonly_commands_write_nothing[health]` 的耗时里 **~90% 是一次真实 HTTPS
+# 往返**（`health.check_network` → `urllib.urlopen`）。用 cProfile 实测：
+#   总 1.14s / urlopen 1.03s / 其余全部检查项合计 <0.1s
+# 于是它的耗时**随网络抖动**（本机 0.68s ⇄ 1.36s），拿它做"渐进退化"告警只会
+# 制造永久噪音，而且掩盖真正的产品退化。这里**显式列出**并在报告里打印，
+# 不静默跳过 —— 想恢复对其告警就把它从这里删掉（同时把基线调到实测上界）。
+NETWORK_BOUND = (
+    'tests/test_cli_no_side_effects.py::test_readonly_commands_write_nothing[health]',
+)
+
+
+def is_network_bound(name: str) -> bool:
+    return any(name == pattern or name.startswith(pattern)
+               for pattern in NETWORK_BOUND)
+
 
 def parse_durations(text):
     """pytest --durations=0 文本 → {test_name: call_seconds}（只取 call 阶段）。"""
@@ -71,6 +87,8 @@ def compare(current, baseline, ratio=1.5, min_delta=0.5, new_slow=5.0,
             min_baseline=0.2):
     warnings = []
     for name, sec in sorted(current.items(), key=lambda kv: -kv[1]):
+        if is_network_bound(name):
+            continue
         if name not in baseline:
             if sec > new_slow:
                 warnings.append(('NEW-SLOW', name, None, sec,
@@ -117,6 +135,7 @@ def main():
         print('[X] 没有解析到任何 duration 行（pytest 输出格式变了？）')
         return 2
 
+    skipped = sorted(n for n in current if is_network_bound(n))
     print('=== 本次最慢 %d 条 ===' % args.top)
     for name, sec in sorted(current.items(), key=lambda kv: -kv[1])[:args.top]:
         print('  %6.2fs  %s' % (sec, name))
@@ -131,6 +150,10 @@ def main():
         print('\nℹ️ 基线不存在（%s）；先跑 --update-baseline 建立基线' % args.baseline)
         return 0
 
+    if skipped:
+        print('\n⏭ 跳过耗时告警（真实网络 I/O 主导，随网络抖动，非产品退化）：')
+        for name in skipped:
+            print('   %.2fs  %s' % (current[name], name))
     baseline = json.load(open(args.baseline, encoding='utf-8'))
     warnings = compare(current, baseline, args.ratio, args.min_delta,
                        args.new_slow)

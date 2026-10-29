@@ -208,7 +208,7 @@ GC 重试）；步骤 5 中崩溃 → 幂等（安全）。
 | 阶段 | 内容 | 出口标准 |
 |---|---|---|
 | **0 ✅ 已完成（第 19 轮）** | `key_meta` 兼容字段 + `kek_retired` 表 + `status()` 诊断（**不改任何 KEK**） | 旧库打开/注册/轮换 seed 全部回归绿；旧行 `kek_gen` **按 0 视为**（见 §4.4.1，不迁移不回填） |
-| 1 | **passphrase 模式**轮换（单事务，`rotate_kek(new_passphrase=None)`） | 换 salt 后旧数据可读、旧信封无法再解；故障注入：UPDATE 抛错 → 全回滚 |
+| **1 ✅ 已完成（第 20 轮）** | **passphrase 模式**轮换（单事务，`rotate_kek(new_passphrase=None)`） | 换 salt 后旧数据可读、旧信封无法再解；故障注入：UPDATE 抛错 → 全回滚 |
 | 2 | **keyring 模式**：双代 + 日志 + GC；新 CLI/MCP 命令 | 6 个崩溃点注入（step1 前/后、commit 前/后、GC 前/后）均可恢复；孤儿条目不阻塞 |
 | 3 | **file-key 模式**（同骨架；`O_EXCL`/0600；GC 扫目录回收孤儿） | 同上；目录里旧 key 文件按日志删除 |
 | 4 | CLI `actus vault rotate-kek [--dry-run] [--all]` + MCP `actus_vault_rotate_kek` + 文档 | `--dry-run` 零写；失败 `failed_names` 不静默 |
@@ -254,6 +254,52 @@ CREATE TABLE IF NOT EXISTS kek_retired (
 
 验收脚本：`actus/tools/audit/verify_vault2_kek_step0.py`（22 项：旧库兼容 / 新库三字段 /
 表 0 行 / `status()` 零写 / register-auth-set-get-rotate 全照旧 / `_init_schema` 幂等 3 次）。
+
+#### 4.4.2 第 1 步已完成的内容（第 20 轮实测）
+
+**API**：`Vault2.rotate_kek(token, new_passphrase=None, caller=None)`（模块级 `vault2.rotate_kek(...)` 同签名）。
+
+**为什么 passphrase 能单事务**：KEK = `PBKDF2(passphrase, key_meta.salt)`，**salt 就在 DB 里**。
+"换 KEK" = 换 salt + 用新 KEK 重包 seed 信封 + `kek_gen += 1` —— 三件事是**同一个 UPDATE**。
+keyring / file-key 的 KEK 在**外部 store**，因此必须双代并存 + 日志 + GC（第 2/3 步）。
+
+**单事务实现**
+```
+读：_decode_seed_hex(identity_id, seed_key, protection, key_meta)      # 旧 KEK 解信封
+算：new_salt = random(16)；new_kek = PBKDF2(passphrase, new_salt)
+    new_meta = {kdf, salt:new_salt, iters, kek_gen: old+1}
+    new_envelope = ENC_V1 + Fernet(new_kek).encrypt(seed_hex)
+验：用新 KEK 解 new_envelope，必须 == seed_hex（否则**不写**）
+写：with self._db(): UPDATE identities SET seed_key=?, key_meta=? WHERE id=?   ← 单事务
+audit: rotate_kek（成功/失败都记）
+```
+失败语义：任何一步抛错 → 事务不 commit（`_db()` finally close ⇒ 回滚）⇒ 信封 / key_meta /
+`kek_gen` **全不变**，数据照旧可读（已用 `_apply_kek_rotation` 注入点实测）。
+
+**关键安全性质**：KEK 只包裹 `seed_key` 信封，**不包裹 secrets** ⇒ 轮换 KEK
+**不需要重新加密任何 secret**（返回体 `secrets_reencrypted: 0`）。因此它比 `rotate_seed_key`
+风险低得多：`rotate_seed_key` 要重加密全部 secrets + backups，KEK 轮换只动一行。
+
+**`kek_retired` 仍不写**：passphrase 模式没有外部条目可清理（旧 KEK 从未落盘，
+只活在旧 salt 的推导里）⇒ 第 0 步建的表保持 0 行（返回体 `kek_retired_written: false`）。
+
+**三种模式明确区分（不假装成功）**
+| 保护方式 | `rotate_kek` 行为 |
+|---|---|
+| `passphrase` | ✅ 单事务轮换（本步） |
+| `keyring` | ❌ `kek_rotation_unsupported` + 说明需要第 2 步（**零写**，实测快照不变） |
+| `file-key` | ❌ 同上，指向第 3 步 |
+| `unavailable` / `legacy-plaintext` | ❌ 同上 |
+
+**`new_passphrase` 语义**：`None` = 沿用当前口令、只换 salt（最常见）；显式给新口令 →
+同时换口令，返回体带 warning「必须同步 `ACTUS_VAULT2_PASSPHRASE`，否则下次打不开」，
+并**实测旧口令确实解不开**（明确报错，不静默）。
+
+**`status()` 反映代数**：轮换后 `kek_gen` 从 0 → 1（`kek_gen_max` 同步）；连续两次 → 2。
+
+**验收**：`actus/tools/audit/verify_vault2_kek_step1.py`（29 项：轮换成功 / seed 与 secrets
+密文未变 / 新实例重开可解 / status 代数 / 连续两次 / 写阶段故障全回滚 / 非 passphrase 拒绝且
+零写 / 换口令后旧口令失效、新口令可用）。
 
 **测试重点**（对应我们第 18 轮审计的盲区谱系）：每个阶段都必须有"**跨崩溃窗口**"
 用例（用故障注入/可 替换的 keyring 替身），不能只测 happy path；`--dry-run` 必须
