@@ -18,15 +18,35 @@
 __all__ = ['prepare', 'sandbox_env', 'guard_write', 'cleanup', 'JOB_LIMITS']
 
 import os
+import re
 import shutil
 
 # Windows Job Object 内存上限（字节）：512MB；POSIX 同样应用于 RLIMIT_AS
 JOB_LIMITS = {'memory_bytes': 512 * 1024 * 1024, 'cpu_seconds': 60}
 
+#: exec_id 只允许单段安全名（防 `../` 把 jail 根移出 artifacts/_sandbox）。
+_EXEC_ID_RE = re.compile(r'^[A-Za-z0-9._-]{1,64}$')
+
+
+def _validate_exec_id(exec_id) -> str:
+    """校验 exec_id 是单段安全名；非法抛 ValueError（不创建任何目录）。"""
+    value = '' if exec_id is None else str(exec_id)
+    if value in ('.', '..') or not _EXEC_ID_RE.match(value):
+        raise ValueError(
+            'exec_id 非法（只允许 [A-Za-z0-9._-]，长度 1~64，且不能是 . / ..）：%r'
+            % (exec_id,))
+    return value
+
 
 def prepare(artifacts_dir: str, exec_id: str) -> str:
-    """创建沙箱 jail 根：artifacts/_sandbox/<exec_id>/（docs/07 §5）。"""
-    root = os.path.join(artifacts_dir, '_sandbox', exec_id)
+    """创建沙箱 jail 根：artifacts/_sandbox/<exec_id>/（docs/07 §5）。
+
+    `exec_id` 先过 `_validate_exec_id`：`../escape` 之类会把 jail 根建到
+    `artifacts/_sandbox` 之外（沙箱边界被 exec_id 控制）；非法值直接
+    ValueError，**不创建任何目录**。
+    """
+    safe_id = _validate_exec_id(exec_id)
+    root = os.path.join(artifacts_dir, '_sandbox', safe_id)
     os.makedirs(root, exist_ok=True)
     return root
 
