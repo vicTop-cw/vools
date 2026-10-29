@@ -1612,6 +1612,53 @@ class Vault2:
     #      的文件**只报告不删除**（孤儿只占空间，误删被引用的代是灾难）。
     #   ⑤ 额外保护：file-key 的 KEK 是"随库"的，可能被**多个身份共用第 0 代文件** ——
     #      删旧代前必须确认没有别的身份还在引用（`_file_kek_referenced_by_others`）。
+    def _kek_dry_run(self, mode: str, identity_id: str, old_gen: int,
+                     key_meta_old, new_passphrase, seed_hex: str,
+                     caller: str = None) -> dict:
+        """KEK 轮换干跑：**零写**（不写 DB / keyring / 文件），只给统计。
+
+        三种模式的干跑语义不同，但"零写"是共同的硬契约：
+          * passphrase：新 salt/新 KEK/新信封**只在内存里**算并回读验证；
+          * keyring   ：只算 `locator_new`，**绝不 set_password**（不新增条目）；
+          * file-key  ：只算文件名，**绝不创建文件**（目录文件数不变）。
+        """
+        new_gen = old_gen + 1
+        would = {"kek_gen_old": old_gen, "kek_gen": new_gen,
+                 "mode": mode, "secrets_reencrypted": 0,
+                 "kek_retired_would_be_written": mode in (PROTECTION_KEYRING,
+                                                          PROTECTION_FILE)}
+        if mode == PROTECTION_PASSPHRASE:
+            passphrase = new_passphrase or self._passphrase
+            if not passphrase:
+                return {"status": "error", "code": "passphrase_unavailable",
+                        "dry_run": True, "mode": mode,
+                        "message": "当前实例没有可用的 passphrase（ACTUS_VAULT2_PASSPHRASE 未设置）"}
+            new_salt = secrets.token_bytes(16)
+            new_kek = hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"),
+                                          new_salt, PASSPHRASE_ITERS, 32)
+            envelope = ENVELOPE_PREFIX + _FernetBackend(new_kek).encrypt(seed_hex)
+            if _FernetBackend(new_kek).decrypt(envelope[len(ENVELOPE_PREFIX):]) != seed_hex:
+                return {"status": "error", "code": "kek_rotate_failed", "dry_run": True,
+                        "mode": mode, "message": "干跑自检失败：新信封回读与 seed 不一致"}
+            would.update({"would_generate_new_salt": True,
+                          "would_rotate_envelope": True,
+                          "passphrase_changed": bool(new_passphrase)})
+        elif mode == PROTECTION_KEYRING:
+            would.update({"locator_old": self._keyring_locator(identity_id, key_meta_old),
+                          "locator_new": '%s#g%d' % (identity_id, new_gen),
+                          "would_write_keyring_entry": True,
+                          "keyring_entries_written": 0})
+        else:  # file-key
+            would.update({"locator_old": self._file_locator(identity_id, key_meta_old),
+                          "locator_new": '%s#g%d' % (FILE_KEY_NAME, new_gen),
+                          "would_create_file": '%s#g%d' % (FILE_KEY_NAME, new_gen),
+                          "files_created": 0})
+        return {"status": "ok", "dry_run": True, "mode": mode,
+                "identity_id": identity_id,
+                "wrote_db": False, "wrote_keyring": False, "wrote_files": False,
+                "would": would,
+                "note": "干跑：只做了「当前 KEK 解出 seed」与「算新参数」，**未写任何存储**"}
+
     def _rotate_kek_filekey(self, identity_id: str, seed_hex: str,
                             key_meta_old, old_gen: int, caller: str = None) -> dict:
         name_old = self._file_locator(identity_id, key_meta_old)
@@ -1852,7 +1899,8 @@ class Vault2:
                          "**回读确认旧代已不在**时置 cleaned=1（delete_lag 场景）")}
 
     def rotate_kek(self, token: str, new_passphrase: str = None,
-                   caller: str = None) -> dict:
+                   caller: str = None, apply: bool = True,
+                   mode: str = None) -> dict:
         """轮换 passphrase 模式的 KEK（**单事务**；seed 与所有密文都不变）。
 
         安全前提：KEK 只包裹 `seed_key` 信封，不包裹 secrets —— 所以轮换 KEK
@@ -1869,12 +1917,20 @@ class Vault2:
             return {"status": "error", "code": "vault_not_found",
                     "message": "密钥库不存在（本方法绝不建库）"}
         self._ensure_ready()
-        mode = self.key_protection
+        requested_mode = mode                     # 调用方断言（可选）；不能覆盖它
+        mode_actual = self.key_protection
+        mode = mode_actual                        # 实际按当前保护方式轮换
         if mode not in (PROTECTION_PASSPHRASE, PROTECTION_KEYRING, PROTECTION_FILE):
             return {"status": "error", "code": "kek_rotation_unsupported",
                     "mode": mode,
                     "message": ("KEK 轮换已支持 passphrase / keyring / file-key 三种模式；"
                                 "%s 模式下没有可用 KEK，无法轮换。" % mode)}
+        if requested_mode and requested_mode != mode_actual:
+            return {"status": "error", "code": "mode_mismatch", "mode": mode_actual,
+                    "message": ("该库当前的 KEK 保护方式是 %r，不是你指定的 %r。"
+                                "**切换保护方式不是轮换**（需迁移 keyring/文件条目），本轮不支持；"
+                                "请去掉 --mode 或传 %r。"
+                                % (mode_actual, requested_mode, mode_actual))}
         ok, sess = self._verify_token(token)
         if not ok:
             return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
@@ -1897,6 +1953,14 @@ class Vault2:
                         reason="seed_unreadable: %s" % exc, caller=caller)
             return {"status": "error", "code": "seed_unreadable",
                     "message": "当前 KEK 解不开 seed 信封，无法轮换：%s" % exc}
+
+        if not apply:
+            # ── 干跑：读阶段已经验证过"当前 KEK 能解出 seed"，到这里**只算参数不落任何写**
+            #    passphrase：算新 salt/新 KEK/新信封在内存里验证（不写 DB）
+            #    keyring   ：只算 locator 与"会写一条 keyring 条目"，**不写 keyring**
+            #    file-key  ：只算文件名与"会创建一个文件"，**不创建文件**
+            return self._kek_dry_run(mode, identity_id, old_gen, key_meta_old,
+                                     new_passphrase, seed_hex, caller=caller)
 
         if mode == PROTECTION_KEYRING:
             return self._rotate_kek_keyring(identity_id, seed_hex, key_meta_old,
@@ -1959,6 +2023,9 @@ class Vault2:
                 "passphrase_changed": bool(new_passphrase),
                 "secrets_reencrypted": 0,       # KEK 只包信封，不包 secrets
                 "kek_retired_written": False,   # passphrase 无外部条目可留
+                # 与其他两种模式保持结构一致：passphrase 没有外部条目要删，
+                # 所以 gc 恒为 not_applicable（调用方不必按 mode 分支取字段）
+                "gc": {"delete": "not_applicable", "cleaned": 0},
                 "warnings": warnings,
                 "note": ("KEK 轮换只换信封的钥匙；seed 与所有 secrets 密文**未改动**"
                          "（故无需重新加密）。keyring/file-key 模式需第 2/3 步。")}
@@ -2847,8 +2914,9 @@ def delete_secret(token: str, name: str, caller: str = None) -> dict:
 
 
 def rotate_kek(token: str, new_passphrase: str = None,
-               caller: str = None) -> dict:
-    return _get_vault2().rotate_kek(token, new_passphrase, caller)
+               caller: str = None, apply: bool = True, mode: str = None) -> dict:
+    return _get_vault2().rotate_kek(token, new_passphrase, caller,
+                                    apply=apply, mode=mode)
 
 
 def rotate_seed_key(token: str, caller: str = None) -> dict:

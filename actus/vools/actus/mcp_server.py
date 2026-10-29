@@ -752,6 +752,21 @@ class MCPServer:
                              'properties': {
                                  'confirm': {'type': 'boolean',
                                              'description': '必须为 true 才执行（破坏性操作的显式确认）'}}}},
+            {'name': 'actus_vault_rotate_kek',
+             'description': ('轮换 KEK（包裹 seed_key 信封的钥匙）。**破坏性**：非干跑必须 '
+                             'confirm=true。dry_run=true 时**零写**（不写 DB / keyring / 文件）且不需要 confirm。'
+                             'mode 可选，用于断言当前保护方式（passphrase/keyring/file-key）；'
+                             '与库实际模式不符会明确拒绝（切换保护方式不是轮换）。'
+                             '返回 would_* 统计（干跑）或 gc/orphans/warnings（真跑）。'),
+             'inputSchema': {'type': 'object', 'required': ['confirm'],
+                             'properties': {
+                                 'confirm': {'type': 'boolean',
+                                             'description': '必须为 true 才执行（dry_run=true 时忽略）'},
+                                 'dry_run': {'type': 'boolean',
+                                             'description': '干跑：只算参数、零写'},
+                                 'mode': {'type': 'string',
+                                          'enum': ['passphrase', 'keyring', 'file-key'],
+                                          'description': '断言当前保护方式（可选）'}}}},
             {'name': 'actus_runtimes',
              'description': '列出所有可用的多语言运行时（python/shell/node/go/rust/ruby/php）',
              'inputSchema': {'type': 'object', 'properties': {}}},
@@ -2026,6 +2041,22 @@ class MCPServer:
                     'code': 'rotate_failed', 'message': str(e)}}, True)
             # warnings 全程留在返回体里（尤其 recovery_key_invalidated），不静默
             return text_result(r)
+        if name == 'actus_vault_rotate_kek':
+            dry = bool(args.get('dry_run'))
+            if not dry and args.get('confirm') is not True:
+                return text_result({'status': 'failed', 'error': {
+                    'code': 'confirmation_required',
+                    'message': ('轮换 KEK 是破坏性操作，必须显式传 confirm=true；'
+                                '只想预览请传 dry_run=true（零写）')}}, True)
+            from vools.actus.vault import rotate_kek_v2
+            try:
+                r = rotate_kek_v2(dry_run=dry, mode=args.get('mode'),
+                                  caller='mcp.vault')
+            except Exception as e:
+                return text_result({'status': 'failed', 'error': {
+                    'code': 'kek_rotate_failed', 'message': str(e)}}, True)
+            return text_result(r)
+
         if name == 'actus_runtimes':
             from vools.actus.runtimes import get_available_runtimes
             try:

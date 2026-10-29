@@ -882,6 +882,28 @@ def write_secret(name: str, value: str, scope: str = 'global',
     return {'status': 'ok', 'name': raw, 'source': 'v2', 'warnings': []}
 
 
+def rotate_kek_v2(dry_run: bool = False, mode: str = None,
+                  caller: str = None) -> dict:
+    """轮换 v2 身份的 KEK（CLI / MCP 共用**薄包装**）。
+
+    - 三种模式（passphrase / keyring / file-key）都由 `vault2.rotate_kek` 分派；
+    - `dry_run=True` → 透传 `apply=False`：**零写**（不写 DB / keyring / 文件）；
+    - KEK 只包裹 seed 信封 ⇒ 轮换后**会话仍有效**（master 未变），故不需要清缓存。
+    """
+    v2, token, reason = _v2_session()
+    if v2 is None:
+        return {"status": "refused", "code": "vault2_unavailable",
+                "message": ("v2 不可用，无法轮换 KEK：%s。"
+                            "两条出路：① 配置 v2 凭据（VAULT_IDENTITY_ID / "
+                            "VAULT_MACHINE_ID / VAULT_PIN）；② 先 register 身份" % reason)}
+    try:
+        return v2.rotate_kek(token, caller=caller,
+                             apply=not dry_run, mode=mode)
+    except Exception as exc:                       # noqa: BLE001 —— 统一出参契约
+        return {"status": "error", "code": "kek_rotate_failed",
+                "message": "%s: %s" % (type(exc).__name__, exc)}
+
+
 def rotate_seed_key_v2(caller: str = None) -> dict:
     """轮换 v2 身份的 `seed_key`（CLI / MCP 共用的**薄包装**）。
 
