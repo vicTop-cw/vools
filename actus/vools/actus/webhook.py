@@ -7,6 +7,7 @@ Python 内置 http.server 实现，支持 HMAC-SHA256 签名验证、
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import threading
@@ -15,15 +16,34 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, parse_qs
 
+logger = logging.getLogger(__name__)
+
+#: 请求体上限（W7）：超过即 413，避免无界读内存。
+MAX_BODY_BYTES = 1024 * 1024
+#: 并发分发上限（W7）：信号量限流，不无界建线程。
+MAX_DISPATCH_WORKERS = 4
+#: RateLimiter 最多跟踪的 IP 数（W8）：超限淘汰最老 key，防伪造 IP 撑爆内存。
+MAX_TRACKED_IPS = 10000
+
 
 class WebhookConfig:
     """Webhook 接收器配置。"""
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 8765,
+    def __init__(self, host: str = "127.0.0.1", port: int = 8765,
                  secret: str = "", require_signature: bool = True,
                  ip_whitelist: List[str] = None,
                  rate_limit_per_minute: int = 60,
-                 timestamp_window: int = 300):
+                 timestamp_window: int = 300,
+                 max_body_bytes: int = MAX_BODY_BYTES,
+                 max_dispatch_workers: int = MAX_DISPATCH_WORKERS):
+        # W1：require_signature=True 却给空 secret 是"看起来安全、实际可伪造"的
+        # 矛盾配置（空密钥 HMAC 人人能算），构造期直接 fail-closed。
+        if require_signature and not (secret or "").strip():
+            raise ValueError(
+                "WebhookConfig: require_signature=True 时必须配置非空 secret"
+                "（空密钥 HMAC 可被任意伪造）")
+        if max_dispatch_workers < 1:
+            raise ValueError("WebhookConfig: max_dispatch_workers 必须 ≥1")
         self.host = host
         self.port = port
         self.secret = secret
@@ -31,6 +51,8 @@ class WebhookConfig:
         self.ip_whitelist = ip_whitelist or []
         self.rate_limit_per_minute = rate_limit_per_minute
         self.timestamp_window = timestamp_window  # 秒
+        self.max_body_bytes = max_body_bytes
+        self.max_dispatch_workers = max_dispatch_workers
 
 
 class WebhookStats:
@@ -89,6 +111,10 @@ class RateLimiter:
         now = time.time()
         with self._lock:
             if client_ip not in self._requests:
+                # W8：key 只增不清会被伪造 IP 撑爆内存；超限先淘汰最老 key。
+                if len(self._requests) >= MAX_TRACKED_IPS:
+                    for old_ip in list(self._requests)[:MAX_TRACKED_IPS // 10 or 1]:
+                        self._requests.pop(old_ip, None)
                 self._requests[client_ip] = []
 
             # 清理 60 秒前的记录
@@ -118,8 +144,13 @@ class IPWhitelist:
             return True  # 无白名单配置则允许所有
 
         for pattern in self._patterns:
-            if pattern(ip):
-                return True
+            try:
+                if pattern(ip):
+                    return True
+            except (ValueError, TypeError):
+                # W5：非法 client IP（代理传坏值等）必须 fail-closed 成 403，
+                # 不能让 ValueError 从 handler 线程冒出去打挂连接。
+                return False
         return False
 
     @staticmethod
@@ -149,8 +180,11 @@ class WebhookReceiver:
         receiver.start_background()  # 非阻塞
      """
 
+    #: W2：接受签名的算法前缀（白名单，防 "anything=<hex>" 通过）。
+    _SIGNATURE_ALGOS = {"sha256": hashlib.sha256, "sha1": hashlib.sha1}
+
     def __init__(self, config: WebhookConfig = None):
-        self._config = config or WebhookConfig()
+        self._config = config or WebhookConfig(require_signature=False)
         self._routes: Dict[str, str] = {}  # event_type -> action_id
         self._fallback_action: Optional[str] = None
         self._server: Optional[HTTPServer] = None
@@ -164,6 +198,12 @@ class WebhookReceiver:
         # start_background() 与线程里 bind 之间的握手：见 start_background 的说明
         self._ready = threading.Event()
         self._start_error: Optional[BaseException] = None
+        # W6/W7：异步分发的并发上限与失败观测面（响应体不能等在途动作结果，
+        # 但失败必须可查：get_status() 暴露计数与最后错误）。
+        self._dispatch_slots = threading.BoundedSemaphore(
+            getattr(self._config, "max_dispatch_workers", MAX_DISPATCH_WORKERS))
+        self._dispatch_errors = 0
+        self._last_dispatch_error: Optional[str] = None
 
     @property
     def stats(self) -> WebhookStats:
@@ -336,8 +376,23 @@ class WebhookReceiver:
             self._respond(handler, 429, {"error": "rate_limited"})
             return
 
-        # 3. 读取请求体
-        content_length = int(handler.headers.get("Content-Length", 0))
+        # 3. 读取请求体（W4：非整数/负值 → 400；W7：超上限 → 413）
+        try:
+            content_length = int(handler.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            self._stats.record_request(False, "format")
+            self._respond(handler, 400, {"error": "invalid_content_length"})
+            return
+        if content_length < 0:
+            self._stats.record_request(False, "format")
+            self._respond(handler, 400, {"error": "invalid_content_length"})
+            return
+        max_body = int(getattr(self._config, "max_body_bytes", MAX_BODY_BYTES))
+        if content_length > max_body:
+            self._stats.record_request(False, "format")
+            self._respond(handler, 413, {"error": "payload_too_large",
+                                         "max_body_bytes": max_body})
+            return
         body = handler.rfile.read(content_length) if content_length else b""
 
         # 4. 签名验证
@@ -366,14 +421,17 @@ class WebhookReceiver:
         # 7. 时间戳防重放
         ts = payload.get("timestamp") or handler.headers.get("X-Request-Timestamp")
         if ts and self._config.timestamp_window:
+            # W3：非法 timestamp 不能静默放行（否则写个 "abc" 就绕过防重放）。
             try:
                 ts_float = float(ts)
-                if abs(time.time() - ts_float) > self._config.timestamp_window:
-                    self._stats.record_request(False, "format")
-                    self._respond(handler, 400, {"error": "timestamp_expired"})
-                    return
             except (ValueError, TypeError):
-                pass
+                self._stats.record_request(False, "format")
+                self._respond(handler, 400, {"error": "invalid_timestamp"})
+                return
+            if abs(time.time() - ts_float) > self._config.timestamp_window:
+                self._stats.record_request(False, "format")
+                self._respond(handler, 400, {"error": "timestamp_expired"})
+                return
 
         # 8. 路由解析
         action_id = self.resolve_action(event_type)
@@ -385,17 +443,46 @@ class WebhookReceiver:
         self._stats.record_request(True)
 
         if action_id:
-            # 异步触发动作（不阻塞 HTTP 响应）
-            threading.Thread(
-                target=self._dispatch_action,
-                args=(action_id, event_type, payload),
-                daemon=True
-            ).start()
+            # W7：有界并发（不无界建线程）；W6：排队失败必须诚实告知，
+            # 不谎报 dispatched。
+            acquired = self._dispatch_slots.acquire(blocking=False)
+            if not acquired:
+                self._stats.record_request(False, "rate")
+                self._respond(handler, 503, {
+                    "status": "busy",
+                    "error": "dispatch_saturated",
+                    "event": event_type,
+                    "action": action_id,
+                    "dispatched": False
+                })
+                return
+
+            def _run_dispatch():
+                try:
+                    self._dispatch_action(action_id, event_type, payload)
+                finally:
+                    self._dispatch_slots.release()
+
+            try:
+                threading.Thread(target=_run_dispatch, daemon=True).start()
+            except Exception as exc:
+                self._dispatch_slots.release()
+                self._record_dispatch_error(str(exc))
+                self._stats.record_request(False, "rate")
+                self._respond(handler, 503, {
+                    "status": "busy",
+                    "error": "dispatch_thread_failed",
+                    "event": event_type,
+                    "action": action_id,
+                    "dispatched": False
+                })
+                return
             self._respond(handler, 200, {
                 "status": "ok",
                 "event": event_type,
                 "action": action_id,
-                "dispatched": True
+                "dispatched": True,
+                "async": True   # 只是已排队，动作结果需查 get_status()
             })
         else:
             self._respond(handler, 202, {
@@ -407,22 +494,25 @@ class WebhookReceiver:
             })
 
     def _verify_signature(self, body: bytes, signature: str) -> bool:
-        """验证 HMAC-SHA256 签名。"""
+        """验证 HMAC 签名（W1/W2：空密钥恒 False；前缀必须在白名单内）。"""
+        secret = self._config.secret or ""
+        # W1：空密钥 HMAC 任何人都能算 —— 绝不作为"有效签名"放行。
+        if not secret.strip():
+            return False
         if not signature:
             return not self._config.require_signature
 
-        # 支持 "sha256=..." 格式
+        # W2：只接受 sha256= / sha1= 前缀；裸 hex 视为历史 sha256 兼容。
         if "=" in signature:
-            _, sig_hex = signature.split("=", 1)
+            prefix, sig_hex = signature.split("=", 1)
+            algo = self._SIGNATURE_ALGOS.get(prefix.strip().lower())
+            if algo is None:
+                return False
         else:
             sig_hex = signature
+            algo = hashlib.sha256
 
-        expected = hmac.new(
-            self._config.secret.encode("utf-8"),
-            body,
-            hashlib.sha256
-        ).hexdigest()
-
+        expected = hmac.new(secret.encode("utf-8"), body, algo).hexdigest()
         return hmac.compare_digest(expected, sig_hex)
 
     def _dispatch_action(self, action_id: str, event_type: str, payload: dict):
@@ -445,9 +535,17 @@ class WebhookReceiver:
                 "triggered_by": "webhook"
             })
         except Exception as e:
-            # 记录但不抛出（异步上下文）
-            print(f"⚠️  Webhook 触发动作失败 [{action_id}]: {e}")
+            # W6：异步上下文不向请求抛，但**不许静默**：结构化日志 + 状态面
+            # （get_status().dispatch 可查计数与最后错误）。返回值保持 None 以兼容
+            # 既有 `_dispatch_action` 调用契约（tests/test_silent_import_bugs.py）。
+            self._record_dispatch_error(f"{action_id}: {e}")
+            logger.warning("Webhook 触发动作失败 [%s]: %s", action_id, e)
             return None
+
+    def _record_dispatch_error(self, message: str) -> None:
+        """W6：记录一次异步分发失败（结构化观测面，不向请求抛）。"""
+        self._dispatch_errors = getattr(self, "_dispatch_errors", 0) + 1
+        self._last_dispatch_error = message
 
     def _log_request(self, client_ip: str, event_type: str,
                      action_id: str, payload: dict):
@@ -480,7 +578,11 @@ class WebhookReceiver:
                 "ip_whitelist": self._config.ip_whitelist
             },
             "routes": self._routes,
-            "stats": self._stats.to_dict()
+            "stats": self._stats.to_dict(),
+            "dispatch": {
+                "errors": getattr(self, "_dispatch_errors", 0),
+                "last_error": getattr(self, "_last_dispatch_error", None),
+            },
         }
 
     # ── HTTP 响应辅助 ──
@@ -501,7 +603,7 @@ class WebhookReceiver:
 
 # ── 便捷函数 ──
 
-def create_receiver(host: str = "0.0.0.0", port: int = 8765,
+def create_receiver(host: str = "127.0.0.1", port: int = 8765,
                     secret: str = "", require_signature: bool = True,
                     ip_whitelist: List[str] = None) -> WebhookReceiver:
     """便捷函数：创建 Webhook 接收器。"""
@@ -513,7 +615,7 @@ def create_receiver(host: str = "0.0.0.0", port: int = 8765,
     return WebhookReceiver(config)
 
 
-def start_webhook(host: str = "0.0.0.0", port: int = 8765,
+def start_webhook(host: str = "127.0.0.1", port: int = 8765,
                   secret: str = "", **kwargs) -> WebhookReceiver:
     """便捷函数：创建并启动 Webhook 接收器（阻塞）。"""
     receiver = create_receiver(host=host, port=port, secret=secret, **kwargs)
@@ -521,7 +623,7 @@ def start_webhook(host: str = "0.0.0.0", port: int = 8765,
     return receiver
 
 
-def start_webhook_background(host: str = "0.0.0.0", port: int = 8765,
+def start_webhook_background(host: str = "127.0.0.1", port: int = 8765,
                              secret: str = "",
                              **kwargs) -> WebhookReceiver:
     """便捷函数：创建并启动 Webhook 接收器（后台）。"""
