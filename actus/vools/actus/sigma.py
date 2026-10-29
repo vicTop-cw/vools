@@ -2342,28 +2342,72 @@ def _fn_len(xs):
 
 
 def _fn_min(*args):
+    # A2（第 32 轮）：空列表/零实参改前抛裸 ValueError（`min() iterable argument
+    # is empty`），与同族 `_fn_index` 的结构化 ShapeError 不一致 —— 上层无法把
+    # "spec 输入不合法"与"引擎 bug"区分。现在统一走 _raise_error('ShapeError')。
+    if not args:
+        _raise_error('ShapeError', 'min: no arguments')
     if len(args) == 1:
-        return min(_require_list(args[0], 'min'))
+        xs = _require_list(args[0], 'min')
+        if not xs:
+            _raise_error('ShapeError', 'min: empty list')
+        return min(xs)
     return min(_require_int(a, 'min') for a in args)
 
 
 def _fn_max(*args):
+    # A2（第 32 轮）：同 _fn_min —— 空输入结构化报错，不抛裸 ValueError。
+    if not args:
+        _raise_error('ShapeError', 'max: no arguments')
     if len(args) == 1:
-        return max(_require_list(args[0], 'max'))
+        xs = _require_list(args[0], 'max')
+        if not xs:
+            _raise_error('ShapeError', 'max: empty list')
+        return max(xs)
     return max(_require_int(a, 'max') for a in args)
 
 
 def _fn_fold_add(xs):
+    # A3（第 32 轮）：混合类型（`[1,[2,3]]`）/ 空行 / 行尾非整数改前抛裸
+    # TypeError/IndexError。现在先判形状与类型，违规统一结构化报错。
     _require_list(xs, 'fold_add')
-    if xs and all(isinstance(x, list) for x in xs):
-        return sum(x[-1] for x in xs)
-    return sum(xs)
+    if not xs:
+        return 0
+    if all(isinstance(x, list) for x in xs):
+        last_values = []
+        for i, row in enumerate(xs):
+            if not row:
+                _raise_error('ShapeError', f'fold_add: row {i} is empty')
+            last = row[-1]
+            if not isinstance(last, int) or isinstance(last, bool):
+                _raise_error('TypeError',
+                             'fold_add: row %d last element expected int, got %s'
+                             % (i, type(last).__name__))
+            last_values.append(last)
+        return sum(last_values)
+    if all(isinstance(x, int) and not isinstance(x, bool) for x in xs):
+        return sum(xs)
+    _raise_error('TypeError',
+                 'fold_add: list must be all ints or all rows (mixed types)')
 
 
 def _fn_map(xs, field):
+    # A1（第 32 轮）：字段下标越界 / 行不是列表改前抛裸 IndexError/TypeError。
+    # 按 `_fn_index` 的既有模式给结构化错误（ShapeError / TypeError）。
     _require_list(xs, 'map')
     _require_int(field, 'map')
-    return [x[field] for x in xs]
+    out = []
+    for i, row in enumerate(xs):
+        if not isinstance(row, list):
+            _raise_error('TypeError',
+                         'map: row %d expected a list, got %s'
+                         % (i, type(row).__name__))
+        if field >= len(row) or field < -len(row):
+            _raise_error('ShapeError',
+                         'map: field %d out of range for row %d of len %d'
+                         % (field, i, len(row)))
+        out.append(row[field])
+    return out
 
 
 def _fold_ints(fn_name):
@@ -2753,6 +2797,14 @@ class SigmaEngine(_ExprEvaluator):
             ev = eval_expr(x)
             if isinstance(ev, tuple) and len(ev) == 2:
                 return _to_plain(ev)
+            if isinstance(ev, str) and ev in ERROR_CLASSES:
+                # A4（第 32 轮）：负向用例 `| 0 ⊘ 0 | ⊥ DivByZero |` 的 input
+                # 求值结果是**命名错误哨兵**（'DivByZero'），不是普通值。改前这里
+                # 直接 `return x` 把原始串 '0 ⊘ 0' 当输入 → 引擎不报错 → judge 判
+                # WA（"expected error DivByZero, got '0 ⊘ 0'"），任何带负向用例的
+                # 合法 spec 都恒 exit 1（假失败）。现在把哨兵抛成对应的命名错误，
+                # run_corpus 的 expected-error 分支即可正确判定。
+                _raise_error(ev, 'corpus input evaluated to %s: %s' % (ev, x))
             return x
         return x
 
@@ -2765,10 +2817,13 @@ class SigmaEngine(_ExprEvaluator):
         for op in order:
             name = op.get('name')
             for t in op.get('tests') or []:
-                inputs = [self._resolve_input_node(v) for v in (t.get('input') or [])]
                 want_err = t.get('error')
                 want_out = t.get('output')
                 try:
+                    # A4：输入解析也放进 try —— 它可能抛出"输入触发的命名错误"
+                    # （负向用例）或 '$_' 前置错误，必须落到下面的结构化分支，
+                    # 而不是从 run_corpus 里逃逸把整个 judge 打断。
+                    inputs = [self._resolve_input_node(v) for v in (t.get('input') or [])]
                     got = self.eval(name, inputs)
                 except IronLawViolation as exc:
                     got_name = getattr(exc, 'name', None) or type(exc).__name__
