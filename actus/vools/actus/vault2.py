@@ -1422,6 +1422,126 @@ class Vault2:
         # 旧 TOTP 随 seed 失效；留着只会在极小概率下与新码撞上而误判"重放"
         conn.execute("DELETE FROM used_codes WHERE identity_id=?", (identity_id,))
 
+    # ── KEK 轮换 · 第 1 步：passphrase 模式（单事务）────────────────────
+    #
+    # 为什么 passphrase 模式能"单事务"：KEK 不是外部存储的密钥，而是
+    # `PBKDF2(passphrase, key_meta.salt)` —— **salt 就在 DB 里**。于是"换 KEK"
+    # = 换 salt + 用新 KEK 重包 seed 信封 + `kek_gen += 1`，三件事同一个 UPDATE。
+    # keyring / file-key 的 KEK 在**外部 store**，必须双代并存 + 日志 + GC
+    # （设计文档第 2/3 步），本轮**明确拒绝**，不假装成功。
+
+    def _apply_kek_rotation(self, conn, identity_id, new_envelope, new_meta):
+        """KEK 轮换的写阶段（单独成方法：便于注入失败验证事务回滚）。"""
+        conn.execute(
+            "UPDATE identities SET seed_key=?, key_meta=? WHERE id=?",
+            (new_envelope, new_meta, identity_id))
+
+    def rotate_kek(self, token: str, new_passphrase: str = None,
+                   caller: str = None) -> dict:
+        """轮换 passphrase 模式的 KEK（**单事务**；seed 与所有密文都不变）。
+
+        安全前提：KEK 只包裹 `seed_key` 信封，不包裹 secrets —— 所以轮换 KEK
+        **不需要**重新加密任何 secret（那是 `rotate_seed_key` 的事），数据零风险。
+
+        `new_passphrase=None` → 沿用当前口令、只换 salt（最常见：怀疑 salt/信封
+        被离线分析、或定期轮换）；显式给新口令 → 同时换口令（调用方必须同步更新
+        `ACTUS_VAULT2_PASSPHRASE`，否则下次打不开，返回值里会明确警告）。
+
+        `kek_retired`：passphrase 模式**没有外部条目要清理**（旧 KEK 从未落盘，
+        只活在旧 salt 的推导里），所以本轮**不写任何行**（第 0 步建的表保持 0 行）。
+        """
+        if not self._exists():
+            return {"status": "error", "code": "vault_not_found",
+                    "message": "密钥库不存在（本方法绝不建库）"}
+        self._ensure_ready()
+        mode = self.key_protection
+        if mode != PROTECTION_PASSPHRASE:
+            return {"status": "error", "code": "kek_rotation_unsupported",
+                    "mode": mode,
+                    "message": ("KEK 轮换当前只支持 passphrase 模式；%s 模式的 KEK 在外部 "
+                                "store，需要双代并存 + 轮换日志 + GC（设计文档第 2/3 步）。"
+                                "本轮**明确拒绝**，不会假装成功。" % mode)}
+        ok, sess = self._verify_token(token)
+        if not ok:
+            return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
+        identity_id = sess["identity_id"]
+
+        with self._db() as conn:
+            row = conn.execute(
+                "SELECT seed_key, key_protection, key_meta FROM identities WHERE id=?",
+                (identity_id,)).fetchone()
+        if not row:
+            return {"status": "error", "message": "身份不存在"}
+        stored_old, protection, key_meta_old = row
+        old_gen = kek_gen_of_meta(key_meta_old)
+
+        try:
+            seed_hex = self._decode_seed_hex(identity_id, stored_old, protection,
+                                             key_meta_old)
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="seed_unreadable: %s" % exc, caller=caller)
+            return {"status": "error", "code": "seed_unreadable",
+                    "message": "当前 KEK 解不开 seed 信封，无法轮换：%s" % exc}
+
+        passphrase = new_passphrase or self._passphrase
+        if not passphrase:
+            return {"status": "error", "code": "passphrase_unavailable",
+                    "message": "当前实例没有可用的 passphrase（ACTUS_VAULT2_PASSPHRASE 未设置）"}
+
+        new_salt = secrets.token_bytes(16)
+        new_kek = hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"),
+                                      new_salt, PASSPHRASE_ITERS, 32)
+        new_gen = old_gen + 1
+        new_meta = json.dumps({"kdf": "pbkdf2-sha256", "salt": new_salt.hex(),
+                               "iters": PASSPHRASE_ITERS, KEK_GEN_FIELD: new_gen},
+                              ensure_ascii=False)
+        new_envelope = ENVELOPE_PREFIX + _FernetBackend(new_kek).encrypt(seed_hex)
+
+        # 写前验证：新信封必须能用新 KEK 解回**同一个 seed**（否则绝不写）
+        try:
+            if _FernetBackend(new_kek).decrypt(new_envelope[len(ENVELOPE_PREFIX):]) != seed_hex:
+                raise ValueError("新信封回读与 seed 不一致")
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="envelope_verify_failed: %s" % exc, caller=caller)
+            return {"status": "error", "code": "kek_rotate_failed",
+                    "message": "轮换中止（磁盘未改动）：%s" % exc}
+
+        # ── 写阶段：单事务（抛错即整体回滚）──
+        try:
+            with self._db() as conn:
+                self._apply_kek_rotation(conn, identity_id, new_envelope, new_meta)
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="write_phase: %s" % exc, caller=caller)
+            return {"status": "error", "code": "kek_rotate_failed",
+                    "message": "轮换写阶段失败（事务已回滚）：%s: %s"
+                               % (type(exc).__name__, exc)}
+
+        if new_passphrase:
+            self._passphrase = new_passphrase           # 本进程后续操作使用新口令
+
+        warnings = []
+        if new_passphrase:
+            warnings.append("passphrase 已更换：必须把 ACTUS_VAULT2_PASSPHRASE 同步为新口令，"
+                            "否则下次打开会解不开 seed 信封")
+        self._audit("rotate_kek", identity_id, success=True,
+                    target="passphrase kek_gen=%d" % new_gen, caller=caller)
+        return {"status": "ok",
+                "mode": "passphrase",
+                "identity_id": identity_id,
+                "kek_gen_old": old_gen,
+                "kek_gen": new_gen,
+                "salt_rotated": True,
+                "envelope_rotated": True,
+                "passphrase_changed": bool(new_passphrase),
+                "secrets_reencrypted": 0,       # KEK 只包信封，不包 secrets
+                "kek_retired_written": False,   # passphrase 无外部条目可留
+                "warnings": warnings,
+                "note": ("KEK 轮换只换信封的钥匙；seed 与所有 secrets 密文**未改动**"
+                         "（故无需重新加密）。keyring/file-key 模式需第 2/3 步。")}
+
     def rotate_seed_key(self, token: str, caller: str = None, apply: bool = True) -> dict:
         """轮换身份的 `seed_key`：换新 seed + 用新 master 重加密**所有**相关密文。
 
@@ -2300,6 +2420,11 @@ def recover(identity_id: str, recovery_key: str, new_pin: str) -> dict:
 
 def delete_secret(token: str, name: str, caller: str = None) -> dict:
     return _get_vault2().delete_secret(token, name, caller)
+
+
+def rotate_kek(token: str, new_passphrase: str = None,
+               caller: str = None) -> dict:
+    return _get_vault2().rotate_kek(token, new_passphrase, caller)
 
 
 def rotate_seed_key(token: str, caller: str = None) -> dict:
