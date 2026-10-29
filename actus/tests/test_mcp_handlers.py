@@ -188,6 +188,7 @@ def test_arguments_must_be_json_object(world):
 # 登记表里 —— 它们随 actions/ 内容出现/消失，本用例的 world 是空 actions。
 _REQUIRED_TOOLS_BASELINE = frozenset([
     'actus_author',
+    'actus_bug_report',
     'actus_confirm',
     'actus_dep_tree',
     'actus_deps',
@@ -209,6 +210,7 @@ _REQUIRED_TOOLS_BASELINE = frozenset([
     'actus_registry_remove',
     'actus_run_code',
     'actus_scaffold',
+    'actus_selfdrive_run',
     'actus_team_add_member',
     'actus_team_create',
     'actus_team_remove_member',
@@ -275,6 +277,10 @@ _SAFE_NO_REQUIRED = [
     # 第 29 轮新增：校验动作契约（action_id 可选；缺省校验全仓）。纯读：
     # load_index/get_action + split_validation，空仓返回 status=ok、valid=True。
     "actus_validate",
+    # 第 31 轮新增：读 bug 账本（memory/bugs.md，可选 status/severity/project_dir）。
+    # **纯只读**：账本不存在时 _read_text 返回 ''、bug_list 返回 []，不创建目录/文件
+    # （已实测 + 本文件 test_bug_list_empty_ledger_creates_nothing 钉住）。
+    "actus_bug_list",
 ]
 
 #: 无必需参数但**不在本文件调用**的工具（写操作/会起服务/依赖本机动作），
@@ -733,3 +739,80 @@ def test_cost_tool_reports_unrecorded_honestly(world):
     assert "暂无记账" in data["message"]
     assert data["calls"] == 0
     assert "budget" in data and data["budget"]["spent_usd"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 第 31 轮新增工具：bug 账本（list/report）与 selfdrive 干跑
+# ---------------------------------------------------------------------------
+
+def test_bug_list_empty_ledger_creates_nothing(world):
+    """退步了会怎样：`actus_bug_list` 在账本不存在时顺手创建 memory/bugs.md ——
+    一个只读列表工具改了用户项目（`_SAFE_NO_REQUIRED` 的安全标注将被打破）。
+
+    断言：status=ok、bugs=[]、count=0；且 `memory/` 目录与 `bugs.md` 都**未被创建**。
+    """
+    project = world.root / "bugproj"
+    project.mkdir()
+
+    is_error, payload, _raw = _call(
+        world, "actus_bug_list", {"project_dir": str(project)})
+
+    assert is_error is False, payload
+    assert payload["status"] == "ok", payload
+    assert payload["bugs"] == [] and payload["count"] == 0, payload
+    assert not (project / "memory").exists(), "只读列表创建了 memory/ 目录"
+    assert not (project / "memory" / "bugs.md").exists(), "只读列表创建了 bugs.md"
+
+
+def test_bug_report_then_list_roundtrip_and_same_key_dedup(world):
+    """退步了会怎样：上报的 bug 查不到（写/读两套账本路径），或同摘要重复上报
+    每次都落新条目（账本被同一个 bug 刷屏，命中数失真）。
+
+    断言：report(summary+source) → list 能查到 1 条；**同键二次上报** →
+    duplicate=True、hits=2，账本仍只有 1 条（不是 2 条）。
+    """
+    project = world.root / "bugproj2"
+    project.mkdir()
+    (project / "real_source.txt").write_text("evidence", encoding="utf-8")
+
+    args = {"summary": "列表偶发重复", "detail": "d", "severity": "high",
+            "source": "real_source.txt", "project_dir": str(project)}
+    is_error, first, _raw = _call(world, "actus_bug_report", args)
+    assert is_error is False, first
+    assert first["status"] == "ok" and first["bug_status"] == "OPEN", first
+    assert first["duplicate"] is False and first["hits"] == 1, first
+
+    is_error, listed, _raw = _call(world, "actus_bug_list",
+                                   {"project_dir": str(project)})
+    assert is_error is False
+    assert listed["count"] == 1, listed
+    assert listed["bugs"][0]["summary"] == "列表偶发重复", listed
+
+    is_error, second, _raw = _call(world, "actus_bug_report", args)
+    assert is_error is False, second
+    assert second["duplicate"] is True and second["hits"] == 2, second
+
+    is_error, listed_again, _raw = _call(world, "actus_bug_list",
+                                         {"project_dir": str(project)})
+    assert listed_again["count"] == 1, "同键重复上报落了新条目: %r" % (listed_again,)
+    assert listed_again["bugs"][0]["hits"] == 2, listed_again
+
+
+def test_selfdrive_run_dry_run_only_plans_and_writes_nothing(world):
+    """退步了会怎样：`dry_run=true` 仍建 SelfDrive/执行节点/写运行快照 —— "只规划
+    不执行"变成"先规划再偷偷跑"，干跑不再安全。
+
+    断言：返回 dry_run=True、有拆解节点（node_count>0）、note 明示未执行；
+    `world.root`（含 HOME/`_meta`/仓库）文件快照与调用前完全一致。
+    """
+    before = _snapshot(world.root)
+
+    raw = world.server._tool_selfdrive_run(
+        {"goal": "补一个回归测试", "dry_run": True, "max_depth": 2})
+    payload = json.loads(raw["content"][0]["text"])
+
+    assert raw["isError"] is False, payload
+    assert payload["status"] == "ok" and payload["dry_run"] is True, payload
+    assert payload["node_count"] > 0, payload
+    assert "干跑" in (payload.get("note") or ""), payload
+    assert _snapshot(world.root) == before, "dry_run 写了文件（运行快照/元数据）"
