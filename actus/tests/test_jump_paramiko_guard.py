@@ -104,7 +104,19 @@ def test_paramiko_sync_never_writes_outside_local_base(fake_transport):
         assert '..' not in segs, '本地写路径逃出 base: %s' % lpath
 
     got_remote_names = [posixpath.basename(r) for r, _l in sftp.got]
-    assert 'evil.txt' not in got_remote_names or True  # 两种拦截形态都可接受
+    # 两种拦截形态都可接受，但**必须至少命中一种**（不许 `or True` 式假保护）：
+    #   ① 扫描闸拦下：evil.txt 从未进入下载列表；
+    #   ② 进了列表但落点仍在 base 内（与上面的 '..' 段断言互补）。
+    base = os.path.abspath('/data/local')
+
+    def _inside_base(lpath):
+        abs_path = os.path.abspath(lpath)
+        return abs_path == base or abs_path.startswith(base + os.sep)
+
+    written_inside_base = all(_inside_base(lpath) for _r, lpath in sftp.got)
+    assert ('evil.txt' not in got_remote_names) or written_inside_base, (
+        'evil.txt 既未被扫描闸拦下，也未落在 local base 内（越界写）: %r'
+        % (sftp.got,))
     # 正常文件必须照常同步（闸不能把好人一起拦死）
     assert any('a.txt' in l for _r, l in sftp.got)
     assert res['status'] == 'ok'

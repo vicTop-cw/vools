@@ -419,15 +419,31 @@ def test_run_panel_does_not_swallow_startup_errors():
     """
     assert _silent_except_handlers(panel.run_panel) == 0, \
         "run_panel 出现 except: pass（静默吞启动错误）"
-    assert "except" in inspect.getsource(panel.run_panel) or True   # 允许记日志式兜底
+    # 原第二条 `assert "except" in getsource(...) or True` 已删除（第 21 轮）：
+    #   * `or True` 让它永真，等于没断言；
+    #   * 实测 `run_panel` 当前**没有 try/except**（启动失败直接向上抛），
+    #     所以"必须有 except"不是现有契约，且无 GUI 环境无法行为化验证。
+    # 保留上面这条真断言：一旦有人加回 `except: pass`（静默吞错），立刻红。
 
 
 def test_panel_app_init_is_the_only_place_creating_tk_root():
     """退步了会怎样：模块级/其它函数里出现 `tk.Tk()` → import 或构造旁路就会建窗口，
     无显示环境下直接崩（面板是可选功能，不该影响其它命令）。
     """
-    src = inspect.getsource(panel)
-    tk_root_sites = [ln.strip() for ln in src.splitlines()
-                     if "tk.Tk()" in ln]
-    assert len(tk_root_sites) == 1, "`tk.Tk()` 只应出现在 PanelApp.__init__，实际: %r" % tk_root_sites
-    assert "def __init__" in src.split("tk.Tk()")[0].rsplit("\n", 3)[-3] or True
+    tree = ast.parse(inspect.getsource(panel))
+    tk_calls = [node for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'Tk']
+    assert len(tk_calls) == 1, \
+        "`tk.Tk()` 只应出现一次（PanelApp.__init__ 内），实际 %d 处" % len(tk_calls)
+    panel_cls = next(node for node in tree.body
+                     if isinstance(node, ast.ClassDef)
+                     and node.name == 'PanelApp')
+    init_node = next(node for node in panel_cls.body
+                     if isinstance(node, ast.FunctionDef)
+                     and node.name == '__init__')
+    call_lineno = tk_calls[0].lineno
+    assert init_node.lineno <= call_lineno <= getattr(
+        init_node, 'end_lineno', init_node.lineno), \
+        "`tk.Tk()` 不在 PanelApp.__init__ 内（模块级/其它函数建窗口会在 import 时崩）"
