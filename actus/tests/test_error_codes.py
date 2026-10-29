@@ -43,11 +43,44 @@ def test_no_singular_plural_code_pairs():
 
 
 def test_missing_param_is_unified():
-    """统一后的契约：只允许 missing_param，且必须带 details.missing。"""
-    src = open(os.path.join(SRC, "mcp_server.py"), encoding="utf-8").read()
-    assert "missing_params" not in src, "missing_params 应已统一为 missing_param"
-    assert "missing_param" in src
-    assert "details" in src and "missing" in src
+    """统一后的契约：只允许 `missing_param`，且必须带 details.missing。
+
+    第 20 轮：源码字符串断言 → **行为断言**。原来 `assert "missing_param" in src`
+    在"守卫被删"时未必红（别处仍可能出现这个词）；现在构造两类会触发缺参的
+    调用，直接断言返回体：
+      1. handler 自校验缺参（`actus_deps`，schema 无 required）→ missing_param；
+      2. handler 深校验（`actus_evolve_rollback` 传空串/None，绕过 schema required
+         的存在性检查）→ missing_param + details.missing 点名空参。
+    """
+    import io as _io
+    import json as _json
+    from vools.actus import mcp_server
+
+    def _payload(raw):
+        return _json.loads(raw["content"][0]["text"])
+
+    # ① MCP 入口的统一缺参校验（generic 层）：param_invalid + details.missing
+    server = mcp_server.MCPServer(stdout=_io.BytesIO())
+    raw = server._call_tool({"name": "actus_deps", "arguments": {}})
+    payload = _payload(raw)
+    assert raw.get("isError") is True
+    assert payload["error"]["code"] == "param_invalid", payload
+    assert payload["error"]["details"]["missing"] == ["action_id"], payload
+
+    # ② handler 自校验层（是 missing_param 的唯一真实出处；generic 层之上仍在）：
+    #    直接调 handler 触发"参数存在但为空"的深校验。
+    err = _payload(mcp_server._handle_deps_check({}))
+    assert err["error"]["code"] == "missing_param", err
+
+    payload = _payload(mcp_server._handle_evolve_rollback(
+        {"action_id": "", "version": None}))
+    error = payload["error"]
+    assert error["code"] == "missing_param", error
+    missing = (error.get("details") or {}).get("missing") or []
+    assert set(missing) == {"action_id", "version"}, error
+    # 单复数分裂由 test_no_singular_plural_code_pairs 静态兜底；这里再直接保证
+    # 行为层只出现 missing_param（若某 handler 回退成 missing_params 会立刻红）。
+    assert "missing_params" not in _json.dumps(payload), payload
 
 
 def test_key_error_codes_present():

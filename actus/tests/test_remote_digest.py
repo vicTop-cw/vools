@@ -7,6 +7,13 @@
 """
 import hashlib
 
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
+_ai_local_bootstrap.install()
+
 import pytest
 
 from vools.actus import resolver as r
@@ -57,11 +64,54 @@ def test_remote_digest_case_insensitive(monkeypatch, tmp_path):
     assert res.digest_verified is True
 
 
-def test_cli_refuses_unverified_remote_by_contract():
-    """源码级契约：CLI 必须默认拒绝未校验远程，并给出两个出路参数。"""
-    import inspect
+def test_cli_refuses_unverified_remote_by_contract(monkeypatch, capsys):
+    """行为契约（第 20 轮替换源码断言）：默认拒绝未校验远程、两个出路可用。
+
+    - 默认：run 一个 digest_verified=False 的 URL → rc=1 + code=remote_unverified
+      （守卫被删 → 会直接进 execute，rc=0，立刻红）；
+    - `--allow-unverified-remote`：放行到执行层（execute 被打桩，不联网）；
+    - `--expect-digest`：值必须真的传给 resolver（守卫在但透传被删 → 红）。
+      URL 的所有网络/下载行为都用 monkeypatch 消除。
+    """
+    import json
     from vools.actus import cli
-    src = inspect.getsource(cli)
-    assert "remote_unverified" in src
-    assert "--expect-digest" in src or "expect_digest" in src
-    assert "allow_unverified_remote" in src
+    from vools.actus import resolver as resolver_mod
+    import vools.actus as actuscore
+
+    calls = []
+
+    class _Resolved:
+        source = "url"
+        url = URL
+        path = None
+        action_id = None
+        ambiguous = []
+        digest_verified = False
+        sha256 = "deadbeef"
+
+    def fake_resolve(target, **kwargs):
+        calls.append(kwargs)
+        return _Resolved()
+
+    executed = []
+    monkeypatch.setattr(resolver_mod, "resolve_target", fake_resolve)
+    monkeypatch.setattr(actuscore, "execute",
+                        lambda *a, **kw: executed.append(a) or {"status": "ok"})
+
+    def run(argv):
+        capsys.readouterr()
+        rc = cli.main(argv)
+        out = capsys.readouterr().out
+        payload = json.loads(out[out.index("{"):]) if "{" in out else {}
+        return rc, payload
+
+    rc, payload = run(["run", URL])
+    assert rc == 1, (rc, payload)
+    assert payload["error"]["code"] == "remote_unverified", payload
+    assert executed == [], "默认拒绝时不应进入执行层"
+
+    rc, _payload = run(["run", URL, "--allow-unverified-remote"])
+    assert rc == 0 and executed, "显式 --allow-unverified-remote 应放行到执行层"
+
+    run(["run", URL, "--expect-digest", "a" * 64])
+    assert calls and calls[-1].get("expect_digest") == "a" * 64, calls

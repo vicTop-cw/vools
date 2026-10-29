@@ -7,6 +7,13 @@
 """
 import hashlib
 
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
+_ai_local_bootstrap.install()
+
 import pytest
 
 from vools.actus import resolver as r
@@ -77,10 +84,32 @@ def test_without_signature_key_flag_stays_false(monkeypatch, tmp_path):
     assert res.signature_verified is False
 
 
-def test_cli_exposes_require_signature_flag():
-    """源码级契约：CLI run 必须暴露 --require-signature 并传给 resolver。"""
-    import inspect
+def test_cli_exposes_require_signature_flag(monkeypatch):
+    """行为契约（第 20 轮替换源码断言）：`--require-signature` 必须真的传给 resolver。
+
+    做法：resolver 打桩记录 kwargs 并抛错（让 CLI 走"解析失败不阻断"的旧路径），
+    execute 打桩避免联网/执行。守卫被删（参数不再透传）→ 记录到 None → 红。
+    """
+    import vools.actus as actuscore
     from vools.actus import cli
-    src = inspect.getsource(cli)
-    assert "--require-signature" in src
-    assert "expect_signature_key" in src
+    from vools.actus import resolver as resolver_mod
+    from vools.actus.errors import ActionError
+
+    calls = []
+
+    def fake_resolve(target, **kwargs):
+        calls.append(kwargs)
+        raise ActionError("remote_unverified", "simulated")
+
+    executed = []
+    monkeypatch.setattr(resolver_mod, "resolve_target", fake_resolve)
+    monkeypatch.setattr(actuscore, "execute",
+                        lambda *a, **kw: executed.append(a) or {"status": "ok"})
+
+    rc = cli.main(["run", URL, "--require-signature", "default"])
+    assert rc == 0, rc
+    assert calls and calls[-1].get("expect_signature_key") == "default", calls
+    assert executed, "解析失败应回退旧路径（零回归），不能中断"
+
+    rc = cli.main(["run", URL])
+    assert rc == 0 and calls[-1].get("expect_signature_key") is None, calls

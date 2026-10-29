@@ -248,6 +248,9 @@ def test_worker_thread_never_touches_tk_widgets():
     # 只禁「碰 Tk 控件」的调用（`sys.path.insert` 不在此列，别再误伤）
     assert not re.search(r"self\.(?:root|output|listbox|detail|_tkinter)\.", src), \
         "工作线程直接操作了 Tk 控件"
+    # 结构性约束（保留静态断言，理由见函数 docstring）："工作线程里不许出现
+    # Tk mainloop" 是**架构约束**，行为层要触发它需要真的起 Tk 线程（CI 无
+    # 显示服务时不可执行），所以这里只能静态检查。
     assert ".mainloop(" not in src, "工作线程不得进入 Tk 事件循环"
     assert "_results.put" in src, "工作线程必须把结果放进队列交给主线程"
 
