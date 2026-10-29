@@ -7,11 +7,11 @@ clipboard_clear / focus_window）的实现，属公开 API，不能删；但此�
 （剪贴板、窗口聚焦）不真跑，只测退化契约与解包逻辑（monkeypatch 子进程）。
 
 当前语义钉点（重要）：
-  * `fingerprint()` 的 `cache` 参数**目前完全没有被读取**（`_file_hash` 是死代码），
-    cache 传入后仍为空、结果与不传一致 —— 本文件钉住现状并注明"若要接线需同时
-    更新产品与测试"；
-  * `fingerprint()` 对**纯 mtime 变化**（内容不变）也会变（parts 含 size+mtime_ns），
-    这是 docstring 声明的增量检测语义，不是内容哈希；
+  * `fingerprint()` 是**元数据版**指纹（relpath + size + mtime_ns），不是内容哈希：
+    内容变了但 size/mtime_ns 没变时**指纹不变**（本文件有专门用例钉住）；
+  * **没有 `cache` 参数**（历史谎言已删除）：传 `cache=` 现在是 TypeError，
+    这是**正确**的——它从来就没被读取过；
+  * `fingerprint()` 对**纯 mtime 变化**（内容不变）也会变（parts 含 size+mtime_ns）；
   * `clipboard_write` 在非 Windows + pyperclip 缺失时返回 False（不抛）；
   * `focus_window` 在非 Windows 返回 True（v0.1 附着语义，假定终端在前台）。
 """
@@ -106,20 +106,39 @@ def test_fingerprint_ignore_extra_excludes_patterns(project):
     assert unignored != baseline, "对照组失败：不带 ignore 时应能看到 x.log"
 
 
-def test_fingerprint_cache_parameter_is_currently_unused(project):
-    """退步了会怎样：`cache` 参数悄悄改了结果（命中旧哈希导致漏掉真实改动），
-    或产品接线后没同步测试。
+def test_fingerprint_does_not_accept_cache(project):
+    """退步了会怎样：`cache` 参数被悄悄加回来（或保留成一个假参数）。
 
-    当前实现：`fingerprint(..., cache=...)` 接受但**从不读取 cache**（`_file_hash`
-    为死代码）。断言：结果与不传 cache 完全一致、且调用后 cache 仍为空；
-    若将来真正启用增量缓存，本用例会红 —— 届时需同步更新产品契约与测试。
+    历史事实：`cache` 从未被读取、`_file_hash` 是死代码（第 38 轮删除）。
+    现在传 `cache=` 必须是 **TypeError** —— 宁可显式报错，也不维护一个说谎的 API。
     """
-    cache = {}
-    with_cache = loophelpers.fingerprint(str(project), cache=cache)
-    without = loophelpers.fingerprint(str(project))
+    with pytest.raises(TypeError):
+        loophelpers.fingerprint(str(project), cache={})
 
-    assert with_cache == without
-    assert cache == {}, "cache 参数当前应为未使用（实测被填充说明实现已变更）"
+
+def test_fingerprint_is_metadata_based_not_content_based(project):
+    """退步了会怎样：有人把 fingerprint 悄悄改成"内容哈希"却不改契约 ——
+    每个 tick 都要全量读盘（性能崩），且真实内容变化会开始改变返回值
+    （改变所有依赖旧指纹的调用方缓存）。
+
+    断言（钉死元数据语义）：改写文件内容但**保持 size 与 mtime_ns 完全不变**
+    → 指纹必须**不变**；若实现读了内容，这条立刻红。
+    """
+    target = project / "a.txt"
+    before = loophelpers.fingerprint(str(project))
+    stat = os.stat(str(target))
+
+    original = target.read_bytes()
+    changed = b"ALPHA"  # 与 b"alpha" 等长（5 字节），只改内容
+    assert len(changed) == len(original) and changed != original
+    target.write_bytes(changed)
+    os.utime(str(target), ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    # 若文件系统把 ns 舍入掉，先确认前提成立（否则本用例测不到目标语义）
+    assert os.stat(str(target)).st_mtime_ns == stat.st_mtime_ns
+    assert os.stat(str(target)).st_size == stat.st_size
+
+    assert loophelpers.fingerprint(str(project)) == before, \
+        "fingerprint 变成了内容哈希（元数据语义被破坏：内容变、size/mtime 不变时指纹应不变）"
 
 
 def test_fingerprint_samples_git_metadata_mtime(project):

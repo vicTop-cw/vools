@@ -34,30 +34,18 @@ def _ignored(rel: str, patterns) -> bool:
     return False
 
 
-def _file_hash(path: str, st: os.stat_result, cache: dict) -> str:
-    """内容 md5，附 (size, mtime_ns) 增量缓存：元数据未变则复用上次哈希。"""
-    key = (st.st_size, st.st_mtime_ns)
-    cached = cache.get(path)
-    if cached and cached[0] == key:
-        return cached[1]
-    h = hashlib.md5()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(1 << 20), b''):
-            h.update(chunk)
-    digest = h.hexdigest()
-    cache[path] = (key, digest)
-    return digest
+def fingerprint(project_dir: str, ignore_extra=None) -> str:
+    """项目内容指纹（**元数据版**）：逐文件 (relpath, size, mtime_ns) 排序后总哈希。
 
-
-def fingerprint(project_dir: str, ignore_extra=None, cache: dict = None) -> str:
-    """项目内容指纹：逐文件 (relpath, size, mtime_ns) 排序后总哈希。
-
-    - cache：跨 tick 的文件哈希缓存（增量），调用方持有一个 dict 即可；
+    - **语义**：这是"快速判断内容有没有变"的指纹，**不是内容哈希**。
+      它抓住：文件新增/删除/改名/改大小/改时间戳；
+      **抓不住**：内容变了但 size 与 mtime_ns 都没变（极罕见）。
+      若需要内容级哈希，请另用文件级 md5（不要偷偷把本函数改成读内容 ——
+      那会让所有依赖旧值的调用方缓存失效，且每个 tick 都要全量读盘）。
     - 附加采样 .git/HEAD 与 .git/refs 的 mtime——捕捉"纯提交不改工作区"；
     - 排除 DEFAULT_IGNORE + ignore_extra。
     """
     patterns = list(DEFAULT_IGNORE) + list(ignore_extra or ())
-    cache = cache if cache is not None else {}
     parts = []
     for dirpath, dirnames, filenames in os.walk(project_dir):
         dirnames[:] = [d for d in dirnames if not _ignored(
