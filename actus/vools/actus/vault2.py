@@ -339,6 +339,41 @@ def _is_hex(value) -> bool:
         return False
 
 
+# ── KEK 代数（docs/vault2-kek-rotation.md §4.4 第 0 步）───────────────────
+#
+# 为什么放 `key_meta` JSON 而不新增 DB 列：
+#   * `key_meta` 本来就是"这个身份的 seed 信封由什么保护"的元数据（passphrase 的
+#     salt/iters 就在这里），代数标记同属该语义，放一起不用第二套迁移机制；
+#   * 加列要 ALTER TABLE + 兼容旧库（我们已经有 `_ensure_identity_key_columns`
+#     一条迁移路径，不再为"一个整数"开第二条）；
+#   * 三种保护模式（keyring/file-key 目前 key_meta 为 NULL）都自然落到"缺省 0"，
+#     将来轮换时各自把 `kek_gen` 写进去即可。
+#
+# **向后兼容**：现有库没有这个字段 → 一律视为 `kek_gen = 0`（不迁移、不回填）。
+# 注意 dissent：设计文档 §4.2/§4.4 曾写"旧行按 1 回填"，与 lead 本轮要求（0）冲突，
+# 按 lead 要求统一为 0，文档已同步改写。
+
+KEK_GEN_FIELD = "kek_gen"
+KEK_GEN_DEFAULT = 0
+
+
+def kek_gen_of_meta(key_meta) -> int:
+    """从 `key_meta` JSON 读出 `kek_gen`；缺失/损坏/非整数 → 0（向后兼容）。"""
+    if not key_meta:
+        return KEK_GEN_DEFAULT
+    try:
+        meta = json.loads(key_meta)
+    except (TypeError, ValueError):
+        return KEK_GEN_DEFAULT
+    if not isinstance(meta, dict):
+        return KEK_GEN_DEFAULT
+    value = meta.get(KEK_GEN_FIELD, KEK_GEN_DEFAULT)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return KEK_GEN_DEFAULT
+
+
 # ── Vault2 ──
 class Vault2:
     def __init__(self, vault_dir: str = None, migrate_legacy: bool = None):
@@ -790,6 +825,18 @@ class Vault2:
                 );
                 CREATE INDEX IF NOT EXISTS idx_rotated_identity ON rotated_backups(identity_id);
                 CREATE INDEX IF NOT EXISTS idx_rotated_expires ON rotated_backups(expires_at);
+                -- KEK 轮换日志（docs/vault2-kek-rotation.md §4.4 第 0 步）
+                -- 纯增量：本步只建表、不写行；后续步骤用它记录"待清理的旧代 KEK"。
+                -- cleaned=0 表示旧代外部条目还在（keyring item / key 文件），
+                -- GC 成功后置 1。主键 (identity_id, kek_gen) 保证同一代只登记一次。
+                CREATE TABLE IF NOT EXISTS kek_retired (
+                    identity_id TEXT NOT NULL,
+                    kek_gen     INTEGER NOT NULL,
+                    locator     TEXT NOT NULL,
+                    retired_at  TEXT NOT NULL,
+                    cleaned     INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (identity_id, kek_gen)
+                );
                 """
             )
 
@@ -2049,6 +2096,35 @@ class Vault2:
         }
         if state_detail:
             base["state_detail"] = state_detail
+        # ── KEK 轮换诊断（第 0 步，**纯读**）──
+        # kek_gen：该库所有身份的代数**最小值**（有任何一个身份还停在旧代就报旧代，
+        #   便于"还没轮换完"的诊断）；空库/missing 时为 0。
+        # kek_retired_count：`kek_retired` 里 cleaned=0 的行数（未清理的旧代数量，应为 0）。
+        # kek_rotation_supported：当前保护模式能否轮换 KEK（keyring / passphrase /
+        #   file-key 都支持；unavailable / legacy-plaintext 不支持）。
+        base["kek_gen"] = 0
+        base["kek_gen_max"] = 0
+        base["kek_retired_count"] = 0
+        base["kek_rotation_supported"] = self.key_protection in (
+            PROTECTION_KEYRING, PROTECTION_PASSPHRASE, PROTECTION_FILE)
+        if exists and state != "corrupt":
+            try:
+                with self._db() as conn:
+                    metas = [r[0] for r in conn.execute(
+                        "SELECT key_meta FROM identities").fetchall()]
+                    try:
+                        pending = conn.execute(
+                            "SELECT COUNT(*) FROM kek_retired WHERE cleaned=0").fetchone()[0]
+                    except sqlite3.Error:
+                        # 极旧的库还没跑到 _init_schema 的建表分支（理论不可达：
+                        # _ensure_ready 已先建）—— 不把只读诊断变成错误
+                        pending = 0
+                gens = [kek_gen_of_meta(m) for m in metas] or [KEK_GEN_DEFAULT]
+                base["kek_gen"] = min(gens)
+                base["kek_gen_max"] = max(gens)
+                base["kek_retired_count"] = int(pending or 0)
+            except sqlite3.Error as exc:                   # noqa: BLE001
+                base["kek_diag_error"] = "%s: %s" % (type(exc).__name__, exc)
         if self.key_protection_warning:
             base["key_protection_warning"] = self.key_protection_warning
         if self.migrated_key_protection:
