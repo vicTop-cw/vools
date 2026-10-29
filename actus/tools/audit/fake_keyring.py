@@ -30,6 +30,7 @@ class FakeKeyring:
         self.fail_write = False
         self.fail_delete = False
         self.stale_read_once = False     # 下一次 get 返回**旧值**（模拟后端缓存）
+        self.stale_targets = set()       # 只对这些 user 生效（空=对任意 user 生效一次）
         self.delete_lag = False          # delete 返回成功但条目仍在
         self.restart_drop_volatile = True
         self.calls = []                  # [(op, user, value/None)]，便于断言顺序
@@ -51,7 +52,7 @@ class FakeKeyring:
 
     def get_password(self, service, user):
         self.calls.append(('get', user, None))
-        if self.stale_read_once:
+        if self.stale_read_once and (not self.stale_targets or user in self.stale_targets):
             # 模拟后端缓存/同步延迟：**这一次**读到的是写入前的旧值
             self.stale_read_once = False
             return self._prev.get(user)

@@ -598,9 +598,48 @@ class Vault2:
         self._file_key_cached = key
         return key
 
+    def _keyring_locator(self, identity_id: str, key_meta: Optional[str] = None) -> str:
+        """keyring 条目 locator。第 2 步起是 `identity#g{N}`；旧库（无 locator）仍是
+        `identity_id`（= 第 0 代），**向后兼容**，不需要迁移 keyring 条目。"""
+        if key_meta:
+            try:
+                meta = json.loads(key_meta)
+            except (TypeError, ValueError):
+                meta = {}
+            user = ((meta.get('kek_locator') or {}) or {}).get('user') if isinstance(meta, dict) else None
+            if user:
+                return user
+        gen = kek_gen_of_meta(key_meta)
+        return identity_id if gen == 0 else '%s#g%d' % (identity_id, gen)
+
+    def _get_keyring_kek(self, locator: str) -> Optional[bytes]:
+        """按 locator 读 keyring 里的 KEK；不存在返回 None（不抛，供诊断/GC 用）。"""
+        if self.key_protection != PROTECTION_KEYRING or self._keyring is None:
+            return None
+        stored = self._keyring.get_password(KEYRING_SERVICE, locator)
+        if not stored:
+            return None
+        try:
+            kek = base64.b64decode(stored)
+        except Exception as exc:                       # noqa: BLE001
+            raise Vault2KeyProtectionError("keyring 条目损坏（%s）：%s" % (locator, exc))
+        if len(kek) != 32:
+            raise Vault2KeyProtectionError(
+                "keyring 条目长度异常（%s，%d != 32）" % (locator, len(kek)))
+        return kek
+
+    def _put_keyring_kek(self, locator: str, kek: bytes) -> None:
+        """写 keyring 条目（不删旧代；调用方负责顺序与回读自检）。"""
+        self._keyring.set_password(KEYRING_SERVICE, locator,
+                                   base64.b64encode(kek).decode('ascii'))
+
     def _kek_for(self, identity_id: str, key_meta: Optional[str]) -> bytes:
         """取该身份的 KEK（keyring 条目 / passphrase 派生 / 随库密钥文件）。"""
         if self.key_protection == PROTECTION_KEYRING:
+            locator = self._keyring_locator(identity_id, key_meta)
+            kek = self._get_keyring_kek(locator)
+            if kek is not None:
+                return kek
             stored = self._keyring.get_password(KEYRING_SERVICE, identity_id)
             if not stored:
                 raise Vault2KeyProtectionError(
@@ -1430,11 +1469,160 @@ class Vault2:
     # keyring / file-key 的 KEK 在**外部 store**，必须双代并存 + 日志 + GC
     # （设计文档第 2/3 步），本轮**明确拒绝**，不假装成功。
 
-    def _apply_kek_rotation(self, conn, identity_id, new_envelope, new_meta):
-        """KEK 轮换的写阶段（单独成方法：便于注入失败验证事务回滚）。"""
+    def _apply_kek_rotation(self, conn, identity_id, new_envelope, new_meta,
+                            retired_rows=()):
+        """KEK 轮换的写阶段（单独成方法：便于注入失败验证事务回滚）。
+
+        `retired_rows`：需要登记的旧代 `(kek_gen, locator)` —— keyring/file-key 模式
+        把旧代记进 `kek_retired(cleaned=0)` 等 GC 清理；passphrase 模式没有外部条目，传空。
+        """
         conn.execute(
             "UPDATE identities SET seed_key=?, key_meta=? WHERE id=?",
             (new_envelope, new_meta, identity_id))
+        for (gen, locator) in (retired_rows or ()):
+            conn.execute(
+                "INSERT OR REPLACE INTO kek_retired "
+                "(identity_id, kek_gen, locator, retired_at, cleaned) VALUES (?,?,?,?,0)",
+                (identity_id, gen, locator,
+                 time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())))
+
+    # ── KEK 轮换 · 第 2 步：keyring 模式（双代并存 + 日志 + GC）──────────
+    #
+    # 与 passphrase 的本质差异：KEK 在**外部 store**（OS 凭据库），所以"换 KEK"
+    # 不能是一个 DB 事务 —— 必须靠**双代并存 + DB 内日志**跨越崩溃窗口：
+    #
+    #   C1 写新代之前          → DB 仍指旧代、旧代完好 ⇒ seed 可解（安全；无残留）
+    #      写新代（外部写）
+    #   C2 写新代后、提交前    → DB 仍指旧代、旧代完好 ⇒ 可解；孤儿新代无害
+    #   → 提交：换信封 + key_meta(gen+1, locator) + 登记旧代 retired(cleaned=0)
+    #   C3 提交后、GC 前       → DB 指新代，旧代仍在 ⇒ 可解；日志待清理
+    #   C4 GC 删旧代前         → 同上
+    #      GC：delete 旧代 → **回读确认** → 才置 cleaned=1
+    #   C5 删后、未标 cleaned  → 可解；日志仍 pending（幂等重试）
+    #   C6 GC 后               → 可解；日志已清理
+    #
+    # 两条硬规则（lead 第 2 步附加要求，也是 I3 的全部意义）：
+    #   ① 写后**回读自检**：`set_password` 没抛 ≠ 后端存对了（stale_read 场景）
+    #   ② GC **删后回读确认**：`delete_password` 没抛 ≠ 条目真的没了（delete_lag 场景）
+    #      只有回读确认不在，才允许 `cleaned=1`；否则保持 0 等下次重试。
+
+    def _rotate_kek_keyring(self, identity_id: str, seed_hex: str,
+                            key_meta_old, old_gen: int, caller: str = None) -> dict:
+        locator_old = self._keyring_locator(identity_id, key_meta_old)
+        new_gen = old_gen + 1
+        locator_new = '%s#g%d' % (identity_id, new_gen)
+        new_kek = secrets.token_bytes(32)
+
+        # ── C1：写新代之前 ──
+        try:
+            self._put_keyring_kek(locator_new, new_kek)
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="kek_write_failed: %s" % exc, caller=caller)
+            return {"status": "error", "code": "kek_write_failed",
+                    "mode": "keyring",
+                    "message": ("写新代 KEK 失败（DB 未改动、旧代完好，seed 仍可解）：%s: %s"
+                                % (type(exc).__name__, exc))}
+
+        # ── C2：写新代之后、提交之前；**回读自检**（不能直接用 new_kek 当"已存好"）──
+        try:
+            readback = self._get_keyring_kek(locator_new)
+        except Exception as exc:                       # noqa: BLE001
+            readback = None
+            readback_error = str(exc)
+        else:
+            readback_error = ''
+        if readback != new_kek:
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="kek_readback_mismatch", caller=caller)
+            return {"status": "error", "code": "kek_readback_mismatch",
+                    "mode": "keyring",
+                    "message": ("新代 KEK 写入后回读不一致（后端缓存/同步延迟？）—— **未提交 DB**，"
+                                "旧代与旧信封不变，seed 仍可解。孤儿条目 %s 无害（无人引用）。%s"
+                                % (locator_new, readback_error)),
+                    "orphan_locator": locator_new}
+
+        new_meta = json.dumps({"kdf": "external-keyring",
+                               "kek_gen": new_gen,
+                               "kek_locator": {"kind": "keyring", "user": locator_new}},
+                              ensure_ascii=False)
+        new_envelope = ENVELOPE_PREFIX + _FernetBackend(new_kek).encrypt(seed_hex)
+        try:
+            if _FernetBackend(new_kek).decrypt(
+                    new_envelope[len(ENVELOPE_PREFIX):]) != seed_hex:
+                raise ValueError("新信封回读与 seed 不一致")
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="envelope_verify_failed: %s" % exc, caller=caller)
+            return {"status": "error", "code": "kek_rotate_failed",
+                    "mode": "keyring",
+                    "message": "轮换中止（DB 未改动，旧代完好）：%s" % exc}
+
+        # ── 提交：换信封 + 日志登记旧代（单事务）──
+        try:
+            with self._db() as conn:
+                self._apply_kek_rotation(conn, identity_id, new_envelope, new_meta,
+                                         retired_rows=[(old_gen, locator_old)])
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="commit_failed: %s" % exc, caller=caller)
+            return {"status": "error", "code": "kek_rotate_failed",
+                    "mode": "keyring",
+                    "message": ("提交失败（事务已回滚，旧代完好）：%s: %s；"
+                                "孤儿新代 %s 无人引用、无害" % (type(exc).__name__, exc, locator_new))}
+
+        # ── GC：删旧代 → **回读确认** → 才置 cleaned=1 ──
+        gc = {"delete": "skipped", "cleaned": 0}
+        try:
+            self._keyring.delete_password(KEYRING_SERVICE, locator_old)
+            still_there = None
+            try:
+                still_there = self._get_keyring_kek(locator_old)
+            except Exception as exc:                   # noqa: BLE001
+                gc = {"delete": "error", "cleaned": 0, "reason": str(exc)}
+            if gc["delete"] != "error":
+                if still_there is not None:
+                    # delete_lag：删了但还在 —— **绝不标 cleaned=1**（I3）
+                    gc = {"delete": "lagged", "cleaned": 0,
+                          "note": "delete 未抛异常但条目仍在（后端延迟）；保留 cleaned=0 待重试"}
+                else:
+                    gc = {"delete": "ok", "cleaned": 1}
+        except Exception as exc:                       # noqa: BLE001
+            gc = {"delete": "failed", "cleaned": 0,
+                  "reason": "%s: %s" % (type(exc).__name__, exc)}
+
+        if gc["cleaned"]:
+            try:
+                with self._db() as conn:
+                    conn.execute("UPDATE kek_retired SET cleaned=1 "
+                                 "WHERE identity_id=? AND kek_gen=?",
+                                 (identity_id, old_gen))
+            except Exception as exc:                   # noqa: BLE001
+                gc["cleaned"] = 0
+                gc["note"] = "cleaned 标记写入失败（下次 GC 重试）：%s" % exc
+
+        self._audit("rotate_kek", identity_id, success=True,
+                    target="keyring kek_gen=%d gc=%s" % (new_gen, gc.get("delete")),
+                    caller=caller)
+        warnings = []
+        if gc.get("delete") in ("lagged", "failed", "error"):
+            warnings.append("旧代 KEK 尚未确认删除（%s）：kek_retired 保留 cleaned=0，"
+                            "下次 GC 会重试；旧代继续存在不影响安全性（DB 已不引用它）"
+                            % gc.get("delete"))
+        return {"status": "ok",
+                "mode": "keyring",
+                "identity_id": identity_id,
+                "kek_gen_old": old_gen,
+                "kek_gen": new_gen,
+                "locator_old": locator_old,
+                "locator_new": locator_new,
+                "envelope_rotated": True,
+                "secrets_reencrypted": 0,
+                "kek_retired_written": True,
+                "gc": gc,
+                "warnings": warnings,
+                "note": ("双代并存：新代写入并经**回读自检**后才提交 DB；GC 仅在"
+                         "**回读确认旧代已不在**时置 cleaned=1（delete_lag 场景）")}
 
     def rotate_kek(self, token: str, new_passphrase: str = None,
                    caller: str = None) -> dict:
@@ -1455,11 +1643,11 @@ class Vault2:
                     "message": "密钥库不存在（本方法绝不建库）"}
         self._ensure_ready()
         mode = self.key_protection
-        if mode != PROTECTION_PASSPHRASE:
+        if mode not in (PROTECTION_PASSPHRASE, PROTECTION_KEYRING):
             return {"status": "error", "code": "kek_rotation_unsupported",
                     "mode": mode,
-                    "message": ("KEK 轮换当前只支持 passphrase 模式；%s 模式的 KEK 在外部 "
-                                "store，需要双代并存 + 轮换日志 + GC（设计文档第 2/3 步）。"
+                    "message": ("KEK 轮换已支持 passphrase（第 1 步）与 keyring（第 2 步）；"
+                                "%s 模式的 KEK 在文件系统，需要第 3 步（O_EXCL/0600 + GC 扫目录）。"
                                 "本轮**明确拒绝**，不会假装成功。" % mode)}
         ok, sess = self._verify_token(token)
         if not ok:
@@ -1483,6 +1671,10 @@ class Vault2:
                         reason="seed_unreadable: %s" % exc, caller=caller)
             return {"status": "error", "code": "seed_unreadable",
                     "message": "当前 KEK 解不开 seed 信封，无法轮换：%s" % exc}
+
+        if mode == PROTECTION_KEYRING:
+            return self._rotate_kek_keyring(identity_id, seed_hex, key_meta_old,
+                                            old_gen, caller=caller)
 
         passphrase = new_passphrase or self._passphrase
         if not passphrase:
