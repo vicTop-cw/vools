@@ -27,6 +27,7 @@ __all__ = [
 ]
 
 import io
+import logging
 import os
 import shutil
 import sys
@@ -37,6 +38,8 @@ from typing import Dict, Optional, Tuple
 
 from .process_state import PROCESS_STATE_LOCK
 from ._proc import run_cmd_safe
+
+logger = logging.getLogger(__name__)
 
 # 进程级全局（os.environ / sys.stdout / sys.stderr / sys.stdin / sys.argv）的改写窗口
 # 必须整段互斥：PythonRuntime 是**进程内 exec**，两个节点并行时各自的注入会互相看见，
@@ -122,8 +125,21 @@ class PythonRuntime(RuntimeBackend):
             exec(code, exec_env, exec_env)
             exit_code = 0
         except SystemExit as e:
-            stderr_buf.write(str(e))
-            exit_code = e.code or 0
+            # R2（第 33 轮）：改前 `e.code or 0` 会把 `sys.exit('bad')` 的**字符串**
+            # 原样当 exit_code 返回（违反 Tuple[str,str,int] 契约，上层
+            # `exit_code == 124` 之类的整型比较会失效）；同时把退出码文本写进
+            # stderr（`sys.exit(3)` → stderr="3"）。现在只取 code 并归一成 int，
+            # stderr 不再混入退出码。
+            code = e.code
+            if code is None:
+                exit_code = 0
+            elif isinstance(code, int) and not isinstance(code, bool):
+                exit_code = code
+            else:
+                try:
+                    exit_code = int(code)
+                except (TypeError, ValueError):
+                    exit_code = 1
         except Exception as e:
             stderr_buf.write(f'{type(e).__name__}: {e}')
             exit_code = 1
@@ -484,8 +500,11 @@ class RuntimeRegistry:
             try:
                 instance = cls()
                 self.register(instance)
-            except Exception:
-                pass
+            except Exception as exc:                       # noqa: BLE001
+                # R3（第 33 轮）：改前 `except: pass` 把构造失败吞掉 —— 该语言随后只
+                # 表现为"不支持的语言"，用户完全看不到真正原因。至少留一条告警。
+                logger.warning('运行时注册失败 %s: %s: %s',
+                               getattr(cls, '__name__', cls), type(exc).__name__, exc)
 
     def register(self, runtime: RuntimeBackend):
         """注册运行时。"""
@@ -494,7 +513,14 @@ class RuntimeRegistry:
             self._runtimes[alias] = runtime
 
     def get(self, language: str) -> Optional[RuntimeBackend]:
-        """获取运行时。"""
+        """获取运行时。
+
+        R1（第 33 轮）：非字符串入参（`None` / 数字 / 对象）改前直接 `.lower()` →
+        裸 `AttributeError`，穿透到 CLI/MCP 变成"内部错误"。现在与"不支持的语言"
+        同一出口：`RuntimeError`（错误分类一致，调用方可按 param/语言错误分流）。
+        """
+        if not isinstance(language, str):
+            raise RuntimeError(f'不支持的语言: {language!r}（期望字符串标识符）')
         return self._runtimes.get(language.lower())
 
     def is_available(self, language: str) -> bool:
