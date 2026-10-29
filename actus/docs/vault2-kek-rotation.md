@@ -207,11 +207,53 @@ GC 重试）；步骤 5 中崩溃 → 幂等（安全）。
 
 | 阶段 | 内容 | 出口标准 |
 |---|---|---|
-| 0 | `key_meta` 兼容字段 + `kek_retired` 表 + `status()` 诊断（**不改任何 KEK**） | 旧库打开/注册/轮换 seed 全部回归绿；旧行 `kek_gen` 按 1 回填 |
+| **0 ✅ 已完成（第 19 轮）** | `key_meta` 兼容字段 + `kek_retired` 表 + `status()` 诊断（**不改任何 KEK**） | 旧库打开/注册/轮换 seed 全部回归绿；旧行 `kek_gen` **按 0 视为**（见 §4.4.1，不迁移不回填） |
 | 1 | **passphrase 模式**轮换（单事务，`rotate_kek(new_passphrase=None)`） | 换 salt 后旧数据可读、旧信封无法再解；故障注入：UPDATE 抛错 → 全回滚 |
 | 2 | **keyring 模式**：双代 + 日志 + GC；新 CLI/MCP 命令 | 6 个崩溃点注入（step1 前/后、commit 前/后、GC 前/后）均可恢复；孤儿条目不阻塞 |
 | 3 | **file-key 模式**（同骨架；`O_EXCL`/0600；GC 扫目录回收孤儿） | 同上；目录里旧 key 文件按日志删除 |
 | 4 | CLI `actus vault rotate-kek [--dry-run] [--all]` + MCP `actus_vault_rotate_kek` + 文档 | `--dry-run` 零写；失败 `failed_names` 不静默 |
+
+#### 4.4.1 第 0 步已完成的内容（第 19 轮实测）
+
+**① `key_meta.kek_gen`（`int`，缺省 0，**不新增 DB 列**）**
+- 读：`vault2.kek_gen_of_meta(key_meta)` —— 缺失/JSON 损坏/非整数 一律回落到 `0`。
+- **为什么放 `key_meta` 而不是加列**：`key_meta` 本来就是"这个身份的 seed 信封由什么保护"
+  的元数据（passphrase 的 salt/iters 就在里面），代数标记同属这一语义；加列需要第二条
+  `ALTER TABLE` 迁移路径（已有 `_ensure_identity_key_columns`），为一个整数不值得。
+- **兼容**：现有库没有该字段 ⇒ `kek_gen = 0`，**不迁移、不回填、不告警**。
+  （注：本节早先版本写"按 1 回填"，与 lead 本轮要求冲突；已统一为 **0**，代码与文档一致。）
+- **本轮只读**：没有任何代码写 `kek_gen`（只有将来的轮换步骤会写）。
+
+**② `kek_retired` 表（纯增量 schema，`_init_schema()` 里 `CREATE TABLE IF NOT EXISTS`）**
+```sql
+CREATE TABLE IF NOT EXISTS kek_retired (
+    identity_id TEXT NOT NULL,
+    kek_gen     INTEGER NOT NULL,
+    locator     TEXT NOT NULL,      -- keyring user / file 路径 / 'passphrase'
+    retired_at  TEXT NOT NULL,
+    cleaned     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (identity_id, kek_gen)
+);
+```
+- 现有库**首次以写路径打开**时自动补建（幂等；连跑 3 次无变化）。
+- **本轮不写入任何行**（`SELECT COUNT(*)` 实测为 0）。
+
+**③ `status()` 三个只读诊断字段**
+| 字段 | 含义 |
+|---|---|
+| `kek_gen` | 该库所有身份代数**最小值**（有身份停在旧代就报旧代）；空库/库不存在 → 0 |
+| `kek_gen_max` | 最大值（多身份时用来看"轮换是否完成一致"） |
+| `kek_retired_count` | `kek_retired` 中 `cleaned=0` 的行数（未清理旧代数量，应为 0） |
+| `kek_rotation_supported` | 当前保护模式是否可轮换 KEK（keyring / passphrase / file-key = true；unavailable / legacy-plaintext = false） |
+
+**`status()` 仍然零写**：对**不存在**的库只做 `stat` 判断，不建目录/库/表（实测目录树快照前后相同）。
+
+**④ 后续步骤现在能观测到什么**：代数（`kek_gen`/`kek_gen_max`）、未清理旧代（`kek_retired_count`）、
+本模式是否支持轮换（`kek_rotation_supported`）—— 阶段 1-3 的"轮换后计数归零""旧代出现在
+`kek_retired` 且 GC 后 `cleaned=1`"都可用这三个字段断言。
+
+验收脚本：`actus/tools/audit/verify_vault2_kek_step0.py`（22 项：旧库兼容 / 新库三字段 /
+表 0 行 / `status()` 零写 / register-auth-set-get-rotate 全照旧 / `_init_schema` 幂等 3 次）。
 
 **测试重点**（对应我们第 18 轮审计的盲区谱系）：每个阶段都必须有"**跨崩溃窗口**"
 用例（用故障注入/可 替换的 keyring 替身），不能只测 happy path；`--dry-run` 必须
