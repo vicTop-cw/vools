@@ -746,10 +746,23 @@ def run_scattered(path: str, params: Optional[dict] = None, confirmed: bool = Fa
         exec_dirs = os.path.dirname(sc.path)
 
     # 核心依赖注入：只在本次执行前后生效，跑完还原宿主环境（C3「不污染宿主」）
+    #
+    # S4（第 31 轮）：注入与还原必须在 **PROCESS_STATE_LOCK** 临界区内 ——
+    # executor 的 env 注入/还原用的就是这把锁（process_state.py 的模块 docstring
+    # 写明它存在的理由就是"两条入口改同一份进程全局"）。改前本函数在锁外改
+    # os.environ，实测"另一个线程持锁时它照样改"，两个执行会互相看见对方的
+    # PYTHONPATH/ACTUS_SCATTERED（偶发、难复现的串环境）。
+    # RLock 可重入：executor 内部再 acquire 同一把锁不会自死锁。
+    from .process_state import PROCESS_STATE_LOCK
+
     injected = build_injection_env()
-    touched = {k: os.environ.get(k) for k in ('PYTHONPATH', 'ACTUS_SCATTERED',
-                                              'ACTUS_INJECTED_CORE')}
+    PROCESS_STATE_LOCK.acquire()
     try:
+        # 快照**必须在锁内取**：在锁外取"原始值"时，可能正好取到另一个执行
+        # 注入后的值（它已持锁改过 env）→ 还原时把别人的注入值写回宿主，
+        # 跑完残留 ACTUS_SCATTERED（实测并发 8×3 轮后残留 True）。
+        touched = {k: os.environ.get(k) for k in ('PYTHONPATH', 'ACTUS_SCATTERED',
+                                                  'ACTUS_INJECTED_CORE')}
         for k in ('PYTHONPATH', 'ACTUS_SCATTERED', 'ACTUS_INJECTED_CORE'):
             os.environ[k] = injected[k]
         kwargs = dict(confirmed=confirmed, meta_dir=exec_meta,
@@ -763,6 +776,7 @@ def run_scattered(path: str, params: Optional[dict] = None, confirmed: bool = Fa
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+        PROCESS_STATE_LOCK.release()
 
     result['scattered'] = {
         'form': sc.as_dict(),

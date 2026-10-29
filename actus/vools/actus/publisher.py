@@ -81,8 +81,15 @@ def _gate_sigma(action_path: str) -> Dict[str, Any]:
     if not text.strip():
         return {'status': 'skipped',
                 'reason': '动作未内嵌 Sigma 规约块（docs/41 §B3.1：sigma-Law 仅复杂动作可选）'}
-    module = parse_module_text(text)
-    rep = verify_module(module)
+    try:
+        module = parse_module_text(text)
+        rep = verify_module(module)
+    except Exception as exc:                             # noqa: BLE001
+        # P3（第 31 轮）：sigma 引擎内部异常改前会**穿透** triple_gate 抛给调用方，
+        # 调用方拿不到结构化 gate 结果（"失败时不告诉你为什么"）。门禁内部错误
+        # 一律收敛成结构化 fail —— 与其它两门的错误处理口径一致。
+        return {'status': 'fail',
+                'reason': f'Sigma 校验引擎内部异常：{type(exc).__name__}: {exc}'}
     return {'status': 'pass' if rep['passed'] else 'fail',
             'fingerprint': rep['fingerprint'],
             'violations': rep['violations'][:10],
@@ -323,13 +330,27 @@ def _refresh_registry(repo: ActionRepo, action_ids: List[str]) -> Dict[str, Any]
                                  % re.sub(r'\W+', '_', os.path.basename(repo.root))[:40])
         reg_obj = ActionRegistry(cache_dir=cache_dir)
         reg_obj.build_from_directory(repo.root)
-        # 生成器可能写的是点前缀那份；读回来并入权威文件
-        for cand in (canonical, os.path.join(repo.root, REGISTRY_FILENAMES[1]),
-                     os.path.join(repo.root, REGISTRY_FILENAMES[0])):
-            if os.path.isfile(cand):
-                with open(cand, encoding='utf-8') as f:
-                    generated = json.load(f)
-                break
+        # 读回生成结果（P1，第 31 轮）：**点前缀那份才是刚生成的**，必须优先读 ——
+        # 改前按 (canonical, dot, canonical) 顺序读，canonical 是**发布前**的旧表，
+        # 一旦存在就 break，生成器刚发现的条目全被丢弃，随后规范化还把它删了
+        # （实测：仓里明明有动作，registry 却一条不增）。
+        # 两份都读、按 id 合并：canonical 里人工加的、磁盘上已不存在的条目也不丢。
+        generated = {'actions': []}
+        _known_g = set()
+        for cand in (os.path.join(repo.root, REGISTRY_FILENAMES[1]), canonical):
+            if not os.path.isfile(cand):
+                continue
+            with open(cand, encoding='utf-8') as f:
+                doc = json.load(f)
+            for _entry in doc.get('actions') or []:
+                if not isinstance(_entry, dict):
+                    continue
+                _eid = _entry.get('id')
+                if _eid and _eid in _known_g:
+                    continue
+                generated['actions'].append(_entry)
+                if _eid:
+                    _known_g.add(_eid)
     except Exception:                                    # noqa: BLE001
         generated = {}                                   # 生成器失败不阻断：兜底自建
 
@@ -416,10 +437,28 @@ def publish_local_only(paths: List[str], repo_root: str, category: str = '',
             if g['path'] == os.path.abspath(f).replace(os.sep, '/') or \
                g['path'] == f.replace(os.sep, '/'):
                 aid = g.get('action_id') or ''
-        published.append({'source': f.replace(os.sep, '/'),
-                          'dest': (rel or os.path.join('actions',
-                                   os.path.basename(f)).replace(os.sep, '/')),
-                          'action_id': aid})
+        id_resolution = 'gate' if aid else ''
+        if not aid:
+            # P4（第 31 轮）：gate=False 时没有 gate 报告，id 只能从动作文件自身解析。
+            # 改前 published[].action_id 恒为 ''，registry 兜底也收不到 id ——
+            # 形成"发布成功但仓清单不可见"的脱节。解析结果用 id_resolution 如实标注。
+            try:
+                from .model import parse_cfg_from_file
+                aid = (parse_cfg_from_file(f).meta or {}).get('id') or ''
+                id_resolution = 'parsed' if aid else 'unresolved'
+            except Exception:                            # noqa: BLE001
+                aid = ''
+                id_resolution = 'unresolved'
+        entry = {'source': f.replace(os.sep, '/'), 'action_id': aid,
+                 'id_resolution': id_resolution}
+        if dry_run:
+            # P2（第 31 轮）：dry_run 的目标是**计划值**，不能与真发布的 'dest'
+            # 共用字段名（同名同义会让调用方把"计划"当"已存在"）。
+            entry['planned_dest'] = os.path.join(
+                'actions', os.path.basename(f)).replace(os.sep, '/')
+        else:
+            entry['dest'] = rel
+        published.append(entry)
     reg = None
     if not dry_run:
         reg = _refresh_registry(repo, [p['action_id'] for p in published])
