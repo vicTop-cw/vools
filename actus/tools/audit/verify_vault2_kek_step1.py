@@ -186,25 +186,23 @@ def main():
     check('5) 回滚后数据仍可读', (v3.get_secret(tok3, 'X') or {}).get('value') == 'XV')
     check('5) 回滚后 status().kek_gen 仍 0', v3.status().get('kek_gen') == 0)
 
-    # ── 6) file-key 模式 → 明确拒绝（第 2 步已实现 keyring；file-key 属第 3 步）──
-    # 注意：第 22 轮落地 keyring 后，本项从"keyring 被拒绝"改为"file-key 被拒绝"。
-    # 这是**收紧**（原来断言 keyring 不支持，现在它支持了，就用仍不支持的 file-key 验拒绝路径）。
-    v2m, vd, sb = fresh('file-key', protection='file-key')
-    os.environ['ACTUS_VAULT2_KEY_PROTECTION'] = 'file-key'
-    os.environ.pop('ACTUS_VAULT2_PASSPHRASE', None)
-    import importlib as _il
-    import vools.actus.vault2 as _v2
-    _il.reload(_v2)
-    vm = _v2.Vault2()
-    regm = vm.register('fk-u', '111111', security_level='L2')
+    # ── 6) **不可用模式** → 明确拒绝 + 零写 ──
+    # 第 22 轮 keyring 落地、第 23 轮 file-key 落地 ⇒ 三种真实模式都支持轮换了。
+    # 仍然存在的拒绝分支是"没有可用 KEK"（unavailable / legacy-plaintext）。
+    # 这里直接把实例的 key_protection 改成 unavailable 来验该分支 ——
+    # 既保住了"拒绝路径"的覆盖，又不再与某个具体模式绑定（原断言已随实现失效）。
+    v2m, vd, sb = fresh('unsupported')
+    vm = v2m.Vault2()
+    regm = vm.register('un-u', '111111', security_level='L2')
     am = vm.auth(regm['identity_id'], regm['machine_id'], '111111')
     before = snap(sb)
+    vm.key_protection = 'unavailable'
     rej = vm.rotate_kek(am['session_token'])
     after = snap(sb)
-    check('6) file-key 模式 → kek_rotation_unsupported',
+    check('6) unavailable 模式 → kek_rotation_unsupported',
           rej.get('code') == 'kek_rotation_unsupported', str(rej.get('code')))
-    check('6) file-key 模式被拒绝时**零写**', before == after)
-    check('6) 拒绝消息指明需要第 3 步', '第 3 步' in (rej.get('message') or ''),
+    check('6) 拒绝时**零写**', before == after)
+    check('6) 拒绝消息说明该模式无可用 KEK', '没有可用 KEK' in (rej.get('message') or ''),
           (rej.get('message') or '')[:70])
 
     # ── 7) 新 passphrase ──

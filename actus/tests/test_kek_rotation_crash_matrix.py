@@ -264,3 +264,131 @@ def test_vault2_rotate_kek_keyring_stale_read_aborts_without_commit(tmp_path, mo
     assert v.status()['kek_gen'] == 0, v.status()
     assert store.has(ident), '旧代 KEK 必须还在'
     assert v.get_secret(tok, 'K')['value'] == 'V'
+
+
+# ---------------------------------------------------------------------------
+# 6) 第 3 步：file-key 模式的真实实现
+# ---------------------------------------------------------------------------
+def _filekey_vault(tmp_path, monkeypatch, passphrase_free=True):
+    monkeypatch.setenv(vault2.PROTECTION_ENV, vault2.PROTECTION_FILE)
+    monkeypatch.delenv(vault2.PASSPHRASE_ENV, raising=False)
+    v = vault2.Vault2(vault_dir=str(tmp_path / 'v2'))
+    return v
+
+
+def test_vault2_rotate_kek_filekey_mode(tmp_path, monkeypatch):
+    """file-key 轮换：O_EXCL 写新代 → 回读 → 提交 → 删旧代（回读确认）→ 代数 0→1。"""
+    v = _filekey_vault(tmp_path, monkeypatch)
+    reg = v.register('fk-u', '123456', security_level='L2')
+    ident = reg['identity_id']
+    auth = v.auth(ident, reg['machine_id'], '123456')
+    tok = auth['session_token']
+    v.set_secret(tok, 'K', 'V')
+
+    vdir = v.vault_dir
+    old_name = vault2.FILE_KEY_NAME
+    new_name = '%s#g1' % vault2.FILE_KEY_NAME
+    assert os.path.isfile(os.path.join(vdir, old_name)), '注册时应创建第 0 代 KEK 文件'
+
+    res = v.rotate_kek(tok)
+    assert res['status'] == 'ok', res
+    assert res['mode'] == 'file-key'
+    assert (res['kek_gen_old'], res['kek_gen']) == (0, 1), res
+    assert os.path.isfile(os.path.join(vdir, new_name)), '新代 KEK 文件必须存在'
+    assert not os.path.exists(os.path.join(vdir, old_name)), 'GC 后旧代文件必须删除'
+    assert res['gc']['cleaned'] == 1, res['gc']
+    # POSIX 权限：0600（Windows 上只切只读位，故这里不硬断言 mode）
+    if os.name == 'posix':
+        assert (os.stat(os.path.join(vdir, new_name)).st_mode & 0o777) == 0o600
+    # 数据仍可读（KEK 只换信封）+ 代数 + 无孤儿
+    assert v.get_secret(tok, 'K')['value'] == 'V'
+    st = v.status()
+    assert st['kek_gen'] == 1 and st['kek_retired_count'] == 0, st
+    assert st.get('kek_file_orphans') == [], st
+    # 第二次轮换 1 → 2
+    res2 = v.rotate_kek(tok)
+    assert res2['status'] == 'ok' and res2['kek_gen'] == 2, res2
+    assert os.path.isfile(os.path.join(vdir, '%s#g2' % vault2.FILE_KEY_NAME))
+    assert not os.path.exists(os.path.join(vdir, '%s#g1' % vault2.FILE_KEY_NAME))
+
+
+def test_vault2_rotate_kek_filekey_o_excl_refuses_existing(tmp_path, monkeypatch):
+    """**O_EXCL**：目标代文件已存在 → 绝不覆盖、不提交（TOCTOU 的反面）。"""
+    v = _filekey_vault(tmp_path, monkeypatch)
+    reg = v.register('fk2', '123456', security_level='L2')
+    ident = reg['identity_id']
+    auth = v.auth(ident, reg['machine_id'], '123456')
+    tok = auth['session_token']
+    v.set_secret(tok, 'K', 'V')
+
+    target = os.path.join(v.vault_dir, '%s#g1' % vault2.FILE_KEY_NAME)
+    with open(target, 'wb') as handle:            # 预先占位（模拟残留/并发）
+        handle.write(b'occupied')
+
+    res = v.rotate_kek(tok)
+    assert res['status'] == 'error', res
+    assert res['code'] == 'kek_file_exists', res
+    assert v.status()['kek_gen'] == 0, '拒绝时必须仍停在旧代'
+    with open(target, 'rb') as handle:
+        assert handle.read() == b'occupied', 'O_EXCL 绝不许覆盖已有文件'
+    assert v.get_secret(tok, 'K')['value'] == 'V'
+
+
+def test_vault2_rotate_kek_filekey_unlink_lag_keeps_pending(tmp_path, monkeypatch):
+    """**删后回读确认**：unlink"成功"但文件还在 → cleaned 必须保持 0（I3）。"""
+    v = _filekey_vault(tmp_path, monkeypatch)
+    reg = v.register('fk3', '123456', security_level='L2')
+    ident = reg['identity_id']
+    auth = v.auth(ident, reg['machine_id'], '123456')
+    tok = auth['session_token']
+    v.set_secret(tok, 'K', 'V')
+
+    monkeypatch.setattr(vault2.Vault2, '_delete_file_kek', lambda self, name: None)
+    res = v.rotate_kek(tok)
+    assert res['status'] == 'ok', res
+    assert res['gc']['delete'] == 'lagged', res['gc']
+    assert res['gc']['cleaned'] == 0, '文件仍在时绝不能标 cleaned=1'
+    assert os.path.exists(os.path.join(v.vault_dir, vault2.FILE_KEY_NAME)), 'lag 场景文件确实还在'
+    assert v.status()['kek_retired_count'] == 1, v.status()
+    assert v.get_secret(tok, 'K')['value'] == 'V'
+
+
+def test_vault2_rotate_kek_filekey_orphan_reported_not_deleted(tmp_path, monkeypatch):
+    """**保守孤儿策略**：既不被引用也不在日志里的 KEK 文件 → 只报告，**不删除**。"""
+    v = _filekey_vault(tmp_path, monkeypatch)
+    reg = v.register('fk4', '123456', security_level='L2')
+    ident = reg['identity_id']
+    auth = v.auth(ident, reg['machine_id'], '123456')
+    tok = auth['session_token']
+    v.set_secret(tok, 'K', 'V')
+
+    orphan = os.path.join(v.vault_dir, '%s#g9' % vault2.FILE_KEY_NAME)
+    with open(orphan, 'wb') as handle:
+        handle.write(b'stray')
+
+    res = v.rotate_kek(tok)
+    assert res['status'] == 'ok', res
+    assert '%s#g9' % vault2.FILE_KEY_NAME in (res.get('orphans') or []), res.get('orphans')
+    assert os.path.exists(orphan), '保守策略下孤儿文件**不得被删除**'
+    assert any('孤儿' in w for w in (res.get('warnings') or [])), res.get('warnings')
+
+
+def test_vault2_rotate_kek_filekey_shared_gen0_not_deleted(tmp_path, monkeypatch):
+    """两个身份共用第 0 代 KEK 文件 → 轮换其中一个时**不得删**该文件（另一个还要用）。"""
+    v = _filekey_vault(tmp_path, monkeypatch)
+    r1 = v.register('fk5a', '123456', security_level='L2')
+    r2 = v.register('fk5b', '654321', security_level='L2')
+    a1 = v.auth(r1['identity_id'], r1['machine_id'], '123456')
+    a2 = v.auth(r2['identity_id'], r2['machine_id'], '654321')
+    v.set_secret(a1['session_token'], 'K1', 'V1')
+    v.set_secret(a2['session_token'], 'K2', 'V2')
+
+    res = v.rotate_kek(a1['session_token'])
+    assert res['status'] == 'ok', res
+    assert res['gc']['delete'] == 'shared', res['gc']
+    assert res['gc']['cleaned'] == 0
+    assert os.path.exists(os.path.join(v.vault_dir, vault2.FILE_KEY_NAME)), \
+        '其它身份仍引用旧代文件，不能删'
+    # 两个身份都仍可读
+    assert v.get_secret(a1['session_token'], 'K1')['value'] == 'V1'
+    assert v.get_secret(a2['session_token'], 'K2')['value'] == 'V2'
