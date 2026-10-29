@@ -46,10 +46,13 @@
 
 
 import json
+import logging
 from vools.core.dataclass_compat import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from . import omega as _omega
+
+logger = logging.getLogger(__name__)
 
 __all__ = ['NodeAction', 'ActionWorker', 'static_assign', 'leaf_assign',
            'plan_from_json', 'order_assign']
@@ -210,8 +213,14 @@ class ActionWorker:
         if isinstance(act, str):  # 允许直接给 action_id
             return NodeAction(act)
         if isinstance(act, dict):  # 允许 {action_id, params, spec_path}
-            return NodeAction(act.get('action_id') or act.get('action'),
-                              act.get('params') or {}, act.get('spec_path'))
+            aid = act.get('action_id') or act.get('action')
+            if not isinstance(aid, str) or not aid.strip():
+                # S1（第 33 轮）：改前会构造 `NodeAction(None)`，执行器随即抛
+                # `AttributeError: 'NoneType' object has no attribute 'rsplit'`，
+                # 被包成 executor_error —— 配置错报成引擎错。现在返回 None，
+                # 由 worker 统一报结构化 `no_action_assigned`。
+                return None
+            return NodeAction(aid, act.get('params') or {}, act.get('spec_path'))
         return None
 
     # ── worker ──
@@ -234,7 +243,14 @@ class ActionWorker:
                     'error': {'code': 'executor_error',
                               'message': f'{type(e).__name__}: {e}'}}
         if not isinstance(result, dict):
-            result = {'status': 'ok', 'value': result}
+            # S2（第 33 轮）：改前 `{'status': 'ok', 'value': result}` —— 执行器返回
+            # None（什么都没做）也会被当成功。与 exec_iface 的同类修复保持一致：
+            # 非结构化结果 = 无法确认执行，判失败并如实说明类型。
+            return {'status': 'failed',
+                    'error': {'code': 'invalid_result',
+                              'message': 'executor 返回非结构化结果（%s），无法确认是否真的执行'
+                                         % type(result).__name__},
+                    'action': act.action_id}
         # 标注来源动作，便于追溯
         result.setdefault('action', act.action_id)
         return result
@@ -250,5 +266,9 @@ class ActionWorker:
             return None
         try:
             return _omega._find_omega_spec(act.action_id, self.actions_dir)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:                            # noqa: BLE001
+            # S3（第 33 轮）：返回值语义不变（None = 无 spec，门禁会判 blocked），
+            # 但改前完全静默 —— 与"消灭静默失败"的原则冲突，至少留痕。
+            logger.warning('spec 解析失败，按无 spec 处理: %s: %s',
+                           type(exc).__name__, exc)
             return None
