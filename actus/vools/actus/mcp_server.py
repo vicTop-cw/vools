@@ -80,6 +80,11 @@ def _tool_name(action_id: str) -> str:
 #   * 结果存**进程内存**：任务表是调度状态，跨重启无意义（真正的执行留痕
 #     executor 已落 `_meta/runs/<exec_id>.json`，磁盘再存一份是重复）。
 #     代价：server 重启后 task_id 失效 —— 已写进工具描述。
+#: 除动作工具之外，也需要「先等 grace、超时转后台」的长时工具。
+#: selfdrive 可能拆解/执行很多轮 —— 在 handler 里同步跑完会阻塞整个 MCP 服务
+#: （serve_forever 严格串行），所以复用既有异步任务框架。
+_ASYNC_TOOLS = frozenset({'actus_selfdrive_run'})
+
 _TASK_GRACE_SEC = float(os.environ.get('ACTUS_MCP_ASYNC_GRACE', '2.0'))
 _TASK_TIMEOUT_SEC = float(os.environ.get('ACTUS_MCP_TASK_TIMEOUT', '600'))
 _TASK_WORKERS = max(1, int(os.environ.get('ACTUS_MCP_TASK_WORKERS', '4')))
@@ -767,6 +772,23 @@ class MCPServer:
                                  'mode': {'type': 'string',
                                           'enum': ['passphrase', 'keyring', 'file-key'],
                                           'description': '断言当前保护方式（可选）'}}}},
+            {'name': 'actus_selfdrive_run',
+             'description': ('自驱式编程：给定目标 → 递归拆解 → 逐节点执行 → Ω 强验证，'
+                             '失败处按 max_depth/max_rounds 继续递归拆解。'
+                             '长时任务：先同步等 ACTUS_MCP_ASYNC_GRACE 秒，超过则转后台并返回 '
+                             '{"status":"running","task_id":...}，用 actus_status(task_id=...) 轮询。'
+                             'dry_run=true 时只规划不执行（返回拆解节点，零副作用）。'),
+             'inputSchema': {'type': 'object', 'required': ['goal'],
+                             'properties': {
+                                 'goal': {'type': 'string', 'description': '目标文本（非空）'},
+                                 'plan': {'type': ['object', 'array', 'string'],
+                                          'description': '动作计划（worker=action 时必填）'},
+                                 'worker': {'type': 'string', 'enum': ['echo', 'action'],
+                                            'description': 'echo=确定性空跑（默认）；action=真实执行 plan'},
+                                 'max_depth': {'type': 'integer', 'minimum': 0},
+                                 'max_rounds': {'type': 'integer', 'minimum': 1},
+                                 'strong': {'type': 'boolean', 'description': 'Ω 强验证'},
+                                 'dry_run': {'type': 'boolean', 'description': '只规划不执行'}}}},
             {'name': 'actus_runtimes',
              'description': '列出所有可用的多语言运行时（python/shell/node/go/rust/ruby/php）',
              'inputSchema': {'type': 'object', 'properties': {}}},
@@ -908,6 +930,36 @@ class MCPServer:
                                                   'description': '保留天数（默认 30）'},
                                  'max_count': {'type': 'integer',
                                                'description': '最多保留条数（默认 1000）'},
+                             }}},
+            {'name': 'actus_bug_list',
+             'description': ('列出 bug 账本（memory/bugs.md）条目：运行时缺陷的 OPEN/关闭记录。'
+                             '可按 status / severity 过滤；只读。'),
+             'inputSchema': {'type': 'object',
+                             'properties': {
+                                 'status': {'type': 'string',
+                                            'description': '状态过滤（OPEN/FIXED/CLOSED…，大小写不敏感）'},
+                                 'severity': {'type': 'string',
+                                              'enum': ['critical', 'high', 'medium', 'low']},
+                                 'project_dir': {'type': 'string',
+                                                 'description': '账本所属项目根（缺省 = 仓库根 repo_root()）'},
+                             }}},
+            {'name': 'actus_bug_report',
+             'description': ('登记一条 OPEN bug 到 memory/bugs.md（**写操作**）。'
+                             '必须给出可核实出处：source（项目根内真实文件）或 ref_call_id'
+                             '（call_log 中的 seq）至少一个；同键重复上报只累加命中。'),
+             'inputSchema': {'type': 'object', 'required': ['summary'],
+                             'properties': {
+                                 'summary': {'type': 'string', 'description': '一句话摘要'},
+                                 'detail': {'type': 'string', 'description': '详细描述'},
+                                 'severity': {'type': 'string',
+                                              'enum': ['critical', 'high', 'medium', 'low'],
+                                              'description': '级别（默认 medium）'},
+                                 'source': {'type': 'string',
+                                            'description': '可核实出处：项目根内真实文件（与 ref_call_id 至少一个）'},
+                                 'ref_call_id': {'type': 'integer',
+                                                 'description': '关联 call_log seq（与 source 至少一个）'},
+                                 'reported_by': {'type': 'string', 'description': '上报人（默认 agent）'},
+                                 'project_dir': {'type': 'string', 'description': '账本所属项目根'},
                              }}},
             {'name': 'actus_evolve',
              'description': '自进化：根据自然语言描述自动生成动作→校验→测试→修复，直到通过',
@@ -1472,8 +1524,8 @@ class MCPServer:
             action_map = _action_tool_map()
         except Exception:
             action_map = {}
-        if name not in action_map:
-            # 非动作工具：**保持内核同步**，改前怎么走现在还怎么走
+        if name not in action_map and name not in _ASYNC_TOOLS:
+            # 非长时工具：**保持内核同步**，改前怎么走现在还怎么走
             return self._call_tool(params)
 
         running = _running_task_count()
@@ -1558,6 +1610,94 @@ class MCPServer:
                 'message': '%s: %s' % (type(exc).__name__, exc),
                 'details': {'tool': (params or {}).get('name', '')},
             }}, True)
+
+    def _tool_selfdrive_run(self, args: dict) -> dict:
+        """actus_selfdrive_run：复用 selfdrive 库，不另造控制器。
+
+        dry_run=True → 只调 Decomposer 产出计划（不建 SelfDrive、不执行、不写快照）；
+        否则与 CLI `actus selfdrive run` 同口径：解析 plan → 选 worker → SelfDrive.run()。
+        长时：由 _call_tool_async 放到后台线程（见 _ASYNC_TOOLS）。
+        """
+        from vools.actus import selfdrive as sd
+        from vools.actus.paths import meta_dir as _mdir
+
+        goal = (args.get('goal') or '')
+        if not isinstance(goal, str) or not goal.strip():
+            return text_result({'status': 'failed', 'error': {
+                'code': 'param_invalid', 'message': 'goal 必须是非空字符串'}}, True)
+        goal = goal.strip()
+
+        try:
+            max_depth = int(args.get('max_depth', 2))
+            max_rounds = int(args.get('max_rounds', 3))
+        except (TypeError, ValueError):
+            return text_result({'status': 'failed', 'error': {
+                'code': 'param_invalid',
+                'message': 'max_depth / max_rounds 必须是整数'}}, True)
+        strong = True if args.get('strong') is True else None
+
+        if args.get('dry_run') is True:
+            try:
+                nodes = sd.Decomposer(max_depth=max_depth).decompose(goal, 'dry-run')
+            except (TypeError, ValueError) as exc:
+                return text_result({'status': 'failed', 'error': {
+                    'code': 'param_invalid', 'message': str(exc)}}, True)
+            leaves = [n for n in nodes
+                      if n.get('parent') is not None and not n.get('children')]
+            return text_result({
+                'status': 'ok', 'dry_run': True, 'goal': goal,
+                'max_depth': max_depth, 'max_rounds': max_rounds,
+                'strong': bool(strong),
+                'node_count': len(nodes), 'leaf_count': len(leaves),
+                'nodes': nodes,
+                'note': '干跑：只做拆解规划，未执行任何节点、未创建运行快照'})
+
+        plan = args.get('plan')
+        plan_raw = None
+        if plan is not None and plan != '':
+            if isinstance(plan, str):
+                plan_raw = plan
+            else:
+                try:
+                    plan_raw = json.dumps(plan, ensure_ascii=False)
+                except (TypeError, ValueError) as exc:
+                    return text_result({'status': 'failed', 'error': {
+                        'code': 'param_invalid',
+                        'message': 'plan 无法序列化为 JSON：%s' % exc}}, True)
+
+        worker, spec_resolver, worker_kind = None, None, 'echo'
+        if (args.get('worker') or 'echo') == 'action':
+            if not plan_raw:
+                return text_result({'status': 'failed', 'error': {
+                    'code': 'param_invalid',
+                    'message': 'worker=action 需要 plan（动作计划）'}}, True)
+            from vools.actus.paths import repo_root as _rroot
+            from vools.actus.selfdrive_worker import ActionWorker
+            try:
+                aw = ActionWorker.from_plan(
+                    plan_raw, actions_dir=os.path.join(_rroot(), 'actions'),
+                    meta_dir=_mdir())
+            except ValueError as exc:
+                return text_result({'status': 'failed', 'error': {
+                    'code': 'param_invalid', 'message': str(exc)}}, True)
+            worker, spec_resolver, worker_kind = aw.worker, aw.spec_resolver, 'action'
+
+        try:
+            run = sd.SelfDrive(goal, max_depth=max(0, max_depth),
+                               max_rounds=max(1, max_rounds),
+                               worker=worker, spec_resolver=spec_resolver,
+                               strong=strong, meta_dir=_mdir())
+            snap = dict(run.run())
+        except (TypeError, ValueError) as exc:
+            return text_result({'status': 'failed', 'error': {
+                'code': 'param_invalid', 'message': str(exc)}}, True)
+        except Exception as exc:                   # noqa: BLE001 —— MCP 边界统一结构化
+            return text_result({'status': 'failed', 'error': {
+                'code': 'internal',
+                'message': '%s: %s' % (type(exc).__name__, exc)}}, True)
+        snap['worker_kind'] = worker_kind
+        snap.setdefault('status', 'ok')
+        return text_result(snap)
 
     def _call_tool_inner(self, params: dict) -> dict:
         name = params.get('name', '')
@@ -2057,6 +2197,9 @@ class MCPServer:
                     'code': 'kek_rotate_failed', 'message': str(e)}}, True)
             return text_result(r)
 
+        if name == 'actus_selfdrive_run':
+            return self._tool_selfdrive_run(args)
+
         if name == 'actus_runtimes':
             from vools.actus.runtimes import get_available_runtimes
             try:
@@ -2114,6 +2257,47 @@ class MCPServer:
 
         if name == 'actus_artifacts_cleanup':
             return _handle_artifacts_cleanup(args)
+
+        # bug 账本（T0r2：bugreport.py 接线；与 CLI `actus bug` 共用同一账本函数）
+        if name == 'actus_bug_list':
+            from vools.actus.bugreport import bug_list, bugs_path
+            raw_dir = args.get('project_dir') or None
+            project_dir = (os.path.abspath(os.path.expanduser(raw_dir))
+                           if raw_dir else None)
+            rows = bug_list(project_dir=project_dir)
+            status = args.get('status')
+            severity = args.get('severity')
+            if status:
+                rows = [r for r in rows
+                        if str(r.get('status') or '').upper() == str(status).upper()]
+            if severity:
+                rows = [r for r in rows
+                        if str(r.get('severity') or '').lower() == str(severity).lower()]
+            return text_result({'status': 'ok', 'bugs': rows, 'count': len(rows),
+                                'path': bugs_path(project_dir).replace(os.sep, '/')})
+
+        if name == 'actus_bug_report':
+            from vools.actus.bugreport import BugreportError, report_bug
+            raw_dir = args.get('project_dir') or None
+            project_dir = (os.path.abspath(os.path.expanduser(raw_dir))
+                           if raw_dir else None)
+            try:
+                result = report_bug(
+                    args.get('summary') or '',
+                    detail=args.get('detail'),
+                    severity=args.get('severity') or 'medium',
+                    ref_call_id=args.get('ref_call_id'),
+                    reported_by=args.get('reported_by') or 'agent',
+                    project_dir=project_dir,
+                    source=args.get('source'))
+            except BugreportError as exc:
+                return text_result({'status': 'failed', 'error': {
+                    'code': 'param_invalid', 'message': str(exc)}}, True)
+            payload = dict(result)
+            payload['bug_status'] = payload.pop('status', 'OPEN')
+            payload['status'] = 'ok'
+            payload['path'] = str(payload.get('path', '')).replace(os.sep, '/')
+            return text_result(payload)
 
         # 进化工具
         if name == 'actus_evolve':

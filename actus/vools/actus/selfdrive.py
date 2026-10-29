@@ -23,8 +23,10 @@
     [--worker echo|action]`，以及 `actus selfdrive status [run_id]` 查看快照。
     第 11 轮接线（此前 docstring 声称"入口已接通"但实测 CLI/MCP 均 0 命中，
     属不实描述；CLI 入口本轮补齐）。
-  * **没有什么**：**MCP 仍无入口**（`grep actus_selfdrive mcp_server.py` 为 0 命中）。
-  * **计划中（未实现）**：MCP `actus_selfdrive_run{plan}`。
+  * **MCP 入口（第 25 轮补齐）**：`actus_selfdrive_run{goal, plan?, worker?,
+    max_depth?, max_rounds?, strong?, dry_run?}` —— 与 CLI 同口径（复用 `SelfDrive`），
+    `dry_run=true` 只调 `Decomposer` 产出计划（零执行/零快照）；
+    长时任务走 MCP 既有异步框架（grace 后转后台，`actus_status(task_id=...)` 轮询）。
 - **持久化**：运行态写 `_meta/selfdrive/<run_id>.json`，支持断点查看（status）。
 
 自驱语义：控制器不依赖人类逐步指令——给定目标后自主规划、执行、验证、在失败
