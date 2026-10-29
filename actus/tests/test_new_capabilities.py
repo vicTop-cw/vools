@@ -494,6 +494,7 @@ def test_integrity_gate_rejects_tampered_cache(world, mutation, expected_reason)
 # ===========================================================================
 
 @pytest.mark.timeout(180)
+@pytest.mark.slow
 def test_report_source_distinguishes_probe_from_cache(world):
     """退步了会怎样：缓存命中的报告仍标 "probe" → 用户/AI 把旧结果当刚探测的，
     或 force-refresh 被缓存短路却标 "cache"。

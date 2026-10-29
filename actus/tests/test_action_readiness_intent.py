@@ -285,6 +285,7 @@ def fake_repo(tmp_path, monkeypatch):
 
 
 @pytest.mark.timeout(180)
+@pytest.mark.slow
 def test_end_to_end_probe_blocks_action_with_missing_dep(fake_repo):
     """真 probe → 报告 → IntentRouter：缺依赖的动作被挡，无依赖的动作放行。
 

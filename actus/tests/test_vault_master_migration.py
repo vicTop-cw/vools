@@ -25,6 +25,9 @@ import sys
 
 import pytest
 
+# 第 22 轮：真实 crypto/DB IO 或真实 CLI 执行（模块总耗时 >3s）
+pytestmark = pytest.mark.slow
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
 _ai_local_bootstrap.install()
@@ -166,6 +169,7 @@ def test_master_derivation_stable_across_windows(world):
 # 2) L1 派生必须逐字不变（防修复误伤）
 # ===========================================================================
 
+@pytest.mark.slow
 def test_l1_derivation_unchanged(world):
     """退步了会怎样：修复时改了 L1 的派生（L1 本就没有动态码，应为空串）——
     L1 用户升级后旧密钥全部解不开（这次修复只应影响 L2/L3 的旧密文）。
@@ -191,6 +195,7 @@ def test_l1_derivation_unchanged(world):
 # 3) auth 自动迁移旧密文 → 可读
 # ===========================================================================
 
+@pytest.mark.slow
 def test_legacy_ciphertext_migrated_on_auth(world):
     """退步了会怎样：旧派生时期的密文不迁移 —— 升级后老用户每次读都是
     「凭证解密失败」，只能靠人工脚本救。

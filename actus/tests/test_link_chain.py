@@ -14,6 +14,9 @@ import sys
 
 import pytest
 
+# 第 22 轮：真实 IO / 真实执行型测试 —— 用 `pytest -m "not slow"` 跳过
+pytestmark = pytest.mark.slow
+
 FENCE = "`" * 3
 ACTUS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

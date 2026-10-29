@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 """actus 测试套件全局夹具：**运行时数据目录默认隔离**（测试卫生）。
 
+测试分档（第 22 轮起）：
+  * `pytest -m "not slow"` —— 日常快速子集（跳过真实 probe / 真实动作执行 /
+    真实 TLS / 真实 crypto IO / 71 个 CLI 子命令全跑等慢测试）；
+  * `pytest` —— 全量（CI 的 test-actus 作业必须跑这条）。
+慢测试清单：grep -rn "pytest.mark.slow" tests/。
+
 背景（第 15 轮，真实事故）：测试套件跑完会把真实仓库 `_meta/` 写脏
 （`events.jsonl` / `probe_cache.json` / `actions.index.json` / `call_log.db` /
 `runs/*.json` / `status.json` / `logs/*`）。它们是 gitignore 的运行时状态，但同属
