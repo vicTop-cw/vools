@@ -89,7 +89,43 @@ def test_probe_force_refresh_flag_maps_to_kwarg(capsys):
     args3 = parser.parse_args(['probe'])
     assert args3.force_refresh is False
     assert args3.as_json is False
-    assert args3.max_age == 3600
+
+
+def test_probe_max_age_default_and_override(capsys, monkeypatch):
+    """第 20 轮（#15）：`max_age` 不抄 3600 字面量，断言**语义**：
+
+    1. parser 默认值 == 核心 `probe()` 的默认值（单一真源；任一侧被改都会红）；
+    2. 显式 `--max-age` 覆盖生效，并**真的传进 probe()**（打桩捕获 kwargs）；
+    3. 不传时传入的是核心默认值（不是硬编码在 CLI 里的另一份）。
+    """
+    import inspect
+    from vools.actus import probe as probe_mod
+
+    core_default = inspect.signature(probe_mod.probe).parameters['max_age'].default
+    parser = cli._build_parser()
+    assert parser.parse_args(['probe']).max_age == core_default, \
+        'CLI 默认 max_age 与 probe() 默认值不一致（出现两份真源）'
+    assert parser.parse_args(['probe', '--max-age', '7']).max_age == 7
+
+    captured = {}
+
+    class _Report:
+        def to_dict(self):
+            return {'report_source': 'probe', 'items': [], 'summary': {}}
+
+    def fake_probe(**kwargs):
+        captured.update(kwargs)
+        return _Report()
+
+    monkeypatch.setattr(probe_mod, 'probe', fake_probe)
+    rc = cli._cmd_probe(parser.parse_args(['probe', '--max-age', '7', '--json']))
+    assert rc == 0
+    assert captured.get('max_age') == 7, captured
+    assert captured.get('force_refresh') is False
+
+    captured.clear()
+    rc = cli._cmd_probe(parser.parse_args(['probe', '--json']))
+    assert rc == 0 and captured.get('max_age') == core_default, captured
 
 
 def test_probe_verbose_json(capsys):

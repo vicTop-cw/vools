@@ -35,44 +35,98 @@ def _tool_defs():
 
 
 def test_resolver_wired_into_readonly_mcp_tools():
-    """actus_info / actus_preview 必须真的走 resolver（源码级契约）。"""
+    """actus_info / actus_preview 必须真的走 resolver（**行为**契约）。
+
+    第 20 轮：删掉源码字符串断言，改为**调用 MCP 工具**，用 name/md5 形态的
+    实际解析结果证明 resolver 在链路上；再用不存在的 id 证明没有"全部吞掉"
+    的退化（守卫被删 → name 形态会退化成 action_not_found，立刻红）。
+    """
+    import io as _io
+    import json as _json
     from vools.actus import mcp_server
-    src = open(MCP, encoding="utf-8").read()
-    assert "def resolve_action_arg" in src
-    assert "aid = resolve_action_arg(args.get('id', ''))" in src, \
-        "actus_info / actus_preview 的 id 必须经 resolve_action_arg 解析"
+    from vools.actus.indexer import get_action
+
+    action = get_action("actus.basics.calculator")
+    canonical = action.meta["id"]
+    server = mcp_server.MCPServer(stdout=_io.BytesIO())
+
+    def call(tool, arguments):
+        raw = server._call_tool({"name": tool, "arguments": arguments})
+        return raw.get("isError"), _json.loads(raw["content"][0]["text"])
+
+    err, payload = call("actus_info", {"id": action.meta["name"]})
+    assert err is False, payload
+    assert payload["data"]["id"] == canonical, payload
+
+    err, payload = call("actus_info", {"id": action.md5})
+    assert err is False, payload
+    assert payload["data"]["id"] == canonical, payload
+
+    err, payload = call("actus_preview",
+                        {"id": action.meta["name"], "args": {"param": "1"}})
+    assert err is False, payload
+    assert payload["data"]["action"]["id"] == canonical, payload
+
+    err, payload = call("actus_info", {"id": "no.such.action"})
+    assert err is True and payload["error"]["code"] == "action_not_found", payload
 
 
 def test_descriptions_document_target_forms():
-    """工具描述必须写清六形态（计划 §四.5），且与 resolver 实际能力对齐。
+    """工具描述必须写清六形态（计划 §四.5）——**从 tools/list 输出断言**。
 
-    描述是字符串拼接（`'…' + TARGET_FORMS_HINT`），AST literal_eval 求不出来，
-    所以直接对源码文本断言。
+    第 20 轮：不再读源码文本，改为取 MCP `_list_tools()` 的**渲染后描述**
+    （这才是 AI/客户端实际看到的东西）。守卫被删/描述被截断 → 立刻红。
     """
-    src = open(MCP, encoding="utf-8").read()
+    import io as _io
+    from vools.actus import mcp_server
+
+    tools = {t["name"]: t for t in
+             mcp_server.MCPServer(stdout=_io.BytesIO())._list_tools()}
     for name in ("actus_info", "actus_preview"):
-        idx = src.find("'name': '%s'" % name)
-        assert idx > 0, name
-        block = src[idx:idx + 900]
-        assert "TARGET_FORMS_HINT" in block, "%s 描述未引用形态说明" % name
-    hint_idx = src.find("TARGET_FORMS_HINT = (")
-    assert hint_idx > 0
-    hint = src[hint_idx:hint_idx + 600]
-    assert "六种形态" in hint
-    for kw in ("动作 id", "可读名", "md5", "路径", "URL"):
-        assert kw in hint, "形态说明缺少关键词 %r" % kw
+        desc = tools[name]["description"]
+        assert "六种形态" in desc, "%s 描述未写清形态: %r" % (name, desc[:120])
+        for kw in ("动作 id", "可读名", "md5", "路径", "URL"):
+            assert kw in desc, "%s 描述缺少形态关键词 %r" % (name, kw)
 
 
-def test_target_forms_hint_matches_resolver_sources():
-    """描述里列的形态必须与 resolver 实际返回的 source 集合一致。"""
-    import inspect
-    from vools.actus import resolver
-    src = inspect.getsource(resolver.resolve_target)
-    for source in ("'path'", "'url'", "'name'", "'md5'", "'id'"):
-        assert source in src, "resolver 未产出 source=%s" % source
-    hint = open(MCP, encoding="utf-8").read()
+def test_target_forms_hint_matches_resolver_sources(tmp_path):
+    """描述里列的形态必须与 resolver **实际产出**的 source 集合一致。
+
+    第 20 轮：删掉 `inspect.getsource(resolve_target)` 子串断言，改为对每种
+    形态**真的调用** resolve_target 并收集 source；URL 分支用 monkeypatch
+    替换下载实现（不联网、不落真实缓存）。
+    """
+    import io as _io
+    from vools.actus import resolver as r
+    from vools.actus import mcp_server
+
+    action = __import__("vools.actus", fromlist=["get_action"]).get_action(
+        "actus.basics.calculator")
+    scattered = tmp_path / "r20.scattered.actus.md"
+    scattered.write_text(
+        "```json #!cfg\n{\"id\": \"r20.scattered.act\", \"name\": \"R20\","
+        " \"version\": \"1.0.0\", \"trust\": \"sandbox\", \"kind\": \"demo\","
+        " \"platform\": [\"desktop\"]}\n```\n", encoding="utf-8")
+
+    seen = set()
+    seen.add(r.resolve_target(action.meta["id"]).source)
+    seen.add(r.resolve_target(action.meta["name"]).source)
+    seen.add(r.resolve_target(action.md5).source)
+    seen.add(r.resolve_target(str(scattered)).source)
+
+    original = r._download_url
+    r._download_url = lambda url, allow_hosts=None: str(scattered)
+    try:
+        seen.add(r.resolve_target("https://example.invalid/a.actus.md",
+                                  allow_hosts=["example.invalid"]).source)
+    finally:
+        r._download_url = original
+    assert seen == {"id", "name", "md5", "path", "url"}, seen
+
+    tools = {t["name"]: t for t in
+             mcp_server.MCPServer(stdout=_io.BytesIO())._list_tools()}
     for kw in ("动作 id", "可读名", "md5", "路径", "URL"):
-        assert kw in hint
+        assert kw in tools["actus_info"]["description"]
 
 
 def test_resolve_action_arg_passthrough_on_failure(monkeypatch):
