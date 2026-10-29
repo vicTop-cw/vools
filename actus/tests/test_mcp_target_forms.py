@@ -34,7 +34,7 @@ def _tool_defs():
     return out
 
 
-def test_resolver_wired_into_readonly_mcp_tools():
+def test_resolver_wired_into_readonly_mcp_tools(monkeypatch):
     """actus_info / actus_preview 必须真的走 resolver（**行为**契约）。
 
     第 20 轮：删掉源码字符串断言，改为**调用 MCP 工具**，用 name/md5 形态的
@@ -62,9 +62,21 @@ def test_resolver_wired_into_readonly_mcp_tools():
     assert err is False, payload
     assert payload["data"]["id"] == canonical, payload
 
+    # preview 的 wiring 只关心"resolver 把 name 归一成 id 后传进 preview"；
+    # 真正 preview 会做一次全量校验 + 安全扫描（约 1s/次），这里打桩 preview
+    # 以保留行为断言、把测试从 ~7s 降到 <1s（产品行为另有 executor 测试覆盖）。
+    received = {}
+    import vools.actus as actuscore
+
+    def fake_preview(action_id, params=None, actions_dir=None):
+        received["action_id"] = action_id
+        return {"action": {"id": action_id}, "blocks": []}
+
+    monkeypatch.setattr(actuscore, "preview", fake_preview)
     err, payload = call("actus_preview",
                         {"id": action.meta["name"], "args": {"param": "1"}})
     assert err is False, payload
+    assert received.get("action_id") == canonical, received
     assert payload["data"]["action"]["id"] == canonical, payload
 
     err, payload = call("actus_info", {"id": "no.such.action"})
