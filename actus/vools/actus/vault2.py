@@ -598,6 +598,96 @@ class Vault2:
         self._file_key_cached = key
         return key
 
+    # ── file-key 助手（第 3 步）────────────────────────────────────────
+    def _file_locator(self, identity_id: str, key_meta: Optional[str] = None) -> str:
+        """file-key 的文件名。第 0 代 = 旧名 `.vault2.key`（**向后兼容，不迁移**）；
+        第 N 代 = `.vault2.key#g{N}`（与 keyring 的 locator 约定同形）。"""
+        if key_meta:
+            try:
+                meta = json.loads(key_meta)
+            except (TypeError, ValueError):
+                meta = {}
+            if isinstance(meta, dict):
+                name = ((meta.get('kek_locator') or {}) or {}).get('name')
+                if name:
+                    return name
+        gen = kek_gen_of_meta(key_meta)
+        return FILE_KEY_NAME if gen == 0 else '%s#g%d' % (FILE_KEY_NAME, gen)
+
+    def _file_key_path(self, name: str) -> str:
+        return os.path.join(self.vault_dir, name)
+
+    def _get_file_kek(self, name: str) -> Optional[bytes]:
+        """读一代 KEK 文件；不存在返回 None；长度/编码不对 → 抛错（不静默）。"""
+        path = self._file_key_path(name)
+        if not os.path.isfile(path):
+            return None
+        with open(path, 'rb') as handle:
+            raw = handle.read().strip()
+        try:
+            key = base64.b64decode(raw)
+        except Exception as exc:                       # noqa: BLE001
+            raise Vault2KeyProtectionError("KEK 文件损坏（base64）：%s —— %s" % (path, exc))
+        if len(key) != 32:
+            raise Vault2KeyProtectionError(
+                "KEK 文件长度异常（%d != 32）：%s" % (len(key), path))
+        return key
+
+    def _put_file_kek(self, name: str, kek: bytes) -> None:
+        """**O_EXCL** 独占创建（绝不覆盖已有代）+ 0600 + 写入。
+
+        ⚠️ 不用"先 exists 再写"：那是 TOCTOU。O_EXCL 把"唯一创建者"的裁决交给内核。
+        Windows 说明：`os.open(..., 0o600)` 的 mode 在 Windows 上只影响只读位，
+        `os.chmod` 同样只切只读位（不做 ACL）—— 所以这里 0600 是 **POSIX 强约束、
+        Windows best-effort**；Windows 下的隔离靠"目录在用户 profile 下"。
+        """
+        path = self._file_key_path(name)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(fd, base64.b64encode(kek))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            os.chmod(path, 0o600)          # POSIX 生效；Windows 只切只读位
+        except OSError:
+            pass
+
+    def _delete_file_kek(self, name: str) -> None:
+        os.unlink(self._file_key_path(name))
+
+    def _file_kek_referenced_by_others(self, identity_id: str, name: str) -> bool:
+        """是否有**其它身份**仍引用同一个 KEK 文件（file-key 的 KEK 是"随库"的，
+        多个身份可能共用第 0 代文件 —— 删之前必须确认没人引用）。"""
+        with self._db() as conn:
+            rows = conn.execute("SELECT id, key_meta FROM identities").fetchall()
+        for (other_id, other_meta) in rows:
+            if other_id == identity_id:
+                continue
+            if self._file_locator(other_id, other_meta) == name:
+                return True
+        return False
+
+    def _scan_file_kek_orphans(self) -> list:
+        """扫描密钥目录里"**既不被任何身份引用、也不在 kek_retired 日志里**"的 KEK 文件。
+
+        保守策略：**只报告、不删除**（见 docs/vault2-kek-rotation.md §4.4.4）——
+        孤儿只占空间、不威胁安全；误删被引用的代是灾难。
+        """
+        try:
+            names = [n for n in os.listdir(self.vault_dir)
+                     if n == FILE_KEY_NAME or n.startswith(FILE_KEY_NAME + '#g')]
+        except OSError:
+            return []
+        with self._db() as conn:
+            # 注意取 r[1]（key_meta），不是 r[0]（id）—— 取错会把所有代都判成孤儿
+            metas = [r[1] for r in conn.execute("SELECT id, key_meta FROM identities")
+                     .fetchall()]
+            logged = {r[0] for r in conn.execute(
+                "SELECT locator FROM kek_retired WHERE cleaned=0").fetchall()}
+        referenced = {self._file_locator('', m) for m in metas}
+        return sorted(n for n in names if n not in referenced and n not in logged)
+
     def _keyring_locator(self, identity_id: str, key_meta: Optional[str] = None) -> str:
         """keyring 条目 locator。第 2 步起是 `identity#g{N}`；旧库（无 locator）仍是
         `identity_id`（= 第 0 代），**向后兼容**，不需要迁移 keyring 条目。"""
@@ -671,6 +761,11 @@ class Vault2:
             return hashlib.pbkdf2_hmac(
                 "sha256", self._passphrase.encode("utf-8"),
                 bytes.fromhex(salt_hex), iters, 32)
+        # file-key：按 locator 取（第 N 代），第 0 代/缺文件时回落到原 `_file_key()`
+        name = self._file_locator(identity_id, key_meta)
+        kek = self._get_file_kek(name)
+        if kek is not None:
+            return kek
         return self._file_key()
 
     def _encrypt_seed_hex(self, identity_id: str, seed_hex: str):
@@ -713,7 +808,8 @@ class Vault2:
         elif self.key_protection == PROTECTION_PASSPHRASE:
             kek = self._kek_for(identity_id, key_meta)
         else:
-            kek = self._file_key()
+            kek = self._get_file_kek(self._file_locator(identity_id, key_meta)) \
+                or self._file_key()
         return ENVELOPE_PREFIX + _FernetBackend(kek).encrypt(seed_hex)
 
     def _decode_seed_hex(self, identity_id: str, stored: str,
@@ -1506,6 +1602,137 @@ class Vault2:
     #   ② GC **删后回读确认**：`delete_password` 没抛 ≠ 条目真的没了（delete_lag 场景）
     #      只有回读确认不在，才允许 `cleaned=1`；否则保持 0 等下次重试。
 
+    # ── KEK 轮换 · 第 3 步：file-key 模式 ─────────────────────────────
+    #
+    # 与 keyring 同骨架（双代 + 日志 + GC），差异全部来自"外部是文件系统"：
+    #   ① 创建必须 **O_EXCL**（"先 exists 再写" = TOCTOU；已存在就绝不覆盖）；
+    #   ② 写后**回读比对**（短写/磁盘满 → 长度或内容不对，必须中止）；
+    #   ③ 删后 **os.path.exists 回读确认**（unlink 没抛 ≠ 文件没了）；
+    #   ④ 孤儿回收**保守**：只删日志里登记的旧代；"存在但既不被引用也不在日志里"
+    #      的文件**只报告不删除**（孤儿只占空间，误删被引用的代是灾难）。
+    #   ⑤ 额外保护：file-key 的 KEK 是"随库"的，可能被**多个身份共用第 0 代文件** ——
+    #      删旧代前必须确认没有别的身份还在引用（`_file_kek_referenced_by_others`）。
+    def _rotate_kek_filekey(self, identity_id: str, seed_hex: str,
+                            key_meta_old, old_gen: int, caller: str = None) -> dict:
+        name_old = self._file_locator(identity_id, key_meta_old)
+        new_gen = old_gen + 1
+        name_new = '%s#g%d' % (FILE_KEY_NAME, new_gen)
+        new_kek = secrets.token_bytes(32)
+
+        # ── C1：写新代之前 ──
+        try:
+            self._put_file_kek(name_new, new_kek)      # O_EXCL：已存在 → FileExistsError
+        except FileExistsError:
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="kek_file_exists", caller=caller)
+            return {"status": "error", "code": "kek_file_exists", "mode": "file-key",
+                    "message": ("目标代 KEK 文件已存在（%s）—— O_EXCL 拒绝覆盖。"
+                                "DB 未改动，旧代完好；请先人工确认该文件是孤儿还是上一轮残留。"
+                                % name_new)}
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="kek_write_failed: %s" % exc, caller=caller)
+            return {"status": "error", "code": "kek_write_failed", "mode": "file-key",
+                    "message": "写新代 KEK 文件失败（DB 未改动，旧代完好）：%s: %s"
+                               % (type(exc).__name__, exc)}
+
+        # ── C2：写后、提交前；**回读比对**（短写必须被发现）──
+        try:
+            readback = self._get_file_kek(name_new)
+        except Exception as exc:                       # noqa: BLE001
+            readback, readback_error = None, str(exc)
+        else:
+            readback_error = ''
+        if readback != new_kek:
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="kek_readback_mismatch", caller=caller)
+            return {"status": "error", "code": "kek_readback_mismatch", "mode": "file-key",
+                    "message": ("新代 KEK 文件写入后回读不一致（短写/磁盘满？）—— **未提交 DB**，"
+                                "旧代完好。孤儿文件 %s 无害（无人引用）。%s"
+                                % (name_new, readback_error)),
+                    "orphan_file": name_new}
+
+        new_meta = json.dumps({"kdf": "file-key", "kek_gen": new_gen,
+                               "kek_locator": {"kind": "file", "name": name_new}},
+                              ensure_ascii=False)
+        new_envelope = ENVELOPE_PREFIX + _FernetBackend(new_kek).encrypt(seed_hex)
+        try:
+            if _FernetBackend(new_kek).decrypt(
+                    new_envelope[len(ENVELOPE_PREFIX):]) != seed_hex:
+                raise ValueError("新信封回读与 seed 不一致")
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="envelope_verify_failed: %s" % exc, caller=caller)
+            return {"status": "error", "code": "kek_rotate_failed", "mode": "file-key",
+                    "message": "轮换中止（DB 未改动，旧代完好）：%s" % exc}
+
+        # ── 提交（单事务）──
+        try:
+            with self._db() as conn:
+                self._apply_kek_rotation(conn, identity_id, new_envelope, new_meta,
+                                         retired_rows=[(old_gen, name_old)])
+        except Exception as exc:                       # noqa: BLE001
+            self._audit("rotate_kek", identity_id, success=False,
+                        reason="commit_failed: %s" % exc, caller=caller)
+            return {"status": "error", "code": "kek_rotate_failed", "mode": "file-key",
+                    "message": ("提交失败（事务已回滚，旧代完好）：%s: %s；孤儿文件 %s 无害"
+                                % (type(exc).__name__, exc, name_new))}
+
+        # ── GC：先查"是否还有别的身份引用旧代文件"，再删 + 回读确认 ──
+        gc = {"delete": "skipped", "cleaned": 0}
+        if self._file_kek_referenced_by_others(identity_id, name_old):
+            gc = {"delete": "shared", "cleaned": 0,
+                  "note": "旧代 KEK 文件仍被其它身份引用，未删除（保留 cleaned=0 供人工确认）"}
+        else:
+            try:
+                self._delete_file_kek(name_old)
+                still = os.path.exists(self._file_key_path(name_old))
+                if still:
+                    gc = {"delete": "lagged", "cleaned": 0,
+                          "note": "unlink 未抛异常但文件仍在（AV 隔离/同步恢复？）；保留 cleaned=0"}
+                else:
+                    gc = {"delete": "ok", "cleaned": 1}
+            except Exception as exc:                   # noqa: BLE001
+                gc = {"delete": "failed", "cleaned": 0,
+                      "reason": "%s: %s" % (type(exc).__name__, exc)}
+
+        if gc["cleaned"]:
+            try:
+                with self._db() as conn:
+                    conn.execute("UPDATE kek_retired SET cleaned=1 "
+                                 "WHERE identity_id=? AND kek_gen=?",
+                                 (identity_id, old_gen))
+            except Exception as exc:                   # noqa: BLE001
+                gc["cleaned"] = 0
+                gc["note"] = "cleaned 标记写入失败（下次 GC 重试）：%s" % exc
+
+        orphans = self._scan_file_kek_orphans()        # **只报告、不删除**
+        self._audit("rotate_kek", identity_id, success=True,
+                    target="file-key kek_gen=%d gc=%s" % (new_gen, gc.get("delete")),
+                    caller=caller)
+        warnings = []
+        if gc.get("delete") in ("lagged", "failed", "shared"):
+            warnings.append("旧代 KEK 文件未确认删除（%s）：kek_retired 保持 cleaned=0；"
+                            "旧代继续存在不影响安全性（DB 已不引用它）" % gc.get("delete"))
+        if orphans:
+            warnings.append("发现 %d 个孤儿 KEK 文件（既不被引用也不在日志里）：%s —— "
+                            "按保守策略**只报告不删除**，请人工确认后处理"
+                            % (len(orphans), ', '.join(orphans)))
+        return {"status": "ok",
+                "mode": "file-key",
+                "identity_id": identity_id,
+                "kek_gen_old": old_gen,
+                "kek_gen": new_gen,
+                "locator_old": name_old,
+                "locator_new": name_new,
+                "envelope_rotated": True,
+                "secrets_reencrypted": 0,
+                "kek_retired_written": True,
+                "gc": gc,
+                "orphans": orphans,
+                "warnings": warnings,
+                "note": ("O_EXCL 创建 + 写后回读 + 删后存在性回读；孤儿**只报告不删除**")}
+
     def _rotate_kek_keyring(self, identity_id: str, seed_hex: str,
                             key_meta_old, old_gen: int, caller: str = None) -> dict:
         locator_old = self._keyring_locator(identity_id, key_meta_old)
@@ -1643,12 +1870,11 @@ class Vault2:
                     "message": "密钥库不存在（本方法绝不建库）"}
         self._ensure_ready()
         mode = self.key_protection
-        if mode not in (PROTECTION_PASSPHRASE, PROTECTION_KEYRING):
+        if mode not in (PROTECTION_PASSPHRASE, PROTECTION_KEYRING, PROTECTION_FILE):
             return {"status": "error", "code": "kek_rotation_unsupported",
                     "mode": mode,
-                    "message": ("KEK 轮换已支持 passphrase（第 1 步）与 keyring（第 2 步）；"
-                                "%s 模式的 KEK 在文件系统，需要第 3 步（O_EXCL/0600 + GC 扫目录）。"
-                                "本轮**明确拒绝**，不会假装成功。" % mode)}
+                    "message": ("KEK 轮换已支持 passphrase / keyring / file-key 三种模式；"
+                                "%s 模式下没有可用 KEK，无法轮换。" % mode)}
         ok, sess = self._verify_token(token)
         if not ok:
             return {"status": "error", "message": "会话无效或已过期，请重新 auth"}
@@ -1674,6 +1900,9 @@ class Vault2:
 
         if mode == PROTECTION_KEYRING:
             return self._rotate_kek_keyring(identity_id, seed_hex, key_meta_old,
+                                            old_gen, caller=caller)
+        if mode == PROTECTION_FILE:
+            return self._rotate_kek_filekey(identity_id, seed_hex, key_meta_old,
                                             old_gen, caller=caller)
 
         passphrase = new_passphrase or self._passphrase
@@ -2435,6 +2664,9 @@ class Vault2:
                 base["kek_gen"] = min(gens)
                 base["kek_gen_max"] = max(gens)
                 base["kek_retired_count"] = int(pending or 0)
+                if self.key_protection == PROTECTION_FILE:
+                    # 只读扫描：孤儿 KEK 文件（既不被引用、也不在日志里）——**不删**
+                    base["kek_file_orphans"] = self._scan_file_kek_orphans()
             except sqlite3.Error as exc:                   # noqa: BLE001
                 base["kek_diag_error"] = "%s: %s" % (type(exc).__name__, exc)
         if self.key_protection_warning:

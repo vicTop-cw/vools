@@ -24,10 +24,12 @@
 运行（打印矩阵表 + 用错误实现验证能红）：
     python tools/audit/kek_crash_matrix.py
 """
+import base64
 import json
 import os
 import sqlite3
 import sys
+import tempfile
 
 BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if BASE not in sys.path:
@@ -291,6 +293,160 @@ FAULT_MATRIX = (
 )
 
 
+#: file-key 模式专用故障模式（外部是**文件系统**，比 keyring 多出短写/占用/隔离）
+FAULT_MATRIX_FILE = (
+    ('fileshort_write@C2', {'short_write': True}, 'C2', True,
+     '短写 → 回读比对发现长度不对 → 必须中止且不提交（旧代完好）'),
+    ('filefail_create@C2', {'fail_create': True}, 'C2', True,
+     'O_EXCL 创建失败（已存在/只读）→ 绝不覆盖、不提交'),
+    ('filefail_unlink@C5', {'fail_unlink': True}, 'C5', True,
+     'unlink 抛异常 → cleaned 必须保持 0（等重试）'),
+    ('fileunlink_lag@C5', {'unlink_lag': True}, 'C5', True,
+     'unlink"成功"但文件仍在 → **删后回读确认**必须拦住 cleaned=1'),
+    ('fileunlink_lag@C6', {'unlink_lag': True}, 'C6', True,
+     'GC 后文件仍在 → 同上'),
+)
+
+
+def _file_name(gen):
+    return '.vault2.key' if gen == 0 else '.vault2.key#g%d' % gen
+
+
+def rotate_filekey_ref(store, conn, identity_id='id-1', crash=None):
+    """file-key 的**参考模型**（与 keyring 同骨架，差异见注释）。
+
+    file-key 比 keyring 多两处必须处理：
+      1. **O_EXCL**：创建用独占语义（先检查再写 = TOCTOU）；
+      2. **孤儿**：文件系统能扫目录 → 保守策略下"只报告不删除"（见 orphan_report）。
+    """
+    from fake_filekey import decode as _decode
+
+    st = db_state(conn, identity_id)
+    old_gen = st['gen']
+    old_name = _file_name(old_gen)
+    raw = store.read(old_name)
+    if raw is None:
+        raise RuntimeError('前置失败：旧代 KEK 文件不存在（%s）' % old_name)
+    old_kek = _decode(old_name, raw)
+    seed_plain = _decrypt(st['envelope'], old_kek)
+
+    new_gen = old_gen + 1
+    new_name = _file_name(new_gen)
+    new_kek = make_kek(identity_id, new_gen, salt_hex='f%02x' % new_gen)
+
+    _maybe_crash('C1', crash)
+    store.create_exclusive(new_name, new_kek)          # O_EXCL：已存在就抛
+    back = store.read(new_name)                        # ★ 写后回读
+    if back is None or _decode(new_name, back) != new_kek:
+        raise RuntimeError('写后回读不一致（短写？）')
+    _maybe_crash('C2', crash)
+
+    new_envelope = ENVELOPE_PREFIX + _FernetBackend(new_kek).encrypt(seed_plain)
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("UPDATE identities SET seed_key=?, key_meta=? WHERE id=?",
+                 (new_envelope,
+                  json.dumps({'kek_gen': new_gen,
+                              'kek_locator': {'kind': 'file', 'name': new_name}}),
+                  identity_id))
+    conn.execute("INSERT OR REPLACE INTO kek_retired "
+                 "(identity_id, kek_gen, locator, retired_at, cleaned) VALUES (?,?,?,?,0)",
+                 (identity_id, old_gen, old_name, '2026-10-29T00:00:00'))
+    conn.execute("COMMIT")
+    _maybe_crash('C3', crash)
+
+    _maybe_crash('C4', crash)
+    try:
+        store.unlink(old_name)
+    except Exception:                       # noqa: BLE001
+        return {'gc': 'delete_failed'}
+    if store.exists(old_name):              # ★ 删后回读确认
+        return {'gc': 'lag_kept_pending'}
+    _maybe_crash('C5', crash)
+    conn.execute("UPDATE kek_retired SET cleaned=1 WHERE identity_id=? AND kek_gen=?",
+                 (identity_id, old_gen))
+    _maybe_crash('C6', crash)
+    return {'gc': 'done'}
+
+
+def file_fault_matrix(verbose=True):
+    """file-key 故障矩阵：每条都要 I1 保持（外部异常不得让 seed 不可解）。"""
+    from fake_filekey import FakeFileKeys
+
+    rows = []
+    for name, faults, crash, expected_i1, why in FAULT_MATRIX_FILE:
+        tmp = tempfile.mkdtemp(prefix='kekfile-')
+        db = os.path.join(tmp, 'v.db')
+        conn, old_kek = make_db(db)
+        store = FakeFileKeys()
+        store.files[_file_name(0)] = __import__('base64').b64encode(old_kek)
+        for k, v in faults.items():
+            setattr(store, k, v)
+        crashed = None
+        try:
+            rotate_filekey_ref(store, conn, crash=crash)
+        except Crash:
+            crashed = 'crash'
+        except Exception as exc:            # noqa: BLE001
+            crashed = 'fault: %s' % exc
+        finally:
+            try:
+                conn.close()
+            except Exception:               # noqa: BLE001
+                pass
+        conn2 = sqlite3.connect(db, isolation_level=None)
+        inv = check_invariants_filekey(store, conn2)
+        conn2.close()
+        rows.append({'name': name, 'inv': inv, 'expected_i1': expected_i1,
+                     'why': why, 'crashed': crashed})
+    if verbose:
+        print()
+        print('file-key 故障矩阵（外部 = 文件系统）')
+        print('%-24s %-6s %-6s %-6s | 期望 I1 | 结论' % ('场景', 'I1', 'I2', 'I3'))
+        print('-' * 88)
+        for r in rows:
+            inv = r['inv']
+            i1 = inv['I1'][0]
+            ok = (r['expected_i1'] is None) or (i1 == r['expected_i1'])
+            print('%-24s %-6s %-6s %-6s | %-7s | %s' % (
+                r['name'], _mark(i1), _mark(inv['I2'][0]), _mark(inv['I3'][0]),
+                '成立' if r['expected_i1'] else '违反',
+                '✅ 符合预期' if ok else '❌ 不符预期'))
+            print('    %s' % r['why'])
+    return rows
+
+
+def check_invariants_filekey(store, conn, identity_id='id-1'):
+    """file-key 版不变式（locator 是文件名，不是 keyring user）。"""
+    from fake_filekey import decode as _decode
+
+    st = db_state(conn, identity_id)
+    out = {}
+    # make_db 默认写的 locator 是 keyring user（骨架共用）；file-key 下要按文件名回退
+    loc = st['locator'] or ''
+    name = loc if loc.startswith('.vault2.key') else _file_name(st['gen'])
+    raw = store.read(name)
+    if raw is None:
+        out['I1'] = (False, 'DB 引用 %s 但文件不存在（seed 不可解）' % name)
+    else:
+        try:
+            out['I1'] = (True, 'seed=%r' % _decrypt(st['envelope'], _decode(name, raw)))
+        except Exception as exc:            # noqa: BLE001
+            out['I1'] = (False, '解不开：%s' % exc)
+    old_name = _file_name(0)
+    if not store.exists(old_name):
+        out['I2'] = (st['gen'] > 0, '旧代文件已删，DB gen=%d' % st['gen'])
+    else:
+        out['I2'] = (True, '旧代文件仍在（DB gen=%d）' % st['gen'])
+    bad = [(g, loc) for (g, loc, cleaned) in st['retired']
+           if cleaned == 1 and store.exists(loc)]
+    out['I3'] = (not bad, '谎报清理的文件=%s' % bad if bad else '无谎报')
+    # 孤儿：存在的文件里，既不被引用、也不在日志里的（保守策略：只报告）
+    referenced = {name}
+    logged = {loc for (_g, loc, _c) in st['retired']}
+    out['ORPHANS'] = (True, '孤儿=%s' % store.orphans(referenced, logged))
+    return out
+
+
 def fault_matrix(verbose=True):
     """跑故障模式矩阵，返回 [{name, i1_ok, detail, expected_i1}]。"""
     rows = []
@@ -351,6 +507,7 @@ def main():
         pass
     rows = matrix(verbose=True)
     frows = fault_matrix(verbose=True)
+    file_rows = file_fault_matrix(verbose=True)
     good_all = all(all(r['correct'].values()) for r in rows)
     caught = [r['crash'] for r in rows if not r['wrong']['I1']]
     print()
@@ -360,7 +517,10 @@ def main():
     print('结论：骨架%s' % ('可用（能红能绿）' if good_all and caught else '有缺陷'))
     fault_ok = all((r['expected_i1'] is None) or (r['inv']['I1'][0] == r['expected_i1'])
                    for r in frows)
-    return 0 if (good_all and caught and fault_ok) else 1
+    file_ok = all((r['expected_i1'] is None) or (r['inv']['I1'][0] == r['expected_i1'])
+                  for r in file_rows)
+    print('file-key 故障矩阵符合预期   :', '✅' if file_ok else '❌')
+    return 0 if (good_all and caught and fault_ok and file_ok) else 1
 
 
 if __name__ == '__main__':

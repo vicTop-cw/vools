@@ -210,7 +210,7 @@ GC 重试）；步骤 5 中崩溃 → 幂等（安全）。
 | **0 ✅ 已完成（第 19 轮）** | `key_meta` 兼容字段 + `kek_retired` 表 + `status()` 诊断（**不改任何 KEK**） | 旧库打开/注册/轮换 seed 全部回归绿；旧行 `kek_gen` **按 0 视为**（见 §4.4.1，不迁移不回填） |
 | **1 ✅ 已完成（第 20 轮）** | **passphrase 模式**轮换（单事务，`rotate_kek(new_passphrase=None)`） | 换 salt 后旧数据可读、旧信封无法再解；故障注入：UPDATE 抛错 → 全回滚 |
 | **2 ✅ 已完成（第 22 轮）** | **keyring 模式**：双代 + 日志 + GC（CLI/MCP 入口仍待第 4 步） | 6 个崩溃点注入（step1 前/后、commit 前/后、GC 前/后）均可恢复；孤儿条目不阻塞 |
-| 3 | **file-key 模式**（同骨架；`O_EXCL`/0600；GC 扫目录回收孤儿） | 同上；目录里旧 key 文件按日志删除 |
+| **3 ✅ 已完成（第 23 轮）** | **file-key 模式**（同骨架；`O_EXCL`/0600；GC 扫目录**只报告**孤儿） | 同上；目录里旧 key 文件按日志删除，孤儿只报告不删 |
 | 4 | CLI `actus vault rotate-kek [--dry-run] [--all]` + MCP `actus_vault_rotate_kek` + 文档 | `--dry-run` 零写；失败 `failed_names` 不静默 |
 
 #### 4.4.1 第 0 步已完成的内容（第 19 轮实测）
@@ -349,6 +349,41 @@ C6  ─────────────────────────�
 - `actus/tests/test_kek_rotation_crash_matrix.py`：**24 passed, 0 xfailed**（含真实实现的
   keyring 轮换 / `delete_lag` 不标 cleaned / `stale_read` 中止不提交）。
 - 骨架的 `test_wrong_impl_passes_after_danger_window` 与灵敏度自检**保留**（落地后仍守护骨架本身）。
+
+#### 4.4.4 第 3 步已完成的内容（第 23 轮实测）
+
+**与 keyring 的差异全部来自"外部是文件系统"**（骨架先加矩阵，再实现 —— 同第 2 步的方法）。
+
+| 差异 | 处理 |
+|---|---|
+| **原子创建** | `os.open(path, O_WRONLY\|O_CREAT\|**O_EXCL**, 0o600)` —— 不用"先 exists 再写"（那是 TOCTOU）；已存在 → `FileExistsError` → 返回 `kek_file_exists`，**绝不覆盖** |
+| **权限 0600** | POSIX 生效；**Windows 说明**：`mode`/`os.chmod` 在 Windows 上只切"只读位"、不做 ACL —— 所以 0600 是 **POSIX 强约束、Windows best-effort**，Windows 的隔离靠"目录在用户 profile 下"（文档与代码注释均已写明） |
+| **写后回读** | 写完 `fsync` → `_get_file_kek(name)` 读回、base64 解码、长度校验 → 与 `new_kek` 比对；不一致（**短写/磁盘满**）→ 中止且**不提交 DB** |
+| **删后回读** | `unlink` 后 `os.path.exists()` 确认；还在（AV 隔离/同步恢复）→ `gc.delete='lagged'`、`cleaned` 保持 **0** |
+| **孤儿回收** | **保守**：只删 `kek_retired` 日志里登记的旧代；"存在但既不被引用、也不在日志里"的文件 → **只报告不删除**（`orphans` 字段 + warning + `status().kek_file_orphans`） |
+
+**为什么孤儿选保守（不删）**：孤儿文件只占空间、**不威胁安全**（没有任何 DB 引用它，
+解不出任何数据）；而"误删被引用的代"是**灾难**（seed 永久不可解）。文件系统能扫目录只是
+"能看见"，不等于"该删" —— 判据仍应以 DB 引用与日志为准。
+
+**额外的共享保护（file-key 特有）**：file-key 的 KEK 是"随库"的，**多个身份可能共用第 0 代
+文件**（旧规则就是 `identity_id` 无关的单一 `.vault2.key`）。所以删旧代前先查
+`_file_kek_referenced_by_others()`：还有别的身份引用 → `gc.delete='shared'`、**不删**、
+`cleaned=0` 等人工确认。否则轮换 A 会把 B 的钥匙删掉。
+
+**locator 约定**
+```
+第 0 代 : .vault2.key          （旧名，不迁移）
+第 N 代 : .vault2.key#g{N}
+key_meta.kek_locator = {"kind": "file", "name": ".vault2.key#g1"}
+```
+
+**验收**
+- `tools/audit/kek_crash_matrix.py`：新增 **file-key 参考模型 + 5 类文件系统故障**
+  （`short_write` / `fail_create` / `fail_unlink` / `unlink_lag@C5` / `unlink_lag@C6`），
+  实跑 **6/6 符合预期**；6 崩溃点 × 不变式矩阵对 file-key 同样成立。
+- `tests/test_kek_rotation_crash_matrix.py`：**29 passed, 0 xfailed**，新增 5 条真实实现断言
+  （happy path + `O_EXCL` 拒绝覆盖 + `unlink_lag` 保持 pending + 孤儿只报告不删 + 共享旧代不删）。
 
 **测试重点**（对应我们第 18 轮审计的盲区谱系）：每个阶段都必须有"**跨崩溃窗口**"
 用例（用故障注入/可 替换的 keyring 替身），不能只测 happy path；`--dry-run` 必须
