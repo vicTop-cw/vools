@@ -26,6 +26,9 @@ import sys
 
 import pytest
 
+# 第 22 轮：真实 crypto/DB IO 或真实 CLI 执行（模块总耗时 >3s）
+pytestmark = pytest.mark.slow
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
 _ai_local_bootstrap.install()
@@ -139,6 +142,7 @@ def test_l1_is_unaffected_by_window(world):
 # ③ 显式契约：跨多个窗口（5 分钟）仍可读 —— docstring 钉成密码学前提
 # ===========================================================================
 
+@pytest.mark.slow
 def test_write_and_read_in_different_windows_is_documented_contract(world):
     """**契约（不是实现细节）**：密钥的生命周期必须比 TOTP 窗口长。
 

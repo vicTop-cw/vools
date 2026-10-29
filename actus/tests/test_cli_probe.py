@@ -14,11 +14,38 @@ import json
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
 _ai_local_bootstrap.install()
 
 from vools.actus import cli
+from vools.actus.probe import cache as cache_mod
+from vools.actus.probe import probe as _probe_real
+
+# 第 22 轮：真实 probe（真实环境 IO）—— `pytest -m "not slow"` 跳过
+pytestmark = pytest.mark.slow
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _warm_probe_cache(tmp_path_factory):
+    """第 22 轮：真实探测一次并预热缓存（module 私有目录）。
+
+    不带 `--force-refresh` 的 CLI 用例应当**命中这份缓存**（各自断言
+    `report_source=cache` / 人类可读输出含 from-cache 提示）——
+    否则"预热"会变成"静默跳过探测"，测试就失去意义。
+    `--force-refresh` 用例仍会真探测（覆盖绕过缓存的契约）。
+    """
+    base = tmp_path_factory.mktemp("cli-probe-cache")
+    old_file, old_dir = cache_mod._CACHE_FILE, cache_mod._CACHE_DIR
+    cache_mod._CACHE_FILE = str(base / "probe_cache.json")
+    cache_mod._CACHE_DIR = str(base)
+    _probe_real(force_refresh=True)
+    try:
+        yield
+    finally:
+        cache_mod._CACHE_FILE, cache_mod._CACHE_DIR = old_file, old_dir
 
 
 def _run(argv, capsys):
@@ -61,6 +88,8 @@ def test_probe_json_output(capsys):
     assert all(item.get('name') for item in items), '存在没有 name 的 item'
     assert all(item.get('category') for item in items), '存在没有 category 的 item'
     assert isinstance(data.get('report_source'), str) and data['report_source']
+    assert data['report_source'] == 'probe', \
+        '--force-refresh 必须真的重新探测（report_source 应为 probe，实际 %r）' % data.get('report_source')
     summary = data['summary']
     assert summary['total_items'] == len(items), \
         'summary.total_items 与实际 items 数不一致: %r vs %d' % (
@@ -77,6 +106,10 @@ def test_probe_human_readable_output(capsys):
     assert 'vools probe report' in out
     assert '[Platform]' in out
     assert '[Summary]' in out
+    # 断言"用的是缓存"这个事实本身（而不是悄悄跳过探测）：人类可读摘要会带
+    # from-cache 提示（report.py 的既有语义）。
+    assert 'from cache' in out.lower(), \
+        '默认 probe 未命中预热缓存（或缓存命中未标注）: %r' % out[:200]
 
 
 def test_probe_force_refresh_flag_maps_to_kwarg(capsys):
@@ -137,3 +170,6 @@ def test_probe_verbose_json(capsys):
     assert '{' in out, 'stdout 中没有 JSON 输出'
     data = json.loads(out[out.index('{'):])
     assert 'platform' in data
+    # 不带 --force-refresh ⇒ 必须命中刚才预热的缓存（证明缓存路径真的生效）。
+    assert data.get('report_source') == 'cache', \
+        '未命中预热缓存: report_source=%r' % data.get('report_source')

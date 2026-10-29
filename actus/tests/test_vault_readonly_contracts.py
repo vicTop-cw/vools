@@ -34,6 +34,9 @@ import uuid
 
 import pytest
 
+# 第 22 轮：真实 crypto/DB IO 或真实 CLI 执行（模块总耗时 >3s）
+pytestmark = pytest.mark.slow
+
 _ACTUS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _VOOLS_ROOT = os.path.join(_ACTUS_ROOT, "vools")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -264,6 +267,7 @@ def test_resolver_status_is_read_only(world):
 # ⑤ 对照组：写路径确实写（证明流程真的跑起来了）
 # ===========================================================================
 
+@pytest.mark.slow
 def test_write_and_delete_paths_really_write(world):
     """退步了会怎样（反向验证）：如果测试环境根本没连上 v2（例如凭据/库没生效），
     "读路径零写"会**因为什么都没发生而假绿**。
@@ -294,6 +298,7 @@ def test_write_and_delete_paths_really_write(world):
 # ⑥ 锁定身份：读也拒绝，且检查本身不写 db
 # ===========================================================================
 
+@pytest.mark.slow
 def test_locked_identity_rejected_on_read_without_writing(world):
     """退步了会怎样：只读会话为了"不写"跳过锁定检查 → 被锁定的身份仍能读密钥；
     或检查失败时顺手 UPDATE failed_attempts（读也会写）。
@@ -326,6 +331,7 @@ def test_locked_identity_rejected_on_read_without_writing(world):
 # ⑦ list_secret_names：四种 source/conflict 情形
 # ===========================================================================
 
+@pytest.mark.slow
 def test_list_secret_names_sources_and_conflicts(world, monkeypatch):
     """退步了会怎样：v1/v2 合并清单的 source/conflict 口径漂移 —— CLI `vault list`
     会把冲突密钥静默算成一边（用户看到"只有一个值"，实际两库不一致）。
@@ -369,6 +375,7 @@ def test_list_secret_names_sources_and_conflicts(world, monkeypatch):
 # ⑧ delete_secret：默认只删 v2 / include_v1 才删 v1 / v2 不可用 → failed+hint
 # ===========================================================================
 
+@pytest.mark.slow
 def test_delete_secret_v2_only_by_default_then_include_v1(world, monkeypatch):
     """退步了会怎样：默认 delete 顺手删掉 v1 旧库副本（破坏性且不可逆）；
     或 include_v1=True 也不删 v1（迁移收尾做不干净）。
@@ -462,6 +469,7 @@ def _run_cli(argv):
     return rc, out.getvalue(), err.getvalue()
 
 
+@pytest.mark.slow
 def test_cli_vault_migrate_dry_run_does_not_write(world):
     """退步了会怎样（`publish --dry-run` 的同款坑）：`vault migrate --dry-run`
     说是"只统计"，实际却写 db/audit —— 预览一次就改了权威数据（且需要写权限）。
@@ -492,6 +500,7 @@ def test_cli_vault_migrate_dry_run_does_not_write(world):
     assert audit_after == audit_before, "dry-run 写改了 audit.log"
 
 
+@pytest.mark.slow
 def test_cli_vault_migrate_partial_when_some_rows_fail(world):
     """退步了会怎样（假成功）：有行迁移失败时仍报 ok / rc=0 —— 用户以为全部迁移完成，
     坏行静默留在 legacy 格式（下次读才炸）。

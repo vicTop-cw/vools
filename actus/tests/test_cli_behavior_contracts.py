@@ -47,6 +47,9 @@ import contextlib
 
 import pytest
 
+# 第 22 轮：真实动作执行（模块总耗时 >3s）
+pytestmark = pytest.mark.slow
+
 # 与同目录其它 actus 测试一致：先跑本地源码引导，让 vools.actus 命中源码树
 # 而不是 site-packages 的发布 wheel（否则测的是旧包，结论是假的）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -278,6 +281,7 @@ def test_viz_sample_only_with_explicit_flag_and_marked_as_sample(world):
 # 3) replay：必须真的执行，不是打印「待实现」
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_replay_really_executes_and_stamps_exec_id(world):
     """假实现复活会怎样：非 dry-run 只打印「(重放执行待实现)」，rc=0，什么都没执行。
 

@@ -9,6 +9,10 @@ import json
 import os
 import subprocess
 import sys
+import pytest
+
+# 第 22 轮：真实动作执行（模块总耗时 >3s）
+pytestmark = pytest.mark.slow
 
 PY = sys.executable
 

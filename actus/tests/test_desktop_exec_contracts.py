@@ -23,6 +23,9 @@ import time
 
 import pytest
 
+# 第 22 轮：真实 IO / 真实执行型测试 —— 用 `pytest -m "not slow"` 跳过
+pytestmark = pytest.mark.slow
+
 _ACTUS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入

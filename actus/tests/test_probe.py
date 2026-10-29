@@ -15,11 +15,15 @@
 py3.6 兼容：无 capture_output/text 之外的新语法依赖，无 walrus，f-string 限于 py3.6 支持形态。
 """
 
+import copy
 import json
 import os
 import sys
 
 import pytest
+
+# 第 22 轮：真实 IO / 真实执行型测试 —— 用 `pytest -m "not slow"` 跳过
+pytestmark = pytest.mark.slow
 
 # 与同目录其它 actus 测试一致：先跑本地源码引导，让 vools.actus 命中源码树
 # 而不是 site-packages 的发布 wheel（否则测的是旧包，结论是假的）。
@@ -241,16 +245,50 @@ def test_cache_corrupt_file_is_not_fatal(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------------------
 # 集成：完整报告
+#
+# 第 22 轮：`probe(force_refresh=True)` 是真实环境探测（单次 4-8s），
+# 三个"只断言报告结构/内容"的用例共享一次探测结果；**每个用例拿 deepcopy**，
+# 保证共享对象只读（任何测试原地改它都不会污染其它测试 —— 第 6 类盲区）。
+# 缓存语义/force-refresh 语义仍由各自独立用例真探测覆盖。
 # ---------------------------------------------------------------------------
 
-@pytest.mark.timeout(180)
-def test_probe_returns_full_report(tmp_path, monkeypatch):
-    """probe() 一次跑完，报告结构完整、九类信息齐备、summary 计数自洽。"""
-    cache_file = tmp_path / "probe_cache.json"
-    monkeypatch.setattr(cache_mod, "_CACHE_FILE", str(cache_file))
-    monkeypatch.setattr(cache_mod, "_CACHE_DIR", str(tmp_path))
 
-    report = probe(force_refresh=True)
+@pytest.fixture(scope="module")
+def _shared_probe_report(tmp_path_factory):
+    """真实探测一次（写进 module 私有缓存目录，不落仓库 _meta），返回只读母本。"""
+    base = tmp_path_factory.mktemp("probe-shared")
+    old_file, old_dir = cache_mod._CACHE_FILE, cache_mod._CACHE_DIR
+    cache_mod._CACHE_FILE = str(base / "probe_cache.json")
+    cache_mod._CACHE_DIR = str(base)
+    try:
+        return probe(force_refresh=True)
+    finally:
+        cache_mod._CACHE_FILE, cache_mod._CACHE_DIR = old_file, old_dir
+
+
+@pytest.fixture
+def shared_probe_report(_shared_probe_report):
+    """每个用例一份 deepcopy：共享母本不可被测试修改（不可变契约）。"""
+    return copy.deepcopy(_shared_probe_report)
+
+
+def test_shared_probe_report_is_per_test_copy(_shared_probe_report,
+                                             shared_probe_report):
+    """不可变证明：改自己的副本不影响母本/其它用例的副本。"""
+    baseline = len(_shared_probe_report.items)
+    shared_probe_report.items.append(
+        ProbeItem(name="mutated-by-test", category="platform"))
+    assert len(_shared_probe_report.items) == baseline, \
+        "共享 probe 报告被测试原地修改了（fixture 必须 deepcopy）"
+    assert len(shared_probe_report.items) == baseline + 1
+
+@pytest.mark.timeout(180)
+def test_probe_returns_full_report(shared_probe_report):
+    """probe() 一次跑完，报告结构完整、九类信息齐备、summary 计数自洽。
+
+    第 22 轮：报告来自 module 级共享的真实探测（每用例 deepcopy，只读使用）。
+    """
+    report = shared_probe_report
     assert isinstance(report, ProbeReport)
     d = report.to_dict()
 
@@ -273,13 +311,9 @@ def test_probe_returns_full_report(tmp_path, monkeypatch):
 
 
 @pytest.mark.timeout(180)
-def test_probe_detects_a_known_tool(tmp_path, monkeypatch):
+def test_probe_detects_a_known_tool(shared_probe_report):
     """机器上必然有 python（正在跑它），探针必须探到它 —— 全表恒 False 说明探测逻辑坏了。"""
-    cache_file = tmp_path / "probe_cache.json"
-    monkeypatch.setattr(cache_mod, "_CACHE_FILE", str(cache_file))
-    monkeypatch.setattr(cache_mod, "_CACHE_DIR", str(tmp_path))
-
-    report = probe(force_refresh=True)
+    report = shared_probe_report
     d = report.to_dict()
     found = [i for i in d["items"]
              if i["name"] in ("python", "py", "python3") and i["available"]]
@@ -288,12 +322,8 @@ def test_probe_detects_a_known_tool(tmp_path, monkeypatch):
 
 
 @pytest.mark.timeout(180)
-def test_format_summary_renders(tmp_path, monkeypatch):
-    cache_file = tmp_path / "probe_cache.json"
-    monkeypatch.setattr(cache_mod, "_CACHE_FILE", str(cache_file))
-    monkeypatch.setattr(cache_mod, "_CACHE_DIR", str(tmp_path))
-
-    text = format_summary(probe(force_refresh=True))
+def test_format_summary_renders(shared_probe_report):
+    text = format_summary(shared_probe_report)
     assert "vools probe report" in text
     assert "[Platform]" in text
     assert "[Summary]" in text

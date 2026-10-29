@@ -57,6 +57,9 @@ import sys
 
 import pytest
 
+# 第 22 轮：真实 IO / 真实执行型测试 —— 用 `pytest -m "not slow"` 跳过
+pytestmark = pytest.mark.slow
+
 # 与同目录其它 actus 测试一致：先跑本地源码引导，让 vools.actus 命中源码树
 # 而不是 site-packages 的发布 wheel（否则测的是旧包，结论是假的）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

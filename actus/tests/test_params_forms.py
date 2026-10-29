@@ -91,6 +91,7 @@ def test_download_helpers_do_not_disable_ssl_verification():
 
 
 @pytest.mark.timeout(90)
+@pytest.mark.slow
 def test_https_self_signed_certificate_is_rejected(tmp_path):
     """行为对照：CERT_NONE 若被启用，自签证书会被静默接受；现在必须拒绝。
 
