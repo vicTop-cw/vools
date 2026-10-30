@@ -281,3 +281,50 @@ class TestLayarankByComplexity:
         from vools.actus.ai.routing import layarank_by_complexity
         result = layarank_by_complexity(None, "intent", [])
         assert isinstance(result, list)
+
+    def test_timeout(self, monkeypatch):
+        """退步了会怎样：超时应报 timeout 错误。"""
+        from vools.actus.ai.routing import layarank_by_complexity, LAYARANK_ERR_TIMEOUT
+
+        class FakeCandidate:
+            def __init__(self, aid):
+                self.action_id = aid; self.tool_name = "tool_" + aid
+                self.description = "desc"
+
+        class SlowClient:
+            def complete(self, msgs, **kw):
+                class Resp:
+                    content = ""
+                    failed = False
+                return Resp()
+
+        # mock time.time 返回递增值：start=0，complete 后返回 10
+        times = iter([0.0, 10.0])
+        monkeypatch.setattr("time.time", lambda: next(times))
+
+        result, err = layarank_by_complexity(
+            SlowClient(), "intent", [FakeCandidate("a1")],
+            timeout_sec=3.0, with_error=True)
+        assert result == []
+        assert LAYARANK_ERR_TIMEOUT in err
+
+    def test_empty_response(self, monkeypatch):
+        """退步了会怎样：空响应应报 empty_response 错误。"""
+        from vools.actus.ai.routing import layarank_by_complexity, LAYARANK_ERR_EMPTY
+
+        class FakeCandidate:
+            def __init__(self, aid):
+                self.action_id = aid; self.tool_name = "tool_" + aid
+                self.description = "desc"
+
+        class EmptyClient:
+            def complete(self, msgs, **kw):
+                class Resp:
+                    content = ""
+                    failed = False
+                return Resp()
+
+        result, err = layarank_by_complexity(
+            EmptyClient(), "intent", [FakeCandidate("a1")], with_error=True)
+        assert result == []
+        assert LAYARANK_ERR_EMPTY in err
