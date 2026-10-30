@@ -126,3 +126,62 @@ class TestPostExecuteGates:
         sd = SelfDrive(goal="测试", strong=True, meta_dir=tmp_meta)
         node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
         assert sd._post_execute_gates(node) is None
+
+    def test_post_gate_ledger_ok(self, tmp_meta, monkeypatch):
+        """退步了会怎样：ledger 返回 ok 时应放行。"""
+        from vools.actus import selfdrive as selfdrive_mod
+        from vools.actus.selfdrive import SelfDrive
+
+        class MockLedger:
+            def verify_gate(self, node):
+                return (True, "")
+            def check_gate(self, node, updated_at=None):
+                return (True, "")
+
+        monkeypatch.setattr(selfdrive_mod._omega_strong, 'get_ledger',
+                            lambda *a, **kw: MockLedger())
+
+        sd = SelfDrive(goal="测试", strong=True, meta_dir=tmp_meta)
+        node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
+        assert sd._post_execute_gates(node) is None
+
+    def test_post_gate_ledger_failed(self, tmp_meta, monkeypatch):
+        """退步了会怎样：ledger 返回 not ok 时应判失败。"""
+        from vools.actus import selfdrive as selfdrive_mod
+        from vools.actus.selfdrive import SelfDrive
+
+        class MockLedger:
+            def verify_gate(self, node):
+                return (False, "missing artifact")
+            def check_gate(self, node, updated_at=None):
+                return (True, "")
+
+        monkeypatch.setattr(selfdrive_mod._omega_strong, 'get_ledger',
+                            lambda *a, **kw: MockLedger())
+
+        sd = SelfDrive(goal="测试", strong=True, meta_dir=tmp_meta)
+        node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
+        result = sd._post_execute_gates(node)
+        assert result is not None
+        assert result['passed'] is False
+        assert result['reason'] == 'omega_verify_gate'
+
+    def test_post_gate_ledger_throws(self, tmp_meta, monkeypatch):
+        """退步了会怎样：ledger 抛异常应 fail-closed。"""
+        from vools.actus import selfdrive as selfdrive_mod
+        from vools.actus.selfdrive import SelfDrive
+
+        class MockLedger:
+            def verify_gate(self, node):
+                raise RuntimeError("ledger broken")
+            def check_gate(self, node, updated_at=None):
+                return (True, "")
+
+        monkeypatch.setattr(selfdrive_mod._omega_strong, 'get_ledger',
+                            lambda *a, **kw: MockLedger())
+
+        sd = SelfDrive(goal="测试", strong=True, meta_dir=tmp_meta)
+        node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
+        result = sd._post_execute_gates(node)
+        assert result is not None
+        assert result['passed'] is False
