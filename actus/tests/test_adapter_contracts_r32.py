@@ -424,3 +424,119 @@ class TestHTTPAdapter:
         assert result.success is False
         assert result.returncode == 404
 
+
+class TestCLICheckCommand:
+    def test_check_command_shell_metachars(self):
+        """退步了会怎样：shell 元字符的 check 应走 shell。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "cli", "command": "python", "check": "python | grep x"},
+        })
+        ca = CLIAdapter(spec)
+        cmd, use_shell = ca._check_command()
+        assert use_shell is True
+
+    def test_check_command_same_as_exe(self):
+        """退步了会怎样：check == command 应走 argv。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "cli", "command": "python", "check": "python"},
+        })
+        ca = CLIAdapter(spec)
+        cmd, use_shell = ca._check_command()
+        assert use_shell is False
+        assert cmd == ["python"]
+
+    def test_check_command_exe_with_args(self):
+        """退步了会怎样：check = exe + args 应切出 argv。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "cli", "command": "python", "check": "python --version"},
+        })
+        ca = CLIAdapter(spec)
+        cmd, use_shell = ca._check_command()
+        assert use_shell is False
+        assert cmd == ["python", "--version"]
+
+    def test_check_command_malformed_quote(self):
+        """退步了会怎样：引号不闭合应走 shell。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "cli", "command": "python", "check": "\"unclosed"},
+        })
+        ca = CLIAdapter(spec)
+        cmd, use_shell = ca._check_command()
+        assert use_shell is True
+
+
+class TestQuickerRun:
+    def test_quicker_run_with_action(self, monkeypatch):
+        """退步了会怎样：Quicker run 应构建正确命令。"""
+        from vools.actus.adapter import QuickerAdapter, AdapterSpec
+
+        class MockResult:
+            returncode = 0
+            stdout = '{"ok": true}'
+            stderr = ""
+
+        captured = {}
+        def mock_run_cmd_safe(cmd, **kw):
+            captured["cmd"] = cmd
+            return MockResult()
+
+        monkeypatch.setattr("vools.actus.adapter.run_cmd_safe", mock_run_cmd_safe)
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "quicker", "action": "my_action"},
+        })
+        qa = QuickerAdapter(spec)
+        result = qa.run(params={"x": 1})
+        assert result.success is True
+        assert captured["cmd"][0] == "QuickerStarter.exe"
+        assert captured["cmd"][1] == "runaction"
+
+    def test_quicker_run_exception(self, monkeypatch):
+        """退步了会怎样：Quicker run 抛异常应返回失败。"""
+        from vools.actus.adapter import QuickerAdapter, AdapterSpec
+
+        def mock_run_cmd_safe(*a, **kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr("vools.actus.adapter.run_cmd_safe", mock_run_cmd_safe)
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "quicker", "action": "my_action"},
+        })
+        qa = QuickerAdapter(spec)
+        result = qa.run()
+        assert result.success is False
+
+
+class TestRunAdapter:
+    def test_run_adapter_not_found(self):
+        """退步了会怎样：run_adapter 找不到适配器应返回失败。"""
+        from vools.actus.adapter import run_adapter
+        result = run_adapter("adapter.cli.nonexistent")
+        assert result.success is False
+        assert "不存在" in result.stderr
+
+    def test_run_adapter_invalid_spec(self):
+        """退步了会怎样：run_adapter 配置错应返回失败。"""
+        from vools.actus.adapter import run_adapter
+        # 创建一个无效 spec 的适配器文件
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["ACTUS_REPO_ROOT"] = d
+            # 这个适配器缺 command，会触发 AdapterSpecError
+            spec_path = os.path.join(d, "actions", "adapters")
+            os.makedirs(spec_path, exist_ok=True)
+            with open(os.path.join(spec_path, "bad.actus.md"), "w", encoding="utf-8") as f:
+                f.write("```json #!cfg\n{\"id\": \"adapter.cli.bad\", \"adapter\": {\"type\": \"cli\"}}\n```\n")
+            result = run_adapter("adapter.cli.bad")
+            assert result.success is False
+
