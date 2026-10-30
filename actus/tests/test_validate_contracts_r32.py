@@ -627,3 +627,73 @@ def test_check_security_high_trust_is_warning_not_error():
                      [_block()], body=_body('import os' + chr(10) + 'os.system("rm -rf /")'))
     issues = V.check_security(action)
     assert issues and all(i.startswith("warning:") for i in issues), issues
+
+
+# ===========================================================================
+# V1 / V2 修复回归（lead 裁决）
+# ===========================================================================
+
+def test_usage_executable_without_id_no_longer_passes():
+    """退步了会怎样（V1 回归）：id 缺失时 `aid = ''` 让 `'' in text` 恒真 ——
+    纯描述 usage 在单独调用该检查时被放行（完整 validate 只是被"缺 id"掩盖）。
+
+    断言：无 id + 纯描述 → 报"不可执行"；无 id + 语句含 `actus run` → 通过；
+    有 id 且 usage 含该 id → 通过。
+    """
+    missing_id = V.check_usage_executable({"usage": "just do it somehow"})
+    assert missing_id and "不可执行" in missing_id[0]
+
+    assert V.check_usage_executable({"usage": "actus run something"}) == []
+    assert V.check_usage_executable({"id": "a.b", "usage": "a.b --confirm"}) == []
+
+
+def test_check_security_concurrent_calls_do_not_leak_null_audit(monkeypatch):
+    """退步了会怎样（V2 回归）：两个并发 check_security 互相覆盖 scanner.audit 的
+    临时替换/恢复 —— 单例的 audit 被永久写成 no-op 代理（安全扫描审计静默丢失），
+    或一方提前恢复导致另一方写审计。
+
+    断言：两个线程并发扫描后，scanner.audit **仍是原哨兵对象**（不是 _NullAudit），
+    且两线程都拿到结果。测试用慢 scan_action（0.05s）制造重叠窗口。
+    """
+    import threading
+    import time as time_mod
+    from vools.actus import security as security_mod
+
+    class _AuditSentinel(object):
+        def log(self, *args, **kwargs):
+            return None
+
+        def summary(self):
+            return {}
+
+    class _SlowScanner(object):
+        def __init__(self):
+            self.audit = _AuditSentinel()
+
+        def scan_action(self, action_id, meta, raw):
+            time_mod.sleep(0.05)
+            return {"issues": [], "sensitive_findings": []}
+
+    scanner = _SlowScanner()
+    original_audit = scanner.audit
+    monkeypatch.setattr(security_mod, "get_security_scanner", lambda: scanner)
+
+    results = []
+    errors = []
+
+    def worker():
+        try:
+            results.append(V.check_security(_action({"id": "c.a", "trust": "sandbox"})))
+        except Exception as exc:      # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert len(results) == 2
+    assert scanner.audit is original_audit, (
+        "并发 check_security 把 scanner.audit 永久写成了临时 no-op 代理")
