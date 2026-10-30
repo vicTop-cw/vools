@@ -175,6 +175,41 @@ class TestQuoteForShell:
         result = _quote_for_shell("")
         assert result != ""
 
+    def test_quote_with_metachars(self):
+        """退步了会怎样：含元字符的值应被引号包裹。"""
+        from vools.actus.adapter import _quote_for_shell
+        result = _quote_for_shell("a; rm -rf /")
+        # 值被引号包裹，元字符不再有接单能力
+        assert result != "a; rm -rf /"
+
+    def test_executable_of_path(self):
+        """退步了会怎样：路径型命令应按整串算。"""
+        from vools.actus.adapter import _executable_of
+        import os
+        # 用 sys.executable（含空格的路径）
+        import sys
+        exe = _executable_of(sys.executable)
+        assert exe == sys.executable
+
+    def test_executable_of_with_param(self):
+        """退步了会怎样：带 ${param} 的命令应提取 param 前的路径。"""
+        from vools.actus.adapter import _executable_of
+        import sys
+        exe = _executable_of(sys.executable + " ${arg}")
+        assert exe == sys.executable
+
+    def test_substitute_multiple_params(self):
+        """退步了会怎样：多个占位符应全部替换。"""
+        from vools.actus.adapter import _substitute_params
+        result = _substitute_params("echo ${a} ${b}", {"a": "1", "b": "2"})
+        assert result == "echo 1 2"
+
+    def test_substitute_partial_missing(self):
+        """退步了会怎样：部分参数缺失应替换为空串。"""
+        from vools.actus.adapter import _substitute_params
+        result = _substitute_params("echo ${a} ${b}", {"a": "1"})
+        assert result == "echo 1 "
+
 
 class TestCLIAdapter:
     def test_check_available_no_check(self):
