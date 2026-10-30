@@ -328,3 +328,21 @@ class TestLayarankByComplexity:
             EmptyClient(), "intent", [FakeCandidate("a1")], with_error=True)
         assert result == []
         assert LAYARANK_ERR_EMPTY in err
+
+    def test_none_response(self):
+        """退步了会怎样：resp is None 应报 llm_error。"""
+        from vools.actus.ai.routing import layarank_by_complexity, LAYARANK_ERR_LLM
+
+        class FakeCandidate:
+            def __init__(self, aid):
+                self.action_id = aid; self.tool_name = "tool_" + aid
+                self.description = "desc"
+
+        class NoneClient:
+            def complete(self, msgs, **kw):
+                return None
+
+        result, err = layarank_by_complexity(
+            NoneClient(), "intent", [FakeCandidate("a1")], with_error=True)
+        assert result == []
+        assert LAYARANK_ERR_LLM in err
