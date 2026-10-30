@@ -346,3 +346,48 @@ class TestLayarankByComplexity:
             NoneClient(), "intent", [FakeCandidate("a1")], with_error=True)
         assert result == []
         assert LAYARANK_ERR_LLM in err
+
+    def test_failed_response_with_raw(self):
+        """退步了会怎样：failed 响应带 raw error_kind 应报 llm_error。"""
+        from vools.actus.ai.routing import layarank_by_complexity, LAYARANK_ERR_LLM
+
+        class FakeCandidate:
+            def __init__(self, aid):
+                self.action_id = aid; self.tool_name = "tool_" + aid
+                self.description = "desc"
+
+        class FailedRawClient:
+            def complete(self, msgs, **kw):
+                class Resp:
+                    content = ""
+                    failed = True
+                    raw = {"error_kind": "auth_failed"}
+                return Resp()
+
+        result, err = layarank_by_complexity(
+            FailedRawClient(), "intent", [FakeCandidate("a1")], with_error=True)
+        assert result == []
+        assert LAYARANK_ERR_LLM in err
+        assert "auth_failed" in err
+
+    def test_failed_response_no_raw(self):
+        """退步了会怎样：failed 响应无 raw 应报 llm_error。"""
+        from vools.actus.ai.routing import layarank_by_complexity, LAYARANK_ERR_LLM
+
+        class FakeCandidate:
+            def __init__(self, aid):
+                self.action_id = aid; self.tool_name = "tool_" + aid
+                self.description = "desc"
+
+        class FailedNoRawClient:
+            def complete(self, msgs, **kw):
+                class Resp:
+                    content = ""
+                    failed = True
+                    raw = None
+                return Resp()
+
+        result, err = layarank_by_complexity(
+            FailedNoRawClient(), "intent", [FakeCandidate("a1")], with_error=True)
+        assert result == []
+        assert LAYARANK_ERR_LLM in err
