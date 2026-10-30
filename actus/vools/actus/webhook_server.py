@@ -99,13 +99,14 @@ class WebhookServer:
         self._running = True
 
     def stop(self):
-        """停止 HTTP 服务器。"""
+        """停止 HTTP 服务器。
+
+        只停监听，**不擦** `_routes`/`_callbacks` —— 重启时已注册的 webhook
+        路由应该还在。真正删除路由应调用 `unregister_route`。
+        """
         if self._receiver is not None:
             self._receiver.stop()
         self._running = False
-        with self._lock:
-            self._routes.clear()
-            self._callbacks.clear()
 
     def status(self) -> dict:
         """返回状态摘要。"""
