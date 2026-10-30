@@ -734,14 +734,19 @@ class TestRunAdapter:
         assert result.success is False
         assert "不存在" in result.stderr
 
-    def test_run_adapter_invalid_spec(self):
-        """退步了会怎样：run_adapter 配置错应返回失败。"""
+    def test_run_adapter_invalid_spec(self, monkeypatch):
+        """退步了会怎样：run_adapter 配置错应返回失败。
+
+        （环境卫生：此前裸写 os.environ["ACTUS_REPO_ROOT"] 不清理，泄漏进
+        后续用例 —— test_action_path_of 断言相对路径被拼上临时目录而炸。
+        改 monkeypatch.setenv，用例结束自动还原。）
+        """
         from vools.actus.adapter import run_adapter
         # 创建一个无效 spec 的适配器文件
         import os
         import tempfile
         with tempfile.TemporaryDirectory() as d:
-            os.environ["ACTUS_REPO_ROOT"] = d
+            monkeypatch.setenv("ACTUS_REPO_ROOT", d)
             # 这个适配器缺 command，会触发 AdapterSpecError
             spec_path = os.path.join(d, "actions", "adapters")
             os.makedirs(spec_path, exist_ok=True)
