@@ -301,3 +301,30 @@ class TestCLIAdapter:
         result = ca.run()
         assert result.success is True
 
+
+class TestQuickerAdapter:
+    def test_check_available_no_quicker(self):
+        """退步了会怎样：无 Quicker 应返回 False。"""
+        from vools.actus.adapter import QuickerAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"type": "quicker"}})
+        qa = QuickerAdapter(spec)
+        ok, msg = qa.check_available()
+        assert ok is False
+        assert "Quicker" in msg
+
+    def test_install_hint(self):
+        """退步了会怎样：应返回 Quicker 安装提示。"""
+        from vools.actus.adapter import QuickerAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"type": "quicker"}})
+        qa = QuickerAdapter(spec)
+        assert "Quicker" in qa.install_hint()
+
+    def test_run_no_action(self):
+        """退步了会怎样：无 action 应返回失败。"""
+        from vools.actus.adapter import QuickerAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"type": "quicker"}})
+        qa = QuickerAdapter(spec)
+        result = qa.run()
+        assert result.success is False
+        assert "未指定" in result.stderr
+
