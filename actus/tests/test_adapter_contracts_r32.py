@@ -286,6 +286,100 @@ class TestQuoteForShell:
         assert result.success is True
         assert captured["cmd"][0] == str(starter)
 
+    def test_quicker_run_no_starter_which_fails(self, monkeypatch):
+        """退步了会怎样：Quicker run 无 starter 且 which 失败应返回失败。"""
+        from vools.actus.adapter import QuickerAdapter, AdapterSpec
+
+        def mock_run_cmd_safe(*a, **kw):
+            raise FileNotFoundError("QuickerStarter.exe not found")
+
+        monkeypatch.setattr("vools.actus.adapter.run_cmd_safe", mock_run_cmd_safe)
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "quicker", "action": "my_action"},
+        })
+        qa = QuickerAdapter(spec)
+        result = qa.run()
+        assert result.success is False
+
+    def test_check_command_shell_in_exe(self):
+        """退步了会怎样：check 含 shell 元字符且以 exe 开头应走 shell。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "cli", "command": "python", "check": "python | grep x"},
+        })
+        ca = CLIAdapter(spec)
+        cmd, use_shell = ca._check_command()
+        assert use_shell is True
+
+    def test_cli_check_available_exception(self, monkeypatch):
+        """退步了会怎样：check_available 抛异常应返回 False。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+
+        def mock_run_cmd_safe(*a, **kw):
+            raise RuntimeError("spawn failed")
+
+        monkeypatch.setattr("vools.actus.adapter.run_cmd_safe", mock_run_cmd_safe)
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "cli", "command": "python", "check": "python --version"},
+        })
+        ca = CLIAdapter(spec)
+        ok, msg = ca.check_available()
+        assert ok is False
+
+    def test_executable_of_unclosed_quote(self):
+        """退步了会怎样：_executable_of 引号不闭合应降级为 split。"""
+        from vools.actus.adapter import _executable_of
+        # shlex.split 会抛 ValueError，应降级到 c.split()
+        exe = _executable_of('python "unclosed')
+        assert exe == "python"
+
+    def test_check_command_empty_check(self):
+        """退步了会怎样：check 为空时应返回 False。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "cli", "command": "python"},
+        })
+        ca = CLIAdapter(spec)
+        ok, msg = ca.check_available()
+        assert ok is True  # 有 command，check 为空时按 command 判断
+
+    def test_quicker_check_available_via_which(self, monkeypatch):
+        """退步了会怎样：Quicker 通过 which 查找应返回 True。"""
+        import shutil
+        from vools.actus.adapter import QuickerAdapter, AdapterSpec
+
+        monkeypatch.setattr(shutil, "which", lambda name: "/fake/QuickerStarter.exe")
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "quicker", "action": "act"},
+        })
+        qa = QuickerAdapter(spec)
+        ok, msg = qa.check_available()
+        assert ok is True
+
+    def test_quicker_run_non_json_output(self, monkeypatch):
+        """退步了会怎样：Quicker run 非 JSON 输出应 data=None。"""
+        from vools.actus.adapter import QuickerAdapter, AdapterSpec
+
+        class MockResult:
+            returncode = 0
+            stdout = "not json"
+            stderr = ""
+
+        monkeypatch.setattr("vools.actus.adapter.run_cmd_safe", lambda *a, **kw: MockResult())
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "quicker", "action": "my_action"},
+        })
+        qa = QuickerAdapter(spec)
+        result = qa.run()
+        assert result.success is True
+        assert result.data is None
+
 
 class TestCLIAdapter:
     def test_check_available_no_check(self):
