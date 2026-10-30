@@ -254,3 +254,79 @@ class TestValidateAdapterSpec:
         })
         ok, issues = validate_adapter_spec(spec)
         assert ok is True
+
+
+class TestRegistryEdgeCases:
+    def test_discover_format2(self, tmp_adapters_dir):
+        """退步了会怎样：#!cfg 在代码块前应能解析。"""
+        from pathlib import Path
+        from vools.actus.adapter import AdapterRegistry
+        d = Path(tmp_adapters_dir)
+        cfg = json.dumps({"id": "adapter.cli.fmt2", "adapter": {"type": "cli", "command": "python"}})
+        (d / "fmt2.actus.md").write_text("#!cfg\n```json\n" + cfg + "\n```\n", encoding="utf-8")
+        ar = AdapterRegistry(adapters_dir=tmp_adapters_dir)
+        specs = ar.discover()
+        assert len(specs) == 1
+        assert specs[0].id == "adapter.cli.fmt2"
+
+    def test_discover_bad_json_skipped(self, tmp_adapters_dir):
+        """退步了会怎样：坏 JSON 应跳过（记 warning），不影响其他。"""
+        from pathlib import Path
+        from vools.actus.adapter import AdapterRegistry
+        d = Path(tmp_adapters_dir)
+        (d / "bad.actus.md").write_text("not valid content", encoding="utf-8")
+        _write_adapter(d, "act.a", {
+            "id": "adapter.cli.test", "adapter": {"type": "cli", "command": "python"},
+        })
+        ar = AdapterRegistry(adapters_dir=tmp_adapters_dir)
+        specs = ar.discover()
+        assert len(specs) == 1
+
+    def test_create_quicker_type(self, tmp_adapters_dir):
+        """退步了会怎样：Quicker 类型应创建 QuickerAdapter。"""
+        from vools.actus.adapter import AdapterRegistry, AdapterSpec, QuickerAdapter
+        ar = AdapterRegistry(adapters_dir=tmp_adapters_dir)
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.quicker.test",
+            "adapter": {"type": "quicker", "action": "act"},
+        })
+        adapter = ar.create_adapter(spec)
+        assert isinstance(adapter, QuickerAdapter)
+
+    def test_create_http_type(self, tmp_adapters_dir):
+        """退步了会怎样：HTTP 类型应创建 HTTPAdapter。"""
+        from vools.actus.adapter import AdapterRegistry, AdapterSpec, HTTPAdapter
+        ar = AdapterRegistry(adapters_dir=tmp_adapters_dir)
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.http.test",
+            "adapter": {"type": "http", "url": "https://example.com"},
+        })
+        adapter = ar.create_adapter(spec)
+        assert isinstance(adapter, HTTPAdapter)
+
+    def test_create_mcp_type(self, tmp_adapters_dir):
+        """退步了会怎样：MCP 类型应创建 MCPAdapter。"""
+        from vools.actus.adapter import AdapterRegistry, AdapterSpec, MCPAdapter
+        ar = AdapterRegistry(adapters_dir=tmp_adapters_dir)
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.mcp.test",
+            "adapter": {"type": "mcp", "mcp_server": "srv", "mcp_tool": "tool"},
+        })
+        adapter = ar.create_adapter(spec)
+        assert isinstance(adapter, MCPAdapter)
+
+    def test_validate_missing_id(self):
+        """退步了会怎样：缺 id 应报 issues。"""
+        from vools.actus.adapter import AdapterSpec, validate_adapter_spec
+        spec = AdapterSpec(id="", type=None)
+        ok, issues = validate_adapter_spec(spec)
+        assert ok is False
+        assert any("id" in i for i in issues)
+
+    def test_validate_missing_type(self):
+        """退步了会怎样：缺 type 应报 issues。"""
+        from vools.actus.adapter import AdapterSpec, validate_adapter_spec
+        spec = AdapterSpec(id="adapter.cli.test", type=None)
+        ok, issues = validate_adapter_spec(spec)
+        assert ok is False
+        assert any("type" in i for i in issues)
