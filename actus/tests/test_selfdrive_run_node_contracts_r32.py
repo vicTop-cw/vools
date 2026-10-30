@@ -89,3 +89,44 @@ class TestRunNode:
         assert node['status'] == 'done'
         assert node['result']['status'] == 'ok'
         assert node['result']['value'] == "not a dict"
+
+    def test_run_node_post_gate_blocks(self, tmp_meta, monkeypatch):
+        """退步了会怎样：post_gate 返回结论时应阻塞节点。"""
+        from vools.actus.selfdrive import SelfDrive
+
+        sd = SelfDrive(goal="测试", meta_dir=tmp_meta)
+
+        def ok_worker(node):
+            return {'status': 'ok'}
+
+        # mock worker 成功
+        sd.worker = ok_worker
+
+        # mock _post_execute_gates 返回 blocked
+        monkeypatch.setattr(sd, '_post_execute_gates',
+                            lambda node: {'passed': False, 'reason': 'omega_verify_gate',
+                                          'detail': 'missing artifact'})
+        node = _make_node()
+        sd._run_node(node)
+        assert node['status'] == 'failed'
+        assert node['reason'] == 'omega_verify_gate'
+
+    def test_run_node_omega_report_in_node(self, tmp_meta, monkeypatch):
+        """退步了会怎样：gate 的 report 应写入 node['omega']。"""
+        from vools.actus.selfdrive import SelfDrive
+
+        sd = SelfDrive(goal="测试", meta_dir=tmp_meta)
+
+        def ok_worker(node):
+            return {'status': 'ok'}
+
+        sd.worker = ok_worker
+
+        # mock _verify 返回带 report 的结论
+        monkeypatch.setattr(sd, '_verify',
+                            lambda node, result: {'passed': True, 'accuracy': 100.0,
+                                                  'reason': 'ok', 'report': {'gate': {'passed': True}}})
+        node = _make_node()
+        sd._run_node(node)
+        assert node['status'] == 'done'
+        assert 'report' in node['omega']
