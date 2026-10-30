@@ -328,3 +328,30 @@ class TestQuickerAdapter:
         assert result.success is False
         assert "未指定" in result.stderr
 
+
+class TestMCPAdapter:
+    def test_check_available_no_server(self):
+        """退步了会怎样：无 mcp_server 应返回 False。"""
+        from vools.actus.adapter import MCPAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"type": "mcp"}})
+        ma = MCPAdapter(spec)
+        ok, msg = ma.check_available()
+        assert ok is False
+        assert "MCP" in msg
+
+    def test_install_hint(self):
+        """退步了会怎样：应返回 MCP 配置提示。"""
+        from vools.actus.adapter import MCPAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"type": "mcp"}})
+        ma = MCPAdapter(spec)
+        assert "mcp_servers.json" in ma.install_hint()
+
+    def test_run_no_tool(self):
+        """退步了会怎样：无 mcp_tool 应返回失败。"""
+        from vools.actus.adapter import MCPAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"type": "mcp"}})
+        ma = MCPAdapter(spec)
+        result = ma.run()
+        assert result.success is False
+        assert "MCP" in result.stderr
+
