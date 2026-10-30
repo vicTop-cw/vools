@@ -110,6 +110,68 @@ class TestPreExecuteGate:
         node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
         assert sd._pre_execute_gate(node) is None
 
+    def test_pre_gate_ledger_ok(self, tmp_meta, monkeypatch):
+        """退步了会怎样：ledger 返回 ok 时应放行。"""
+        from vools.actus import selfdrive as selfdrive_mod
+        from vools.actus.selfdrive import SelfDrive
+
+        class MockLedger:
+            def execute_gate(self, node):
+                return (True, "")
+
+        monkeypatch.setattr(selfdrive_mod._omega_strong, 'omega_enabled',
+                            lambda node: True)
+        monkeypatch.setattr(selfdrive_mod._omega_strong, 'get_ledger',
+                            lambda *a, **kw: MockLedger())
+
+        sd = SelfDrive(goal="测试", strong=True, meta_dir=tmp_meta)
+        node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
+        assert sd._pre_execute_gate(node) is None
+
+    def test_pre_gate_ledger_failed(self, tmp_meta, monkeypatch):
+        """退步了会怎样：ledger 返回 not ok 时应判失败。"""
+        from vools.actus import selfdrive as selfdrive_mod
+        from vools.actus.selfdrive import SelfDrive
+
+        class MockLedger:
+            def execute_gate(self, node):
+                return (False, "missing spec")
+
+        monkeypatch.setattr(selfdrive_mod._omega_strong, 'omega_enabled',
+                            lambda node: True)
+        monkeypatch.setattr(selfdrive_mod._omega_strong, 'get_ledger',
+                            lambda *a, **kw: MockLedger())
+
+        sd = SelfDrive(goal="测试", strong=True, meta_dir=tmp_meta)
+        node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
+        result = sd._pre_execute_gate(node)
+        assert result is not None
+        assert result['passed'] is False
+        assert result['reason'] == 'omega_execute_gate'
+
+    def test_pre_gate_ledger_throws(self, tmp_meta, monkeypatch):
+        """退步了会怎样：ledger 抛异常时 _pre_execute_gate 不捕获（由 _run_node 处理）。
+
+        注意：_post_execute_gates 有 try/except 捕获门禁异常，但 _pre_execute_gate 没有
+        —— 这是门禁行为的不一致，值得后续修复。
+        """
+        from vools.actus import selfdrive as selfdrive_mod
+        from vools.actus.selfdrive import SelfDrive
+
+        class MockLedger:
+            def execute_gate(self, node):
+                raise RuntimeError("ledger broken")
+
+        monkeypatch.setattr(selfdrive_mod._omega_strong, 'omega_enabled',
+                            lambda node: True)
+        monkeypatch.setattr(selfdrive_mod._omega_strong, 'get_ledger',
+                            lambda *a, **kw: MockLedger())
+
+        sd = SelfDrive(goal="测试", strong=True, meta_dir=tmp_meta)
+        node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
+        with pytest.raises(RuntimeError):
+            sd._pre_execute_gate(node)
+
 
 class TestPostExecuteGates:
     def test_post_gate_disabled(self, tmp_meta):
