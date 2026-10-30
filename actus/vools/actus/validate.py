@@ -27,6 +27,7 @@ import json
 import os
 import re
 import sys
+import threading
 from typing import Dict, List, Tuple
 from .paths import repo_root
 
@@ -52,6 +53,11 @@ from .paths import repo_root
 RUNTIME_NOTE_PREFIX = 'runtime:'
 WARNING_PREFIX = 'warning:'
 NOTE_PREFIXES = (RUNTIME_NOTE_PREFIX, WARNING_PREFIX)
+
+#: `check_security` 临时替换**进程单例** scanner 的 `audit` 属性期间的互斥锁。
+#: 只包住"替换 audit → 扫描 → 恢复 audit"这段（不是全局 validate 锁）：
+#: 两个并发 validate 互相覆盖 audit 抑制会写脏/漏写安全扫描审计。
+_SECURITY_SCAN_LOCK = threading.Lock()
 
 
 def split_validation(errors) -> Tuple[List[str], List[str]]:
@@ -936,7 +942,7 @@ def check_usage_executable(meta: dict) -> List[str]:
     text = usage.strip()
     if not text:
         return errors
-    if 'actus run' in text or ' run ' in text or aid in text:
+    if 'actus run' in text or ' run ' in text or (aid and aid in text):
         return errors
     # 函数式调用形态（sigma 模板：`actus_<namespace>_<name>({...})`；
     # 一般动作：`<id>(args)` 或 `调用示例: foo(...)`）→ 可执行，不判失败。
@@ -1617,13 +1623,18 @@ def check_security(action: Action) -> List[str]:
                 return None
             def summary(self):
                 return {}
-        _orig_audit = getattr(scanner, 'audit', None)
-        scanner.audit = _NullAudit()
-        try:
-            result = scanner.scan_action(
-                action_id, action.meta, action.raw or action.body or '')
-        finally:
-            scanner.audit = _orig_audit
+        # 并发保护：scanner 是进程单例，audit 是被临时替换的共享属性。
+        # 只锁这段（读取原值→替换→扫描→恢复），不串行化整个 validate。
+        # 读取原值也必须在锁内：否则另一线程正在替换时读到的"原值"是 _NullAudit，
+        # 恢复时会把 no-op 代理永久写回单例。
+        with _SECURITY_SCAN_LOCK:
+            _orig_audit = getattr(scanner, 'audit', None)
+            scanner.audit = _NullAudit()
+            try:
+                result = scanner.scan_action(
+                    action_id, action.meta, action.raw or action.body or '')
+            finally:
+                scanner.audit = _orig_audit
     except Exception as exc:  # noqa: BLE001
         return ['warning: 安全扫描异常（%s: %s）' % (type(exc).__name__, exc)]
 
