@@ -104,3 +104,65 @@ class TestCreateAdapter:
         spec = AdapterSpec.from_dict({"id": "adapter.cli.test", "adapter": {"type": "cli"}})
         with pytest.raises(AdapterSpecError):
             ar.create_adapter(spec)
+
+
+class TestProbeAvailable:
+    def test_unknown_type(self):
+        """退步了会怎样：未知适配器类型应返回 False。"""
+        from vools.actus.adapter import _probe_available, clear_availability_cache
+        clear_availability_cache()
+        ok, msg = _probe_available("adapter.cli.x", "unknown", "", "", "", "", "", "", False)
+        assert ok is False
+        assert "未知" in msg
+
+    def test_cli_available(self):
+        """退步了会怎样：CLI 命令存在应返回 True。"""
+        from vools.actus.adapter import _probe_available, clear_availability_cache
+        clear_availability_cache()
+        ok, msg = _probe_available("adapter.cli.x", "cli", "python", "", "", "", "", "", False)
+        assert ok is True
+
+    def test_cli_unavailable(self):
+        """退步了会怎样：CLI 命令不存在应返回 False。"""
+        from vools.actus.adapter import _probe_available, clear_availability_cache
+        clear_availability_cache()
+        ok, msg = _probe_available("adapter.cli.x", "cli", "nonexistent_xyz_123", "", "", "", "", "", False)
+        assert ok is False
+
+    def test_http_no_preflight_skips_probe(self):
+        """退步了会怎样：HTTP 无 preflight 应直接返回 True（不探测网络）。"""
+        from vools.actus.adapter import _probe_available, clear_availability_cache
+        clear_availability_cache()
+        ok, msg = _probe_available("adapter.http.x", "http", "", "https://example.com", "", "", "", "", False)
+        assert ok is True
+
+    def test_cached(self):
+        """退步了会怎样：相同 key 应命中缓存。"""
+        from vools.actus.adapter import _probe_available, clear_availability_cache
+        clear_availability_cache()
+        r1 = _probe_available("adapter.cli.cached", "cli", "python", "", "", "", "", "", False)
+        r2 = _probe_available("adapter.cli.cached", "cli", "python", "", "", "", "", "", False)
+        assert r1 == r2
+
+
+class TestEnsureAvailable:
+    def test_ensure_available_ok(self, tmp_adapters_dir):
+        """退步了会怎样：可用适配器不应抛异常。"""
+        from vools.actus.adapter import AdapterRegistry, AdapterSpec, clear_availability_cache
+        clear_availability_cache()
+        ar = AdapterRegistry(adapters_dir=tmp_adapters_dir)
+        spec = AdapterSpec.from_dict({"id": "adapter.cli.test", "adapter": {"type": "cli", "command": "python"}})
+        ar.ensure_available("adapter.cli.test", spec)  # 不应抛
+
+    def test_ensure_available_unavailable(self, tmp_adapters_dir):
+        """退步了会怎样：不可用适配器应抛 AdapterUnavailableError。"""
+        from vools.actus.adapter import (AdapterRegistry, AdapterSpec, AdapterUnavailableError,
+                                         clear_availability_cache)
+        clear_availability_cache()
+        ar = AdapterRegistry(adapters_dir=tmp_adapters_dir)
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.cli.test",
+            "adapter": {"type": "cli", "command": "nonexistent_xyz_123"},
+        })
+        with pytest.raises(AdapterUnavailableError):
+            ar.ensure_available("adapter.cli.test", spec)
