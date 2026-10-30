@@ -174,3 +174,83 @@ class TestQuoteForShell:
         from vools.actus.adapter import _quote_for_shell
         result = _quote_for_shell("")
         assert result != ""
+
+
+class TestCLIAdapter:
+    def test_check_available_no_check(self):
+        """退步了会怎样：无 check 时应按 command 可执行文件判断。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"command": "python"}})
+        ca = CLIAdapter(spec)
+        ok, msg = ca.check_available()
+        assert ok is True
+
+    def test_check_available_bad_command(self):
+        """退步了会怎样：不可用的命令应返回 False。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"command": "nonexistent_xyz"}})
+        ca = CLIAdapter(spec)
+        ok, msg = ca.check_available()
+        assert ok is False
+        assert "nonexistent_xyz" in msg
+
+    def test_install_hint_with_install(self):
+        """退步了会怎样：有 install 字段应返回 install 内容。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"command": "foo", "install": "pip install foo"}})
+        ca = CLIAdapter(spec)
+        assert ca.install_hint() == "pip install foo"
+
+    def test_install_hint_no_install(self):
+        """退步了会怎样：无 install 应返回通用提示。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"command": "foo"}})
+        ca = CLIAdapter(spec)
+        assert "foo" in ca.install_hint()
+
+    def test_run_simple(self):
+        """退步了会怎样：应能执行简单命令。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "python", "args": ["-c", "print('hello')"]},
+        })
+        ca = CLIAdapter(spec)
+        result = ca.run()
+        assert result.success is True
+        assert "hello" in result.stdout
+
+    def test_run_no_command(self):
+        """退步了会怎样：无 command 应返回失败。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a"})
+        ca = CLIAdapter(spec)
+        result = ca.run()
+        assert result.success is False
+        assert "未指定" in result.stderr
+
+    def test_run_with_params(self):
+        """退步了会怎样：应能替换 ${param} 占位符。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "python", "args": ["-c", "print('${msg}')"]},
+        })
+        ca = CLIAdapter(spec)
+        result = ca.run(params={"msg": "hello world"})
+        assert result.success is True
+        assert "hello world" in result.stdout
+
+    def test_run_json_output(self):
+        """退步了会怎样：json 输出应被解析。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "python", "args": ["-c", "import json; print(json.dumps({\"ok\": True}))"]},
+            "output": {"type": "json"},
+        })
+        ca = CLIAdapter(spec)
+        result = ca.run()
+        assert result.success is True
+        assert result.data == {"ok": True}
+
