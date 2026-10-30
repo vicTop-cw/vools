@@ -391,3 +391,27 @@ class TestLayarankByComplexity:
             FailedNoRawClient(), "intent", [FakeCandidate("a1")], with_error=True)
         assert result == []
         assert LAYARANK_ERR_LLM in err
+
+    def test_failed_response_raw_attr_error(self):
+        """退步了会怎样：resp.raw 抛 AttributeError 应报 llm_error。"""
+        from vools.actus.ai.routing import layarank_by_complexity, LAYARANK_ERR_LLM
+
+        class FakeCandidate:
+            def __init__(self, aid):
+                self.action_id = aid; self.tool_name = "tool_" + aid
+                self.description = "desc"
+
+        class FailedRawAttrClient:
+            def complete(self, msgs, **kw):
+                class Resp:
+                    content = ""
+                    failed = True
+                    @property
+                    def raw(self):
+                        raise AttributeError("no raw")
+                return Resp()
+
+        result, err = layarank_by_complexity(
+            FailedRawAttrClient(), "intent", [FakeCandidate("a1")], with_error=True)
+        assert result == []
+        assert LAYARANK_ERR_LLM in err
