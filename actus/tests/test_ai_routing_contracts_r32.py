@@ -197,3 +197,87 @@ class TestLastLayarankError:
         """退步了会怎样：默认应返回空字符串（无错误）。"""
         from vools.actus.ai.routing import last_layarank_error
         assert last_layarank_error() == ''
+
+
+class TestLayarankByComplexity:
+    def test_empty_candidates(self):
+        """退步了会怎样：空候选应返回空列表，无错误。"""
+        from vools.actus.ai.routing import layarank_by_complexity
+        result, err = layarank_by_complexity(None, "intent", [], with_error=True)
+        assert result == []
+        assert err == ''
+
+    def test_empty_intent(self):
+        """退步了会怎样：空意图应返回空列表，无错误。"""
+        from vools.actus.ai.routing import layarank_by_complexity
+        result, err = layarank_by_complexity(None, "  ", [], with_error=True)
+        assert result == []
+        assert err == ''
+
+    def test_client_throws(self):
+        """退步了会怎样：client 抛异常应报 call_error。"""
+        from vools.actus.ai.routing import layarank_by_complexity, LAYARANK_ERR_CALL
+
+        class FakeCandidate:
+            def __init__(self, aid):
+                self.action_id = aid; self.tool_name = "tool_" + aid
+                self.description = "desc"
+
+        class BadClient:
+            def complete(self, msgs, **kw):
+                raise RuntimeError("boom")
+
+        result, err = layarank_by_complexity(
+            BadClient(), "intent", [FakeCandidate("a1")], with_error=True)
+        assert result == []
+        assert LAYARANK_ERR_CALL in err
+
+    def test_client_failed_response(self):
+        """退步了会怎样：client 返回 failed 响应应报 llm_error。"""
+        from vools.actus.ai.routing import layarank_by_complexity, LAYARANK_ERR_LLM
+
+        class FakeCandidate:
+            def __init__(self, aid):
+                self.action_id = aid; self.tool_name = "tool_" + aid
+                self.description = "desc"
+
+        class FailedClient:
+            def complete(self, msgs, **kw):
+                class Resp:
+                    content = ""
+                    failed = True
+                    raw = {"error_kind": "quota"}
+                return Resp()
+
+        result, err = layarank_by_complexity(
+            FailedClient(), "intent", [FakeCandidate("a1")], with_error=True)
+        assert result == []
+        assert LAYARANK_ERR_LLM in err
+
+    def test_client_valid_response(self):
+        """退步了会怎样：client 返回合法 JSON 应解析出结果。"""
+        from vools.actus.ai.routing import layarank_by_complexity
+
+        class FakeCandidate:
+            def __init__(self, aid):
+                self.action_id = aid; self.tool_name = "tool_" + aid
+                self.description = "desc"
+
+        class GoodClient:
+            def complete(self, msgs, **kw):
+                class Resp:
+                    content = '[{"action_id": "a1", "adjustment": 0.1, "reason": "ok"}]'
+                    failed = False
+                return Resp()
+
+        result, err = layarank_by_complexity(
+            GoodClient(), "intent", [FakeCandidate("a1")], with_error=True)
+        assert err == ''
+        assert len(result) == 1
+        assert result[0].action_id == "a1"
+
+    def test_with_error_false(self):
+        """退步了会怎样：with_error=False 应只返回 list（向后兼容）。"""
+        from vools.actus.ai.routing import layarank_by_complexity
+        result = layarank_by_complexity(None, "intent", [])
+        assert isinstance(result, list)
