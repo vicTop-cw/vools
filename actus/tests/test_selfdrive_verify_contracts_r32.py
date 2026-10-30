@@ -92,3 +92,37 @@ class TestVerify:
         gate = sd._verify(node, {'status': 'ok'})
         assert gate['passed'] is False
         assert 'omega_error' in gate['reason']
+
+
+class TestPreExecuteGate:
+    def test_pre_gate_disabled(self, tmp_meta):
+        """退步了会怎样：strong=False（enforce_pre_gate=False）应直接放行。"""
+        from vools.actus.selfdrive import SelfDrive
+        sd = SelfDrive(goal="测试", strong=False, meta_dir=tmp_meta)
+        assert sd.enforce_pre_gate is False
+        node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
+        assert sd._pre_execute_gate(node) is None
+
+    def test_pre_gate_no_omega_marker(self, tmp_meta):
+        """退步了会怎样：无 [omega:required] 标记应放行。"""
+        from vools.actus.selfdrive import SelfDrive
+        sd = SelfDrive(goal="测试", strong=True, meta_dir=tmp_meta)
+        node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
+        assert sd._pre_execute_gate(node) is None
+
+
+class TestPostExecuteGates:
+    def test_post_gate_disabled(self, tmp_meta):
+        """退步了会怎样：strong=False（enforce_pre_gate=False）应直接放行。"""
+        from vools.actus.selfdrive import SelfDrive
+        sd = SelfDrive(goal="测试", strong=False, meta_dir=tmp_meta)
+        assert sd.enforce_pre_gate is False
+        node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
+        assert sd._post_execute_gates(node) is None
+
+    def test_post_gate_no_marker(self, tmp_meta):
+        """退步了会怎样：无 gate 标记应放行。"""
+        from vools.actus.selfdrive import SelfDrive
+        sd = SelfDrive(goal="测试", strong=True, meta_dir=tmp_meta)
+        node = {'id': 't001', 'goal': 'a', 'children': [], 'status': 'pending', 'depth': 1}
+        assert sd._post_execute_gates(node) is None
