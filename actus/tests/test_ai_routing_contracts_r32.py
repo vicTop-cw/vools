@@ -113,6 +113,19 @@ class TestComputeFallbackChain:
                                        unhealthy_ids=["deepseek:chat"])
         assert ("deepseek", "chat") not in chain
 
+    def test_excludes_cooling_via_fallback(self):
+        """退步了会怎样：fallback.is_cooling 返回 True 的 provider 应被排除。"""
+        from vools.actus.ai.routing import compute_fallback_chain
+
+        class MockFallback:
+            def is_cooling(self, provider, model):
+                return provider == "deepseek"
+
+        all_providers = [("openai", "gpt-4o", None), ("deepseek", "chat", None)]
+        chain = compute_fallback_chain("openai", "gpt-4o", all_providers, fallback=MockFallback())
+        assert ("deepseek", "chat") not in chain
+        assert ("openai", "gpt-4o") not in chain  # 主 provider 不在链中
+
 
 class TestRetryWithFallback:
     def test_primary_success(self):
