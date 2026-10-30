@@ -355,3 +355,72 @@ class TestMCPAdapter:
         assert result.success is False
         assert "MCP" in result.stderr
 
+
+class TestHTTPAdapter:
+    def test_check_available_no_url(self):
+        """退步了会怎样：无 url 应返回 False。"""
+        from vools.actus.adapter import HTTPAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"type": "http"}})
+        ha = HTTPAdapter(spec)
+        ok, msg = ha.check_available()
+        assert ok is False
+        assert "URL" in msg
+
+    def test_install_hint(self):
+        """退步了会怎样：应返回 HTTP 无需安装提示。"""
+        from vools.actus.adapter import HTTPAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"type": "http"}})
+        ha = HTTPAdapter(spec)
+        assert "无需安装" in ha.install_hint()
+
+    def test_run_no_url(self):
+        """退步了会怎样：无 url 应返回失败。"""
+        from vools.actus.adapter import HTTPAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({"id": "act.a", "adapter": {"type": "http"}})
+        ha = HTTPAdapter(spec)
+        result = ha.run()
+        assert result.success is False
+        assert "URL" in result.stderr
+
+    def test_run_success(self, monkeypatch):
+        """退步了会怎样：HTTP 2xx 应返回成功。"""
+        from vools.actus.adapter import HTTPAdapter, AdapterSpec
+
+        class MockResp:
+            status = 200
+            def read(self):
+                return b'{"ok": true}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: MockResp())
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "http", "url": "https://example.com/api"},
+        })
+        ha = HTTPAdapter(spec)
+        result = ha.run()
+        assert result.success is True
+        assert result.returncode == 200
+        assert result.data == {"ok": True}
+
+    def test_run_http_error(self, monkeypatch):
+        """退步了会怎样：HTTP 错误码应返回失败。"""
+        import urllib.error
+        from vools.actus.adapter import HTTPAdapter, AdapterSpec
+
+        def mock_urlopen(*a, **kw):
+            raise urllib.error.HTTPError("https://x", 404, "Not Found", {}, None)
+
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "http", "url": "https://example.com/api"},
+        })
+        ha = HTTPAdapter(spec)
+        result = ha.run()
+        assert result.success is False
+        assert result.returncode == 404
+
