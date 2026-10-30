@@ -39,19 +39,21 @@ def test_params_action_ref_uses_action_output(monkeypatch):
         seen["params"] = params
         return {"status": "ok", "data": {"produced": 42}}
 
-    monkeypatch.setattr(ex, "execute", fake_execute)
+    # 字符串寻址（在补丁时刻重新 import）：合跑时 _ai_local_bootstrap 会在
+    # 收集期重建 vools.actus.*，模块属性寻址会打到旧对象导致补丁失效。
+    monkeypatch.setattr("vools.actus.executor.execute", fake_execute)
     assert resolve_params_extended("@action:myapp.producer") == {"produced": 42}
     assert seen["id"] == "myapp.producer"
 
 
 def test_params_action_ref_wraps_non_dict_output(monkeypatch):
-    monkeypatch.setattr(ex, "execute",
+    monkeypatch.setattr("vools.actus.executor.execute",
                         lambda aid, params=None, **kw: {"status": "ok", "data": [1, 2]})
     assert resolve_params_extended("@action:myapp.producer") == {"output": [1, 2]}
 
 
 def test_params_action_ref_failure_reports(monkeypatch):
-    monkeypatch.setattr(ex, "execute",
+    monkeypatch.setattr("vools.actus.executor.execute",
                         lambda aid, params=None, **kw: {"status": "failed",
                                                         "error": {"code": "boom"}})
     with pytest.raises(Exception) as exc:
