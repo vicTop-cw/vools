@@ -251,32 +251,33 @@ def test_stop_before_start_is_safe(server):
     assert server.status()['webhooks'] == 0
 
 
-def test_stop_clears_routes_and_is_idempotent(server):
-    """退步了会怎样：stop 只关服务器不清路由 →「已停止」的状态里还挂着路由表，
-    重启后状态与实际监听不一致；重复 stop 若二次 shutdown 则抛异常。"""
+def test_stop_keeps_routes_and_is_idempotent(server):
+    """退步了会怎样：stop 只关服务器**不擦**路由 → 重启后已注册的 webhook 路由还在；
+    重复 stop 若二次 shutdown 则抛异常（幂等：不抛）。
+
+    修复前：stop() 清空 `_routes`/`_callbacks`，重启后路由表为空、触发器永久失联。
+    """
     server.add(_make_trigger('hook.a', 'act.a'), lambda t: None)
     server.start()
 
     server.stop()
     st = server.status()
     assert st['running'] is False
-    assert st['webhooks'] == 0 and st['routes'] == {}
+    # routes 必须保留（stop 不擦）
+    assert st['routes'] == {'hook.a': 'act.a'}
 
     server.stop()                                   # 幂等：不抛
     assert server.status()['running'] is False
+    assert server.status()['routes'] == {'hook.a': 'act.a'}
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    '已知产品 bug（已报告，未修）：WebhookServer.stop() 会清空 _routes/_callbacks，'
-    '而 TriggerEngine.start() 不会重新 add（它只调 self._webhooks.start()）——'
-    'engine.stop() → engine.start() 之后 webhook 触发器静默失效：路由表为空、'
-    '进站事件一律走「No route registered」202，且没有任何报错。'))
 def test_stop_then_start_keeps_registered_routes(server):
-    """退步了会怎样：这条 xfail 钉的是正确语义 —— 重启后已注册的 webhook 路由必须还在。
+    """退步了会怎样：重启后已注册的 webhook 路由必须还在。
 
-    现状：stop() 把 _routes/_callbacks 清空，start() 不会重建，于是重启后
-    `status()['routes'] == {}`，触发器永久失联（TriggerEngine 侧 `_triggers` 仍完好，
-    两边状态分叉）。
+    `WebhookServer.stop()` 只停监听，**不擦** `_routes`/`_callbacks` ——
+    `engine.stop() → engine.start()` 之后 webhook 触发器应该仍能命中路由表。
+    （修复前：stop() 清空路由表，start() 不重建，触发器永久失联，
+    进站事件一律走「No route registered」202，无报错。）
     """
     server.add(_make_trigger('hook.a', 'act.a'), lambda t: None)
     server.start()
