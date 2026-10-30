@@ -460,15 +460,20 @@ class TestCLIAdapter:
         assert result.data == {"ok": True}
 
     def test_run_shell_metachars(self):
-        """退步了会怎样：shell 元字符命令应走 shell 路径。"""
+        """退步了会怎样：shell 元字符命令应走 shell 路径。
+
+        （原用 `echo hello | grep hello` 依赖 grep 在 PATH —— cmd 环境
+        没有 grep 会 255。改用 && 链，sh/cmd 通用。）
+        """
         from vools.actus.adapter import CLIAdapter, AdapterSpec
         spec = AdapterSpec.from_dict({
             "id": "act.a",
-            "adapter": {"command": "echo hello | grep hello"},
+            "adapter": {"command": "echo hello && echo world"},
         })
         ca = CLIAdapter(spec)
         result = ca.run()
         assert result.success is True
+        assert "hello" in result.stdout and "world" in result.stdout
 
     def test_run_command_fails(self):
         """退步了会怎样：命令失败应返回失败结果。"""
