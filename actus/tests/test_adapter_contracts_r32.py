@@ -210,6 +210,82 @@ class TestQuoteForShell:
         result = _substitute_params("echo ${a} ${b}", {"a": "1"})
         assert result == "echo 1 "
 
+    def test_run_json_output_bad_json(self, monkeypatch):
+        """退步了会怎样：JSON 输出无法解析时应 data=None。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+
+        class MockResult:
+            returncode = 0
+            stdout = "not json"
+            stderr = ""
+
+        monkeypatch.setattr("vools.actus.adapter.run_cmd_safe", lambda *a, **kw: MockResult())
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "python", "args": ["-c", "print('not json')"]},
+            "output": {"type": "json"},
+        })
+        ca = CLIAdapter(spec)
+        result = ca.run()
+        assert result.success is True
+        assert result.data is None
+
+    def test_mcp_check_available_bad_json(self, tmp_path, monkeypatch):
+        """退步了会怎样：MCP 配置坏 JSON 应返回 False。"""
+        from vools.actus.adapter import MCPAdapter, AdapterSpec
+        mcp_config = tmp_path / ".actus" / "mcp_servers.json"
+        mcp_config.parent.mkdir(parents=True, exist_ok=True)
+        mcp_config.write_text("not json", encoding="utf-8")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "mcp", "mcp_server": "myserver"},
+        })
+        ma = MCPAdapter(spec)
+        ok, msg = ma.check_available()
+        assert ok is False
+
+    def test_quicker_check_available_with_starter(self, tmp_path):
+        """退步了会怎样：Quicker starter 路径存在应返回 True。"""
+        from vools.actus.adapter import QuickerAdapter, AdapterSpec
+        starter = tmp_path / "QuickerStarter.exe"
+        starter.write_text("", encoding="utf-8")
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "quicker", "action": "act", "starter": str(starter)},
+        })
+        qa = QuickerAdapter(spec)
+        ok, msg = qa.check_available()
+        assert ok is True
+
+    def test_quicker_run_with_starter(self, tmp_path, monkeypatch):
+        """退步了会怎样：Quicker run 用 starter 路径。"""
+        from vools.actus.adapter import QuickerAdapter, AdapterSpec
+        starter = tmp_path / "QuickerStarter.exe"
+        starter.write_text("", encoding="utf-8")
+
+        class MockResult:
+            returncode = 0
+            stdout = "{}"
+            stderr = ""
+
+        captured = {}
+        def mock_run_cmd_safe(cmd, **kw):
+            captured["cmd"] = cmd
+            return MockResult()
+
+        monkeypatch.setattr("vools.actus.adapter.run_cmd_safe", mock_run_cmd_safe)
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "quicker", "action": "my_action", "starter": str(starter)},
+        })
+        qa = QuickerAdapter(spec)
+        result = qa.run()
+        assert result.success is True
+        assert captured["cmd"][0] == str(starter)
+
 
 class TestCLIAdapter:
     def test_check_available_no_check(self):
