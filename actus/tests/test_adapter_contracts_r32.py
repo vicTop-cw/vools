@@ -540,3 +540,104 @@ class TestRunAdapter:
             result = run_adapter("adapter.cli.bad")
             assert result.success is False
 
+
+class TestCLIRunOutput:
+    def test_run_output_file_success(self, tmp_path, monkeypatch):
+        """退步了会怎样：output_path 文件存在时应读取内容。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+
+        class MockResult:
+            returncode = 0
+            stdout = "ignored"
+            stderr = ""
+
+        monkeypatch.setattr("vools.actus.adapter.run_cmd_safe", lambda *a, **kw: MockResult())
+
+        out_file = tmp_path / "out.txt"
+        out_file.write_text("file content", encoding="utf-8")
+
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "python", "args": ["-c", "pass"]},
+            "output": {"type": "file", "path": str(out_file)},
+        })
+        ca = CLIAdapter(spec)
+        result = ca.run()
+        assert result.success is True
+        assert "file content" in result.stdout
+        assert result.artifact_path == str(out_file)
+
+    def test_run_output_file_missing(self, tmp_path, monkeypatch):
+        """退步了会怎样：output_path 文件不存在应返回 stdout。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+
+        class MockResult:
+            returncode = 0
+            stdout = "stdout content"
+            stderr = ""
+
+        monkeypatch.setattr("vools.actus.adapter.run_cmd_safe", lambda *a, **kw: MockResult())
+
+        out_file = tmp_path / "missing.txt"
+
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "python", "args": ["-c", "pass"]},
+            "output": {"type": "file", "path": str(out_file)},
+        })
+        ca = CLIAdapter(spec)
+        result = ca.run()
+        assert result.success is True
+        assert "stdout content" in result.stdout
+
+    def test_run_run_exception(self, monkeypatch):
+        """退步了会怎样：run_cmd_safe 抛异常应返回失败。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+
+        def mock_run_cmd_safe(*a, **kw):
+            raise RuntimeError("spawn failed")
+
+        monkeypatch.setattr("vools.actus.adapter.run_cmd_safe", mock_run_cmd_safe)
+
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "python", "args": ["-c", "pass"]},
+        })
+        ca = CLIAdapter(spec)
+        result = ca.run()
+        assert result.success is False
+        assert "spawn failed" in result.stderr
+
+
+class TestMCPAdapterConfig:
+    def test_mcp_check_available_with_config(self, tmp_path, monkeypatch):
+        """退步了会怎样：MCP 服务器在配置中应返回 True。"""
+        from vools.actus.adapter import MCPAdapter, AdapterSpec
+        import json
+        mcp_config = tmp_path / ".actus" / "mcp_servers.json"
+        mcp_config.parent.mkdir(parents=True, exist_ok=True)
+        mcp_config.write_text(json.dumps({"myserver": {}}), encoding="utf-8")
+        # Path.home() 在 Windows 用 USERPROFILE
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "mcp", "mcp_server": "myserver"},
+        })
+        ma = MCPAdapter(spec)
+        ok, msg = ma.check_available()
+        assert ok is True
+
+    def test_mcp_run_with_tool(self, monkeypatch):
+        """退步了会怎样：MCP run 带 tool 应返回框架结果。"""
+        from vools.actus.adapter import MCPAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"type": "mcp", "mcp_server": "srv", "mcp_tool": "tool"},
+        })
+        ma = MCPAdapter(spec)
+        result = ma.run()
+        assert result.success is False
+        assert "MCP" in result.stderr
+
