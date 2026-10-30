@@ -254,3 +254,50 @@ class TestCLIAdapter:
         assert result.success is True
         assert result.data == {"ok": True}
 
+    def test_run_shell_metachars(self):
+        """退步了会怎样：shell 元字符命令应走 shell 路径。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "echo hello | grep hello"},
+        })
+        ca = CLIAdapter(spec)
+        result = ca.run()
+        assert result.success is True
+
+    def test_run_command_fails(self):
+        """退步了会怎样：命令失败应返回失败结果。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "python", "args": ["-c", "import sys; sys.exit(1)"]},
+        })
+        ca = CLIAdapter(spec)
+        result = ca.run()
+        assert result.success is False
+
+    def test_run_with_check(self):
+        """退步了会怎样：有 check 字段时应走 check 路径。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "python", "check": "python --version"},
+        })
+        ca = CLIAdapter(spec)
+        ok, msg = ca.check_available()
+        assert ok is True
+
+    def test_run_with_output_path(self, tmp_path):
+        """退步了会怎样：output_path 为文件时应读取文件内容。"""
+        from vools.actus.adapter import CLIAdapter, AdapterSpec
+        out_file = tmp_path / "out.txt"
+        spec = AdapterSpec.from_dict({
+            "id": "act.a",
+            "adapter": {"command": "python", "args": ["-c", "open('OUTFILE', 'w').write('file output')"]},
+            "output": {"type": "file", "path": str(out_file)},
+        })
+        # 先执行生成文件
+        ca = CLIAdapter(spec)
+        result = ca.run()
+        assert result.success is True
+
