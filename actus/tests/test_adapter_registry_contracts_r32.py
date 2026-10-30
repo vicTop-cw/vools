@@ -166,3 +166,91 @@ class TestEnsureAvailable:
         })
         with pytest.raises(AdapterUnavailableError):
             ar.ensure_available("adapter.cli.test", spec)
+
+
+class TestValidateAdapterSpec:
+    def test_valid_cli(self):
+        """退步了会怎样：合法 CLI 应通过。"""
+        from vools.actus.adapter import AdapterSpec, validate_adapter_spec
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.cli.test",
+            "adapter": {"type": "cli", "command": "python"},
+        })
+        ok, issues = validate_adapter_spec(spec)
+        assert ok is True
+        assert issues == []
+
+    def test_cli_missing_command(self):
+        """退步了会怎样：CLI 缺 command 应报 issues。"""
+        from vools.actus.adapter import AdapterSpec, validate_adapter_spec
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.cli.test",
+            "adapter": {"type": "cli"},
+        })
+        ok, issues = validate_adapter_spec(spec)
+        assert ok is False
+        assert any("command" in i for i in issues)
+
+    def test_quicker_missing_action(self):
+        """退步了会怎样：Quicker 缺 action 应报 issues。"""
+        from vools.actus.adapter import AdapterSpec, validate_adapter_spec
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.quicker.test",
+            "adapter": {"type": "quicker"},
+        })
+        ok, issues = validate_adapter_spec(spec)
+        assert ok is False
+        assert any("action" in i for i in issues)
+
+    def test_http_missing_url(self):
+        """退步了会怎样：HTTP 缺 url 应报 issues。"""
+        from vools.actus.adapter import AdapterSpec, validate_adapter_spec
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.http.test",
+            "adapter": {"type": "http"},
+        })
+        ok, issues = validate_adapter_spec(spec)
+        assert ok is False
+        assert any("url" in i for i in issues)
+
+    def test_mcp_missing_server_and_tool(self):
+        """退步了会怎样：MCP 缺 server+tool 应报 issues。"""
+        from vools.actus.adapter import AdapterSpec, validate_adapter_spec
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.mcp.test",
+            "adapter": {"type": "mcp"},
+        })
+        ok, issues = validate_adapter_spec(spec)
+        assert ok is False
+        assert any("mcp_server" in i for i in issues)
+        assert any("mcp_tool" in i for i in issues)
+
+    def test_valid_quicker(self):
+        """退步了会怎样：合法 Quicker 应通过。"""
+        from vools.actus.adapter import AdapterSpec, validate_adapter_spec
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.quicker.test",
+            "adapter": {"type": "quicker", "action": "my_action"},
+        })
+        ok, issues = validate_adapter_spec(spec)
+        assert ok is True
+
+    def test_valid_http(self):
+        """退步了会怎样：合法 HTTP 应通过。"""
+        from vools.actus.adapter import AdapterSpec, validate_adapter_spec
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.http.test",
+            "adapter": {"type": "http", "url": "https://example.com"},
+        })
+        ok, issues = validate_adapter_spec(spec)
+        assert ok is True
+
+    def test_valid_mcp(self):
+        """退步了会怎样：合法 MCP 应通过。"""
+        from vools.actus.adapter import AdapterSpec, validate_adapter_spec
+        spec = AdapterSpec.from_dict({
+            "id": "adapter.mcp.test",
+            "adapter": {"type": "mcp", "mcp_server": "srv", "mcp_tool": "tool"},
+        })
+        ok, issues = validate_adapter_spec(spec)
+        assert ok is True
