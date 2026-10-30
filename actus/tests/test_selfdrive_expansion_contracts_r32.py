@@ -99,6 +99,30 @@ class TestExpandFailed:
         expanded = sd._expand_failed()
         assert expanded == 0
 
+    def test_expand_failed_no_subs(self, tmp_meta, monkeypatch):
+        """退步了会怎样：_retry_children 返回空时应不展开。"""
+        from vools.actus.selfdrive import SelfDrive
+        sd = SelfDrive(goal="实现功能X", max_depth=2, meta_dir=tmp_meta)
+        # mock _retry_children 返回空
+        monkeypatch.setattr(sd, '_retry_children', lambda node: [])
+        sd.nodes = [
+            {'id': 't001', 'goal': '实现功能X', 'children': [], 'status': 'failed', 'depth': 1, 'result': None, 'omega': None},
+        ]
+        expanded = sd._expand_failed()
+        assert expanded == 0
+
+    def test_retry_children_no_planner_empty_template(self, tmp_meta, monkeypatch):
+        """退步了会怎样：无 planner 且模板返回空时应返回空列表。"""
+        from vools.actus.selfdrive import SelfDrive
+        sd = SelfDrive(goal="实现功能X", max_depth=2, meta_dir=tmp_meta)
+        # 无 planner
+        sd.decomposer.planner = None
+        # 模板返回空
+        monkeypatch.setattr(sd.decomposer, 'template_children', lambda goal, depth: [])
+        node = {'id': 't001', 'goal': '实现功能X', 'children': [], 'status': 'failed', 'depth': 1}
+        kids = sd._retry_children(node)
+        assert kids == []
+
 
 class TestRunWithExpansion:
     def test_run_expands_and_retries(self, tmp_meta):
