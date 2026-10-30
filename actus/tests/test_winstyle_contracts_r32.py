@@ -5,20 +5,25 @@
 此前**零覆盖**（模块仅被 `tkdialog.py` 延迟 import），意味着「圆角失败」这条展示性降级路径
 从来没有被真正执行过。
 
-先审计（报告，**未改产品代码**）
---------------------------------
-**BUG-A｜no-throw 契约破损（低危）**：模块 docstring 承诺「纯展示性增强：任何失败都不抛异常、
+审计发现的两条产品 bug（**本轮已批准修复**，产品侧改动见文件末尾「修复对照」）
+--------------------------------------------------------------------------
+**BUG-A｜no-throw 契约破损（低危，已修）**：模块 docstring 承诺「纯展示性增强：任何失败都不抛异常、
 不阻断动作，只降级」，但参数类型非法时在 **`try` 之外**先比较：
 ``round_corners("abc")`` / ``round_corners([1])`` 抛 ``TypeError``（``'<=' not supported``）。
-即「文档说绝不抛，实际会抛」—— 属于合同与实现不一致。
-已用 ``test_known_bug_non_numeric_hwnd_raises``（``xfail(strict=True)``）把契约钉住：
-修复（把入参校验挪进 try / 先做类型判断）后该用例会 XPASS，strict 会让套件提醒更新。
+修法：把入参校验收进 `_should_skip()`（内部 try/except TypeError），非法类型统一收敛成 `"none"`；
+``None`` / 0 的 falsy 分支**语义不变**。回归用例：
+``TestEarlyReturn::test_non_numeric_hwnd_degrades_to_none``。
 
-**BUG-B｜GDI 句柄泄漏（中危）**：`SetWindowRgn` 返回 0（失败）时系统**不接管** HRGN，
+**BUG-B｜GDI 句柄泄漏（中危，已修）**：`SetWindowRgn` 返回 0（失败）时系统**不接管** HRGN，
 代码直接 ``return "none"`` 而未 ``DeleteObject(hrgn)``。实测 50 次失败调用：
-进程 GDI 对象数 **0 → 50**（每次泄漏一个句柄）。对一个长驻 GUI 动作族，反复失败会耗尽 GDI
-配额（默认 ~10k）。已用 ``test_known_bug_region_handle_leaked_on_failure``
-（``xfail(strict=True)``）钉住：修复后 XPASS。
+进程 GDI 对象数 **0 → 50**（每次泄漏一个句柄）；长驻 GUI 动作族反复失败会耗尽 GDI 配额（~10k）。
+修法：失败分支补 ``gdi32.DeleteObject(hrgn)``（并显式声明 HANDLE argtypes，避免 64 位句柄被截断）；
+**成功分支仍然不删**（所有权已移交系统）。回归用例：
+
+* ``TestFailureBranches::test_region_handle_released_on_setwindowrgn_failure``（桩 SetWindowRgn=0 +
+  **真** CreateRoundRectRgn → 20 次调用后 **GDI 对象数不变**）；
+* ``TestFailureBranches::test_region_handle_not_deleted_on_success``（成功路径**不得** DeleteObject）；
+* ``TestFailureBranches::test_region_handle_delete_uses_created_handle``（回滚删的必须是刚建的那个句柄）。
 
 覆盖策略（本机 Windows 11，可真跑）
 ----------------------------------
@@ -80,6 +85,21 @@ def _lib(**funcs):
             self.__dict__.update(funcs)
 
     return _Lib()
+
+
+def _gdi(create_result=1234, delete_result=1, **overrides):
+    """gdi32 替身：默认同时提供 `CreateRoundRectRgn` 与 `DeleteObject`。
+
+    为什么必须带 DeleteObject：产品在失败分支会回滚句柄（BUG-B 修复），
+    若替身缺这个符号，失败会变成 AttributeError 被外层兜底成 "none" ——
+    断言仍"绿"，但测的根本不是目标分支（假的通过）。
+    """
+    funcs = {
+        "CreateRoundRectRgn": _fn(create_result),
+        "DeleteObject": _fn(delete_result),
+    }
+    funcs.update(overrides)
+    return _lib(**funcs)
 
 
 def _install_libs(monkeypatch, dwm=None, user32=None, gdi32=None):
@@ -182,7 +202,7 @@ class TestEarlyReturn:
         """
         if _IS_WIN:
             dwm = _lib(DwmSetWindowAttribute=_fn(0))
-            gdi = _lib(CreateRoundRectRgn=_fn(1234))
+            gdi = _gdi()
             _install_libs(monkeypatch, dwm=dwm, gdi32=gdi)
             for radius in (0, -1, -24):
                 assert round_corners(0x1234, radius=radius) == "none"
@@ -319,7 +339,7 @@ class TestFailureBranches:
         会用一个垃圾尺寸裁窗口（可能整窗不可见）。
         """
         set_rgn = _fn(1)
-        gdi = _lib(CreateRoundRectRgn=_fn(1234))
+        gdi = _gdi()
         user32 = _lib(GetWindowRect=_fn(0), SetWindowRgn=set_rgn)
         _install_libs(monkeypatch, dwm=_lib(DwmSetWindowAttribute=_fn(1)),
                       user32=user32, gdi32=gdi)
@@ -332,7 +352,7 @@ class TestFailureBranches:
 
         退步了会怎样：用 0×0 尺寸建区域并 SetWindowRgn，窗口被裁成不可见。
         """
-        gdi = _lib(CreateRoundRectRgn=_fn(1234))
+        gdi = _gdi()
         user32 = _lib(GetWindowRect=_fn(behavior=_rect_filler(0, 0)),
                       SetWindowRgn=_fn(1))
         _install_libs(monkeypatch, dwm=_lib(DwmSetWindowAttribute=_fn(1)),
@@ -350,7 +370,7 @@ class TestFailureBranches:
         _install_libs(monkeypatch, dwm=_lib(DwmSetWindowAttribute=_fn(1)),
                       user32=_lib(GetWindowRect=_fn(behavior=_rect_filler(200, 120)),
                                   SetWindowRgn=set_rgn),
-                      gdi32=_lib(CreateRoundRectRgn=_fn(0)))
+                      gdi32=_gdi(create_result=0))
         assert round_corners(0x1234) == "none"
         assert set_rgn.calls == [], "句柄为 0 时不应调用 SetWindowRgn"
 
@@ -363,7 +383,7 @@ class TestFailureBranches:
         _install_libs(monkeypatch, dwm=_lib(DwmSetWindowAttribute=_fn(1)),
                       user32=_lib(GetWindowRect=_fn(behavior=_rect_filler(200, 120)),
                                   SetWindowRgn=_fn(0)),
-                      gdi32=_lib(CreateRoundRectRgn=_fn(1234)))
+                      gdi32=_gdi())
         assert round_corners(0x1234) == "none"
 
     def test_region_arguments_cover_full_window(self, monkeypatch):
@@ -372,7 +392,7 @@ class TestFailureBranches:
         退步了会怎样：用 `w, h` 而不是 `w+1, h+1`，窗口最右/最下一列像素落在区域外被裁掉
         （1px 缺边的经典 off-by-one）。
         """
-        gdi = _lib(CreateRoundRectRgn=_fn(1234))
+        gdi = _gdi()
         _install_libs(monkeypatch, dwm=_lib(DwmSetWindowAttribute=_fn(1)),
                       user32=_lib(GetWindowRect=_fn(behavior=_rect_filler(200, 120)),
                                   SetWindowRgn=_fn(1)),
@@ -383,38 +403,89 @@ class TestFailureBranches:
 
 
 # ---------------------------------------------------------------------------
-# 5) 已知产品 bug（strict xfail：修复后 XPASS → 套件提醒更新）
+# 5) 两个已修 bug 的回归（原为 strict xfail；产品修复后转为真断言）
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="BUG-A：docstring 承诺不抛异常，实际非数值 hwnd 抛 TypeError")
-def test_known_bug_non_numeric_hwnd_raises():
-    """契约（模块 docstring）：「任何失败都不抛异常、不阻断动作，只降级」。
+class TestBugRegressions:
+    def test_non_numeric_hwnd_degrades_to_none(self):
+        """BUG-A 回归：非数值 hwnd 必须降级 `"none"`，**不抛**（模块承诺 no-throw）。
 
-    当前实现把入参校验放在 try 之外，``round_corners("abc")`` 抛 TypeError。
-    修复方式（**未改，报告用**）：把校验挪进 try，或先 `isinstance(int)` 再比较。
-    修复后本用例 XPASS → strict 会失败，提醒把 xfail 去掉。
-    """
-    assert round_corners("abc") == "none"
+        退步了会怎样：把入参校验从 `_should_skip()` 的 try 里挪出来（或改回裸比较），
+        `round_corners("abc")` 会抛 TypeError —— 一次给窗口加圆角就能打断
+        toast/dialog 动作，而模块文档明确承诺「不阻断动作」。
+        """
+        for bad in ("abc", [1], {"x": 1}):
+            assert round_corners(bad) == "none", "hwnd=%r 必须降级而不是抛" % (bad,)
 
+    def test_non_numeric_radius_degrades_to_none(self):
+        """BUG-A 回归：非数值 radius 同样只降级、不抛。
 
-@pytest.mark.xfail(strict=True, reason="BUG-B：SetWindowRgn 失败时 CreateRoundRectRgn 的 HRGN 未 DeleteObject")
-def test_known_bug_region_handle_leaked_on_failure(hidden_window, monkeypatch):
-    """SetWindowRgn 失败 → 区域句柄所有权未移交，必须 DeleteObject 否则泄漏 GDI 句柄。
+        退步了会怎样：radius 走 `radius <= 0` 比较，传字符串抛 TypeError；
+        半径是可选参数，调用方传错类型不该让整个动作失败。
+        """
+        assert round_corners(0x1234, radius="x") == "none"
 
-    实测（修复前）：20 次失败调用后进程 GDI 对象 +20。修复后本用例 XPASS。
-    """
-    user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
-    user32.GetGuiResources.restype = ctypes.c_ulong
-    user32.GetGuiResources.argtypes = (wintypes.HANDLE, ctypes.c_ulong)
-    process = kernel32.GetCurrentProcess()
+    def test_none_and_zero_still_degrade_normally(self):
+        """BUG-A 修复**不得改坏**既有 falsy 分支：None / 0 / False → "none"（不抛、不探测）。
 
-    _install_libs(monkeypatch, dwm=_lib(DwmSetWindowAttribute=_fn(1)),
-                  user32=_lib(GetWindowRect=_fn(behavior=_rect_filler(200, 120)),
-                              SetWindowRgn=_fn(0)))
-    # 注意：gdi32 保持真实 —— 要真的建 HRGN，才能观察到「没被释放」
-    before = user32.GetGuiResources(process, 0)
-    for _ in range(20):
-        assert round_corners(hidden_window) == "none"
-    after = user32.GetGuiResources(process, 0)
-    assert after == before, "失败路径泄漏了 %d 个 GDI 句柄" % (after - before,)
+        退步了会怎样：若把校验改成 `isinstance(hwnd, int) and hwnd > 0` 之类，
+        None 会被送去 Win32 调用（或抛异常）—— 反而破坏了原本正确的降级路径。
+        """
+        for falsy in (None, 0, False):
+            assert round_corners(falsy) == "none"
+
+    def test_region_handle_released_on_setwindowrgn_failure(self, hidden_window, monkeypatch):
+        """BUG-B 回归：`SetWindowRgn` 失败时必须 `DeleteObject`，**GDI 对象数不变**。
+
+        用**真** `CreateRoundRectRgn`（真的分配 HRGN）+ 桩 `SetWindowRgn=0`，
+        连续 20 次失败调用后比较进程 GDI 对象数。
+
+        退步了会怎样：去掉失败分支的 DeleteObject，每次失败泄漏一个 GDI 句柄
+        （实测 20 次 → +20；默认 ~10k 配额，长驻动作族反复失败会耗尽 → 后续 GDI 调用全线失败）。
+        """
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        user32.GetGuiResources.restype = ctypes.c_ulong
+        user32.GetGuiResources.argtypes = (wintypes.HANDLE, ctypes.c_ulong)
+
+        _install_libs(monkeypatch, dwm=_lib(DwmSetWindowAttribute=_fn(1)),
+                      user32=_lib(GetWindowRect=_fn(behavior=_rect_filler(200, 120)),
+                                  SetWindowRgn=_fn(0)))
+        # 注意：gdi32 保持真实 —— 要真的建 HRGN，才能观察到它有没有被释放
+        process = kernel32.GetCurrentProcess()
+        before = user32.GetGuiResources(process, 0)
+        for _ in range(20):
+            assert round_corners(hidden_window) == "none"
+        after = user32.GetGuiResources(process, 0)
+        assert after == before, "失败路径泄漏了 %d 个 GDI 句柄" % (after - before,)
+
+    def test_region_handle_delete_uses_created_handle(self, monkeypatch):
+        """BUG-B 回归：回滚时删的必须是**刚建出来的那个** HRGN（不是别的值/不是空）。
+
+        退步了会怎样：删错句柄（或删 0）等于没回滚 —— 泄漏照旧，还可能误删别的 GDI 对象，
+        表现是「修了但没修好」，且没有断言能发现。
+        """
+        gdi = _gdi(create_result=4321)
+        _install_libs(monkeypatch, dwm=_lib(DwmSetWindowAttribute=_fn(1)),
+                      user32=_lib(GetWindowRect=_fn(behavior=_rect_filler(200, 120)),
+                                  SetWindowRgn=_fn(0)),
+                      gdi32=gdi)
+        assert round_corners(0x1234) == "none"
+        assert gdi.DeleteObject.calls == [(4321,)], (
+            "失败回滚应删除刚创建的 HRGN(4321)，实得 %r" % (gdi.DeleteObject.calls,))
+
+    def test_region_handle_not_deleted_on_success(self, monkeypatch):
+        """BUG-B 对偶契约：`SetWindowRgn` 成功时**不得** DeleteObject（所有权已移交系统）。
+
+        退步了会怎样：成功路径也删除句柄，会释放一个**系统正在用于裁剪窗口**的区域 →
+        窗口裁剪失效（方角/花屏）甚至进程崩溃（使用已释放的 GDI 对象）。
+        """
+        gdi = _gdi(create_result=4321)
+        _install_libs(monkeypatch, dwm=_lib(DwmSetWindowAttribute=_fn(1)),
+                      user32=_lib(GetWindowRect=_fn(behavior=_rect_filler(200, 120)),
+                                  SetWindowRgn=_fn(1)),
+                      gdi32=gdi)
+        assert round_corners(0x1234) == "region"
+        assert gdi.DeleteObject.calls == [], (
+            "成功路径不得 DeleteObject（所有权已移交系统），实得 %r"
+            % (gdi.DeleteObject.calls,))

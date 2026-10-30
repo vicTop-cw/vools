@@ -14,12 +14,26 @@ _DWMWA_WINDOW_CORNER_PREFERENCE = 33  # Win11 22000+
 _DWMWCP_ROUND = 2
 
 
+def _should_skip(hwnd, radius) -> bool:
+    """入参是否应直接降级为 "none"。
+
+    **任何类型异常都按"非法"处理**：模块承诺「任何失败都不抛异常、只降级」，
+    而 ``"abc" <= 0`` / ``[1] <= 0`` 这类不可比较值会在比较处抛 TypeError
+    —— 校验本身也必须在这个 no-throw 契约内（BUG-A 收口）。
+    ``None`` / 0 / ``False`` 走 falsy 分支属**正常**降级，行为保持不变。
+    """
+    try:
+        return bool(not hwnd or hwnd <= 0 or radius <= 0)
+    except TypeError:
+        return True
+
+
 def round_corners(hwnd: int, radius: int = 24) -> str:
     """给窗口加四角圆角。返回 "dwm" | "region" | "none"。
 
-    hwnd 非法（<=0）或 radius 非法（<=0）时直接 "none"（便于测试与降级路径）。
+    hwnd 非法（<=0 / None / 非数值）或 radius 非法（<=0 / 非数值）时直接 "none"。
     """
-    if not hwnd or hwnd <= 0 or radius <= 0:
+    if _should_skip(hwnd, radius):
         return "none"
     try:
         import ctypes
@@ -39,6 +53,10 @@ def round_corners(hwnd: int, radius: int = 24) -> str:
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
             ctypes.c_int, ctypes.c_int)
         gdi32.CreateRoundRectRgn.restype = wintypes.HANDLE
+        # 失败回滚要用 DeleteObject：必须显式声明句柄类型，否则 ctypes 按 c_int
+        # 传参会在 64 位句柄上溢出/截断 —— 那时"回滚"本身会失败，泄漏照旧。
+        gdi32.DeleteObject.argtypes = (wintypes.HANDLE,)
+        gdi32.DeleteObject.restype = wintypes.BOOL
 
         hwnd_arg = wintypes.HWND(hwnd)
 
@@ -60,8 +78,11 @@ def round_corners(hwnd: int, radius: int = 24) -> str:
         if not hrgn:
             return "none"
         if user32.SetWindowRgn(hwnd_arg, hrgn, True):
-            # 区域所有权已移交系统，按 Win32 契约不再 DeleteObject
+            # 成功：区域所有权已移交系统，按 Win32 契约**不再** DeleteObject
             return "region"
+        # 失败：SetWindowRgn 返回 0 表示系统**没有**接管该区域，必须自己释放 ——
+        # 否则每次失败泄漏一个 GDI 句柄（实测 50 次失败 → GDI 对象 +50，BUG-B 收口）
+        gdi32.DeleteObject(hrgn)
         return "none"
     except Exception:
         return "none"
