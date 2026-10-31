@@ -323,6 +323,9 @@ class TestExecutorFor:
 
 class TestExecutorIface:
     def test_import_error(self, monkeypatch):
+        # from . import executor 走 getattr(父包)：若前序文件已绑定真模块，
+        # 只置 sys.modules=None 拦不住 —— 父包属性也要一并摘掉（合跑 identity-proof）
+        monkeypatch.delattr(_pkg, 'executor', raising=False)
         monkeypatch.setitem(sys.modules, 'vools.actus.executor', None)
         r = ei._ExecutorIface().execute(_action(), ExecutionContext())
         assert r.status == 'error' and 'executor 不可导入' in r.error
@@ -439,6 +442,7 @@ class TestExecutorIface:
 
 class TestAdapterIface:
     def test_import_error(self, monkeypatch):
+        monkeypatch.delattr(_pkg, 'adapter', raising=False)
         monkeypatch.setitem(sys.modules, 'vools.actus.adapter', None)
         r = ei._AdapterIface().execute(_action(), ExecutionContext())
         assert r.status == 'error' and 'adapter 不可导入' in r.error
@@ -607,6 +611,7 @@ class TestAdapterIface:
 
 class TestScatteredIface:
     def test_import_error(self, monkeypatch):
+        monkeypatch.delattr(_pkg, 'scattered', raising=False)
         monkeypatch.setitem(sys.modules, 'vools.actus.scattered', None)
         r = ei._ScatteredIface().execute(_action(), ExecutionContext())
         assert r.status == 'error' and 'scattered 不可导入' in r.error
