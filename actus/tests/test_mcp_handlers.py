@@ -72,6 +72,15 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
 
+    # cost.COSTS_DIR 是 import 期按当时 env 冻结的模块全局：合跑时先收集的
+    # 测试模块（test_cost_month_boundary.py 顶部 `from vools.actus import cost`）
+    # 会在收集期（ACTUS_META_DIR 尚未被 conftest 钉到会话 tmp）把它冻结到
+    # 真实仓库 _meta/costs，`actus_cost` 便读到跨文件脏账本（solo 绿 / 合跑红）。
+    # 与 test_cost_month_boundary.py 的既有手势一致：显式指到本用例 tmp，
+    # 不依赖 import 顺序。
+    from vools.actus import cost as _cost_mod
+    monkeypatch.setattr(_cost_mod, "COSTS_DIR", str(meta / "costs"))
+
     w = _World()
     w.root = tmp_path
     w.repo = repo
