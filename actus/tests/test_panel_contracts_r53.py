@@ -15,6 +15,7 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
+import _ai_local_bootstrap  # noqa: F401  # 先于 vools 绑定名字：bootstrap 幂等重建保证 from-import 与字符串 patch 同源（防 split-brain 挂死）
 import pytest
 
 tk = pytest.importorskip("tkinter")
