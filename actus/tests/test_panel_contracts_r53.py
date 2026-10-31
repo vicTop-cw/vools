@@ -283,9 +283,12 @@ class TestRunPanel:
         """热键注册失败 → 常驻窗口（不 withdraw）。"""
         app = MagicMock()
         app.run = MagicMock()
-        with patch("vools.actus.panel.PanelApp", return_value=app), \
-             patch("vools.actus.panel._register_global_hotkey", return_value=False):
-            run_panel("ctrl+alt+space")
+        # 对象寻址（panel_mod 与 from-import 同源）而非字符串寻址：
+        # bootstrap 收集期重建 sys.modules['vools.actus.*'] 后，字符串 patch
+        # 会打到新模块而 run_panel 闭包持有旧模块 → 真 mainloop 挂死。
+        monkeypatch.setattr(panel_mod, "PanelApp", MagicMock(return_value=app))
+        monkeypatch.setattr(panel_mod, "_register_global_hotkey", lambda *a, **k: False)
+        run_panel("ctrl+alt+space")
         app.root.withdraw.assert_not_called()
         app.run.assert_called_once()
 
@@ -293,9 +296,9 @@ class TestRunPanel:
         """热键注册成功 → withdraw + 日志。"""
         app = MagicMock()
         app.run = MagicMock()
-        with patch("vools.actus.panel.PanelApp", return_value=app), \
-             patch("vools.actus.panel._register_global_hotkey", return_value=True):
-            run_panel("ctrl+alt+space")
+        monkeypatch.setattr(panel_mod, "PanelApp", MagicMock(return_value=app))
+        monkeypatch.setattr(panel_mod, "_register_global_hotkey", lambda *a, **k: True)
+        run_panel("ctrl+alt+space")
         app.root.withdraw.assert_called_once()
         app._log.assert_called_once()
 
