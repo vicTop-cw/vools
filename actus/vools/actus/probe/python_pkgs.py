@@ -117,6 +117,17 @@ MAX_PKG_WORKERS = 12
 # 超预算的包标 budget_exceeded 并在 _summary 计数，绝不静默丢。
 _PKG_BUDGET_SEC = 5.0
 
+# BUG-531（方案 A）：importlib.metadata 的读取面（distributions() /
+# distribution() / Distribution.version / Distribution.metadata —— 底下都是
+# pathlib.open + email 解析）在 CPython 3.13 Windows x64 上多线程并发访问
+# 会触发进程级崩溃（fatal 0x80000003，崩溃栈为多线程同在 metadata read_text
+# 与主线程 GC 相撞）。元数据读取不是线程安全面 —— 用模块级锁把**每次元数据
+# 读取**串行化；锁粒度是单次读取，不锁整个探测函数，其他维度照常并发。
+# probe() 的各探测器本就在同一线程池里并发跑（probe/__init__ 的
+# ThreadPoolExecutor），所以 actions.py 的 has_python（importlib.metadata.version
+# 的另一处调用点）也共用这把锁。
+_METADATA_READ_LOCK = threading.Lock()
+
 
 def _load_metadata_module():
     """返回可用的 importlib.metadata 模块（py3.6/3.7 回退 backport）；都没有返回 None。"""
@@ -195,23 +206,28 @@ def _build_metadata_index():
     if metadata_module is None:
         return index
     try:
-        for distribution in metadata_module.distributions():
-            path = getattr(distribution, '_path', None)
-            filename = getattr(path, 'name', '')
-            parsed = _split_dist_filename(filename) if filename else None
-            if parsed is not None:
-                # 版本留到真正被问到时读真值（已知版本位传 None）
-                index.setdefault(_normalize_dist_name(parsed[0]),
-                                 (distribution, None))
-                continue
-            try:
-                metadata = distribution.metadata
-                name = metadata['Name']
-                version = metadata['Version']
-            except Exception:
-                continue          # 单条元数据损坏不该毁掉整个索引
-            if name and version:
-                index.setdefault(_normalize_dist_name(name), (distribution, version))
+        # BUG-531：distributions() 是惰性生成器（迭代即扫 sys.path），循环体里
+        # 还有 distribution.metadata 读取 —— 整段持锁串行化（索引只建一次，
+        # 实测建索引本身 ~16ms，锁住它不构成吞吐瓶颈）。
+        with _METADATA_READ_LOCK:
+            for distribution in metadata_module.distributions():
+                path = getattr(distribution, '_path', None)
+                filename = getattr(path, 'name', '')
+                parsed = _split_dist_filename(filename) if filename else None
+                if parsed is not None:
+                    # 版本留到真正被问到时读真值（已知版本位传 None）
+                    index.setdefault(_normalize_dist_name(parsed[0]),
+                                     (distribution, None))
+                    continue
+                try:
+                    metadata = distribution.metadata
+                    name = metadata['Name']
+                    version = metadata['Version']
+                except Exception:
+                    continue          # 单条元数据损坏不该毁掉整个索引
+                if name and version:
+                    index.setdefault(_normalize_dist_name(name),
+                                     (distribution, version))
     except Exception:
         return {}                 # 扫描整体失败 → 调用方退回逐名查询
     return index
@@ -223,7 +239,10 @@ def _indexed_version(entry):
     if known_version is not None:
         return known_version, None
     try:
-        return distribution.version, None
+        # BUG-531：distribution.version 底下是 metadata → read_text → email
+        # 解析 —— 每次真值读取单独持锁（锁粒度 = 单次元数据读取）。
+        with _METADATA_READ_LOCK:
+            return distribution.version, None
     except Exception as exc:      # 元数据损坏等：留痕（只记类型名）
         return '', {'error_kind': 'metadata_error', 'error': type(exc).__name__}
 
@@ -398,7 +417,10 @@ def _get_pkg_version_detail(package_name: str, import_name: str, index=None):
             not_found = getattr(metadata_module, 'PackageNotFoundError', ())
             for dist_name in dist_names:
                 try:
-                    return metadata_module.distribution(dist_name).version, None
+                    # BUG-531：逐名查询链路同样要串行化（distribution() 扫描 +
+                    # version 读 email 元数据）。
+                    with _METADATA_READ_LOCK:
+                        return metadata_module.distribution(dist_name).version, None
                 except not_found:
                     continue                              # 换个候选名，不算错误
                 except Exception as exc:                  # 元数据损坏等：留痕继续
