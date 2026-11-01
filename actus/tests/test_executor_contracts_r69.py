@@ -610,15 +610,22 @@ class TestEnv:
         assert os.environ['TOK'] == 'abc'
         os.environ.pop('TOK', None)
 
-    def test_apply_env_sandboxed_build_dir(self, iso, tmp_path):
+    def test_apply_env_sandboxed_build_dir(self, iso, tmp_path, monkeypatch):
+        # 注入键经 monkeypatch 登记，teardown 自动还原——不能裸 pop ACTUS_*：
+        # 会把 conftest session 钉死的 ACTUS_VAULT2_DIR/ACTUS_META_DIR 一并删掉
+        # （跨文件 order-dependent：先跑本文件再跑 vault 系测试即触发）。
         a = _Act(aid='demo.s', meta={})
-        build = ex._apply_env_injections(a, {}, 'e-5', str(tmp_path),
-                                         sandboxed=True, meta_dir=None)
+        # 快照→注入→逐字回写（与产品 _build_child_env 同一手势）：_apply_env_injections
+        # 裸写 os.environ，monkeypatch 追踪不到它后设的键；也不能裸 pop ACTUS_*——
+        # 会把 conftest session 钉死的 ACTUS_VAULT2_DIR/ACTUS_META_DIR 一并删掉
+        # （跨文件 order-dependent：先跑本文件再跑 vault 系测试即触发）。
+        snap = ex._env_snapshot()
+        try:
+            build = ex._apply_env_injections(a, {}, 'e-5', str(tmp_path),
+                                             sandboxed=True, meta_dir=None)
+        finally:
+            ex._env_restore(snap)
         assert str(tmp_path) in build
-        # 清理沙箱 env
-        for k in list(os.environ):
-            if k.startswith(('ACTUS_', 'SANDBOX')):
-                os.environ.pop(k, None)
 
 
 # ── 子进程超时（fake Popen + fake kill_tree）────────────────

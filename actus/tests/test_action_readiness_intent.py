@@ -281,6 +281,30 @@ def fake_repo(tmp_path, monkeypatch):
     cache_file = tmp_path / "probe_cache.json"
     monkeypatch.setattr(cache_mod, "_CACHE_FILE", str(cache_file))
     monkeypatch.setattr(cache_mod, "_CACHE_DIR", str(tmp_path))
+    # 重线程探测器打桩：真跑会起线程池+子进程，与套件其它残留线程 + GC 并发
+    # 时实测触发 CPython 3.13 Windows 0x80000003 进程崩溃（BUG-531 待裁决）。
+    # 本测试只关心 actions/readiness 维度；缺依赖判定用假工具名，不受影响。
+    import vools.actus.probe as _probe_pkg
+    from vools.actus.probe.base import Prober as _Prober
+
+    def _fake_prober(cls_name, items):
+        cls = type(cls_name, (_Prober,), {})
+
+        def probe(self):
+            return list(items)
+
+        cls.probe = probe
+        return cls
+
+    monkeypatch.setattr(_probe_pkg, "SystemToolsProber",
+                        _fake_prober("SystemToolsProber", []))
+    monkeypatch.setattr(_probe_pkg, "RuntimesProber",
+                        _fake_prober("RuntimesProber", []))
+    monkeypatch.setattr(_probe_pkg, "CompilersProber",
+                        _fake_prober("CompilersProber", []))
+    monkeypatch.setattr(_probe_pkg, "PythonPackagesProber",
+                        _fake_prober("PythonPackagesProber", []))
+    monkeypatch.setattr(_probe_pkg, "PlatformToolsProber", None)
     return actions
 
 
