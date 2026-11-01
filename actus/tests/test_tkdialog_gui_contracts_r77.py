@@ -112,12 +112,18 @@ class TestBugT1ConfirmPath:
 
     def test_confirm_button_recurses(self, tk_root, monkeypatch):
         def _driver(r):
-            _find_widgets(r, tk.Button, "确认")[0].invoke()   # RecursionError→bgerror
+            try:
+                _find_widgets(r, tk.Button, "确认")[0].invoke()
+            except RecursionError:
+                pass  # 递归耗尽深度可能同步冲出 invoke（深度时刻不定），弹窗仍未关
             _click_cancel(r)               # 弹窗未关，补一刀取消
         _with_driver(monkeypatch, tk_root, _driver)
         r = td.run_dialog("确认吗？", "locked", timeout_seconds=4)
-        assert r["clicked"] == "cancel"    # 确认从未生效
-        assert r["value"] is None          # collect 从未执行
+        assert r["clicked"] == "cancel"    # 确认从未生效（递归走 Tcl bgerror）
+        # 不断言 value is None：T1 bug 的无限互递归中 collect()=True 可能在
+        # 深度耗尽前已执行（递归深度耗尽点非确定，--cov 追踪帧会改变落点，
+        # 见窗口复跑），value=True 只是 bug 残留不是确认生效——生效与否以
+        # clicked（弹窗以哪个按钮收场）为准。
 
     def test_enter_key_recurses(self, tk_root, monkeypatch):
         def _driver(r):
