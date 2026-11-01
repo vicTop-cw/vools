@@ -262,5 +262,7 @@ class TestPlatformProber:
         assert it.extra["os"] == pmod.platform.system()
 
     def test_prober_is_prober_subclass(self):
-        from vools.actus.probe.base import Prober
-        assert issubclass(pmod.PlatformProber, Prober)
+        # identity-proof：经 pmod 的 MRO 验证基类，而不是在测试体里重新 import
+        # Prober（bootstrap 重建后旧类与测试时 import 的新 Prober 身份不同，
+        # issubclass 假阴性——与 panel/cost 跨文件族同根因）。
+        assert issubclass(pmod.PlatformProber, pmod.Prober)
