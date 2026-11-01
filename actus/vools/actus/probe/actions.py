@@ -460,7 +460,12 @@ class _SelfCapabilities(object):
                 from importlib import metadata as _metadata
             except ImportError:                     # py3.6
                 import importlib_metadata as _metadata  # type: ignore
-            _metadata.version(name)
+            # BUG-531（方案 A）：importlib.metadata 读取面在 CPython 3.13
+            # Windows 上多线程并发会进程级崩溃 —— 与 python_pkgs 共用同一把
+            # 模块级元数据锁串行化（probe() 的各探测器并发跑在同一线程池里）。
+            from .python_pkgs import _METADATA_READ_LOCK
+            with _METADATA_READ_LOCK:
+                _metadata.version(name)
             found = True
         except Exception:
             found = False

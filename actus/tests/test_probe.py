@@ -258,10 +258,14 @@ def _shared_probe_report(tmp_path_factory):
     """真实探测一次（写进 module 私有缓存目录，不落仓库 _meta），返回只读母本。
 
     重线程探测器打桩（手动 setattr/还原——module scope 不能用 function 级
-    monkeypatch）：system_tools/runtimes/compilers/python_pkgs/platform_tools 真
-    跑会各起线程池 + 子进程，与套件里其它测试的残留线程 + GC 并发时实测触发
+    monkeypatch）：system_tools/runtimes/compilers/platform_tools 真跑会各起
+    线程池 + 子进程，与套件里其它测试的残留线程 + GC 并发时实测触发
     CPython 3.13 Windows 0x80000003 进程崩溃（bug #30/BUG-531，待裁决）。
     本 fixture 只断言报告结构/九段齐全/python 可探到，桩体保持契约形状。
+
+    BUG-531 已按方案 A 修复（importlib.metadata 读取面模块级锁串行化，
+    见 probe/python_pkgs.py 的 _METADATA_READ_LOCK）—— python_pkgs 维度
+    撤桩恢复真跑；其余维度桩保留（它们的线程池/子进程面不在方案 A 覆盖内）。
     """
     from vools.actus.probe import base as _base
 
@@ -278,10 +282,8 @@ def _shared_probe_report(tmp_path_factory):
                               available=True, version="stub", path="stub-path")
 
     import vools.actus.probe as _probe_pkg
-    import vools.actus.probe.python_pkgs as pkgs_mod
     saved = (_probe_pkg.SystemToolsProber, _probe_pkg.RuntimesProber,
-             _probe_pkg.CompilersProber, _probe_pkg.PythonPackagesProber,
-             _probe_pkg.PlatformToolsProber)
+             _probe_pkg.CompilersProber, _probe_pkg.PlatformToolsProber)
     _probe_pkg.SystemToolsProber = _fake_prober(
         "SystemToolsProber", "system_tools", [py_item])
     _probe_pkg.RuntimesProber = _fake_prober(
@@ -289,10 +291,6 @@ def _shared_probe_report(tmp_path_factory):
     _probe_pkg.CompilersProber = _fake_prober(
         "CompilersProber", "compilers",
         [ProbeItem(name="stub-cc", category="compilers",
-                   available=True, version="stub", path="stub-path")])
-    _probe_pkg.PythonPackagesProber = _fake_prober(
-        "PythonPackagesProber", "python_packages",
-        [ProbeItem(name="stub-pkg", category="python_packages",
                    available=True, version="stub", path="stub-path")])
     _probe_pkg.PlatformToolsProber = None
     base = tmp_path_factory.mktemp("probe-shared")
@@ -304,7 +302,7 @@ def _shared_probe_report(tmp_path_factory):
     finally:
         cache_mod._CACHE_FILE, cache_mod._CACHE_DIR = old_file, old_dir
         (_probe_pkg.SystemToolsProber, _probe_pkg.RuntimesProber,
-         _probe_pkg.CompilersProber, _probe_pkg.PythonPackagesProber,
+         _probe_pkg.CompilersProber,
          _probe_pkg.PlatformToolsProber) = saved
 
 
