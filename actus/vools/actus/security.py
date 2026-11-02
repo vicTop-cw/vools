@@ -204,6 +204,34 @@ class SensitiveInfoDetector:
             return ""
 
 
+# ── 硬编码密钥 vs 变量引用 ────────────────────────────────────────────────
+# `sensitive_patterns` 是为**脱敏**写的：任意文本里 `token = supersecret` 都要命中。
+# 但 `scan_action` 把同一批命中当成"动作源码里写死了密钥"的证据，于是
+# `token=params.get("token")`（把调用方凭据转发给保险库）也被数进去 ——
+# trust=sandbox 的动作因此 validate 判 invalid、执行期 `_security_gate` 直接 permission_denied。
+# 只对"动作源码"这一路做区分：右值是名字/属性/下标/调用，就不是密钥本身。
+# 分不准时保守判字面量（宁可多报，不放过真密钥）。
+_KV_SEP_RE = re.compile(r"[:=]")
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ACCESSOR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*(?:\.|\[|\()")
+_OPAQUE_RE = re.compile(r"^[A-Za-z0-9_\-/+=]{8,}$")
+
+
+def _is_variable_reference(matched: str) -> bool:
+    """`key=value` 形状里 value 是否只是变量引用（而非写死的字面量）。"""
+    sep = _KV_SEP_RE.search(matched)
+    if not sep:
+        return False                      # sk-/ghp_/AKIA/PRIVATE KEY：形状本身就是密钥
+    rhs = matched[sep.end():].strip().rstrip(",;)]")
+    if not rhs or rhs[0] in "\"'":
+        return False                      # 带引号字面量
+    if _OPAQUE_RE.match(rhs) and any(c.isdigit() for c in rhs):
+        return False                      # 含数字的长不透明串：按密钥处理
+    if _IDENT_RE.match(rhs) or _ACCESSOR_RE.match(rhs):
+        return True                       # 裸标识符 / 属性 / 下标 / 调用
+    return False
+
+
 # ── 输入验证与注入防护 ────────────────────────────────────────────────────
 
 class InputValidator:
@@ -369,11 +397,19 @@ class SecurityScanner:
 
         # 2. 代码扫描
         if code:
-            # 敏感信息
+            # 敏感信息：只有"写死的字面量"才算硬编码密钥（会升级为 sandbox/community
+            # 的判红项）；变量引用只进 warnings，数量照常报出，不静默丢弃。
             findings = self.detector.scan(code)
-            if findings:
-                result["sensitive_findings"] = findings
-                result["warnings"].append(f"发现 {len(findings)} 处敏感信息")
+            literals = [f for f in findings
+                        if not _is_variable_reference(f["match"])]
+            refs = len(findings) - len(literals)
+            if literals:
+                result["sensitive_findings"] = literals
+                result["warnings"].append(f"发现 {len(literals)} 处敏感信息")
+            if refs:
+                result["warnings"].append(
+                    f"另有 {refs} 处命中敏感字段名的变量引用"
+                    "（转发调用方凭据，不计入硬编码）")
 
             # 危险命令
             ok, issues = self.validator.check_command(code)
