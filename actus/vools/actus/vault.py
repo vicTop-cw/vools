@@ -523,6 +523,16 @@ def _get_vault(meta_dir: str) -> Vault:
     return _vault_singleton
 
 
+def reset_vault_singleton():
+    """测试用：重置单例。
+
+    合并回灌（docs/39 §10.3）：Actus 侧 `actuscore/vault.py` 改 alias shim 之前自带这个钩子，
+    单例状态在本模块，复位只能在这里做。
+    """
+    global _vault_singleton
+    _vault_singleton = None
+
+
 def set_key(key: str, value: str, scope: str = 'global',
             description: str = '', meta_dir: str = '') -> dict:
     """便捷函数：存储密钥。"""
