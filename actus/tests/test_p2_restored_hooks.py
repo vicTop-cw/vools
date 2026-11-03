@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""合并回灌的四处测试支撑钩子 + notify 规则机制（docs/39 §10.3 的 P2 后遗）。
+"""P2 后遗之一：Actus 调用面要求、但 vools 真源给不出的四处复位钩子（docs/39 §10.3）。
 
 要拦的失效有两类：
 
@@ -8,11 +8,14 @@
    —— 状态在本模块，复位只能在本模块做。缺的后果不是"测试写法要改"这么简单：
    Actus 全量当场 110 errors（`vault2.reset_singleton` 51 / `vault.reset_vault_singleton` 40 /
    `calllog.reset_store` 5 个文件 / `runtimes.reset_registry` 4）。
-2. **规则机制整块留在被合并掉的那一侧**。`NotificationManager` 的 docstring 一直写着
-   "管理通知渠道、**规则**和发送"，而 `_evaluate_condition()` 在产品里**没有任何调用者** ——
-   读代码的人会以为规则已生效，实际上 `add_rule` / `check_rules` 根本不存在。
-   这比缺一个功能更糟（虚假安全感），所以除了补实现，本件还专门钉
-   "`_evaluate_condition` 确实被 `check_rules` 调用"那一格。
+2. **规则机制不是漏搬，是按裁决删的**（本轮差点搞错，记在这里）：`NotificationManager`
+   的 class docstring 还写着"管理通知渠道、**规则**和发送"，看着像规则被合并落在了丢掉的那一侧；
+   但 `stats()` 的 docstring 明写「规则特性（`add_rule`/`check_rules`/`NotifyRule`）已**整条删除**
+   （全仓零调用，"规则永不评估却打印规则数"属统计名不副实），`cli.py` 的 `notify stats` 打印行也一并删」
+   —— 出处 `686ce42f`。所以**本件不恢复规则**，只钉四处钩子；
+   残留的 `_evaluate_condition()`（现无调用者）是 vools 侧的清理项，由 vools 自己裁决。
+   教训：判断"这是漏搬还是裁决删除"，要读到**同一能力的所有自述**（class docstring 只是其中一处），
+   并把删除那笔提交的正文翻出来。
 
 出口条件：本文件全绿，且 Actus 侧 `tests/test_notify.py` / `test_vault2.py` /
 `test_calllog.py` / `test_runtimes.py` / `test_vault.py` / `test_env_isolation.py` /
@@ -30,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402
 _ai_local_bootstrap.install()
 
-from vools.actus import calllog, notify, runtimes, vault, vault2  # noqa: E402
+from vools.actus import calllog, runtimes, vault, vault2  # noqa: E402
 
 
 # ===========================================================================
@@ -87,97 +90,13 @@ def test_reset_store_closes_the_handle_it_drops(tmp_path, monkeypatch):
     calllog.reset_store()                       # 空单例时再复位不得抛
 
 
-# ===========================================================================
-# notify 规则机制：docstring 承诺的能力要真的在产品里跑
-# ===========================================================================
-
-def _rule(mgr, name="r1", condition="status == 'failed'", **kw):
-    mgr.add_rule(notify.NotifyRule(name=name, condition=condition,
-                                   channel=notify.NotifyChannel.CONSOLE,
-                                   template="失败: {action_id}", **kw))
-    return mgr
-
-
-def test_rule_surface_exists():
-    """退步了会怎样：规则面再次只存在于某一份副本里（合并后单源，就必须在这一源上有）。
-
-    断言：`NotifyRule` 与三个方法在场。
-    """
-    mgr = notify.NotificationManager()
-    assert hasattr(notify, "NotifyRule")
-    for m in ("add_rule", "remove_rule", "check_rules"):
-        assert callable(getattr(mgr, m, None)), m
-    assert mgr._rules == []
-
-
-def test_check_rules_fires_and_maps_level_from_status():
-    """退步了会怎样：命中不发、或级别不按 status 映射 —— "失败要报警"这件事只是文档。
-
-    断言：failed ⇒ 发 1 条且 level=ERROR；ok ⇒ SUCCESS；不匹配 ⇒ 0 条且历史不动。
-    """
-    mgr = _rule(notify.NotificationManager())
-    fired = mgr.check_rules({"status": "failed", "action_id": "demo.x"})
-    assert fired == 1 and len(mgr._history) == 1
-    assert mgr._history[-1]["message"].level is notify.NotifyLevel.ERROR
-    assert mgr._history[-1]["delivered"] is True
-    assert mgr._history[-1]["message"].body == "失败: demo.x"
-
-    mgr2 = _rule(notify.NotificationManager(), condition="status == 'ok'")
-    mgr2.check_rules({"status": "ok", "action_id": "demo.y"})
-    assert mgr2._history[-1]["message"].level is notify.NotifyLevel.SUCCESS
-
-    mgr3 = _rule(notify.NotificationManager())
-    assert mgr3.check_rules({"status": "ok", "action_id": "demo.z"}) == 0
-    assert mgr3._history == []
-
-
-def test_check_rules_consults_the_evaluator():
-    """**反孤儿断言**：`_evaluate_condition` 曾经是谁都没调用的死代码，而 docstring 说规则生效。
-
-    断言：`check_rules` 每条启用的规则都过一次求值器（用计数替身证明调用关系，不是证明结果）。
-    """
-    calls = []
-    mgr = _rule(notify.NotificationManager(), condition="status == 'failed'")
-    mgr._evaluate_condition = lambda cond, ctx: (calls.append(cond) or False)
-    assert mgr.check_rules({"status": "failed", "action_id": "a"}) == 0
-    assert calls == ["status == 'failed'"], calls
-
-
-def test_enabled_and_cooldown_are_honored():
-    """退步了会怎样：`enabled=False` 仍发、或 cooldown 形同虚设 —— 一次故障刷一条告警风暴。
-
-    断言：停用 ⇒ 0 条；cooldown 内第二次 ⇒ 0 条，cooldown 外 ⇒ 1 条。
-    """
-    mgr = _rule(notify.NotificationManager(), enabled=False)
-    assert mgr.check_rules({"status": "failed", "action_id": "a"}) == 0
-
-    mgr = _rule(notify.NotificationManager(), cooldown=999)
-    assert mgr.check_rules({"status": "failed", "action_id": "a"}) == 1
-    assert mgr.check_rules({"status": "failed", "action_id": "a"}) == 0
-    mgr._rules[0].cooldown = 0                  # 冷却窗口过后仍可再发
-    assert mgr.check_rules({"status": "failed", "action_id": "a"}) == 1
-
-
-def test_remove_rule_drops_only_that_name():
-    """退步了会怎样：remove 按前缀/按对象误删 —— 删一条规则把别的规则带走。
-
-    断言：两条规则删其一，剩的那条仍在且仍能触发。
-    """
-    mgr = _rule(notify.NotificationManager(), name="keep", condition="status == 'ok'")
-    _rule(mgr, name="drop")
-    mgr.remove_rule("drop")
-    assert [r.name for r in mgr._rules] == ["keep"]
-    assert mgr.check_rules({"status": "ok", "action_id": "a"}) == 1
-
-
 def test_alias_shim_exposes_the_restored_names():
     """打到调用面：Actus 侧 `actuscore.X` 是本模块的 alias，补上的名字必须从那一侧也看得见。
 
-    断言：从 `actuscore.*` 导入这四个钩子 + `NotifyRule` 全部可用（Actus 树不在位时 skip 无意义 ⇒
-    直接按 vools 的模块对象判）。
+    断言：这四个钩子在 vools 模块对象上都在位（Actus 侧 `actuscore.*` 是它的 alias，
+    这里在位 ⇒ 那一侧也在位）。
     """
     for mod_name, name in (("vault2", "reset_singleton"), ("vault", "reset_vault_singleton"),
-                           ("runtimes", "reset_registry"), ("calllog", "reset_store"),
-                           ("notify", "NotifyRule")):
+                           ("runtimes", "reset_registry"), ("calllog", "reset_store")):
         mod = importlib.import_module(f"vools.actus.{mod_name}")
         assert hasattr(mod, name), f"vools.actus.{mod_name}.{name} 缺失"

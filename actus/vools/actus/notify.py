@@ -60,25 +60,6 @@ class NotifyMessage:
             self.timestamp = datetime.now().isoformat()
 
 
-@dataclass
-class NotifyRule:
-    """通知规则：条件命中时按模板发一条通知。
-
-    **这是合并回灌**（docs/39 P2 的后遗）：`NotificationManager` 的 docstring 一直写着
-    "管理通知渠道、**规则**和发送"，而 `_evaluate_condition()` 在产品里**没有任何调用者** ——
-    规则机制（`NotifyRule` / `add_rule` / `remove_rule` / `check_rules`）在孪生合并时被落在
-    了 Actus 侧，vools 只剩一个无人使用的评估函数（比没有更糟：读代码的人会以为规则已生效）。
-    Actus 侧 `actuscore.notify` 现在是本模块的 alias shim，补在这里才是单一真源。
-    """
-    name: str
-    condition: str          # 条件表达式（如 "status == 'failed'"）
-    channel: NotifyChannel
-    template: str           # 消息模板（用 context 的键做 {占位}）
-    enabled: bool = True
-    cooldown: float = 0.0   # 冷却时间（秒）
-    _last_fired: float = 0.0
-
-
 # ── 通知发送器 ──────────────────────────────────────────────────────────────
 
 class ConsoleSender:
@@ -240,41 +221,6 @@ class NotificationManager:
         }
         self._history: List[NotifyMessage] = []
         self._history_limit = 100
-        self._rules: List[NotifyRule] = []
-
-    def add_rule(self, rule: NotifyRule):
-        """添加通知规则。"""
-        self._rules.append(rule)
-
-    def remove_rule(self, name: str):
-        """按名字移除规则。"""
-        self._rules = [r for r in self._rules if r.name != name]
-
-    def check_rules(self, context: dict) -> int:
-        """逐条规则求值，命中就发通知；返回触发条数。
-
-        投递结果不由调用方决定成败 —— `notify()` 已经把"没发出去"标进历史
-        （`delivered: False`），这里只负责"命中了几条"。冷却期内的规则跳过。
-        """
-        fired = 0
-        for rule in self._rules:
-            if not rule.enabled:
-                continue
-            if rule.cooldown > 0:
-                now = datetime.now().timestamp()
-                if now - rule._last_fired < rule.cooldown:
-                    continue
-            if not self._evaluate_condition(rule.condition, context):
-                continue
-            status = str(context.get("status", ""))
-            level = (NotifyLevel.ERROR if status == "failed"
-                     else NotifyLevel.SUCCESS if status == "ok"
-                     else NotifyLevel.INFO)
-            self.notify(title=rule.name, body=rule.template.format(**context),
-                        level=level, channel=rule.channel, metadata=dict(context))
-            rule._last_fired = datetime.now().timestamp()
-            fired += 1
-        return fired
 
     def configure(self, channel: NotifyChannel, **kwargs):
         """配置通知渠道。"""
