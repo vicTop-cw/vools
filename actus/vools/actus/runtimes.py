@@ -572,6 +572,15 @@ def _get_registry() -> RuntimeRegistry:
     return _registry
 
 
+def reset_registry():
+    """测试用：重置注册表（探测过的运行时结果缓存在实例里）。
+
+    合并回灌（docs/39 §10.3）：Actus 侧 `actuscore/runtimes.py` 改 alias shim 前自带这个钩子。
+    """
+    global _registry
+    _registry = None
+
+
 def execute_block(language: str, code: str, context: Dict) -> Tuple[str, str, int]:
     """便捷函数：执行代码块。"""
     return _get_registry().execute(language, code, context)

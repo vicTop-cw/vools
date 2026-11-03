@@ -2880,6 +2880,16 @@ def _get_vault2(create: bool = False) -> Vault2:
     return _vault2_singleton
 
 
+def reset_singleton():
+    """测试用：丢弃进程内单例。
+
+    合并回灌（docs/39 §10.3）：这原本是 Actus 侧 `actuscore/vault2.py` 自带的测试支撑钩子，
+    P2 把该模块改成 alias shim 后名字就没了 —— 单例状态在本模块，复位只能在这里做。
+    """
+    global _vault2_singleton
+    _vault2_singleton = None
+
+
 def register(identity_name: str, pin: str, machine_name: str = None,
              security_level: str = "L2") -> dict:
     return _get_vault2().register(identity_name, pin, machine_name, security_level)

@@ -249,6 +249,20 @@ def get_store(meta_dir: Optional[str] = None) -> CallLogStore:
         return _store
 
 
+def reset_store() -> None:
+    """测试用：丢弃并关闭当前单例（句柄不关会留旧 meta_dir 的活连接）。
+
+    合并回灌（docs/39 §10.3）：Actus 侧 `actuscore/calllog.py` 改 alias shim 前自带这个钩子，
+    状态与锁都在本模块 —— 复位只能在这里做，且必须拿同一把 `_store_lock`。
+    """
+    global _store, _store_key
+    with _store_lock:
+        if _store is not None:
+            _store.close()
+        _store = None
+        _store_key = None
+
+
 def write_call_log(tool: str, params: Any = None, result: Any = None,
                    ok: bool = True, runtime_ms: int = 0,
                    caller: str = 'mcp', ns: str = '') -> bool:
