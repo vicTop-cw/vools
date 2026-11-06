@@ -142,7 +142,7 @@ testpaths = ["tests"]
 # 如需运行全部测试，使用: pytest --override-ini="addopts=--tb=short -q"
 # 如需运行特定子项目测试，使用: pytest bridges/tests/ 或 pytest rx/tests/
 # 让未注册标记直接失败，杜绝"标记名写对但无人实现"的静默空守卫
-addopts = "--tb=short -q --strict-markers --ignore=tests/monitoring --ignore=tests/benchmarks --ignore=tests/archive --ignore=tests/other --ignore=tests/__rust__ --ignore=tests/__persist__ --ignore=tests/__pycache__"
+addopts = "--tb=short -q --strict-markers --ignore=tests/monitoring --ignore=tests/benchmarks --ignore=tests/archive --ignore=tests/other --ignore=tests/__rust__ --ignore=tests/__persist__ --ignore=tests/__pycache__ --ignore=actus/tests/manual_gui"
 markers = [
     "integration: 标记集成测试（依赖外部资源，如剪贴板、文件系统、键鼠）",
     "windows_only: 仅在 Windows 上可运行的测试",
