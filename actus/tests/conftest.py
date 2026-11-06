@@ -49,6 +49,16 @@ _VOOLS_BRIDGES_DIR = os.path.join(_VOOLS_REPO_ROOT, "bridges")
 if _VOOLS_BRIDGES_DIR not in sys.path:
     sys.path.insert(0, _VOOLS_BRIDGES_DIR)
 
+# 把 actus/vools/ 加入 vools.__path__（让 `import vools.actus` 解析到
+# actus/vools/actus/，因为 actus 源码在 actus/vools/actus/ 而非 vools/actus/）
+_ACTUS_VOOLS_DIR = os.path.join(_VOOLS_REPO_ROOT, "actus", "vools")
+try:
+    import vools as _vools_pkg
+    if _ACTUS_VOOLS_DIR not in _vools_pkg.__path__:
+        _vools_pkg.__path__.append(_ACTUS_VOOLS_DIR)
+except ImportError:
+    pass
+
 import shutil
 import time as _real_time
 
