@@ -136,7 +136,12 @@ _LAZY = {
     # actions（种子动作 façade，定义在 vools/actus/actions/basics/*.actus.schema.md）
     'get_all_actions': '.actions', 'load_action': '.actions',
     'CalculatorAction': '.actions', 'TodoListAction': '.actions',
-    'TextEditorAction': '.actions', 'ImageViewerAction': '.actions',
+        'TextEditorAction': '.actions', 'ImageViewerAction': '.actions',
+    # clipboard（vools.reactive 剪贴板能力落地 actus，配置+动作式交互）
+    'clip_read': '.clipboard', 'clip_write': '.clipboard',
+    'clip_clear': '.clipboard', 'clip_watch': '.clipboard',
+    'ClipWatcher': '.clipboard', 'ClipChangeType': '.clipboard',
+    'ClipData': '.clipboard',
 }
 
 
@@ -260,10 +265,14 @@ _actions = [
     'CalculatorAction', 'TodoListAction', 'TextEditorAction', 'ImageViewerAction',
 ]
 
+_clipboard = [
+    'clip_read', 'clip_write', 'clip_clear', 'clip_watch', 'ClipWatcher',
+]
+
 __all__ = (
     _base + _model + _exec + _workflow + _registry + _records
     + _concurrency + _sandbox + _trust + _security + _adapter
     + _install + _selfheal + _project + _notify + _health
     + _jump + _webhook + _intent + _sigma
-    + _classification + _actions
+    + _classification + _actions + _clipboard
 )
