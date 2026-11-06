@@ -48,3 +48,13 @@
 - fist-mbt 发布：T0（actus 全量测试套件验证）→ claim → plan 拆 T0.1/T0.2/T0.3 → ACL 授权 atomcode-9a/9b/9c → supervisor_prompt_inject 注入执行提示词。3 agent 并发推进。
 - 已验证测试：r99(52) + r98+r58(229) + omega(31) = 312 passed，0 failed。
 - 未做：全量 5265 测试套件需要 agent 跑（串行超时 8 分钟）；PROBE_PLAN 两个进行中缺口（runtime: 依赖前缀测试、intent.py ready 判据验收）已分给 T0.3 agent。
+
+## [统帅轮-09时 续] 2026-11-06 | dependency.py 回归修复 + PROBE_PLAN 缺口收口
+- 续修发现：test_dependency_contracts_r52.py 有 3 FAILED（test_tree_with_action_found / test_tree_recursive_action_dep / test_found_with_deps），根因与 omega 同族——785601e6 收口时删除了 DependencyResolver._find_action_file 方法，但测试用 monkeypatch.setattr(res, '_find_action_file', ...) / MagicMock._find_action_file.return_value 做桩 → AttributeError / mock 不生效。
+- 修复：在 DependencyResolver 上恢复 _find_action_file 方法（委托 resolver.find_action_file），get_dep_tree 与 check_action_deps 改为调用 self._find_action_file。commit 11fdcc5a。
+- PROBE_PLAN 缺口收口：runtime: 依赖前缀测试已被 test_dependency_contracts_r52.py::TestCheckRuntime 覆盖（L219/L231）；intent.py ready 判据由 test_action_readiness_intent.py 9 用例覆盖。验证：r52(100) + intent(3) = 103 passed。
+- 验证核心套件：r52 + r98 + r58 + r99 + omega + intent + resolver_cli + cli_surface + probe_actions = 440 passed, 4 failed。4 failed 全部是 `No module named 'vools.bridge'`（环境约束，可选包未安装），在 HEAD 无改动时同样失败，确认非回归。
+- BUG-80 评估：py3.6 pyk 属性访问缺口是设计层问题（import vools 在 py3.6 会连带拉起 vools.pyk → numpy/pandas），前置条件是跨模块设计变更，不在统帅轮授权范围。维持 OPEN + KNOWN_EXEMPTIONS 豁免。
+- stash 冲突：验证测试时 git stash/stash pop 与其他 agent 并行 WIP 冲突（memory/bugs.md、crypto.py、table.py 等 10 文件），这些是其他 agent 的工作，不触碰。已提交的 actus 改动（9690bffb、ad14f20c、b345305c、11fdcc5a）均干净。
+- 推送：gitcode main ad14f20c..11fdcc5a。GitHub 网络不通未推。
+- fist-mbt 任务状态：T0.1/T0.2/T0.3 已认领 + 提示词注入（supervisor_prompt_inject），3 agent 并发执行中。
