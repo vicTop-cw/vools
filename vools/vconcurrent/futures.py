@@ -597,6 +597,9 @@ class VThreadPoolExecutor:
         self._executor.shutdown(wait=False)
         deadline = None if timeout is None else (time.monotonic() + timeout)
         while True:
+            # BUG-xxx 修复：不在循环中持续持有 _lock。
+            # _on_done 回调同样需要 _lock 来从 _pending 移除已完成 future；
+            # 若轮询持有锁，会导致 _on_done 无法完成 → _pending 永远非空 → 死锁。
             with self._lock:
                 pending = len(self._pending)
             if pending == 0:
@@ -786,6 +789,8 @@ class VProcessPoolExecutor:
         self._executor.shutdown(wait=False)
         deadline = None if timeout is None else (time.monotonic() + timeout)
         while True:
+            # 同 VThreadPoolExecutor：不在循环中持续持有 _lock，
+            # 否则 _on_done 回调无法获取锁，导致 _pending 永远非空（死锁）。
             with self._lock:
                 pending = len(self._pending)
             if pending == 0:

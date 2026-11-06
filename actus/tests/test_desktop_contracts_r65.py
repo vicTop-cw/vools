@@ -12,6 +12,8 @@ import asyncio
 import json
 
 import pytest
+
+fastapi = pytest.importorskip("fastapi", reason="fastapi 未安装，跳过 desktop 契约测试")
 from fastapi.testclient import TestClient
 
 from vools.actus import desktop as dmod
