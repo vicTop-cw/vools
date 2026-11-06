@@ -27,6 +27,13 @@ import pytest
 
 _ACTUS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _VOOLS_ROOT = os.path.join(_ACTUS_ROOT, "vools")
+_REPO_ROOT = os.path.dirname(_ACTUS_ROOT)  # 仓库根，提供 vools 主包
+_SUBPROJ_ROOTS = os.pathsep.join(
+    [_REPO_ROOT, _ACTUS_ROOT,
+     os.path.join(_REPO_ROOT, "rx"),
+     os.path.join(_REPO_ROOT, "pyk"),
+     os.path.join(_REPO_ROOT, "rhop"),
+     os.path.join(_REPO_ROOT, "bridges")])  # 子进程 PYTHONPATH：让 vools 主包 extend_path 合并各子项目命名空间
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
 _ai_local_bootstrap.install()
@@ -179,7 +186,7 @@ def test_set_persists_and_readable_across_instances_and_processes(world, monkeyp
         % (_VOOLS_ROOT, str(world.meta)))
     env = dict(os.environ)
     env["ACTUS_VAULT_KEY"] = "test-master-key"
-    env["PYTHONPATH"] = _VOOLS_ROOT + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = _SUBPROJ_ROOTS + os.pathsep + _VOOLS_ROOT + os.pathsep + env.get("PYTHONPATH", "")
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True,
                           text=True, timeout=120, env=env, cwd=str(world.root))
     assert proc.returncode == 0, proc.stderr[-800:]

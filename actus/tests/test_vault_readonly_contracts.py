@@ -39,6 +39,13 @@ pytestmark = pytest.mark.slow
 
 _ACTUS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _VOOLS_ROOT = os.path.join(_ACTUS_ROOT, "vools")
+_REPO_ROOT = os.path.dirname(_ACTUS_ROOT)  # 仓库根，提供 vools 主包
+_SUBPROJ_ROOTS = os.pathsep.join(
+    [_REPO_ROOT, _ACTUS_ROOT,
+     os.path.join(_REPO_ROOT, "rx"),
+     os.path.join(_REPO_ROOT, "pyk"),
+     os.path.join(_REPO_ROOT, "rhop"),
+     os.path.join(_REPO_ROOT, "bridges")])  # 子进程 PYTHONPATH：让 vools 主包 extend_path 合并各子项目命名空间
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ai_local_bootstrap  # noqa: E402  — 必须先于 vools.actus 导入
 _ai_local_bootstrap.install()
@@ -189,7 +196,7 @@ def test_cli_vault_get_is_read_only(world):
     _setup_v2(world)
     before = _snapshot(world.db_path)
     env = dict(os.environ)
-    env["PYTHONPATH"] = _VOOLS_ROOT + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = _SUBPROJ_ROOTS + os.pathsep + _VOOLS_ROOT + os.pathsep + env.get("PYTHONPATH", "")
 
     proc = subprocess.run(
         [sys.executable, "-m", "vools.actus.cli", "vault", "get", "db_pw"],

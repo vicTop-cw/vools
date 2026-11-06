@@ -192,7 +192,7 @@ class TestProbeReportBasics:
         r = ProbeReport(arch="x64")
         assert r.report_source == "probe"
         assert r.extra == {"arch": "x64"}  # 未声明的维度收进 self.extra
-        assert 0 < (time.time() - r.timestamp) < 60
+        assert 0 <= (time.time() - r.timestamp) < 60  # 同秒创建时差值为 0 属正常
 
     def test_to_dict_roundtrip(self):
         item = FakeItem("git", "system_tools", True, "2.40", "/usr/bin/git",

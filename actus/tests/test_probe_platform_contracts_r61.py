@@ -4,6 +4,7 @@
 只测公开契约，零产品代码改动。隔离：环境变量用 monkeypatch。
 """
 
+import sys
 import types
 
 import pytest
@@ -126,6 +127,8 @@ class TestIsWsl:
 
 
 class TestLinuxDistro:
+    @pytest.mark.skipif(sys.platform == "win32",
+                        reason="Linux 发行版语义，Windows 无 os-release")
     def test_distro_module_present(self):
         # distro 库若已安装则走第一分支；返回四个键
         d = pmod._get_linux_distro()

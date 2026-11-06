@@ -84,7 +84,8 @@ def test_template_calls_scaffold_with_declared_params(monkeypatch):
     captured = {}
 
     def fake_scaffold(description, action_id=None, trust="audit",
-                      output_dir=None, author="ai-scaffold", repo_root=None):
+                      output_dir=None, author="ai-scaffold", repo_root=None,
+                      force=False):
         captured["description"] = description
         captured["action_id"] = action_id
         captured["trust"] = trust
@@ -109,7 +110,8 @@ def test_template_dict_template_uses_description_key(monkeypatch):
     captured = {}
 
     def fake_scaffold(description, action_id=None, trust="audit",
-                      output_dir=None, author="ai-scaffold", repo_root=None):
+                      output_dir=None, author="ai-scaffold", repo_root=None,
+                      force=False):
         captured["description"] = description
         return {"path": "/tmp/x", "id": "x", "trust": trust, "template": "basic",
                 "validation": {"valid": True, "errors": []}, "next_steps": []}
