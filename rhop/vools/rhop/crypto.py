@@ -32,8 +32,12 @@ _ENV_KEY_FIELD = "ct"
 # 默认环境变量名
 ENV_RHOP_KEY = "RHOP_KEY"
 
-# 配置密文前缀（明文 ↔ 密文 双支持用；见 RhopCrypto.encrypt_secret / decrypt_secret）
+# 配置密文前缀（明文 ↔ 密文 双支持用；见 encrypt_secret / decrypt_secret）
 SECRET_PREFIX = "RHOP-ENC:"
+
+# 密钥派生参数（固定本地密钥 → Fernet key）
+_DERIVE_ALG = "sha256"
+_DERIVE_INFO = b"vools.rhop.mvp.crypto.v1"
 
 
 class VerifyResult(NamedTuple):
@@ -191,7 +195,14 @@ class RhopCrypto(object):
     def encrypt_secret(self, plaintext: Union[str, bytes, None]) -> str:
         """把一段明文（密码 / token / 密钥）加密成 ``RHOP-ENC:<token>`` 密文。
 
-        与 ``encrypt_json`` 共用同一把 Fernet 密钥，底层委托 VText。
+        与 ``encrypt_json`` 共用同一把 Fernet 密钥与派生参数，因此配置文件里
+        的密文可以用 ``python -m vools.rhop.secret enc`` 离线生成后回填。
+
+        Args:
+            plaintext: 明文文本；None / 空串返回空串（不产出空密文）。
+
+        Returns:
+            str: ``RHOP-ENC:...`` 密文文本。
         """
         if plaintext is None or plaintext == "":
             return ""
@@ -207,6 +218,9 @@ class RhopCrypto(object):
 
     def decrypt_secret(self, value: Union[str, None]) -> str:
         """解密 ``RHOP-ENC:`` 密文，返回明文。
+
+        Args:
+            value: 密文文本；None / 空串返回空串。
 
         Raises:
             ValueError: 前缀不符（不是 rhop 密文）或解密失败（密钥不符/密文被篡改），
