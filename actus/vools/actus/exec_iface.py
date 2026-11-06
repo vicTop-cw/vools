@@ -30,14 +30,16 @@ from typing import Any, Dict, List, Optional
 import re
 from vools.core.dataclass_compat import dataclass, field
 
-# Python 版本兜底（包声明 requires-python >= 3.6）：
-# typing.Protocol / runtime_checkable 是 3.8+ 才有的。3.6/3.7 下用 ABC +
-# __subclasshook__ 轻量鸭子协议兜底，保持与 3.8 runtime_checkable Protocol
-# 一致的 isinstance 语义（测试 test_protocol_runtime_checkable 锁定该契约：
+# Python 版本兜底：typing.Protocol / runtime_checkable 是 3.8+ 才有的。
+# 本包官方声明 requires-python = ">=3.8"（actus/pyproject.toml，CI 矩阵 3.8-3.13），
+# 标准环境走 try 分支用原生 typing.Protocol，行为零变化；except 分支仅服务
+# 更老解释器上的导入健壮性（如 3.6/3.7 命名空间装配场景），用 ABC +
+# __subclasshook__ 轻量鸭子协议模拟 runtime_checkable 的 isinstance 语义
+# （测试 test_protocol_runtime_checkable 锁定该契约：
 # 有 execute 方法的对象 isinstance 为 True，object() 为 False）。
 try:
-    from typing import Protocol, runtime_checkable  # py3.8+
-except ImportError:  # py3.6/3.7
+    from typing import Protocol, runtime_checkable  # py3.8+（标准路径）
+except ImportError:  # py3.6/3.7 降级兜底
     import abc as _abc
 
     class Protocol(_abc.ABC):
