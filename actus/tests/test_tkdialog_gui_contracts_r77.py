@@ -170,14 +170,22 @@ class TestHelpers:
         monkeypatch.delenv("ACTUS_DIALOG_FOCUS_POLL_MS")
         assert td._resolve_focus_poll() == 400             # 缺省 400
 
-    def test_get_root_reuses_and_recovers(self, tk_root):
+    def test_get_root_reuses_and_recovers(self, tk_root, monkeypatch):
         assert td._get_root() is tk_root                   # 缓存命中
-        dead = tk.Tk()
-        dead.withdraw()
-        dead.destroy()                                     # 摧毁后 winfo_exists→False
+        # 假死缓存：winfo_exists 抛 TclError（等价已销毁的真实 Tk）。
+        # 不真实创建第二个 Tk（打包运行时第二个 Tk() 会报 tk.tcl 不可用），
+        # 重建路径用 monkeypatch 让 td 内的 Tk() 返回 fixture root。
+        class _DeadRoot:
+            def winfo_exists(self):
+                raise tk.TclError("dead")
+            def withdraw(self):
+                pass
+        dead = _DeadRoot()
         tk._actus_dialog_root = dead
+        monkeypatch.setattr(tk, "Tk", lambda: tk_root)     # 重建路径复用 fixture root
         r2 = td._get_root()
-        assert r2 is not dead and r2.winfo_exists()        # 重建并替换缓存
+        assert r2 is tk_root and r2.winfo_exists()         # 重建并替换缓存
+        assert tk._actus_dialog_root is r2
         tk._actus_dialog_root = tk_root
 
     def test_reset_root_state(self, tk_root):

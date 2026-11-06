@@ -18,6 +18,15 @@ pytestmark = pytest.mark.slow
 
 PY = sys.executable
 
+_ACTUS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(_ACTUS_ROOT)  # 仓库根，提供 vools 主包
+_SUBPROJ_ROOTS = os.pathsep.join(
+    [_REPO_ROOT, _ACTUS_ROOT,
+     os.path.join(_REPO_ROOT, "rx"),
+     os.path.join(_REPO_ROOT, "pyk"),
+     os.path.join(_REPO_ROOT, "rhop"),
+     os.path.join(_REPO_ROOT, "bridges")])  # 子进程 PYTHONPATH：vools 主包 extend_path 合并各子项目命名空间
+
 EXEC_ACTION = """---
 id: myapp.target
 name: Target
@@ -132,6 +141,7 @@ def _make_repo(tmp_path):
 def _run_cli(root, *args):
     env = dict(os.environ)
     env["ACTUS_REPO_ROOT"] = str(root)
+    env["PYTHONPATH"] = _SUBPROJ_ROOTS + os.pathsep + env.get("PYTHONPATH", "")
     proc = subprocess.run([PY, "-m", "vools.actus.cli", *args],
                           capture_output=True, text=True, encoding="utf-8", env=env)
     out = (proc.stdout or "").strip()

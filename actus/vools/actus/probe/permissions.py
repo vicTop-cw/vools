@@ -14,6 +14,8 @@ from .base import Prober, ProbeItem
 
 def _check_windows_admin() -> bool:
     """Windows 管理员检测（ctypes，零依赖）。"""
+    if sys.platform != "win32":
+        return False
     try:
         import ctypes
         return ctypes.windll.shell32.IsUserAnAdmin() != 0

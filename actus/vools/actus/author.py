@@ -29,6 +29,19 @@ from .constants import is_action_file
 _AI_MODIFIED_PREFIX = '# AI-MODIFIED ['
 
 
+def _find_action_file(action_id: str, actions_root: str) -> Optional[str]:
+    """定位动作文件（委托 resolver.find_action_file，异常吞掉返回 None）。
+
+    供 Pipeline/author_action/publish_action 复用，避免三处重复的
+    try/except 委托逻辑漂移。
+    """
+    try:
+        from .resolver import find_action_file
+        return find_action_file(action_id, actions_root)
+    except Exception:
+        return None
+
+
 def _collapse_ai_modified_marks(text: str) -> str:
     """删掉历史 AI-MODIFIED 留痕行（保留其余内容原样）。
 
@@ -275,11 +288,7 @@ def author_action(action_id: str, instruction: str,
     repo_root = repo_root or _paths_repo_root()
 
     # 定位动作文件（委托 resolver.find_action_file，避免双轨漂移）
-    try:
-        from .resolver import find_action_file
-        file_path = find_action_file(action_id, os.path.join(repo_root, 'actions'))
-    except Exception:
-        file_path = None
+    file_path = _find_action_file(action_id, os.path.join(repo_root, 'actions'))
     if file_path is None:
         raise ActionError('action_not_found',
                           f'找不到动作文件: {action_id}',
@@ -389,11 +398,7 @@ def publish_action(action_id: str, repo_root: Optional[str] = None,
     _explicit_root = repo_root is not None
     repo_root = repo_root or _paths_repo_root()
     # 定位动作文件（委托 resolver.find_action_file，避免双轨漂移）
-    try:
-        from .resolver import find_action_file
-        file_path = find_action_file(action_id, os.path.join(repo_root, 'actions'))
-    except Exception:
-        file_path = None
+    file_path = _find_action_file(action_id, os.path.join(repo_root, 'actions'))
 
     if file_path is None:
         raise ActionError('action_not_found', f'找不到动作: {action_id}')
