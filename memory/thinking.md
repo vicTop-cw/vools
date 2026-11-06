@@ -38,3 +38,13 @@
 - 关键对照实验：执行期间 `cancel`（置标志）→ 优雅落 CANCELLED，不抛错；执行期间 `requeue`（force 改状态）→ StoreError 逃逸。差别只在「收尾是否认持有者」，这比读 BUG-329 的注释更有说服力。
 - 教训：①`run_resident` 这种长驻循环是「异常放大器」——单点 StoreError 的爆炸半径不是一次任务失败，而是整侧停摆，审代码时应把「循环体内是否有 try/except」当成高优先级信号；②force=True 的运维 API 与执行器收尾写回天然冲突，任何「force 可改状态」的设计都必须配套「收尾认持有者/版本」；③探针里曾把 `handler` 当成 `{"name": ...}` 传导致解析失败，正确姿势是 `register_handler(name, fn)` + 任务 dict 里 `"handler": "<name>"`（`INSTRUCTION_KEYS` 决定它进 payload）。
 - 未做：BUG-365/366/367 均未修（本轮是 bugfind 只读模式）；PG store 的同类语义（set_state 是否同样的非法流转校验、回收计数）未验证——本机无 DSN。
+
+## [统帅轮-09时] 2026-11-06 | actus 基建迭代 + fist-mbt 多 agent 并发
+- 目标：持续迭代 vools actus 基建，未实现计划落地，已实现计划打磨，有 bug 优先修复。
+- 侦察：fist-mbt 服务未运行 → 用 Python subprocess 拉起 JS 构建产物（182 工具），连通正常。vools 主仓 HEAD=9690bffb（统帅轮-11时），远程 gitcode/github 均无新提交，本地已最新。
+- 发现 bug：工作区 omega.py 被 785601e6 提交"收口 _find_action_file 到 resolver"时**删除了函数体**（改为内联 resolver 调用），但 test_omega.py L19 仍 `from vools.actus.omega import _find_action_file` → ImportError，test_omega.py 整个文件收集失败。
+- 修复：恢复 omega.py 的 `_find_action_file` 函数体（委托 resolver.find_action_file），保持兼容签名。验证：test_omega.py 31 passed + r99 52 passed + r98/r58 229 passed = 312 passed。
+- 提交：9690bffb 已含 r99 测试（test_triggers_contracts_r99.py + test_workflow_contracts_r99.py），已推 gitcode main（26040a47..9690bffb）。GitHub 网络不通，未推 github。
+- fist-mbt 发布：T0（actus 全量测试套件验证）→ claim → plan 拆 T0.1/T0.2/T0.3 → ACL 授权 atomcode-9a/9b/9c → supervisor_prompt_inject 注入执行提示词。3 agent 并发推进。
+- 已验证测试：r99(52) + r98+r58(229) + omega(31) = 312 passed，0 failed。
+- 未做：全量 5265 测试套件需要 agent 跑（串行超时 8 分钟）；PROBE_PLAN 两个进行中缺口（runtime: 依赖前缀测试、intent.py ready 判据验收）已分给 T0.3 agent。
