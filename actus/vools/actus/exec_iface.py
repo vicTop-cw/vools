@@ -25,10 +25,40 @@ __all__ = [
     'ERROR_KINDS', 'result_from_adapter', 'result_from_exception',
 ]
 
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, List, Optional
 
 import re
 from vools.core.dataclass_compat import dataclass, field
+
+# Python 版本兜底（包声明 requires-python >= 3.6）：
+# typing.Protocol / runtime_checkable 是 3.8+ 才有的。3.6/3.7 下用 ABC +
+# __subclasshook__ 轻量鸭子协议兜底，保持与 3.8 runtime_checkable Protocol
+# 一致的 isinstance 语义（测试 test_protocol_runtime_checkable 锁定该契约：
+# 有 execute 方法的对象 isinstance 为 True，object() 为 False）。
+try:
+    from typing import Protocol, runtime_checkable  # py3.8+
+except ImportError:  # py3.6/3.7
+    import abc as _abc
+
+    class Protocol(_abc.ABC):
+        __slots__ = ()
+
+    def runtime_checkable(cls):
+        """按类体公开方法集做鸭子判定（仅方法成员，与 PEP 544 一致）。"""
+        _required = tuple(
+            n for n, v in vars(cls).items()
+            if callable(v) and not n.startswith('_')
+        )
+
+        def _subclasshook(aclass, other):
+            if aclass is not cls:
+                return NotImplemented
+            if _required and all(hasattr(other, n) for n in _required):
+                return True
+            return NotImplemented
+
+        cls.__subclasshook__ = classmethod(_subclasshook)
+        return cls
 
 # 错误归一化闭集（docs/03 §3.4）：
 # - auth：认证失败
