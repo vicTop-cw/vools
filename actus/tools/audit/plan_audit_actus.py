@@ -68,12 +68,19 @@ show('params: @action 递归深度保护', 'max_action_depth' in
      io.open(os.path.join(ROOT, 'vools/actus/resolver.py'), encoding='utf-8').read(),
      'resolver.resolve_params_extended(max_action_depth=3)')
 
-# kind 体系
+# kind 体系 — 检测逻辑放宽：`kind == 'X'` 或 `kind in (..., 'X')` 都算已落地
+# 原检测只看 `kind == 'alias'` 字面匹配，但 executor.py 用 `kind in ('alias', 'link')`
+# 更优雅的写法，导致 alias 被误报 MISS。
 exec_src = io.open(os.path.join(ROOT, 'vools/actus/executor.py'),
                    encoding='utf-8').read()
+import re as _re
 for kind in ('link', 'alias', 'bundle', 'doc', 'template', 'demo'):
-    show('kind 执行语义: ' + kind, ("kind == '%s'" % kind) in exec_src,
-         'executor.py')
+    pattern = _re.compile(
+        r"kind\s*==\s*['\"]%s['\"]|kind\s+in\s*\([^)]*['\"]%s['\"]" % (
+            _re.escape(kind), _re.escape(kind))
+    )
+    show('kind 执行语义: ' + kind, bool(pattern.search(exec_src)),
+         'executor.py (%s)' % ('kind== or kind in') if pattern.search(exec_src) else 'executor.py')
 show('kind 非执行豁免清单', 'demo' in V._NON_EXEC_KINDS,
      '_NON_EXEC_KINDS=%r' % (V._NON_EXEC_KINDS,))
 kinds = {}
@@ -94,8 +101,9 @@ for key in ('kind', 'md5', 'name', 'languages', 'platform'):
 # 校验面
 show('校验: 代码块语言检查', hasattr(V, 'check_block_languages'),
      'validate.check_block_languages')
-show('校验: kind 合法性', 'check_kind' in dir(V),
-     'validate.check_kind' if 'check_kind' in dir(V) else '未找到 check_kind')
+show('校验: kind 合法性',
+      hasattr(V, 'check_kind') or hasattr(V, 'is_known_kind'),
+      'validate.is_known_kind' if hasattr(V, 'is_known_kind') and not hasattr(V, 'check_kind') else 'validate.check_kind' if hasattr(V, 'check_kind') else '未找到')
 show('校验: link/alias target 存在性',
      'target_not_found' in io.open(os.path.join(ROOT, 'vools/actus/validate.py'),
                                    encoding='utf-8').read()
@@ -127,13 +135,16 @@ if os.path.isfile(doc03):
     for kw in ('kind', 'link', 'demo', 'template', 'bundle', 'md5'):
         print('  docs/03 含 %-8s: %s' % (kw, kw in txt))
 
-# §六.6 _find_action_file
+# §六.6 _find_action_file — 检测函数定义（def _find_action_file），而非任意字符串
+# 原检测只看 `_find_action_file` 字符串出现，会把注释里的历史说明也命中
+# （paths.py 注释「5 份 _find_action_file 实现吃过亏」）。真正的清理判据是
+# 函数定义消失——薄封装调用 resolver 的写法不算漂移源。
 hits = []
 for dp, _d, fs in os.walk(os.path.join(ROOT, 'vools', 'actus')):
     for f in fs:
         if f.endswith('.py'):
             pth = os.path.join(dp, f)
-            if '_find_action_file' in io.open(pth, encoding='utf-8',
-                                              errors='replace').read():
+            content = io.open(pth, encoding='utf-8', errors='replace').read()
+            if _re.search(r'def\s+_find_action_file', content):
                 hits.append(os.path.relpath(pth, ROOT))
 show('§六.6 _find_action_file 已清理', not hits, '仍存在: %r' % (hits,))

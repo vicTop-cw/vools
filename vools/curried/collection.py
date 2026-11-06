@@ -36,10 +36,12 @@ __all__ = [
     'head',
     'tail',
     'cons',
+    'conj',
     'singleton',
     'interleave',
     'interpose',
     'distinct',
+    'count_by',
 ]
 
 
@@ -145,6 +147,31 @@ def groupby(func: Callable[[A], K], iterable: Iterable[A]) -> Dict[K, List[A]]:
 
 
 group_by = groupby
+
+
+@curry
+def count_by(func: Callable[[A], K], iterable: Iterable[A]) -> Dict[K, int]:
+    """
+    按键函数对元素计数
+
+    Args:
+        func: 分组键函数
+        iterable: 可迭代对象
+
+    Returns:
+        字典，键是分组键，值是该组元素个数
+
+    Example:
+        >>> count_by(lambda x: x % 2, range(5))
+        {0: 3, 1: 2}
+        >>> count_by(str.lower, ['A', 'b', 'C', 'a', 'B'])
+        {'a': 2, 'b': 2, 'c': 1}
+    """
+    counts: Dict[K, int] = {}
+    for item in iterable:
+        key = func(item)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 @curry
@@ -452,6 +479,25 @@ def cons(x: A, iterable: Iterable[A]) -> List[A]:
         [0, 1, 2, 3]
     """
     return [x] + list(iterable)
+
+
+@curry
+def conj(iterable: Iterable[A], x: A) -> List[A]:
+    """
+    将元素添加到列表末尾（cons 的对偶）
+
+    Args:
+        iterable: 原有可迭代对象
+        x: 要添加的元素
+
+    Returns:
+        新列表
+
+    Example:
+        >>> conj([1, 2, 3], 0)
+        [1, 2, 3, 0]
+    """
+    return list(iterable) + [x]
 
 
 @curry

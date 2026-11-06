@@ -610,8 +610,12 @@ class DependencyResolver:
             return {"id": action_id, "circular": True}
         visited.add(action_id)
 
-        # 查找动作文件
-        action_path = self._find_action_file(action_id)
+        # 查找动作文件（委托 resolver.find_action_file，避免双轨漂移）
+        try:
+            from .resolver import find_action_file
+            action_path = find_action_file(action_id, self._actions_root)
+        except Exception:
+            action_path = None
         if not action_path:
             return {"id": action_id, "found": False}
 
@@ -641,19 +645,6 @@ class DependencyResolver:
             "depth": depth
         }
 
-    def _find_action_file(self, action_id: str) -> Optional[str]:
-        """查找动作文件路径（委托给 resolver.find_action_file，格式无关）。
-
-        原实现用字符串搜 `"id": "xxx"` 判断身份，**只认旧格式 JSON**——
-        新格式 YAML front-matter 的 `.actus.schema.md` 全部找不到（实测 4 个
-        种子动作全返回 None）。计划 §六.6 要求『并入 resolver，避免双轨漂移』。
-        """
-        try:
-            from .resolver import find_action_file
-            return find_action_file(action_id, self._actions_root)
-        except Exception:
-            return None
-
     def _extract_deps_from_file(self, path: str) -> list:
         """从动作文件中提取 deps。"""
         try:
@@ -682,7 +673,11 @@ def get_resolver() -> DependencyResolver:
 def check_action_deps(action_id: str, auto_install: bool = False) -> dict:
     """检查指定动作的依赖（便捷函数）。"""
     resolver = get_resolver()
-    action_path = resolver._find_action_file(action_id)
+    try:
+        from .resolver import find_action_file
+        action_path = find_action_file(action_id, resolver._actions_root)
+    except Exception:
+        action_path = None
     if not action_path:
         return {"ok": False, "error": f"action not found: {action_id}"}
 

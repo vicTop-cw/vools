@@ -166,8 +166,13 @@ class Pipeline:
         self._begin('graph_validate')
         missing = []
         for dep in self.action.meta.get('deps', []) or []:
-            # 在仓库内查找依赖
-            dep_path = _find_action_file(dep, self.repo_root)
+            # 在仓库内查找依赖（委托 resolver.find_action_file，避免双轨漂移）
+            actions_dir = os.path.join(self.repo_root, 'actions')
+            try:
+                from .resolver import find_action_file
+                dep_path = find_action_file(dep, actions_dir)
+            except Exception:
+                dep_path = None
             if dep_path is None:
                 missing.append(dep)
         self._end(not missing,
@@ -269,8 +274,12 @@ def author_action(action_id: str, instruction: str,
     from .paths import repo_root as _paths_repo_root
     repo_root = repo_root or _paths_repo_root()
 
-    # 定位动作文件
-    file_path = _find_action_file(action_id, repo_root)
+    # 定位动作文件（委托 resolver.find_action_file，避免双轨漂移）
+    try:
+        from .resolver import find_action_file
+        file_path = find_action_file(action_id, os.path.join(repo_root, 'actions'))
+    except Exception:
+        file_path = None
     if file_path is None:
         raise ActionError('action_not_found',
                           f'找不到动作文件: {action_id}',
@@ -379,7 +388,12 @@ def publish_action(action_id: str, repo_root: Optional[str] = None,
     from .paths import repo_root as _paths_repo_root
     _explicit_root = repo_root is not None
     repo_root = repo_root or _paths_repo_root()
-    file_path = _find_action_file(action_id, repo_root)
+    # 定位动作文件（委托 resolver.find_action_file，避免双轨漂移）
+    try:
+        from .resolver import find_action_file
+        file_path = find_action_file(action_id, os.path.join(repo_root, 'actions'))
+    except Exception:
+        file_path = None
 
     if file_path is None:
         raise ActionError('action_not_found', f'找不到动作: {action_id}')
@@ -432,18 +446,3 @@ def publish_action(action_id: str, repo_root: Optional[str] = None,
         'index_status': idx_status,
         'message': '已入索引，下次 MCP server 启动时自动生效' if in_index else '入索引失败',
     }
-
-
-def _find_action_file(action_id: str, repo_root: str) -> Optional[str]:
-    """根据 action_id 在 actions/ 目录中查找对应的动作文件。
-
-    **收口到 resolver.find_action_file**（计划 §六.6）：原来这里自己维护
-    候选路径 + 递归搜索，与 resolver / dependency 各写一份。本实现的判据
-    本来是对的（解析后比对 meta['id']），但留着就是第四份漂移源。
-    """
-    actions_dir = os.path.join(repo_root, 'actions')
-    try:
-        from .resolver import find_action_file
-        return find_action_file(action_id, actions_dir)
-    except Exception:
-        return None

@@ -80,8 +80,12 @@ def _find_omega_spec(action_id: str, actions_dir: str) -> Optional[str]:
                 if os.path.isfile(spec_path):
                     return spec_path
 
-    # 3. 与动作文件同目录
-    action_file = _find_action_file(action_id, actions_dir)
+    # 3. 与动作文件同目录（委托 resolver.find_action_file，避免双轨漂移）
+    try:
+        from .resolver import find_action_file
+        action_file = find_action_file(action_id, actions_dir)
+    except Exception:
+        action_file = None
     if action_file:
         action_dir = os.path.dirname(action_file)
         for nm in names:
@@ -100,12 +104,16 @@ def _find_action_file(action_id: str, actions_dir: str) -> Optional[str]:
     的文件，又**认不出**新格式 `.actus.schema.md` 的 YAML `id: xxx`（无引号）。
     实测连种子动作 `actus.basics.calculator` 都返回 None，导致
     `_find_omega_spec` 的「与动作同目录找 spec」分支永远失效。
+
+    现已收敛为单一实现：直接委托 `resolver.find_action_file`，保持兼容
+    签名（test_omega.py 与其它调用方仍 import 此名）。
     """
     try:
         from .resolver import find_action_file
         return find_action_file(action_id, actions_dir)
     except Exception:
         return None
+
 
 
 # ── Spec 加载与缓存 ──

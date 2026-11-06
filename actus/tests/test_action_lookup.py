@@ -81,14 +81,23 @@ def test_find_action_file_tolerates_bad_files(tmp_path):
 
 
 def test_dependency_lookup_delegates_and_finds_new_format(tmp_path):
-    """dependency 的查找必须委托给单一实现（三轨收口），且命中正确文件。"""
-    from vools.actus.dependency import DependencyResolver
+    """dependency 的查找必须委托给单一实现（三轨收口），且命中正确文件。
+
+    第 31 轮修复（统帅轮-08时）：原测试调用 `r._find_action_file`，
+    但该方法已在三轨收口时删除（DependencyResolver 内部委托
+    `resolver.find_action_file`）。改为通过 `_check_action` 验证
+    委托链路通畅——它内部调用 find_action_file 并返回 DepCheckResult。
+    """
+    from vools.actus.dependency import DependencyResolver, Dependency
     _write(tmp_path, "newfmt.actus.schema.md", NEW_FORMAT)
     r = DependencyResolver(actions_root=str(tmp_path))
-    hit = r._find_action_file("myapp.newfmt")
-    assert hit is not None
-    assert hit.endswith("newfmt.actus.schema.md"), \
-        "dependency 查找返回了错误的文件: %r" % (hit,)
+    # _check_action 内部委托 resolver.find_action_file(dep.name, self._actions_root)
+    dep = Dependency(name="myapp.newfmt")
+    result = r._check_action(dep)
+    assert result.satisfied, \
+        "dependency 查找未命中新格式动作: %r" % (result.message,)
+    assert "newfmt.actus.schema.md" in result.message, \
+        "dependency 查找返回了错误的文件: %r" % (result.message,)
 
 
 def test_seed_actions_resolvable_via_shared_helper():
