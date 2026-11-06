@@ -332,6 +332,11 @@ class DelayCurried:
 
         # BUG-254: 参数数量校验前置，避免多余位置参数被静默接受
         if not self._has_var_positional:
+            # 已绑定且非 *args/**kwargs 的参数个数
+            already_bound = sum(
+                1 for name, param in self.sig.parameters.items()
+                if name in self.bound_args and param.kind not in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD)
+            )
             # 当前可继续绑定的非可变参数位置数
             bindable = sum(
                 1 for name, param in self.sig.parameters.items()

@@ -124,7 +124,7 @@ def get_week(dt, num: int = 0, weekday: int = 1):
 
     参数:
         dt: 日期字符串
-        num: 周偏移
+        num: 周偏移（正数=未来，负数=过去）
         weekday: 一周的开始（1-7，默认为1即周一）
 
     返回:
