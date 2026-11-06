@@ -89,6 +89,24 @@
       "type": "object",
       "description": "入参 JSON Schema（draft-07）"
     },
+    "output_schema": {
+      "type": "object",
+      "description": "出参契约 JSON Schema（draft-07）— 声明 output 信封 data/status 形状（docs/46 #4 P1）"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["sync", "stream", "long_task"],
+      "description": "执行模式（docs/46 #6 P1）：sync 同步 / stream 流式 / long_task 长任务（可取消）；缺省 sync"
+    },
+    "resources": {
+      "type": "object",
+      "description": "资源声明（docs/46 #7 P1）— executor 消费（timeout_ms / max_processes 等）",
+      "properties": {
+        "timeout_ms": { "type": "integer", "minimum": 0, "description": "单次执行超时毫秒数" },
+        "max_processes": { "type": "integer", "minimum": 1, "description": "最大并发进程数" }
+      },
+      "additionalProperties": false
+    },
     "secrets": {
       "type": "array",
       "items": { "type": "string" },
