@@ -5,7 +5,7 @@
   * `pytest -m "not slow"` —— 日常快速子集（跳过真实 probe / 真实动作执行 /
     真实 TLS / 真实 crypto IO / 71 个 CLI 子命令全跑等慢测试）；
   * `pytest` —— 全量（CI 的 test-actus 作业必须跑这条）。
-慢测试清单：grep -rn "pytest.mark.slow" tests/。
+ 慢测试清单：grep -rn "pytest.mark.slow" tests/。
 
 背景（第 15 轮，真实事故）：测试套件跑完会把真实仓库 `_meta/` 写脏
 （`events.jsonl` / `probe_cache.json` / `actions.index.json` / `call_log.db` /
@@ -18,7 +18,37 @@
 本夹具**不碰** `actions/`、`contracts/` 等真实产物目录（那是产物，不是运行时状态）。
 """
 
+# ---------------------------------------------------------------------------
+# 模块导入路径修复（第 31 轮 / 统帅轮-08时）：修复 5 个测试文件收集失败
+#
+# 问题：在 `actus/` 目录跑 pytest 时，`vools` 解析到 `actus/vools/`（仅含 actus
+# 子模块），导致 `import vools.core` / `import vools.bridge` 失败，5 个测试文件
+# （test_action_lookup / test_desktop_contracts_r65 / test_directives /
+# test_mdtest_contracts_r55 / test_mdtest_validation）收集报错。
+#
+# 根因：actus/vools/ 是 actus 子项目的本地 vools 包副本（只含 actus 子模块），
+# 缺 core / bridge 子模块。vools.core 在仓库根 `vools/core/`，vools.bridge 在
+# `bridges/vools/bridge/`。
+#
+# 修复：把仓库根 `vools/` 与 `bridges/` 加入 sys.path，让 `vools` 优先解析到
+# 仓库根的完整包（含 core/bridge），而不是 actus/vools/ 的子集。
+# 注意：此修复只在测试收集期生效（conftest 顶部），不影响运行时安装态。
+# ---------------------------------------------------------------------------
+import sys
 import os
+
+# 仓库根 = actus/ 的上两级目录（actus/tests/conftest.py → actus/ → vools/）
+_VOOLS_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+# 把仓库根加入 sys.path（让 `import vools` 解析到完整包，而非 actus/vools/ 子集）
+if _VOOLS_REPO_ROOT not in sys.path:
+    sys.path.insert(0, _VOOLS_REPO_ROOT)
+
+# 把 bridges/ 加入 sys.path（让 `import vools.bridge` 解析到 bridges/vools/bridge/）
+_VOOLS_BRIDGES_DIR = os.path.join(_VOOLS_REPO_ROOT, "bridges")
+if _VOOLS_BRIDGES_DIR not in sys.path:
+    sys.path.insert(0, _VOOLS_BRIDGES_DIR)
+
 import shutil
 import time as _real_time
 
