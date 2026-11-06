@@ -610,12 +610,8 @@ class DependencyResolver:
             return {"id": action_id, "circular": True}
         visited.add(action_id)
 
-        # 查找动作文件（委托 resolver.find_action_file，避免双轨漂移）
-        try:
-            from .resolver import find_action_file
-            action_path = find_action_file(action_id, self._actions_root)
-        except Exception:
-            action_path = None
+        # 查找动作文件（委托 self._find_action_file → resolver.find_action_file）
+        action_path = self._find_action_file(action_id)
         if not action_path:
             return {"id": action_id, "found": False}
 
@@ -645,6 +641,19 @@ class DependencyResolver:
             "depth": depth
         }
 
+    def _find_action_file(self, action_id: str) -> Optional[str]:
+        """查找动作文件路径。**委托给 resolver.find_action_file**（格式无关）。
+
+        保留为 DependencyResolver 的方法以维持兼容性（test_dependency_contracts_r52.py
+        与 check_action_deps 调用方仍引用此名）。785601e6 收口时改为内联 resolver
+        调用，但方法签名保留，避免下游测试/调用方断链。
+        """
+        try:
+            from .resolver import find_action_file
+            return find_action_file(action_id, self._actions_root)
+        except Exception:
+            return None
+
     def _extract_deps_from_file(self, path: str) -> list:
         """从动作文件中提取 deps。"""
         try:
@@ -673,11 +682,8 @@ def get_resolver() -> DependencyResolver:
 def check_action_deps(action_id: str, auto_install: bool = False) -> dict:
     """检查指定动作的依赖（便捷函数）。"""
     resolver = get_resolver()
-    try:
-        from .resolver import find_action_file
-        action_path = find_action_file(action_id, resolver._actions_root)
-    except Exception:
-        action_path = None
+    # 查找动作文件（委托 self._find_action_file → resolver.find_action_file）
+    action_path = resolver._find_action_file(action_id)
     if not action_path:
         return {"ok": False, "error": f"action not found: {action_id}"}
 
