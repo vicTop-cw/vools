@@ -44,3 +44,28 @@ from .clipboard import (  # noqa: F401
     read_clipboard,
     write_clipboard,
 )
+
+# 压缩/解压能力（clone 自 clip/Jump/common/universal_compress.py，2026-11-06 增强）
+from . import compress  # noqa: F401
+from .compress import (  # noqa: F401
+    ALGO_DEFAULT,
+    compress,
+    compress_bytes,
+    compress_bytes_auto,
+    compress_file,
+    compress_many,
+    csv_bytes_to_rows,
+    decompress_bytes,
+    detect_algo,
+    pack_bytes,
+    pack_dict,
+    restore,
+    restore_bytes,
+    restore_bytes_to_bytes,
+    restore_file,
+    restore_many,
+    rows_to_csv_bytes,
+    unpack_dict,
+    unpack_files,
+    unpack_files_multi,
+)
