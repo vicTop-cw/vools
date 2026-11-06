@@ -91,12 +91,13 @@ class TestFindOmegaSpec:
 
     def test_same_dir_as_action(self, tmp_path, monkeypatch):
         """无 omega 目录 → 与动作文件同目录找。"""
+        import vools.actus.resolver as resolver
         acts = tmp_path / "actions"
         adir = acts / "public"
         adir.mkdir(parents=True)
         (adir / "s.actus.md").write_text("action", encoding="utf-8")
         (adir / "s.spec.json").write_text("{}", encoding="utf-8")
-        monkeypatch.setattr(omega, "_find_action_file",
+        monkeypatch.setattr(resolver, "find_action_file",
                             lambda aid, d: str(adir / "s.actus.md"))
         got = omega._find_omega_spec("s", str(acts))
         assert got == os.path.join(str(adir), "s.spec.json")
@@ -168,32 +169,32 @@ class TestValidateSpec:
         assert ok is True and errors == []
 
     def test_bug_o1_whitelist_missing_supported_types(self):
-        """BUG-O1（证据测试）：validate_spec 的 ASSERTION_TYPES 白名单缺 6 种
-        check_assertion 支持的类型。generate_spec_template 生成的模板自带
-        {"type": "status_ok"} → 自产模板过不了自己的验证器（spec_error）。
+        """BUG-O1（已修复验证）：validate_spec 的 ASSERTION_TYPES 白名单
+        现已包含 check_assertion 支持的全部类型（含 status_ok/all_of/
+        not_empty/path_exists/json_path/schema）。修复后这些类型应通过验证。
 
-        正确行为：白名单应包含 status_ok/all_of/not_empty/path_exists/
-        json_path/schema；修 BUG 后改此断言。
+        正确行为：白名单包含全部 20 种类型；修 BUG 后改此断言为 ok is True。
         """
         for atype in ("status_ok", "all_of", "not_empty", "path_exists",
                       "json_path", "schema"):
             ok, errors = omega.validate_spec(
                 self._spec(assertions=[{"type": atype}]))
-            assert ok is False, atype
-            assert any("未知 type" in e for e in errors), (atype, errors)
+            assert ok is True, atype
+            assert errors == [], (atype, errors)
         # 而 check_assertion 明明支持它们（运行时不拦）
         ok, _ = omega.check_assertion({"type": "status_ok"}, {"status": "ok"})
         assert ok is True
 
     def test_bug_o1_template_cannot_pass_own_validator(self):
-        """generate_spec_template 的输出直接喂 validate_spec → spec_error。
+        """BUG-O1（已修复验证）：generate_spec_template 的输出直接喂
+        validate_spec → 应通过验证（白名单已含 status_ok）。
 
-        生成器与验证器自相矛盾（模板含 status_ok，白名单没有它）。
+        修复前生成器与验证器自相矛盾（模板含 status_ok，白名单没有它）。
+        修复后模板应能通过自己的验证器。
         """
         template = omega.generate_spec_template("t.a", {"status": "ok"})
         ok, errors = omega.validate_spec(template)
-        assert ok is False
-        assert any("status_ok" in e for e in errors)
+        assert ok is True, errors
 
     def test_missing_required_fields(self):
         ok, errors = omega.validate_spec({})
