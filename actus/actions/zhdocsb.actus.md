@@ -175,8 +175,7 @@ def main(params: dict) -> dict:
 
         "on_change_action": on_change_action,
 
-        "message": "watcher dispatched by trigger engine", "data": None}
-
+        "message": "watcher dispatched by trigger engine"}
 
 
 # 入口自调用协议：读 ACTUS_PARAMS → 调 main(params) → 打印

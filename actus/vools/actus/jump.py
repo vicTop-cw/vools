@@ -756,6 +756,44 @@ def _patch_paramiko_filename_decoding():
     return True
 
 
+# ── SSH 连接重试参数 ──
+# 跳板机 CoreFTP（SSH-2.0-CoreFTP-0.3.3）实测会**间歇性**在算法协商阶段直接失败：
+# 同一台机、同一组凭据，31 次 jump_show 里 3 次报 "SSH 连接失败: Negotiation failed."，
+# 其余 28 次正常。算法交集是存在的（服务端 offer dh-group14-sha1 /
+# group-exchange-sha1 / group-exchange-sha256，paramiko 默认 _preferred_kex 里都有），
+# 所以这不是静态不兼容，而是服务端在 banner/kex 阶段的瞬时拒绝 —— 重试即可。
+_SSH_CONNECT_ATTEMPTS = 3
+_SSH_CONNECT_BACKOFF = 0.5
+
+# 只有「重试有意义」的失败才重试。认证失败（密码错、密钥被拒）重试多少次都是
+# 同一个结果，还会把服务端的锁死窗口放大 N 倍；主机密钥不匹配是配置问题，同理。
+#
+# 连接被重置/拒绝（WSAE* 一族）**刻意不重试**：实测这台 CoreFTP 在一次协商失败
+# 后，紧接着的下一连直接被掐 banner（WinError 10053）——那是服务端的限速/冷却
+# 信号，再撞只会把窗口拉长（README §5「别连续重试」的实测结论）。
+_TRANSIENT_SSH_MARKERS = (
+    "negotiation failed",
+    "no existing session",
+    "error reading ssh protocol banner",
+    "timed out",
+    "timeout",
+)
+
+
+def _is_transient_ssh_error(exc):
+    """判断一次 connect 失败是否值得重试（判据见 _TRANSIENT_SSH_MARKERS）。
+
+    用类名而不是 isinstance：paramiko 是惰性导入的，本模块顶层没有它的引用；
+    而 AuthenticationException / BadHostKeyException 在 paramiko 里是稳定的类名。
+    """
+    name = type(exc).__name__
+    if name in ("AuthenticationException", "BadHostKeyException",
+                "PartialAuthentication"):
+        return False
+    text = str(exc).lower()
+    return any(marker in text for marker in _TRANSIENT_SSH_MARKERS)
+
+
 def _sftp_connect(remote_host, remote_user, port=22, key_path=None,
                   password=None, timeout=300):
     """建 SFTP 会话。
@@ -764,14 +802,15 @@ def _sftp_connect(remote_host, remote_user, port=22, key_path=None,
     主机密钥策略用 AutoAddPolicy —— 与 build_ssh_opts 里那两条
     StrictHostKeyChecking=no / UserKnownHostsFile=/dev/null 对齐；
     不设的话首次连任何机器都会抛 "not found in known_hosts"。
+
+    瞬时失败（协商/banner/连接被重置）按 _SSH_CONNECT_ATTEMPTS 重试，
+    每次重试都新建 client —— 失败的 client 不可复用。
     """
     _patch_paramiko_filename_decoding()
     paramiko, err = _import_paramiko()
     if paramiko is None:
         return None, {"status": "error", "message": err}
 
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     kwargs = {
         "hostname": remote_host,
         "username": remote_user,
@@ -787,14 +826,22 @@ def _sftp_connect(remote_host, remote_user, port=22, key_path=None,
     if password:
         kwargs["password"] = password
 
-    try:
-        client.connect(**kwargs)
-    except Exception as e:
+    attempts = max(1, int(_SSH_CONNECT_ATTEMPTS))
+    for attempt in range(1, attempts + 1):
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
-            client.close()
-        except Exception:
-            pass
-        return None, {"status": "error", "message": "SSH 连接失败: %s" % e}
+            client.connect(**kwargs)
+            break
+        except Exception as e:
+            try:
+                client.close()
+            except Exception:
+                pass
+            if attempt < attempts and _is_transient_ssh_error(e):
+                time.sleep(_SSH_CONNECT_BACKOFF * attempt)
+                continue
+            return None, {"status": "error", "message": "SSH 连接失败: %s" % e}
 
     try:
         sftp = client.open_sftp()

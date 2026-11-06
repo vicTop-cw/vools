@@ -395,8 +395,8 @@ class TestExecuteDeps:
 
 class TestExecuteOmegaGate:
     def _run(self, flow, monkeypatch, r98_bridge, verify_ret=None,
-             verify_raise=None):
-        r98_bridge['report'] = {'blocks': [_ok_block('{"n":1}')]}
+             verify_raise=None, entry_stdout='{"n":1}'):
+        r98_bridge['report'] = {'blocks': [_ok_block(entry_stdout)]}
         monkeypatch.setattr(ex, '_find_omega_spec',
                             lambda aid, ad=None: 'X:/spec/omega/r98.json')
 
@@ -432,6 +432,63 @@ class TestExecuteOmegaGate:
         assert r['status'] == 'failed'
         assert r['error']['code'] == 'omega_gate_failed'
         assert '42%' in r['error']['message']
+
+    def test_gate_failed_preserves_inner_error_code(self, flow, monkeypatch,
+                                                    r98_bridge):
+        """动作自身失败时，外层 error.code 必须是动作的真实码，不是 omega_gate_failed。
+
+        实测场景（jump_show 列不存在的目录）：动作回 permission_denied，而 Ω 断言
+        data.status=='ok' 必然判不过。旧实现把外层码一律盖成 omega_gate_failed，
+        于是「SSH 连不上 / 路径不存在」与「Ω 契约没过关」在回执里同形，调用方
+        （CLI 的 _map_error_code、面板、重试策略）拿不到据以决策的根因。
+        """
+        failed_envelope = json.dumps({
+            'status': 'failed', 'data': None,
+            'error': {'code': 'permission_denied', 'message': 'no such path'}})
+        r = self._run(flow, monkeypatch, r98_bridge,
+                      verify_ret={'status': 'ok',
+                                  'gate': {'passed': False, 'accuracy': 0}},
+                      entry_stdout=failed_envelope)
+        assert r['status'] == 'failed'
+        assert r['error']['code'] == 'permission_denied', '真实错误码被 Ω 码盖掉了'
+        assert '动作自身失败' in r['error']['message']
+        # Ω 结论降为附加信息，不丢
+        assert r['error']['details']['omega']['gate']['passed'] is False
+        assert r['error']['details']['action_error']['code'] == 'permission_denied'
+
+    def test_gate_failed_inner_ok_still_omega_gate_failed(self, flow, monkeypatch,
+                                                          r98_bridge):
+        """动作自身成功、纯粹 Ω 判不过 ⇒ 仍用 omega_gate_failed（不能误报根因）。"""
+        ok_envelope = json.dumps({'status': 'ok', 'data': {'n': 1}, 'error': None})
+        r = self._run(flow, monkeypatch, r98_bridge,
+                      verify_ret={'status': 'ok',
+                                  'gate': {'passed': False, 'accuracy': 50}},
+                      entry_stdout=ok_envelope)
+        assert r['status'] == 'failed'
+        assert r['error']['code'] == 'omega_gate_failed'
+
+    def test_gate_failed_inner_error_code_empty_string(self, flow, monkeypatch,
+                                                       r98_bridge):
+        """动作失败但 error.code 为空串 ⇒ 不能把空串当码，落回 omega_gate_failed。"""
+        failed_envelope = json.dumps({
+            'status': 'failed', 'data': None,
+            'error': {'code': '', 'message': 'boom'}})
+        r = self._run(flow, monkeypatch, r98_bridge,
+                      verify_ret={'status': 'ok',
+                                  'gate': {'passed': False, 'accuracy': 0}},
+                      entry_stdout=failed_envelope)
+        assert r['error']['code'] == 'omega_gate_failed'
+
+    def test_gate_failed_inner_error_not_dict(self, flow, monkeypatch,
+                                              r98_bridge):
+        """动作失败但 error 不是 dict（字符串/None）⇒ 不炸，落回 omega_gate_failed。"""
+        failed_envelope = json.dumps(
+            {'status': 'failed', 'data': None, 'error': 'plain string'})
+        r = self._run(flow, monkeypatch, r98_bridge,
+                      verify_ret={'status': 'ok',
+                                  'gate': {'passed': False, 'accuracy': 0}},
+                      entry_stdout=failed_envelope)
+        assert r['error']['code'] == 'omega_gate_failed'
 
     def test_verify_raises_spec_invalid(self, flow, monkeypatch, r98_bridge):
         r = self._run(flow, monkeypatch, r98_bridge,

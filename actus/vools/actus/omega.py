@@ -26,7 +26,8 @@ from pathlib import Path
 ASSERTION_TYPES = frozenset({
     "exists", "not_exists", "type", "equals", "not_equals", "approx",
     "regex", "contains", "not_contains", "length", "range", "subset",
-    "superset", "any_of",
+    "superset", "any_of", "all_of", "status_ok", "not_empty", "json_path",
+    "path_exists", "schema",
 })
 
 
