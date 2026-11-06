@@ -4,7 +4,29 @@ __all__ = ['Action', 'parse_cfg', 'parse_cfg_from_file', 'parse_action_from_sche
 
 import json
 import os
-from vools.core.dataclass_compat import dataclass, field
+import sys as _sys
+
+# 第 31 轮修复（统帅轮-08时）：vools.core 在仓库根 vools/core/，vools.bridge
+# 在 bridges/vools/bridge/，都不在 actus/vools/ 子集里。当 cwd 在 actus/ 时
+# vools 解析到 actus/vools/（命名空间包，仅含 actus 子模块），core/bridge
+# 导入失败。把仓库根与 bridges/ 加入 sys.path 并扩展 vools.__path__，
+# 让命名空间包 vools 能跨目录看到 core/bridge 子模块。仅在导入失败时补路径。
+try:
+    from vools.core.dataclass_compat import dataclass, field
+except ModuleNotFoundError:
+    _repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    if _repo_root not in _sys.path:
+        _sys.path.insert(0, _repo_root)
+    import vools as _vools_pkg
+    _vools_root = os.path.join(_repo_root, "vools")
+    if _vools_root not in _vools_pkg.__path__:
+        _vools_pkg.__path__.append(_vools_root)
+    # vools.bridge 在 bridges/vools/bridge/，需把 bridges/ 加入 vools.__path__
+    _bridges_root = os.path.join(_repo_root, "bridges", "vools")
+    if _bridges_root not in _vools_pkg.__path__:
+        _vools_pkg.__path__.append(_bridges_root)
+    from vools.core.dataclass_compat import dataclass, field
+
 from typing import Optional, List
 
 from .errors import ActionError
