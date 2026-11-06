@@ -31,7 +31,10 @@
 计数 + `logging` 记录（`psutil_unavailable` 只记一次，避免刷屏）。
 """
 
-from __future__ import annotations
+# 注意：本包声明 requires-python >= 3.6（vools pyproject.toml），不得使用
+# `from __future__ import annotations`（PEP 563，3.7+ 语法）——否则在 3.6
+# 测试环境下 import 即 SyntaxError，波及全部 import vools.actus 的测试收集。
+# 本模块注解全部为 typing 经典写法（Optional/Union/Sequence），无需延迟求值。
 
 import logging
 import os

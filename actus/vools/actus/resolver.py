@@ -16,7 +16,8 @@
   ambiguous: 多命中时的候选列表
 """
 
-from __future__ import annotations
+# 注意：同 _proc.py——包声明 requires-python >= 3.6，禁用 PEP 563 延迟注解
+# （3.7+ 语法）。本模块注解为 typing 经典写法 + dataclass，急切求值即可。
 
 import hashlib
 import os
