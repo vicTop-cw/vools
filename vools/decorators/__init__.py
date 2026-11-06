@@ -98,7 +98,7 @@ def _load_curried():
     return _curried_cache
 
 #灵活的占位符
-from .flex_pos import flex_pos
+from .flex_pos import flex_pos, _, is_placeholder, _Placeholder
 
 __all__ = [
     # 缓存
