@@ -49,6 +49,13 @@ _VOOLS_BRIDGES_DIR = os.path.join(_VOOLS_REPO_ROOT, "bridges")
 if _VOOLS_BRIDGES_DIR not in sys.path:
     sys.path.insert(0, _VOOLS_BRIDGES_DIR)
 
+# 把 rx/ 加入 sys.path（让 `import vools.reactive` 解析到 rx/vools/reactive/，
+# 供 vools.actus.clipboard 使用；vools/__init__ 用 extend_path 合并命名空间，
+# 不加 rx 根则 vools.reactive 整体不可见）
+_VOOLS_RX_DIR = os.path.join(_VOOLS_REPO_ROOT, "rx")
+if _VOOLS_RX_DIR not in sys.path:
+    sys.path.insert(0, _VOOLS_RX_DIR)
+
 # 把 actus/vools/ 加入 vools.__path__（让 `import vools.actus` 解析到
 # actus/vools/actus/，因为 actus 源码在 actus/vools/actus/ 而非 vools/actus/）
 _ACTUS_VOOLS_DIR = os.path.join(_VOOLS_REPO_ROOT, "actus", "vools")
