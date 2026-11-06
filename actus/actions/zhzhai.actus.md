@@ -125,7 +125,7 @@ def main(params: dict) -> dict:
 
     result = f"processed: {param}"
 
-    return {"status": "ok", "result": result, "data": None}
+    return {"status": "ok", "result": result}
 
 
 

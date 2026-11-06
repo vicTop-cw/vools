@@ -157,7 +157,8 @@ def _execute_template_kind(action, action_id, params, **kw):
     try:
         result = scaffold_action(description=str(desc),
                                  action_id=action.meta.get('target') or None,
-                                 trust=action.meta.get('trust') or 'audit')
+                                 trust=action.meta.get('trust') or 'audit',
+                                 force=True)
     except Exception as exc:
         return {
             'status': 'failed', 'data': None,
@@ -531,12 +532,34 @@ def execute(action_id: str, params: dict = None,
                 elif not omega_report.get('gate', {}).get('passed', False):
                     # 缺省值取 False：走到这里 gate 必然存在（pass/fail 两条都带），
                     # 但万一将来新增第三种回包形状，宁可判不过也不放行。
+                    #
+                    # 错误码不能一律盖成 omega_gate_failed：动作自身已经失败时，
+                    # 它的真实码（如 network_error / file_not_found）才是调用方
+                    # （CLI 的 _map_error_code、面板、重试策略）据以决策的信息，
+                    # 盖掉之后「SSH 连不上」和「Ω 契约没过关」在回执里同形。
+                    # 只在动作本身成功、确实纯粹是 Ω 判不过时才用 omega_gate_failed。
+                    inner = result.get('data') if isinstance(result.get('data'), dict) else {}
+                    inner_err = inner.get('error') if isinstance(inner.get('error'), dict) else None
+                    inner_code = inner_err.get('code') if inner_err else None
+                    gate_msg = (f"Ω-gate 验证失败，准确率 "
+                                f"{omega_report['gate'].get('accuracy', 0)}% < 100%")
                     result['status'] = 'failed'
-                    result['error'] = {
-                        'code': 'omega_gate_failed',
-                        'message': f"Ω-gate 验证失败，准确率 {omega_report['gate'].get('accuracy', 0)}% < 100%",
-                        'details': omega_report
-                    }
+                    if inner_code:
+                        # 保留动作自己的码，只把 Ω 结论降为附加信息。
+                        msg = gate_msg
+                        if inner.get('status') != 'ok':
+                            msg = f"{gate_msg}（动作自身失败：{inner_code}）"
+                        result['error'] = {
+                            'code': inner_code,
+                            'message': msg,
+                            'details': {'omega': omega_report, 'action_error': inner_err},
+                        }
+                    else:
+                        result['error'] = {
+                            'code': 'omega_gate_failed',
+                            'message': gate_msg,
+                            'details': omega_report,
+                        }
             except Exception as e:
                 # 原本 `except Exception: pass` 把坏 spec 抹平成「这个动作没配 spec」——
                 # 两种情况的回执完全同形，调用方无从分辨。现在既留痕也判不过。

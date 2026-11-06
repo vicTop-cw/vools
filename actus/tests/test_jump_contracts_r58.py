@@ -1768,6 +1768,109 @@ class TestSyncParamiko:
         assert "plan broken" in out["message"]
 
 
+# ═══════════════ SSH 连接重试（2026-11-03 修：间歇性 Negotiation failed）═══════════════
+# 背景：同一台 CoreFTP（SSH-2.0-CoreFTP-0.3.3），31 次 jump_show 里 3 次报
+# "SSH 连接失败: Negotiation failed."，其余 28 次正常。算法交集存在 ⇒ 不是静态
+# 不兼容，是服务端在 banner/kex 阶段的瞬时拒绝 ⇒ 重试可解。但重试必须**只**覆盖
+# 瞬时失败：认证错重试 N 次是同一个结果且放大锁死窗口；连接被重置/拒绝是服务端
+# 限速信号，再撞只会把窗口拉长。下面 4 条把这些判据钉住。
+
+
+class FakeTransientSSHClient(FakeSSHClient):
+    """前 N 次 connect 抛瞬时错误，之后成功。"""
+
+    fail_times = 0
+    fail_exc = None
+
+    def __init__(self):
+        # FakeSSHClient.__init__ 把实例记在 FakeSSHClient.instances 上，
+        # 这里改成记在自己名下，否则子类场景下断言永远看到空列表。
+        self.closed = False
+        self.kwargs = None
+        self._sftp = object()
+        FakeTransientSSHClient.instances.append(self)
+
+    def connect(self, **kw):
+        self.kwargs = kw
+        if FakeTransientSSHClient.fail_times > 0:
+            FakeTransientSSHClient.fail_times -= 1
+            raise FakeTransientSSHClient.fail_exc
+        super().connect(**kw)
+
+
+class TestSftpConnectRetry:
+    def _fake_paramiko(self, monkeypatch):
+        fake = types.ModuleType("paramiko")
+        fake.SSHClient = FakeTransientSSHClient
+        fake.AutoAddPolicy = lambda: object()
+        monkeypatch.setattr(jm, "_import_paramiko", lambda: (fake, None))
+        FakeTransientSSHClient.instances = []
+        FakeTransientSSHClient.fail_times = 0
+        FakeTransientSSHClient.fail_exc = None
+
+    def test_transient_negotiation_retries_then_succeeds(self, monkeypatch):
+        """第 1 次 Negotiation failed、第 2 次成功 ⇒ 最终建连成功，且只重试 1 次。"""
+        self._fake_paramiko(monkeypatch)
+        FakeTransientSSHClient.fail_times = 1
+        FakeTransientSSHClient.fail_exc = Exception("Negotiation failed.")
+        pair, err = jm._sftp_connect("h", "u", 22, None, None, 300)
+        assert err is None and pair is not None
+        # 2 个 client：失败的 1 个 + 成功的 1 个
+        assert len(FakeTransientSSHClient.instances) == 2
+
+    def test_transient_exhausts_attempts_and_reports_last_error(self, monkeypatch):
+        """每次都是 Negotiation failed ⇒ 试满 _SSH_CONNECT_ATTEMPTS 次后如实报错。"""
+        self._fake_paramiko(monkeypatch)
+        FakeTransientSSHClient.fail_times = 99
+        FakeTransientSSHClient.fail_exc = Exception("Negotiation failed.")
+        pair, err = jm._sftp_connect("h", "u", 22, None, None, 300)
+        assert pair is None and err["status"] == "error"
+        assert "Negotiation failed" in err["message"]
+        assert len(FakeTransientSSHClient.instances) == jm._SSH_CONNECT_ATTEMPTS
+
+    def test_auth_failure_not_retried(self, monkeypatch):
+        """认证失败不重试 —— 重试 N 次是同一个结果，还放大服务端锁死窗口。"""
+
+        class AuthenticationException(Exception):
+            """仿 paramiko 的类名，走 _is_transient_ssh_error 的类名判据。"""
+
+        self._fake_paramiko(monkeypatch)
+        FakeTransientSSHClient.fail_times = 99
+        FakeTransientSSHClient.fail_exc = AuthenticationException("Authentication failed.")
+        pair, err = jm._sftp_connect("h", "u", 22, None, None, 300)
+        assert pair is None and "SSH 连接失败" in err["message"]
+        assert len(FakeTransientSSHClient.instances) == 1, "认证失败不该重试"
+
+    def test_connection_reset_not_retried(self, monkeypatch):
+        """连接被重置（服务端限速信号）不重试 —— 再撞只会把冷却窗口拉长。"""
+        self._fake_paramiko(monkeypatch)
+        FakeTransientSSHClient.fail_times = 99
+        FakeTransientSSHClient.fail_exc = OSError(10053, "Connection aborted.")
+        pair, err = jm._sftp_connect("h", "u", 22, None, None, 300)
+        assert pair is None and "SSH 连接失败" in err["message"]
+        assert len(FakeTransientSSHClient.instances) == 1, "连接被重置不该重试"
+
+    def test_is_transient_ssh_error_markers(self):
+        """判据本身：瞬时 marker 命中、非瞬时/认证/主机密钥不命中。"""
+        assert jm._is_transient_ssh_error(Exception("Negotiation failed.")) is True
+        assert jm._is_transient_ssh_error(Exception("Error reading SSH protocol banner")) is True
+        assert jm._is_transient_ssh_error(Exception("Connection timed out")) is True
+        assert jm._is_transient_ssh_error(Exception("No existing session")) is True
+        assert jm._is_transient_ssh_error(Exception("Authentication failed.")) is False
+        assert jm._is_transient_ssh_error(Exception("[Errno 13] Permission denied")) is False
+        # 类名优先于文案：paramiko 的认证异常文案里也可能出现 "fail"
+        class AuthenticationException(Exception):
+            pass
+        assert jm._is_transient_ssh_error(AuthenticationException("Negotiation failed")) is False
+
+    def test_marker_table_excludes_reset_family(self):
+        """markers 表里不得出现连接重置/拒绝一族（否则又变成盲目重试）。"""
+        joined = " ".join(jm._TRANSIENT_SSH_MARKERS)
+        for bad in ("connection reset", "connection aborted", "connection refused",
+                    "10053", "10054", "10060", "10061"):
+            assert bad not in joined, bad
+
+
 # ═══════════════ 导出 ═══════════════
 
 class TestAll:

@@ -1629,7 +1629,7 @@ class ClipboardDispatcher:
 
         sig = _make_signature(change_type, content, files)
         now = time.time()
-        log.debug("_dispatch_once: received sig=%s, ct=%s, content_len=%d, self_sigs=%d", 
+        log.debug("_dispatch_once: received sig=%s, ct=%s, content_len=%d, self_sigs=%d",
                   sig[:2] if isinstance(sig, tuple) else sig, change_type, len(content) if content else 0,
                   len(self._self_signatures))
 
@@ -1645,7 +1645,7 @@ class ClipboardDispatcher:
                     return
                 # 额外检查：如果内容长度和类型匹配，也认为是自己写回的
                 for pending_sig in self._self_signatures:
-                    if (pending_sig[0] == sig[0] and 
+                    if (pending_sig[0] == sig[0] and
                         pending_sig[2] == sig[2]):
                         try:
                             self._self_signatures.remove(pending_sig)
@@ -1736,11 +1736,11 @@ class ClipboardDispatcher:
             if ct2 == ClipChangeType.CLEAR or c2 is None:
                 raise ValueError("clipboard not updated yet")
             sig = _make_signature(ct2, c2, f2)
-            log.debug("set_clipboard: written sig=%s, ct=%s, content_len=%d", 
+            log.debug("set_clipboard: written sig=%s, ct=%s, content_len=%d",
                       sig[:2] if isinstance(sig, tuple) else sig, ct2, len(c2) if c2 else 0)
         except Exception as e:
             sig = _make_signature(change_type, content, files)
-            log.debug("set_clipboard: fallback sig=%s, change_type=%s", 
+            log.debug("set_clipboard: fallback sig=%s, change_type=%s",
                       sig[:2] if isinstance(sig, tuple) else sig, change_type)
 
         with self._lock:
