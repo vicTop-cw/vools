@@ -733,7 +733,7 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
   判据：① RED —— stash 掉 sql 修复后守卫点名 `[core] vools/sql/__init__.py (requires-python >=3.6)`；给豁免表塞一条 bogus 条目后第④格点名 "vools/datetime 已带兜底，豁免条目该删"；② 修复后守卫双版本 4 passed、tests/sql 6 格双版本 exit=0、bridges/tests/test_vbnet_lazy_attr.py 双版本 exit=0；③ py3.6 实测 vools.sql star 核验 OK（37 名字）、vbnet 属性访问与 from-import 给出同一模块对象；④ vbnet 兜底成本实测 0.0s（api 本已在 sys.modules）。
   过程诚实记录（重要）：本条最初写的是"三处全修 + 成本实测 import vools.task 前后都 0.63s 没吃掉惰性收益"——【那句成本结论是错的】：`import vools.task` 单进程探针确实不拉 sql/pyk，但根 conftest 会把 pyk/ 挂进 sys.path，`import vools` 的既有 <3.7 分支连带 import vools.pyk，于是 pyk 兜底被触发，py3.6 `import vools` 由 0.54s 涨到 1.28s（core 一项 1.17s + numpy/pandas）。ABAB 交错各 4 次（不带 tests/sql 以排除串扰）证明 tests/task::test_concurrent_submissions 【补后 4/4 失败、不补 4/4 通过】。第一版 ABAB 得出"决定性归因"是【假证据】——它是固定顺序（PRE 总在先），机器负载随会话上升造成错觉，反向顺序重跑才把结论推翻。故回退 pyk 兜底，缺口转记 BUG-80。
 
-## BUG-80 [2026-10-16T22:00:00Z] [medium] OPEN
+## BUG-80 [2026-10-16T22:00:00Z] [medium] CLOSED
 - summary: pyk/vools/pyk/__init__.py 的 11 个懒加载名在 py3.6 上属性访问/star import 拿不到（PEP 562 是 3.7+），已知缺口，因引入回归而【本轮刻意不补】
 - detail: 现象：py3.6 下 `vools.pyk.core`、`from vools.pyk import *` 均失败（__all__ 11 个名字里只有被别处先绑过的 tools 幸免），而 11 个子模块本身在 py3.6 都能直接 import —— 缺的只是属性解析层；`from vools.pyk import core` 这类 from-import 实测可用（importlib 退回子模块导入）。vools-pyk 声明 requires-python=">=3.6"，属承诺范围内的缺口。
   为什么不补（实测数据，不是推测）：补一段 <3.7 主动绑定后
@@ -743,6 +743,16 @@ f({"k": 1})   # 期望走 fallback；实际 ModuleNotFoundError
   现状登记方式：tests/core/test_pep562_py36_convention.py 的 KNOWN_EXEMPTIONS 表带量化理由，且第④格会在"缺口已被解决"时反向报警，不会烂成无声豁免。
 - reported_by: polish-lead
 - ref_call: 组合模式寻虫轮（BUG-78 修复过程中用双版本实测拦下的过度修复）
+
+
+### CLOSED(2026-11-08T13:11:55Z / BUG-80)
+- evidence: 归档关闭，非 FIXED。处置定性：本条实为 **feature 请求误入 bug 台账**——为 py3.6 补 PEP 562 属性解析层（11 个懒加载名在 <3.7 的属性访问形态）属增强性变更，不属待修缺陷；已按实测数据确认【刻意不补】，故关闭归档、不产生代码变更。
+  依据（detail 内已含实测数据，此处归档复述关键判据）：
+  ① 补 <3.7 主动绑定后，py3.6 `import vools` 由 0.54s 涨到 1.28s（根 conftest 使 vools/__init__ 的既有 3.6 分支连带 import vools.pyk，core 单项 1.17s 并拉起 numpy+pandas）；
+  ② 时序敏感用例 tests/task/test_task_complete.py::TestEdgeCases::test_concurrent_submissions（自带 20s 预算）在 ABAB 交错各 4 次对照下【补后 4/4 失败、不补 4/4 通过】——补缺口换稳定套件回归，净亏；
+  ③ 真修前置条件是跨模块设计变更（`import vools` 在 py3.6 不连带拉起 vools.pyk：把 pyk 从 3.6 预导入清单摘掉，或给 pyk 重依赖做按需分层），不在单条 bug 处置范围，将来若解决可另立任务；
+  ④ 现状由 tests/core/test_pep562_py36_convention.py 的 KNOWN_EXEMPTIONS 表带量化理由登记，且第④格会在"缺口已被解决"时反向报警，不会烂成无声豁免。
+  处置效果：BUG-80 由 OPEN 转 CLOSED 后，台账 OPEN 项仅保留真实待修缺陷，本条目作为已知取舍决策留档备查。
 
 
 ## BUG-79 [2026-10-16T21:00:00Z] [medium] FIXED
