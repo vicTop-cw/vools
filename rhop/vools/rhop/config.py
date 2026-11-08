@@ -66,6 +66,13 @@ def _key_from_cfg(key_cfg):
     return str(key_cfg)
 
 
+def _mask_spec(spec, secret_keys):
+    """导出配置时对凭据字段打码（password / key_path / token 不落盘）。"""
+    if not isinstance(spec, dict):
+        return spec
+    return {k: ("***" if k in secret_keys else v) for k, v in spec.items()}
+
+
 def _channel_from_dict(spec: dict):
     """按 spec 构造在线通道（kind: sftp / git / relay）。"""
     kind = (spec.get("kind") or "sftp").lower()
@@ -145,16 +152,16 @@ class RhopConfig(object):
         return cls.from_dict(data)
 
     def to_dict(self) -> dict:
-        """导出配置 dict（密钥不落盘，仅回填存在性标记）。"""
+        """导出配置 dict（密钥与通道凭据不落盘，仅回填存在性标记）。"""
         out = {
             "name": self.name,
             "role": self.role,
             "has_key": bool(self.key),
-            "sftp": {k: ("***" if k in ("password", "key_path") else v)
-                     for k, v in self.sftp.items()},
-            "online": self.online,
+            "sftp": _mask_spec(self.sftp, ("password", "key_path")),
+            "online": [_mask_spec(spec, ("password", "key_path", "token"))
+                       for spec in self.online],
             "shared": self.shared,
-            "relay": self.relay,
+            "relay": _mask_spec(self.relay, ("token",)),
         }
         return out
 
