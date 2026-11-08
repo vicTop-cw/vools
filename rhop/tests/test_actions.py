@@ -207,15 +207,27 @@ class TestJumpProbe:
         assert result["transport"] == "paramiko"
 
     def test_probe_missing_host(self):
+        # T0r2.2.1：配置缺失视为不可达，status 必须为 error（旧行为恒 ok）
         result = jump_probe({"sftp": {"port": 22}})
-        assert result["status"] == "ok"
+        assert result["status"] == "error"
         assert result["reachable"] is False
         assert "host" in result["detail"]
 
     def test_probe_unreachable_port(self):
+        # T0r2.2.1：端口不可达必须反映为 error，不再恒 ok
         result = jump_probe(_cfg(1, timeout=3))
-        assert result["status"] == "ok"
+        assert result["status"] == "error"
         assert result["reachable"] is False
+
+    def test_probe_unreachable_flow_through_run_action(self, sftp_server):
+        """T0r2.2.1 回归：probe 不可达经 run_action + omega_unwrap 正确判失败。"""
+        result = run_action("jump.probe", {"sftp": {"port": 1, "host": "127.0.0.1", "timeout": 2}})
+        assert result["status"] == "ok"  # run_action 外层只反映调用成功
+        assert result["data"]["status"] == "error"
+        assert result["data"]["reachable"] is False
+        unwrapped = omega_unwrap(result)
+        assert unwrapped["status"] == "error"
+        assert unwrapped["omega_gate"]["action"] == "jump.probe"
 
 
 class TestJumpPushPull:

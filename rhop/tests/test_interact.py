@@ -89,10 +89,20 @@ class TestInteractRoundtrip:
         """判据：仅配置+动作名完成一次交互闭环（A 发请求包 -> B 执行 -> 回传）。"""
         cfg = _base_cfg(tmp_path)
         result = interact(cfg, "jump.probe", {}, mode="roundtrip")
-        assert result["status"] == "ok"
-        assert result["result"] == "ok"
-        assert result["action_result"]["status"] == "ok"
-        assert result["action_result"]["reachable"] is False  # 本机配置无 host，探测不可达但动作本身 ok
+        # T0r2.2.1：本机配置无 host，probe 反映真实不可达 -> 对端执行结果为 error 并回传
+        assert result["status"] == "ok"  # 闭环本身成功
+        assert result["result"] == "error"
+        assert result["action_result"]["status"] == "error"
+        assert result["action_result"]["omega_gate"]["action"] == "jump.probe"
+        assert result["action_result"]["omega_gate"]["data"]["reachable"] is False
+
+    def test_execute_probe_unreachable_propagates_error(self, tmp_path):
+        """T0r2.2.1 回归：execute 模式 probe 不可达，Ω-gate 错误向外传播。"""
+        cfg = _base_cfg(tmp_path, sftp={"host": "127.0.0.1", "port": 1, "timeout": 2})
+        result = interact(cfg, "jump.probe", {})
+        assert result["status"] == "error"
+        assert "omega_gate" in result
+        assert result["omega_gate"]["action"] == "jump.probe"
 
     def test_judge_request_and_handle(self, tmp_path):
         """request + handle_request：发送侧投递、接收侧解密执行并回传。"""
@@ -132,8 +142,8 @@ class TestInteractRoundtrip:
         cfg = _base_cfg(tmp_path)
         result = interact(cfg, "jump.probe", {}, mode="roundtrip")
         ar = result["action_result"]
-        assert ar["status"] == "ok"
-        assert "reachable" in ar
+        assert ar["status"] == "error"  # T0r2.2.1：无 host -> 真实不可达
+        assert "reachable" in ar["omega_gate"]["data"]
 
 
 class TestHandleRequestDirect:
@@ -143,4 +153,4 @@ class TestHandleRequestDirect:
         cfg_obj = RhopConfig.from_dict(cfg)
         direct = run_action("jump.probe", cfg_obj.action_cfg(), {})
         assert direct["status"] == "ok"
-        assert direct["data"]["status"] == "ok"
+        assert direct["data"]["status"] == "error"  # T0r2.2.1：无 host -> 真实不可达

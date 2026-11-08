@@ -615,12 +615,18 @@ def _payload_bool(payload, key, default=False):
 # ---- 公开动作 ----
 
 def jump_probe(cfg, payload=None):
-    """探测 SFTP 跳板机可达性（TCP 端口探测优先，paramiko 可用时真实连接）。"""
+    """探测 SFTP 跳板机可达性（TCP 端口探测优先，paramiko 可用时真实连接）。
+
+    可达性语义（T0r2.2.1 修正）：仅当连接成功才算可达，返回 status="ok"；
+    配置缺失 / 认证失败 / 端口不可达一律 status="error" + reachable=False，
+    不再出现"无论可达性都返回 status=ok"的旧行为，错误经 run_action / interact
+    的 Ω-gate 正确向外传播。
+    """
     sftp = _sftp_cfg_of(cfg)
     host = sftp.get("host")
     port = int(sftp.get("port", 22) or 22)
     if not host:
-        return {"status": "ok", "reachable": False,
+        return {"status": "error", "reachable": False,
                 "detail": "缺少 sftp.host 配置（视为不可达）", "transport": "none"}
     paramiko, _ = _import_paramiko()
     try:
@@ -629,7 +635,7 @@ def jump_probe(cfg, payload=None):
                                       sftp.get("key_path"), sftp.get("password"),
                                       timeout=int(sftp.get("timeout", 10) or 10))
             if err:
-                return {"status": "ok", "reachable": False,
+                return {"status": "error", "reachable": False,
                         "detail": err.get("message", "连接失败"), "transport": "paramiko"}
             client, sftp_conn = pair
             _sftp_close(client, sftp_conn)
@@ -642,7 +648,7 @@ def jump_probe(cfg, payload=None):
         return {"status": "ok", "reachable": True,
                 "detail": "TCP 端口可达 %s:%s" % (host, port), "transport": "tcp"}
     except Exception as e:
-        return {"status": "ok", "reachable": False, "detail": str(e)}
+        return {"status": "error", "reachable": False, "detail": str(e)}
 
 
 def jump_push(cfg, payload=None):
