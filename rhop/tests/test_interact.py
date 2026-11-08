@@ -69,6 +69,23 @@ class TestRhopConfig:
         assert acfg["sftp"]["host"] == "h"
         assert acfg["has_key"] is True
 
+    def test_to_dict_masks_all_credentials(self, tmp_path):
+        """导出配置不打密钥，并打码 sftp / online 通道 / relay 的全部凭据字段。"""
+        cfg = _base_cfg(
+            tmp_path,
+            sftp={"host": "h", "password": "pw-sftp", "key_path": "kp-sftp"},
+            online=[
+                {"kind": "sftp", "host": "h2", "password": "pw-online"},
+                {"kind": "relay", "host": "127.0.0.1", "port": 9999, "token": "tok-online"},
+            ],
+            relay={"host": "127.0.0.1", "port": 0, "token": "tok-relay"},
+        )
+        c = RhopConfig.from_dict(cfg)
+        dumped = json.dumps(c.to_dict(), ensure_ascii=False)
+        for secret in ("pw-sftp", "kp-sftp", "pw-online", "tok-online", "tok-relay", KEY):
+            assert secret not in dumped
+        assert c.to_dict()["has_key"] is True
+
 
 class TestInteractExecute:
     def test_execute_unknown_action(self, tmp_path):

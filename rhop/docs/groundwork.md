@@ -35,7 +35,7 @@ rhop 地基 = 传输介质（可插拔） + 公开动作（可验证） + 三角
 | C2.1 | SftpChannel paramiko 优先 + 注入式回退 | **已完成**（2026-10-18 编码并验证） | `vools/rhop/transport/online.py` |
 | C2.2 | actus jump 改装 rhop 公开动作（probe/push/pull/sync） | **已完成**（2026-11-08 编码并验证；probe 可达性语义修正：不可达一律 `status="error"`，错误经 Ω-gate 传播） | `vools/rhop/actions/`（`__init__.py` + `jump.py`） |
 | C2.3 | A/B/C 三角拓扑与身份互换（Role = SEND/RECV/RELAY） | **已完成**（2026-11-08 编码并验证；Role 常量 + `Session`（relay>online>shared 通道链）+ `reverse()` 身份互换 + RELAY 中继链路；`test_session.py` 21 用例全绿） | 新建 `vools/rhop/session.py` |
-| C2.4 | 配置驱动入口（`rhop.interact()` 一键交互） | 待办 | 新建 `vools/rhop/config.py` + `interact.py` |
+| C2.4 | 配置驱动入口（`rhop.interact()` 一键交互） | **已完成**（2026-11-08 编码并验证；`RhopConfig`（key 明文/密文/path/env + shared http 解析走 `make_shared_path`）+ `interact()` execute/request/roundtrip 三模式 + `handle_request()` 接收侧闭环回传；`to_dict` 全凭据打码） | 新建 `vools/rhop/config.py` + `interact.py` |
 
 ## Step 1 完成判据（全部通过）
 
