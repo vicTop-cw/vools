@@ -1,3 +1,14 @@
+---
+AIGC:
+    Label: "1"
+    ContentProducer: [REDACTED-AIGC-PRODUCER-ID]
+    ProduceID: [REDACTED-AIGC-TRACE-ID]
+    ReservedCode1: pyDBMBsl9X6zwfzV8tqarI2UFGFuKUqflYhiP4ld82lZB2uKKMBciTx4B44JooRxRGoWcoX9sKgnnXNik9TPE5kZr5HEIXvGFUMgqEPWXUwZO5G9iEm/PlYqoQgKfBgV7Pkrj/Y0Pa1Uz/RGgnlI1d/ntIsod9VJpPIdtc28UR8j6U8uJ8Tz+iMNQgc=
+    ContentPropagator: [REDACTED-AIGC-PRODUCER-ID]
+    PropagateID: [REDACTED-AIGC-TRACE-ID]
+    ReservedCode2: pyDBMBsl9X6zwfzV8tqarI2UFGFuKUqflYhiP4ld82lZB2uKKMBciTx4B44JooRxRGoWcoX9sKgnnXNik9TPE5kZr5HEIXvGFUMgqEPWXUwZO5G9iEm/PlYqoQgKfBgV7Pkrj/Y0Pa1Uz/RGgnlI1d/ntIsod9VJpPIdtc28UR8j6U8uJ8Tz+iMNQgc=
+---
+
 # vools-actus 基建 T0 验收报告
 
 > 命名空间：vools-actus-infra ｜ 任务树：T0（parent）→ T0.1~T0.5
@@ -52,3 +63,4 @@ T0 根任务 cleanup_mode=deferred，全部子任务完成后按需做最终收�
 2. **并行 R10H 在途产物**：工作树存在并行任务（R10H 平台枚举/索引指纹）的在途修改与未跟踪产物（OUTFILE_*、_r10h_*、actus/vools/actus/keys/ 等），非 T0 基建范围，未处理以免干扰；后续任务前需与其协调或等其合入。
 3. **分支同步**：main ahead of origin/main（本轮新增 3 个 commit），按需 push。
 4. **T0 根收口**：子任务全部完成后，如无需再拆，可对 T0 执行 task_cleanup / verify 完成根任务。
+*（内容由AI生成，仅供参考）*
