@@ -66,6 +66,52 @@ try:
 except ImportError:
     pass
 
+# ---------------------------------------------------------------------------
+# pytest tmpdir 清理对损坏 reparse point 的容忍补丁（统帅轮-02时 / T0r4.1）
+#
+# 真实事故（2026-11-07 实测）：Temp\pytest-of-victo\pytest-current 变成损坏的
+# reparse point（fsutil reparsepoint query → Error 5，连 rmdir/takeown 都
+# Access denied，无法在用户态删除）。pytest ≥7 每次进程结束都走
+# cleanup_numbered_dir → cleanup_dead_symlinks → Path.resolve()，
+# resolve 到这个坏链接抛 PermissionError(WinError 5) 且未被捕获 ——
+# 结果：**196/196 个测试文件 rc=1，即使用例全过**（逐文件实测留证，
+# _scan_result.json）。测试退出码全局不可信，CI 退出码判定失灵。
+#
+# 修复：包一层 cleanup_dead_symlinks，对 PermissionError/OSError 跳过该坏项
+# （只影响退出清理的 symlink 体检，不影响任何测试行为与 tmp 内容）。
+# ---------------------------------------------------------------------------
+
+
+def _patch_cleanup_dead_symlinks_tolerant():
+    try:
+        import _pytest.pathlib as _pplib
+    except Exception:
+        return
+    _orig = getattr(_pplib, "cleanup_dead_symlinks", None)
+    if _orig is None or getattr(_orig, "_actus_tolerant", False):
+        return
+
+    def tolerant(root):
+        try:
+            return _orig(root)
+        except (PermissionError, OSError):
+            # 坏 reparse point / ACL 异常项：跳过清理体检（不影响测试结果）
+            return
+
+    tolerant._actus_tolerant = True  # type: ignore[attr-defined]
+    _pplib.cleanup_dead_symlinks = tolerant
+    # 已绑定的引用也换掉（cleanup_numbered_dir 闭包里按名字引用模块级函数）
+    for _name in ("cleanup_numbered_dir", "make_numbered_dir_with_cleanup"):
+        _fn = getattr(_pplib, _name, None)
+        if _fn is not None:
+            try:
+                _fn.__globals__["cleanup_dead_symlinks"] = tolerant
+            except Exception:
+                pass
+
+
+_patch_cleanup_dead_symlinks_tolerant()
+
 import shutil
 import time as _real_time
 

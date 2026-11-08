@@ -516,13 +516,15 @@ def test_detail_pkg_resources_unavailable_signal(monkeypatch):
     monkeypatch.setattr('vools.actus.probe.python_pkgs._load_metadata_module',
                         lambda: None)
 
-    def no_import(name, *a, **kw):
-        raise ImportError(name)
-
-    monkeypatch.setattr('builtins.__import__', no_import)
+    # sys.modules 注 None：`import pkg_resources` 抛 ModuleNotFoundError
+    # （“import of pkg_resources halted; None in sys.modules”，Python 3.11+
+    # import 引擎行为；它是 ImportError 的子类，error 名按真实类型记录）——
+    # 不再打桩 builtins.__import__（那会连带炸掉 pytest 内部 import，
+    # 用例一旦失败渲染报告即 INTERNALERROR，真实断言信息被吞，T0r4.1 收口）
+    monkeypatch.setitem(sys.modules, 'pkg_resources', None)
     v, s = P._get_pkg_version_detail('whatever', 'whatever')
     assert v == ''
-    assert s == {'error_kind': 'metadata_unavailable', 'error': 'ImportError'}
+    assert s == {'error_kind': 'metadata_unavailable', 'error': 'ModuleNotFoundError'}
 
 
 def test_detail_import_fallback_without_version_attr(monkeypatch):
