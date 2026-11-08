@@ -6920,11 +6920,19 @@ severity medium。
 
 ### FIXED(2026-10-28T10:38:00Z / BUG-370)
 - evidence: `tests/test_pg_store.py`：`_SESSION_TABLES` 精确跟踪（`_pg_store` / AB `_pair` / 集成用例三处登记）+ 模块内 session 级 autouse fixture 回收 `"<table>"` 与 `"<table>_schema_meta"`（不用 `rhop_%` 通配；best-effort 失败 `warnings` 留信号）。判据：WSL 真 PG `test_pg_store.py + test_pg_store_concurrency.py` → **47 passed**，跑完查库 `relname like 'rhop%'` → **0**（整改前累计 19 张）；新增 2 条回归用例（登记+回收+`to_regclass()` 验证 / 空登记 no-op）。
-## BUG-371 [2026-11-07T03:45:28Z] [low] OPEN
+## BUG-371 [2026-11-07T03:45:28Z] [low] FIXED
 - summary: clip_watch(interval<=0) no lower-bound guard
 - detail: T0r4.5 probe evidence: clip_watch(interval=0/-1, backend=polling) neither errors nor clamps; is_running=True — busy-loop risk (CPU impact unquantified). Suggest param_invalid or clamp to min interval in actus/vools/actus/clipboard.py wrapper or vools.reactive.monitoring.clipboard dispatcher.
 - reported_by: steward-02h-w5
 
-### FIXED(2026-11-08 / T0r2.1.1)
+### FIXED(2026-11-08 / BUG-371, T0r2.1.1)
 - fix: wrapper 层 ClipWatcher/clip_watch 对 interval 显式 fail-fast——非数字/bool → TypeError，NaN/inf/<=0 → ValueError（参考 BUG-430/432 校验风格）；dispatcher 层 ClipboardDispatcher/_PollingBackend/_X11EventBackend 兜底——interval<=0 保留 clamp(0.02) 兼容语义，NaN/inf 显式拒绝（防 stop() join(timeout) 永久阻塞）。
 - evidence: `actus/tests/test_clipboard_integration.py` 新增 4 组回归（interval=0/-1/-0.01 → ValueError、非数字/bool/None → TypeError、NaN/inf → ValueError、dispatcher clamp 兼容）；跑测 actus test_clipboard_integration.py **23 passed**、rx test_reactive_clipboard.py **24 passed**、rx monitoring/test_clipboard_save.py **13 passed**，导出契约 test_lazy_exports_exist 不回归。
+
+
+## OPEN 项全量核验记录 (T0r3.3.2, 2026-11-08)
+- scope: 全量扫描 memory/bugs.md（6930 行），标题状态统计：FIXED 360 / CLOSED 1（BUG-80）/ OPEN 1（BUG-371）。
+- 核验发现并处置：BUG-371 标题仍标 OPEN，但其修复已由 T0r2.1.1 落盘（commit 7dfc471e "fix(actus-clip): BUG-371 clip_watch interval lower-bound guard"，回归测试 actus test_clipboard_integration.py 23 passed 等）——状态失实，本轮更新为 FIXED 并对齐 FIXED 段标注（BUG-371, T0r2.1.1）。
+- 修正后 vools 侧台账：OPEN = 0（无待修缺陷条目）；BUG-80 已归档 CLOSED（见上，feature 请求刻意不补）。
+- 平台一致性：fist-mbt bug_list 平台返回 2 条 OPEN（BUG-1、BUG-2），均属 FIST-Mbt 框架自身、不在 vools bugs.md 台账（vools 台账中 BUG-1/BUG-2 为 vools 自身缺陷且均已 FIXED，编号体系独立，无跨台账同名混淆）。结论：vools 侧 OPEN 台账（0 条）与平台口径一致，无冲突项。
+- 新缺陷上报：未发现 vools 侧新的 OPEN 缺陷，无登记新增。
