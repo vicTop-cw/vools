@@ -34,7 +34,7 @@ rhop 地基 = 传输介质（可插拔） + 公开动作（可验证） + 三角
 |---|---|---|---|
 | C2.1 | SftpChannel paramiko 优先 + 注入式回退 | **已完成**（2026-10-18 编码并验证） | `vools/rhop/transport/online.py` |
 | C2.2 | actus jump 改装 rhop 公开动作（probe/push/pull/sync） | **已完成**（2026-11-08 编码并验证；probe 可达性语义修正：不可达一律 `status="error"`，错误经 Ω-gate 传播） | `vools/rhop/actions/`（`__init__.py` + `jump.py`） |
-| C2.3 | A/B/C 三角拓扑与身份互换（Role = SEND/RECV/RELAY） | 待办 | 新建 `vools/rhop/session.py` |
+| C2.3 | A/B/C 三角拓扑与身份互换（Role = SEND/RECV/RELAY） | **已完成**（2026-11-08 编码并验证；Role 常量 + `Session`（relay>online>shared 通道链）+ `reverse()` 身份互换 + RELAY 中继链路；`test_session.py` 21 用例全绿） | 新建 `vools/rhop/session.py` |
 | C2.4 | 配置驱动入口（`rhop.interact()` 一键交互） | 待办 | 新建 `vools/rhop/config.py` + `interact.py` |
 
 ## Step 1 完成判据（全部通过）
@@ -46,7 +46,7 @@ rhop 地基 = 传输介质（可插拔） + 公开动作（可验证） + 三角
 ## 后续 Step
 
 - **Step 2 公开动作集**：`rhop.actions` 提供 `jump.probe/push/pull/sync`，复用 actus 已验证逻辑，schema 公开；跨动作调用带 Ω-gate 容错解包。（2026-11-08 已完成：四动作经 `run_action`/`interact` 可用；probe 反映真实可达性，不可达经 Ω-gate 传播错误。）
-- **Step 3 A/B/C 三角**：角色声明 + 对端/中转 endpoint；A→B、A→C→B、B→A 反向三条路径测试通过。
+- **Step 3 A/B/C 三角**：角色声明 + 对端/中转 endpoint；A→B、A→C→B、B→A 反向三条路径测试通过。（2026-11-08 已完成：`vools/rhop/session.py` 提供 `Role` 常量与 `Session`；`reverse()` 互换 SEND↔RECV（RELAY 保持）；中转链路走 RelayServer/RelayChannel，通道选择链 relay > online > shared；A→B 直连、A→C→B 中转、B→A 反向与通道回退由 `test_session.py` 21 用例覆盖，rhop 全量 635 passed 不回退。）
 - **Step 4 配置驱动 + vq 迁移**：vq/sparksql-exe `configs.py` 的 ROLE p0..p3 废弃/映射到 A/B/C；`utils/sftp.py` 桥接退化为 SftpChannel 回退实现。
 
 ## 文档索引
