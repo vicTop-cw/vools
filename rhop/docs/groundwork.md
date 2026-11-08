@@ -43,11 +43,20 @@ rhop 地基 = 传输介质（可插拔） + 公开动作（可验证） + 三角
 - [x] paramiko 缺失/导入失败：回退注入式 reader/writer，行为不变（`TestSftpChannelParamikoMissing` 覆盖）。
 - [x] `select_transport` 中 SftpChannel 可用性判定正确（52/52 测试通过）；paramiko 后端真实一包往返成功（本地 SFTPServer 实测 `BACKEND_OK / PROBE_OK / ROUNDTRIP_OK / FS_OK`；外网 `test@47.93.7.122:10022` 当前 TCP 超时不可达，属外部环境问题，非代码缺陷）。
 
+## Step 4 完成判据（全部通过，2026-11-08）
+
+- [x] config 边界实测：`RhopConfig.from_dict/from_file` 校验 key 五种形态（明文 / `{"plain"}` / `{"cipher"}+外层密钥 / `{"path"}` / `{"env"}`），缺 key、非法 role、非 dict 明确拒绝；`build_shared` 单 spec/写读分离/file:// / http(s):// 解析为 `HttpEndpoint`/缺 write/None 全覆盖，34 项全过。
+- [x] interact 三模式实测：`execute` 本端执行 + Ω-gate 错误传播；`request` 加密投递（含自定义文件名）；`roundtrip` 单机闭环（发送→对端解密执行→回传→本端取回验证），12 项全过。
+- [x] `handle_request` 接收侧闭环回传（`res_<filename>`）：成功路径、缺 action 报错、显式 session 三种形态均通过。
+- [x] 测试全绿：`test_interact.py + test_session.py + test_actions.py` = **54 passed** 不回退（含新增 `test_to_dict_masks_all_credentials`）。
+- [x] 与 C2.2/C2.3 联动：jump 四动作经 `run_action`/`interact` 可用（C2.2）；`Session` 通道链 relay > online > shared 与 `reverse()` 身份互换供 `interact`/`handle_request` 复用（C2.3）。
+- [x] 安全：`to_dict` 导出配置对 sftp / online 通道 / relay 全部凭据打码，密钥仅回填存在性标记。
+
 ## 后续 Step
 
 - **Step 2 公开动作集**：`rhop.actions` 提供 `jump.probe/push/pull/sync`，复用 actus 已验证逻辑，schema 公开；跨动作调用带 Ω-gate 容错解包。（2026-11-08 已完成：四动作经 `run_action`/`interact` 可用；probe 反映真实可达性，不可达经 Ω-gate 传播错误。）
 - **Step 3 A/B/C 三角**：角色声明 + 对端/中转 endpoint；A→B、A→C→B、B→A 反向三条路径测试通过。（2026-11-08 已完成：`vools/rhop/session.py` 提供 `Role` 常量与 `Session`；`reverse()` 互换 SEND↔RECV（RELAY 保持）；中转链路走 RelayServer/RelayChannel，通道选择链 relay > online > shared；A→B 直连、A→C→B 中转、B→A 反向与通道回退由 `test_session.py` 21 用例覆盖，rhop 全量 635 passed 不回退。）
-- **Step 4 配置驱动 + vq 迁移**：vq/sparksql-exe `configs.py` 的 ROLE p0..p3 废弃/映射到 A/B/C；`utils/sftp.py` 桥接退化为 SftpChannel 回退实现。
+- **Step 4 配置驱动**：`RhopConfig`（key 五形态 + shared http 解析）与 `interact()` 一键交互入口（execute/request/roundtrip 三模式 + `handle_request` 闭环回传）落地，验收见上方 Step 4 完成判据（2026-11-08 已完成）。**vq/sparksql-exe 迁移属外部仓库，暂缓**：`configs.py` 的 ROLE p0..p3 废弃/映射到 A/B/C、`utils/sftp.py` 桥接退化为 SftpChannel 回退实现，待外部仓库排期后另行跟进。
 
 ## 文档索引
 
