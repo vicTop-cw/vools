@@ -27,6 +27,24 @@ def _sessions(shared, role_a=Role.SEND, role_b=Role.RECV):
     return a, b
 
 
+class _FakeOnline(object):
+    """最小在线通道替身：仅验证 Session 的 online 分支选择与投递语义。"""
+
+    def __init__(self, up=True, name="fake-online"):
+        self._up = up
+        self.name = name
+        self.sent = []
+
+    def available(self):
+        return self._up
+
+    def send(self, filename, content):
+        self.sent.append((filename, content))
+
+    def receive(self, filename):
+        return self.sent[0][1]
+
+
 class TestRoleModel:
     def test_reverse_swap_send_recv(self):
         a, b = _sessions(_shared)
@@ -46,6 +64,52 @@ class TestRoleModel:
         sess = Session(role=Role.SEND, shared=_shared(tmp_path))
         with pytest.raises(ValueError):
             sess.send_package("x.rhop", {"a": 1})
+
+    def test_relay_role_rejects_send(self):
+        """RELAY 角色不发送载荷：send_package 明确拒绝。"""
+        c = Session(role=Role.RELAY, crypto=RhopCrypto.from_key(KEY))
+        with pytest.raises(ValueError):
+            c.send_package("x.rhop", {"a": 1})
+
+    def test_relay_role_rejects_recv(self):
+        """RELAY 角色不消费载荷：recv_package 明确拒绝。"""
+        c = Session(role=Role.RELAY, crypto=RhopCrypto.from_key(KEY))
+        with pytest.raises(ValueError):
+            c.recv_package("x.rhop")
+
+    def test_reverse_reuses_media_and_key(self, tmp_path):
+        """身份互换只对调角色标签，介质/密钥/中转地址原样复用（同一对象）。"""
+        shared = _shared(tmp_path)
+        crypto = RhopCrypto.from_key(KEY)
+        a = Session(role=Role.SEND, shared=shared, crypto=crypto, name="node-a")
+        b = a.reverse()
+        assert b.role == Role.RECV
+        assert b.name == "node-a"
+        assert b.shared is shared
+        assert b.crypto is crypto
+
+    def test_describe_snapshot(self, tmp_path):
+        """describe() 输出会话登记快照（角色/介质/密钥标记）。"""
+        shared = _shared(tmp_path)
+        a = Session(role=Role.SEND, shared=shared, online=[_FakeOnline()],
+                    crypto=RhopCrypto.from_key(KEY), name="node-a")
+        info = a.describe()
+        assert info["name"] == "node-a"
+        assert info["role"] == Role.SEND
+        assert info["online"] == ["fake-online"]
+        assert info["shared"] == shared.name
+        assert info["has_crypto"] is True
+
+    def test_available_false_without_media(self):
+        """无任何介质（relay/online/shared 全缺）时 available() 为 False。"""
+        sess = Session(role=Role.SEND, crypto=RhopCrypto.from_key(KEY))
+        assert sess.available() is False
+
+    def test_available_true_with_shared(self, tmp_path):
+        """仅 shared path 可达时 available() 为 True。"""
+        sess = Session(role=Role.SEND, shared=_shared(tmp_path),
+                       crypto=RhopCrypto.from_key(KEY))
+        assert sess.available() is True
 
 
 class TestDirectTopology:
@@ -148,3 +212,28 @@ class TestRelayTopology:
         sess = Session(role=Role.SEND, crypto=RhopCrypto.from_key(KEY))
         with pytest.raises(IOError):
             sess.send_package("x.rhop", {"a": 1})
+
+    def test_online_preferred_over_shared(self, tmp_path):
+        """通道选择链：在线通道可用时优先于 shared path（transport=online）。"""
+        shared = _shared(tmp_path)
+        fake = _FakeOnline(up=True)
+        a = Session(role=Role.SEND, shared=shared, online=[fake],
+                    crypto=RhopCrypto.from_key(KEY))
+        sent = a.send_package("pkg-o.rhop", {"via": "online"})
+        assert sent["transport"] == "online"
+        assert fake.sent[0][0] == "pkg-o.rhop"
+
+        b = Session(role=Role.RECV, shared=shared, online=[fake],
+                    crypto=RhopCrypto.from_key(KEY))
+        received = b.recv_package("pkg-o.rhop")
+        assert received["status"] == "ok"
+        assert received["transport"] == "online"
+        assert received["payload"] == {"via": "online"}
+
+    def test_online_down_falls_back_shared(self, tmp_path):
+        """在线通道不可达 -> 自动回退 shared path，链路不中断。"""
+        shared = _shared(tmp_path)
+        a = Session(role=Role.SEND, shared=shared, online=[_FakeOnline(up=False)],
+                    crypto=RhopCrypto.from_key(KEY))
+        sent = a.send_package("pkg-o2.rhop", {"fallback": "shared"})
+        assert sent["transport"] == "shared"
