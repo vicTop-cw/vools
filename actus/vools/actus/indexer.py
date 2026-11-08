@@ -9,6 +9,7 @@ __all__ = ['scan_actions', 'build_index', 'load_index', 'get_action',
 
 import hashlib
 import json
+import logging
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List
@@ -33,6 +34,54 @@ ACTION_SUFFIX = '.actus.md'  # 向后兼容别名（外部代码可能引用）
 
 # 本模块内的判定别名（历史名 _is_action_file，保留防外部引用）
 _is_action_file = is_action_file
+
+
+# ---------------------------------------------------------------------------
+# 索引自动失效（REFACTOR_COMPLETION §六.4）：解析器指纹
+#
+# 问题：格式解析逻辑（格式检测 / 元数据解析 / 块提取）变更后，旧索引缓存
+# 继续被 load_index 使用 ⇒「解析逻辑改了、旧索引继续用」的静默错配
+# （此前唯一手段是手工删 _meta/ 重建）。
+# 方案：build_index 落盘时写入 parser_fingerprint —— 格式解析链关键模块
+# 源码内容的 sha256（前 16 hex，命名键分隔）；load_index 读回比对，不匹配
+# ⇒ 索引过期 ⇒ 自动重建（结果附 rebuild_reason + logging.info，不静默）。
+# 指纹只依赖源码文本字节（无 mtime/时钟因素），同码同值、跨机器可复现；
+# 全部指纹源不可读时退化为空输入 hash，同样恒定，不会引发重建风暴。
+# ---------------------------------------------------------------------------
+
+#: 索引缓存里解析器指纹的键名（indexer 自身扩展字段，schema_version 不动）。
+INDEX_FINGERPRINT_KEY = 'parser_fingerprint'
+
+
+def _fingerprint_source_texts() -> Dict[str, str]:
+    """指纹源：格式解析链关键模块的源码文本（键名稳定，便于测试替换）。
+
+    覆盖解析链两层（缺文件则跳过该层，指纹退化为剩余层的 hash）：
+      * model.py       —— 格式检测（后缀 + _has_yaml_frontmatter）与双格式
+                          解析入口 parse_cfg_from_file/_parse_schema_md_action
+      * frontmatter.py —— YAML front-matter 元数据解析（形式 B）
+    """
+    pkg_dir = os.path.dirname(os.path.abspath(__file__))
+    sources = (('model', 'model.py'), ('frontmatter', 'frontmatter.py'))
+    texts = {}
+    for key, rel in sources:
+        try:
+            with open(os.path.join(pkg_dir, rel), 'r', encoding='utf-8') as f:
+                texts[key] = f.read()
+        except OSError:
+            continue
+    return texts
+
+
+def _parser_fingerprint() -> str:
+    """解析器指纹：_fingerprint_source_texts() 内容的 sha256 前 16 hex。"""
+    texts = _fingerprint_source_texts()
+    digest = hashlib.sha256()
+    for key in sorted(texts):
+        digest.update(key.encode('utf-8'))
+        digest.update(b'\x00')
+        digest.update(texts[key].encode('utf-8'))
+    return digest.hexdigest()[:16]
 
 
 def _inject_cached_path(rel: str, roots: List[str]) -> str:
@@ -386,6 +435,9 @@ def build_index(actions_dir: str = None, meta_dir: str = None,
         'schema_version': '2.0.0',
         'classification_version': '2.0',
         'generated_at': datetime.now(_TZ).isoformat(timespec='seconds'),
+        # 解析器指纹（索引自动失效，REFACTOR_COMPLETION §六.4）：
+        # load_index 读回与当前指纹比对，不匹配即自动重建。
+        'parser_fingerprint': _parser_fingerprint(),
         'actions': entries,
         'by_kind': {k: sorted(v) for k, v in sorted(by_kind.items())},
         'by_purpose': {k: sorted(v) for k, v in sorted(by_purpose.items())},
@@ -423,6 +475,12 @@ def build_index(actions_dir: str = None, meta_dir: str = None,
 def load_index(meta_dir: str = None, build: bool = True) -> dict:
     """读取索引；不存在时默认先构建（`build=False` 时**返回空索引、不落盘**）。
 
+    索引自动失效（REFACTOR_COMPLETION §六.4，仅 `build=True` 时生效）：
+    缓存里的 parser_fingerprint 与当前格式解析链指纹不一致（含老缓存
+    无该字段，按过期处理重建一次）⇒ 索引过期 ⇒ 自动重建，返回值附
+    `rebuild_reason` 并记 logging.info —— 防「解析逻辑改了、旧索引继续
+    用」的静默错配。`build=False` 只读路径不重建（零副作用契约不变）。
+
     第 13/14 轮审计：`load_index` 被只读入口（MCP tools/list、resolve_target 等）
     调用，索引缺失时 `build_index` 会落盘 `_meta/actions.index.json` +
     `actions.mtimes.json` —— 只读 FS 上直接失败。只读路径应传 `build=False`，
@@ -438,7 +496,27 @@ def load_index(meta_dir: str = None, build: bool = True) -> dict:
             return {'actions': {}, 'problems': {}, 'built': False}
         return build_index(meta_dir=meta)
     with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+        index = json.load(f)
+    # ── 解析器指纹失效判定（REFACTOR_COMPLETION §六.4）────────────
+    # build=False 只读场景维持「读到什么返回什么」的零副作用契约，
+    # 过期也照返（调用方自选是否重建）。
+    if build:
+        current_fp = _parser_fingerprint()
+        cached_fp = index.get(INDEX_FINGERPRINT_KEY)
+        if cached_fp != current_fp:
+            if cached_fp is None:
+                reason = ('no parser_fingerprint in cache '
+                          '(pre-fingerprint index, treated as stale)')
+            else:
+                reason = ('parser_fingerprint mismatch '
+                          '(cached=%s current=%s)' % (cached_fp, current_fp))
+            logging.getLogger(__name__).info(
+                'action index stale -> auto rebuild: %s', reason)
+            index = build_index(meta_dir=meta)
+            # rebuild_reason 只进返回值（rebuild_reason 不落盘，避免
+            # 过期标记残留在新鲜缓存里误导后续读取）。
+            index['rebuild_reason'] = reason
+    return index
 
 
 def get_action(action_id: str, actions_dir: str = None,

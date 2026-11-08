@@ -121,11 +121,23 @@ class KeyManager:
 
         return None
 
+    # 包内置公钥目录（随 wheel 分发）：种子动作的 .sig 提交进仓库/进 wheel，
+    # 验签公钥必须同行——否则干净 checkout / pip 安装环境（HOME 无 ~/.actus/keys）
+    # verify_file 恒报 "Public key not found"（统帅轮-02时 T0r4.1 收口）。
+    _BUNDLED_KEYS_DIRNAME = "keys"
+
     def load_public_key(self, name: str = "default") -> Optional[bytes]:
-        """加载公钥。"""
+        """加载公钥（HOME 密钥目录优先，包内置 keys/ 回退兜底）。"""
         pub_path = os.path.join(self._keys_dir, f"{name}.pub")
         if not os.path.isfile(pub_path):
-            return None
+            bundled = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                self._BUNDLED_KEYS_DIRNAME, f"{name}.pub",
+            )
+            if os.path.isfile(bundled):
+                pub_path = bundled
+            else:
+                return None
 
         with open(pub_path, "rb") as f:
             data = f.read()

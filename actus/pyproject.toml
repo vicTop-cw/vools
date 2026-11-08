@@ -145,6 +145,8 @@ include = ["vools*"]
     # wheel 不会安装它 —— 装完后 schema_path 不存在、校验静默跳过（同族缺陷）。
     # 包内 schemas/ 副本随 wheel 安装，adapter.py 优先用包内、回退源树 contracts/。
     "schemas/*.json",
+    # keys/*.pub：种子动作验签公钥随 wheel 分发（T0r4.1：HOME 无公钥时包内回退）
+    "keys/*.pub",
 ]
 
 # ============ pytest ============

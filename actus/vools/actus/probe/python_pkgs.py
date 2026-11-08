@@ -444,12 +444,24 @@ def _get_pkg_version_detail(package_name: str, import_name: str, index=None):
                     continue  # DistributionNotFound / 坏元数据：都查不到，继续兜底
 
     # ── 3) import 兜底（只用 import_name，与旧行为一致）──
+    # 信号裁决口径（T0r4.1 收口，r95 三用例契约）：
+    #   * ModuleNotFoundError → 目标包没装（正常形态）：**保留**已积累的
+    #     途径/诊断性信号（metadata_error 元数据损坏、metadata_unavailable
+    #     pkg_resources 不可用等）——r95 契约要求这些留痕不得被「没装」吞
+    #     掉（否则元数据损坏/环境缺失被误判成普通没装，用户排障走错方向）；
+    #     无信号时返回 None（等价于正常没装形态）；
+    #   * 其他 ImportError → import 途径/依赖链级失败，与途径信号同族：
+    #     保留既有留痕（error 名更具体）；
+    #   * 其他异常（RuntimeError 等包自身炸了）→ 目标信号优先：
+    #     import_error 覆盖途径信号（metadata_unavailable），不得被淹没。
     try:
         module = importlib.import_module(import_name)
     except ModuleNotFoundError:
-        return '', signal          # 没装：正常形态，不是错误
+        return '', signal          # 没装：正常形态，保留已积累的诊断信号
+    except ImportError:
+        return '', signal          # 途径/依赖链级失败：保留途径留痕
     except Exception as exc:
-        if signal is None:
+        if signal is None or signal.get('error_kind') == 'metadata_unavailable':
             signal = {'error_kind': 'import_error',
                       'error': type(exc).__name__}
         return '', signal
