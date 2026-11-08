@@ -7,6 +7,8 @@
 > 核实方法（**可复跑**）：`python actus/tools/audit/plan_audit_core.py`
 > （含 D 类文件存在性检查：`vools/look_upon.py`、`setup.py`、`requirements.txt` 均报 MISS，
 > `vools/datetime/utils.py`、`vools/datetime/vdate_class.py`、`pyproject.toml` 均 OK）。
+> 本轮复核（**2026-11-08**）重新执行审计：IMPLEMENTATION_PLAN 条目 7 OK + 1 MISS，
+> MISS 为计划类名 `vicDate` —— 其无独立类定义，仅作为 `vools/datetime/__init__.py` 兼容别名延迟加载映射到 `VDate`（详见 §1.1 标注）。
 
 
 ## 1. 项目分析
@@ -19,11 +21,16 @@
 - **daterange.py**: 包含 get_date_range 函数
 - **vicDate**: 需要实现的日期类
 
-> **【路径已过时 · 核实于 2026-10-29】** 计划中的 `vools/datetime/{mydate,mydates,range,dates_format}.py`
-> 已不是最终形态：**日期能力统一实现在 `vools/datetime/utils.py`**
-> （审计实测：`get_recently_days` → `utils.py:392`、`get_dates` → `:427`、`get_date_range` → `:530`），
-> 日期类 `VDate` 在 `vools/datetime/vdate_class.py:41`。
-> 另：计划中的类名 `vicDate` 在仓库中**不存在**（实际实现为 `VDate`）。
+> **【路径已过时 · 复核于 2026-11-08】** 计划中的 `vools/datetime/{mydate,mydates,range}.py`
+> **均不存在**（实测 `Test-Path` 全部 False），日期能力统一实现在 `vools/datetime/utils.py`
+> （审计实测：`vDate` → `utils.py:31`、`get_recently_months` → `:300`、`get_recently_weeks` → `:351`、
+> `get_recently_days` → `:392`、`get_dates` → `:427`、`get_date_range` → `:530`），
+> 日期类 `VDate` 在 `vools/datetime/vdate_class.py:41`；
+> 注意 `dates_format.py` **仍然存在**（含 `DateProcessor` / `EnhancedDateFormatter`，由 `__init__.py` 导出），
+> 不属于过时项。
+> 另：计划中的类名 `vicDate` **无独立类定义**，但 `vools/datetime/__init__.py` 提供**兼容别名**
+> （`__getattr__` 延迟加载 `VDate as vicDate`，Py<3.7 分支直接别名），
+> 即 `vools.datetime.vicDate` 可用且等价 `VDate`；审计脚本 MISS `vicDate` 因其仅检查类定义，符合预期。
 
 ### 1.2 缺失的 Spark UDF 函数
 - 各种日期处理 UDF
@@ -47,9 +54,10 @@
 
 **目标**: 将所有日期相关组件组织到 `datetime` 模块中
 
-> **【路径已过时 · 2026-10-29】** 下方步骤里新建的 `mydate.py` / `mydates.py` / `range.py`
+> **【路径已过时 · 复核于 2026-11-08】** 下方步骤里新建的 `mydate.py` / `mydates.py` / `range.py`
 > **没有按此拆分**：这些能力最终合并进 `vools/datetime/utils.py`（+ `vdate_class.py` 放类）。
 > 若按下方旧路径重建文件，会与现状重复/冲突 —— 请以 `utils.py` 为真源。
+> （§3.1 中同名旧文件引用同样过时，以本标注为准；下方 `dates_format.py` 步骤仍有效，该文件现存。）
 
 **实施步骤**:
 1. **更新 `vools/datetime/__init__.py`**:
@@ -114,7 +122,7 @@
    - 使用配置系统获取数据库凭证
    - 使用配置系统获取文件路径
 
-> **【路径已过时 · 核实于 2026-10-29】** 仓库根**没有** `vools/look_upon.py`；
+> **【路径已过时 · 复核于 2026-11-08】** 仓库根**没有** `vools/look_upon.py`；
 > 同名文件只存在于**另一个子包** `pyk/vools/pyk/look_upon.py`（`pyk/` 是独立子项目，不属于 `vools` 包）。
 > 本计划的 look_upon 改造应落到 `pyk/` 侧；`vools` 包的 DB/配置能力实际在
 > `vools/db/postgresql.py`（`PostgreSQLConnection`）与 `vools/config.py` / `vools/config.template.py`。
@@ -156,6 +164,9 @@
 - 实现日期相关的 Spark UDF
 - 提供日期计算函数（days_gap, weeks_gap, months_gap 等）
 
+> **【路径已过时 · 复核于 2026-11-08】** 本节 `mydate.py` / `mydates.py` / `range.py` 均为旧拆分引用，见 §2.1 标注；
+> 实际实现：`vools/datetime/utils.py`（`vDate`@31 等）与 `vools/datetime/vdate_class.py`（`VDate`@41）。
+
 **vools/datetime/mydates.py**:
 - 实现 get_recently_months 函数
 - 实现 get_recently_weeks 函数
@@ -193,6 +204,9 @@
 - 使用配置系统获取文件路径
 - 确保安全的数据库交互
 
+> **【路径已过时 · 复核于 2026-11-08】** `vools/look_upon.py` 在 `vools` 包内**不存在**，见 §2.4 标注；
+> 对应实现位于独立子包 `pyk/vools/pyk/look_upon.py`。
+
 ## 4. 测试计划
 
 ### 4.1 单元测试
@@ -213,7 +227,7 @@
 - 更新 pyproject.toml
 - 更新 requirements.txt
 
-> **【路径已过时 · 核实于 2026-10-29】** 上方三条里 **`setup.py` 与 `requirements.txt` 已不存在**（原文保留为历史记录）；
+> **【路径已过时 · 复核于 2026-11-08】** 上方三条里 **`setup.py` 与 `requirements.txt` 已不存在**（原文保留为历史记录）；
 > 打包与依赖声明已统一由 **`pyproject.toml`** 承担（审计实测：前两者 MISS，`pyproject.toml` OK）。
 > 因此本条实际只剩「更新 pyproject.toml」一项待做 —— **不要**再去创建 setup.py / requirements.txt。
 
