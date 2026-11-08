@@ -6910,3 +6910,11 @@ severity medium。
 
 ### FIXED(2026-10-28T10:38:00Z / BUG-370)
 - evidence: `tests/test_pg_store.py`：`_SESSION_TABLES` 精确跟踪（`_pg_store` / AB `_pair` / 集成用例三处登记）+ 模块内 session 级 autouse fixture 回收 `"<table>"` 与 `"<table>_schema_meta"`（不用 `rhop_%` 通配；best-effort 失败 `warnings` 留信号）。判据：WSL 真 PG `test_pg_store.py + test_pg_store_concurrency.py` → **47 passed**，跑完查库 `relname like 'rhop%'` → **0**（整改前累计 19 张）；新增 2 条回归用例（登记+回收+`to_regclass()` 验证 / 空登记 no-op）。
+## BUG-371 [2026-11-07T03:45:28Z] [low] OPEN
+- summary: clip_watch(interval<=0) no lower-bound guard
+- detail: T0r4.5 probe evidence: clip_watch(interval=0/-1, backend=polling) neither errors nor clamps; is_running=True — busy-loop risk (CPU impact unquantified). Suggest param_invalid or clamp to min interval in actus/vools/actus/clipboard.py wrapper or vools.reactive.monitoring.clipboard dispatcher.
+- reported_by: steward-02h-w5
+
+### FIXED(2026-11-08 / T0r2.1.1)
+- fix: wrapper 层 ClipWatcher/clip_watch 对 interval 显式 fail-fast——非数字/bool → TypeError，NaN/inf/<=0 → ValueError（参考 BUG-430/432 校验风格）；dispatcher 层 ClipboardDispatcher/_PollingBackend/_X11EventBackend 兜底——interval<=0 保留 clamp(0.02) 兼容语义，NaN/inf 显式拒绝（防 stop() join(timeout) 永久阻塞）。
+- evidence: `actus/tests/test_clipboard_integration.py` 新增 4 组回归（interval=0/-1/-0.01 → ValueError、非数字/bool/None → TypeError、NaN/inf → ValueError、dispatcher clamp 兼容）；跑测 actus test_clipboard_integration.py **23 passed**、rx test_reactive_clipboard.py **24 passed**、rx monitoring/test_clipboard_save.py **13 passed**，导出契约 test_lazy_exports_exist 不回归。

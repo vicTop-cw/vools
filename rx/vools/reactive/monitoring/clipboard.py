@@ -24,6 +24,7 @@ import hashlib
 import itertools
 import json
 import logging
+import math
 import os
 import pickle
 import sys
@@ -1031,7 +1032,18 @@ class _X11EventBackend:
 
     def __init__(self, on_change: Callable[[], None], interval: float = 0.2) -> None:
         self._on_change = on_change
-        self._interval = max(0.02, float(interval))
+        # BUG-371: interval 必须 clamp 到最小间隔；NaN/inf 会破坏 select
+        # 超时语义，显式拒绝。
+        try:
+            _interval_f = float(interval)
+        except (TypeError, ValueError):
+            raise TypeError(
+                f"_X11EventBackend 的 interval 需要数字，收到 "
+                f"{type(interval).__name__}: {interval!r}") from None
+        if not math.isfinite(_interval_f):
+            raise ValueError(
+                f"_X11EventBackend 的 interval 必须是有限数值，收到 {interval!r}")
+        self._interval = max(0.02, _interval_f)
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._running = False
@@ -1315,7 +1327,18 @@ class _PollingBackend:
 
     def __init__(self, on_change: Callable[[], None], interval: float = 0.2) -> None:
         self._on_change = on_change
-        self._interval = max(0.02, float(interval))
+        # BUG-371: 轮询后端是 busy-loop 的直接执行者，interval 必须 clamp 到
+        # 最小间隔；NaN/inf 会破坏 stop() 的 join(timeout) 语义，显式拒绝。
+        try:
+            _interval_f = float(interval)
+        except (TypeError, ValueError):
+            raise TypeError(
+                f"_PollingBackend 的 interval 需要数字，收到 "
+                f"{type(interval).__name__}: {interval!r}") from None
+        if not math.isfinite(_interval_f):
+            raise ValueError(
+                f"_PollingBackend 的 interval 必须是有限数值，收到 {interval!r}")
+        self._interval = max(0.02, _interval_f)
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._running = False
@@ -1488,7 +1511,19 @@ class ClipboardDispatcher:
             set(change_types) if change_types else None
         )
         self._tags: List[str] = list(tags or ())
-        self._interval = max(0.02, float(interval))
+        # BUG-371: interval<=0 沿用 clamp 到最小轮询间隔（0.02s）的兼容语义，
+        # 但 NaN/inf 无法 clamp：stop() 的 join(timeout=interval*2+0.5) 会因
+        # nan/inf 永久阻塞或永不触发轮询，必须显式拒绝。
+        try:
+            _interval_f = float(interval)
+        except (TypeError, ValueError):
+            raise TypeError(
+                f"ClipboardDispatcher 的 interval 需要数字，收到 "
+                f"{type(interval).__name__}: {interval!r}") from None
+        if not math.isfinite(_interval_f):
+            raise ValueError(
+                f"ClipboardDispatcher 的 interval 必须是有限数值，收到 {interval!r}")
+        self._interval = max(0.02, _interval_f)
         self._signature_history: "deque[Tuple[float, Tuple[Any, ...]]]" = deque(
             maxlen=max(8, int(self_signature_capacity))
         )

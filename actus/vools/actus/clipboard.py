@@ -30,6 +30,7 @@ write_to_clipboard）接入 actus，收敛为「配置 + 动作」式交互：�
     >>> w.stop()                               # 动作：停
 """
 
+import math
 from typing import Any, Callable, Iterable, Optional
 
 try:  # rx 命名空间可能不可用（monitoring 子模块整体受条件导入保护）
@@ -112,13 +113,24 @@ def clip_write(
     """动作：把文本写入系统剪贴板，返回表示已写入内容的 ClipData。
 
     参数：
-        text:    要写入的文本（None 视为空串）
+        text:    要写入的文本（None 视为空串；bytes/bytearray/memoryview
+                 一律拒绝——历史上 bytes 会被 str() 静默变形为 "b'...'" 写入
+                 剪贴板，调用者毫无察觉，属静默数据污染，T0r4.5 收口改为硬报错）
         tags:    附加标签
         source:  来源标识（写入 metadata._source）
     """
     if ClipData is None:
         _raise_missing()
-    text = "" if text is None else str(text)
+    if text is None:
+        text = ""
+    elif isinstance(text, (bytes, bytearray, memoryview)):
+        raise TypeError(
+            "clip_write 拒绝 bytes-like 输入（%s）：二进制内容静默 str() 会变形为 "
+            "\"b'...'\" 写入剪贴板；请先显式 decode('utf-8', errors=...) 或改为写入文本"
+            % type(text).__name__
+        )
+    else:
+        text = str(text)
     _shared_reader().write(text, [], ClipChangeType.TEXT)
     meta: dict = {}
     if source:
@@ -171,6 +183,23 @@ class ClipWatcher:
     ) -> None:
         if ClipData is None:
             _raise_missing()
+        # BUG-371: 原实现零校验——interval<=0 / 非数字 / NaN / inf 直接透传
+        # 底层 Dispatcher。polling 后端虽有 clamp(0.02) 兜底，但 clamp 是静默
+        # 行为：调用方传 0 / -1 期望"立即轮询 / 不轮询"的语义并未兑现，且
+        # win32 事件后端下 interval 不参与轮询，非法值不会被任何后端报错，
+        # 存在 busy-loop（interval=0/-1 落在 clamp 下限仍可接受，但语义不可见）
+        # 与接口契约缺失双重风险。收口为显式 fail-fast 校验。
+        if isinstance(interval, bool) or not isinstance(interval, (int, float)):
+            raise TypeError(
+                f"clip_watch/ClipWatcher 的 interval 需要数字，收到 "
+                f"{type(interval).__name__}: {interval!r}")
+        if not math.isfinite(interval):
+            raise ValueError(
+                f"clip_watch/ClipWatcher 的 interval 必须是有限数值，收到 {interval!r}")
+        if interval <= 0:
+            raise ValueError(
+                f"clip_watch/ClipWatcher 的 interval 必须 > 0"
+                f"（杜绝 busy-loop），收到 {interval}")
         self._on_text = on_text
         self._on_change = on_change
         self._subject, self._dispatcher = from_clipboard(
