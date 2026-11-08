@@ -83,6 +83,36 @@ def test_write_tags_preserved():
 
 
 # ---------------------------------------------------------------------------
+# 边界回归（T0r4.5 寻虫收口）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", [b"actus-bytes", bytearray(b"actus-ba"), memoryview(b"mv")])
+def test_write_rejects_bytes_like(bad):
+    """bytes-like 输入必须硬报错：此前 str() 静默变形为 "b'...'" 写入剪贴板。
+
+    实证（T0r4.5 探针 probe 2）：clip_write(b'actus-bytes-probe') 曾把
+    "b'actus-bytes-probe'"（带 repr 引号与 b 前缀）写入系统剪贴板，
+    调用者意图（写二进制/编码文本）与实际写入内容完全不符且无告警。
+    """
+    with pytest.raises(TypeError) as ei:
+        clip_write(bad)
+    assert "bytes-like" in str(ei.value)
+
+
+def test_write_none_is_empty_string():
+    """文档语义锁定：None 视为空串（宽容路径不因 bytes 收紧而回归）。"""
+    cd = clip_write(None)
+    assert cd.content == ""
+
+
+def test_write_int_is_str_coerced():
+    """宽容语义锁定：int 等 str() 可转换对象维持现状转字符串（防过度收紧回归）。"""
+    cd = clip_write(12345)
+    assert cd.content == "12345"
+
+
+# ---------------------------------------------------------------------------
 # 清空动作
 # ---------------------------------------------------------------------------
 
@@ -182,6 +212,61 @@ def test_clip_watch_filter_self_default():
             writer.stop()
     finally:
         w.stop()
+
+
+# ---------------------------------------------------------------------------
+# 监控参数校验（BUG-371：clip_watch(interval<=0) 无下限守卫）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", [0, -1, -0.01])
+def test_clip_watch_rejects_non_positive_interval(bad):
+    """interval<=0 必须硬报错。
+
+    BUG-371 实证：此前 clip_watch(interval=0/-1) 直接透传底层 Dispatcher，
+    polling 后端 clamp(0.02) 静默生效——调用方期望"立即轮询 / 不轮询"的语义
+    未兑现，win32 事件后端下非法值甚至不被任何后端报错，接口契约缺失。
+    收口后 fail-fast：非法 interval 明确报错，杜绝 busy-loop 与语义幻觉。
+    """
+    with pytest.raises(ValueError) as ei:
+        clip_watch(interval=bad)
+    assert "interval" in str(ei.value)
+    assert "> 0" in str(ei.value)
+
+
+@pytest.mark.parametrize("bad", ["0.1", True, None])
+def test_clip_watch_rejects_bad_interval_type(bad):
+    """非数字 interval 必须硬报错（bool 是 int 子类，同样拒绝）。"""
+    with pytest.raises(TypeError) as ei:
+        clip_watch(interval=bad)
+    assert "interval" in str(ei.value)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_clip_watch_rejects_non_finite_interval(bad):
+    """NaN/inf 必须硬报错：无法 clamp，会破坏底层 stop() join 超时语义。"""
+    with pytest.raises(ValueError) as ei:
+        clip_watch(interval=bad)
+    assert "interval" in str(ei.value)
+
+
+def test_dispatcher_clamps_non_positive_interval():
+    """底层 dispatcher 对 interval<=0 保留 clamp(0.02) 兼容语义（不回归），
+    NaN/inf 与非法类型显式拒绝（BUG-371 兜底防线）。"""
+    from vools.reactive.monitoring.clipboard import ClipboardDispatcher
+
+    d0 = ClipboardDispatcher(interval=0, backend="polling")
+    try:
+        assert d0._interval >= 0.02
+        d0.start()
+        assert d0.is_running
+    finally:
+        d0.stop()
+
+    with pytest.raises(ValueError):
+        ClipboardDispatcher(interval=float("nan"))
+    with pytest.raises(TypeError):
+        ClipboardDispatcher(interval=None)
 
 
 # ---------------------------------------------------------------------------
