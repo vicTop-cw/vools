@@ -39,15 +39,23 @@ def main():
     os.makedirs(SHARE_DIR, exist_ok=True)
 
     # 形态 1：execute —— 本端直接执行公开动作（jump.probe 探测目标可达性）
+    # T0r2.2.1 语义：probe 如实反映真实可达性；本示例未配置 sftp.host，
+    # 因此返回 status=error（Ω-gate 收纳「缺少 sftp.host 配置（视为不可达）」）。
+    # 配置了可达 host 时此处为 status=ok。
     probe = interact(cfg, action="jump.probe", mode="execute")
     print("[execute] jump.probe ->", probe)
+    assert probe["status"] == "error", "execute 模式应如实传播 probe 不可达错误"
+    assert probe["omega_gate"]["action"] == "jump.probe"
+    assert probe["omega_gate"]["data"]["reachable"] is False
 
     # 形态 2：roundtrip —— 一次双方交互：A 发包 -> B 取包解密执行 -> 加密回传 -> A 取回验证
+    # 闭环本身 status=ok；action_result 为 B 端真实执行结果（无 host -> error 并回传）。
     result = interact(cfg, action="jump.probe", mode="roundtrip")
     print("[roundtrip] ->", result)
     assert result["status"] == "ok", "roundtrip 链路失败"
-    assert result["action_result"]["status"] == "ok", "B 端动作执行失败"
-    print("roundtrip 全链路通过：A -> B -> A，无链路控制代码")
+    assert result["action_result"]["status"] == "error", "B 端动作执行结果应如实回传（无 host 不可达）"
+    assert result["action_result"]["omega_gate"]["data"]["reachable"] is False
+    print("roundtrip 全链路通过：A -> B -> A，无链路控制代码（动作结果如实回传）")
 
 
 if __name__ == "__main__":

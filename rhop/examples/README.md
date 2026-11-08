@@ -48,13 +48,22 @@ interact(cfg, action="jump.probe", mode="roundtrip")  # 单机闭环：A->B->A �
 
 公开动作集：`jump.probe / jump.push / jump.pull / jump.sync`（统一 `(cfg, payload) -> dict` 出参，Ω-gate 容错解包）。
 
+### 错误传播（T0r2.2.1 语义）
+
+动作结果如实反映真实状态，不美化不吞错：
+
+- `jump.probe` 未配置 `sftp.host` 时视为不可达，返回 `status=error` 且 `omega_gate.data.reachable=false`；
+- `execute` 模式下动作错误经 Ω-gate 收纳后直接传播到调用方；
+- `roundtrip` / `handle_request` 闭环本身成功（`status=ok`），`action_result` 为对端真实执行结果（含 error），随响应包原样回传。
+
 ## 示例清单
 
 | 文件 | 形态 | 运行方式 |
 |---|---|---|
-| `roundtrip_demo.py` | 单机闭环（A 发 -> 同进程 B 收执回传 -> A 取回验证） | `python roundtrip_demo.py` |
+| `roundtrip_demo.py` | 单机闭环（execute + roundtrip 两形态，A 发 -> 同进程 B 收执回传 -> A 取回验证） | `python roundtrip_demo.py` |
 | `two_proc_send.py` | 双进程 A 端：interact 一键投递 + 轮询取回 | `python two_proc_send.py --wait` |
 | `two_proc_recv.py` | 双进程 B 端：handle_request 一键处理回传 | `python two_proc_recv.py --poll` |
+| `relay_demo.py` | 三角拓扑 A->C->B 中转闭环（自建 RelayServer，SEND 投递 -> RELAY 暂存 -> RECV 执行回传 -> SEND 取回） | `python relay_demo.py` |
 
 ### 双进程演示（两个终端）
 
@@ -69,10 +78,22 @@ python examples/two_proc_send.py --wait
 A 端投递 `jump.probe` 请求包 -> B 端取包解密执行 -> 加密回传 -> A 端取回验证。
 全程只有「配置 + 动作名」，无链路控制代码；示例共用 `_demo_share/` 目录作为 shared path 介质。
 
+### 中转演示（relay）
+
+```bash
+python examples/relay_demo.py
+```
+
+A 端配置加一项 `"relay": {"host": ..., "port": ..., "token": ...}` 指向自建中转，
+`interact(mode="request")` 投递 -> `handle_request` 从 C 取包执行 -> 回传 -> A 取回，
+通道选择链「中转优先」命中 relay。零外部依赖（中转为本机自建）。
+
 ## 真实介质替换
 
 示例默认使用本地 `_demo_share/` 作为 shared path（零外部依赖即可跑通）。接入真实场景时：
 
 - 换在线通道：配置 `online` 列表（sftp/git），`SftpChannel` 内置 paramiko 优先 + 注入回退；
-- 换中转：配置 `relay`（host/port/token），`RelayServer` 收包暂存 + TTL 过期自动关闭；
+- 换中转：配置 `relay`（host/port/token），`RelayServer` 收包暂存 + TTL 过期自动关闭（形态见 `relay_demo.py`）；
 - 换角色：A/B 反向传递时把 `role` 由 SEND 换成 RECV（或调用 `session.reverse()`），介质与密钥原样复用。
+
+> 示例与交互入口的可运行性由 `tests/test_examples_smoke.py` 以子进程 smoke 守护（roundtrip / two_proc 双进程 / relay 三角拓扑 + 四动作交互入口覆盖）。
