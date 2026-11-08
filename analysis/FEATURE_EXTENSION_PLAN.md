@@ -4,9 +4,9 @@
 
 本计划旨在系统性分析 vools 与 funcy、toolz、returns 三个相关库之间的功能差异，识别缺失功能，并制定分阶段实施计划。
 
-> **实现状态（核实于 2026-10-29）**：31 条中 **28 条已实现（~90%）**；部分 1 条、未实现 1 条。
+> **实现状态（核实于 2026-11-08，T0r3.2.2 复跑）**：31 条中 **31 条已实现（100%）**。
 > 已实现：`Result` 类型、集合/序列/字典/函数组合/错误处理/响应式等核心能力（逐项见 §7 的「实际状态」表）。
-> 部分 / 未实现的具体条目：以 `actus/tools/audit/plan_audit_core.py` 的 MISS 输出为准；其中**属本计划（核心库）**的是 `conj`、`count_by（对比表）`，其余 MISS（`vicDate`、`look_upon.py`、`setup.py`、`requirements.txt`、`spark/init.py`）属 IMPLEMENTATION_PLAN 的 D 类路径。
+> 上期（2026-10-29）标注的「部分/未实现」条目 `conj`、`count_by（对比表）` 已复跑确认**均已落地**（`vools/curried/collection.py:485 / :153`）；审计 MISS 仅剩 IMPLEMENTATION_PLAN 的 D 类路径标注（`vicDate` 兼容别名、`look_upon.py`、`spark/init.py`、`setup.py`、`requirements.txt`），均已在该文档核实为过时/别名，不属本计划缺口。
 > 核实方法（**可复跑**）：`python actus/tools/audit/plan_audit_core.py`（根 = 仓库 `vools/`，秒级完成）。
 > 测试证据（可复跑）：`tests/functional/` + `tests/curried/` + 11 个相关回归文件 → 实测 **506 passed**。
 
