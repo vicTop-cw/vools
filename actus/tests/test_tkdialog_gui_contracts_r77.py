@@ -27,6 +27,26 @@ import _ai_local_bootstrap  # noqa: F401  必须在 vools 之前
 
 import tkinter as tk
 
+# ---------------------------------------------------------------------------
+# 环境守卫（统帅轮-09时）：Tcl/Tk 运行库缺失时整文件 skip 而非 32 个 ERROR。
+#
+# 背景：Loomy python-runtime（embedded Python 发行版）不带 lib/tcl8.6，
+# `tk.Tk()` 报 `_tkinter.TclError: Can't find a usable init.tcl`——纯环境归因，
+# 不是产品缺陷；CI / 桌面 Python 环境有 Tcl 时照常全跑。
+# 探测方式：真建一个 root 再立刻销毁（比 import 探测更诚实——import tkinter
+# 成功但 Tcl 库缺失的组合真实存在，本机实测就是这种）。
+# ---------------------------------------------------------------------------
+try:
+    _probe_root = tk.Tk()
+    _probe_root.destroy()
+    _TK_AVAILABLE = True
+except tk.TclError:
+    _TK_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(
+    not _TK_AVAILABLE,
+    reason="Tcl/Tk 运行库不可用（embedded Python 无 lib/tcl8.6），GUI 契约测试跳过")
+
 import vools.actus.tkdialog as td
 
 

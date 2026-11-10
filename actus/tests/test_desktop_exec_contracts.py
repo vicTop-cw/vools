@@ -223,7 +223,10 @@ def test_desktop_import_does_not_write_on_readonly_fs(world, monkeypatch):
     `import vools.actus.desktop` 直接 PermissionError（模块导入不应有写副作用）。
 
     断言：monkeypatch `Path.mkdir` 抛 OSError 后，重新 import 桌面模块**不抛异常**。
+    前置：desktop 模块顶层 import fastapi —— fastapi 缺席时该模块根本无法构造
+    （与本文件 TestClient 一族的 importorskip 同语义），skip 而非 ERROR。
     """
+    pytest.importorskip("fastapi")
     import pathlib
 
     def read_only_mkdir(self, *args, **kwargs):

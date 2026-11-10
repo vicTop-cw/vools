@@ -582,7 +582,16 @@ def test_detail_module_not_found_is_not_error(monkeypatch):
     monkeypatch.setattr(_il, 'import_module', _not_found_only)
     v, s = P._get_pkg_version_detail('never-installed', 'never_installed')
     assert v == ''
-    assert s is None
+    # 环境分档（r95 契约 §途径信号语义）：
+    #  * pkg_resources 可用（setuptools 装着）→ 元数据途径畅通 →「没装」是
+    #    正常形态，s is None；
+    #  * pkg_resources 不可用（py3.12+ 无 setuptools 的 venv）→ 途径本身
+    #    失效，实现按契约**留痕** metadata_unavailable（不许被「没装」吞掉），
+    #    但 error_kind 必须是 metadata_unavailable ——「目标没装」不许升级成
+    #    「import_error」（import 兜底抛的也是 ModuleNotFoundError，属没装）。
+    if s is None:
+        return
+    assert s.get('error_kind') == 'metadata_unavailable', s
 
 
 def test_get_pkg_version_compat_entry(monkeypatch):

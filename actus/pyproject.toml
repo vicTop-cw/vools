@@ -114,10 +114,11 @@ include = ["vools*"]
 
 [tool.setuptools.package-data]
 "vools.actus" = [
-    "config.template.py",
     "*.md",
+    # templates/index.html：desktop server 的 Web UI 页面（desktop.py TemplateResponse 引用）。
+    # 统帅轮-09时清理：原 config.template.py 与 static/* 两条 glob 指向不存在的路径
+    # （0 文件），属打包层死条目，已删除；templates/* 有真实文件保留。
     "templates/*",
-    "static/*",
     # 种子动作（三层动作边界的第 1 层，docs/08 §1）：
     # vools/actus/actions/**/*.actus.md + *.actus.schema.md 随 wheel 分发，
     # pip 装上即有 4 个基线 GUI 动作（此前只收 *.md 与 vools/actus/ 直属层，
