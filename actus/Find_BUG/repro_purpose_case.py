@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+# =====================================================================
+# STALE-已修（2026-11-10 定性）：本脚本复现的缺陷已全部修复，保留仅作
+# 历史寻虫证据。注意：断言语义为「bug 存在的证据」形态——现在跑会
+# AssertionError（=已修的正常现象），不是坏账。
+# 逐条修复证据见 actus/Find_BUG/TRIAGE_R103.md。本脚本逻辑零改动，仅加本头注释。
+# BUG-I3b 已修（TRIAGE_R103 #10）：filter_by_dimension 查询端归一（V-19），小写 transform 也能命中
+# =====================================================================
 """BUG-I3b（正式版）：purpose/industry 不在 action.schema.json 的 enum 里
   （schema properties 只有 trust/kind/license/pricing 带 enum）——
   所以 purpose: [Transform] 在装了 jsonschema 的正常环境也能通过必填校验，

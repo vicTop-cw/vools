@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+# =====================================================================
+# STALE-已修（2026-11-10 定性）：本脚本复现的缺陷已全部修复，保留仅作
+# 历史寻虫证据。注意：断言语义为「bug 存在的证据」形态——现在跑会
+# AssertionError（=已修的正常现象），不是坏账。
+# 逐条修复证据见 actus/Find_BUG/TRIAGE_R103.md。本脚本逻辑零改动，仅加本头注释。
+# BUG-F1/N1/S1 已修（TRIAGE_R103 #5）：get_featured 交集生效死动作出榜；normalize_multi_field 截断真生效；check_secrets 假重复消失
+# =====================================================================
 """复现 curator.get_featured + validate.normalize_multi_field / check_secrets 缺陷：
 
 BUG-F1（契约漂移，curator.get_featured）：docstring 承诺
