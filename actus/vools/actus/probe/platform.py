@@ -87,11 +87,17 @@ def _get_linux_distro() -> dict:
 
 
 def _get_sip_status() -> bool:
-    """macOS SIP 状态检测。"""
+    """macOS SIP 状态检测。
+
+    判据（统帅轮-10时修正）：匹配 `status: enabled`——不能用裸 `"enabled" in
+    stdout`，SIP **disabled** 时的输出「System Integrity Protection status:
+    disabled.」同样包含 "enabled" 子串（disabled ⊃ enabled），会把关闭态误报
+    成开启态（安全语义反转，静默错值）。
+    """
     try:
         import subprocess
         r = subprocess.run(["csrutil", "status"], capture_output=True, text=True, errors='replace', timeout=5)
-        return "enabled" in r.stdout.lower()
+        return "status: enabled" in r.stdout.lower()
     except Exception:
         return None
 
