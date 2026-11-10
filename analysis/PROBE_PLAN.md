@@ -981,22 +981,22 @@ def _get_pkg_version(pkg):
 > `duplicate_ids` **细粒度分支目前没有专项单测**（`grep` 全 `actus/tests/` 零命中）。
 > 这部分靠 fixture 手工验证，**建议补测**（已列入 §9 剩余工作）。
 >
-> **两个已知缺口（进行中 —— 代码已开始落地但本轮不判完成，见 §9）**：
-> 1. **`runtime:` 依赖前缀进 resolver**：原状是 `actus/vools/actus/dependency.py` 的
->    `_parse_dep_string` **没有该分支**（docstring 只列 `builtin/system/pip/npm/mcp/action/cs_*`），
->    裸串 fallthrough 成 action 依赖 → 名为 `runtime:python` 的动作**永远 blocked**。
->    本轮核验（2026-10-28 09:0x）：**分支已在工作区落地** ——
->    `_DepKind.RUNTIME = "runtime"`（`:42`）、`elif dep_str.startswith("runtime:")`（`:189`），
->    并带一张「抽象名 → 可执行文件候选」展开表（`runtime:shell` → bash/sh…，`runtime:rust` → rustc/cargo）。
->    ⚠️ **但仍算进行中**：`grep -rn "runtime:" actus/tests/` **零命中** —— 该解析分支**尚无单测**，
->    本轮未验收。
-> 2. **`intent.py` 的 ready 判据接 `verdicts`**：原状是粗粒度「动作在报告里 = ready」。
->    本轮核验：**已加第二道门** —— `_extract_blocked_ids()`（`intent.py:114-135`）从报告的
->    `action_readiness.extra.verdicts` 提取**显式 `verdict == "blocked"`** 的 id，
->    `_is_ready()`（`:137`）变成两道门：①在 `_ready_ids` 里；②不在 `_blocked_ids` 里。
->    取不到 / 结构异常 / 旧报告 → `None` → **只看第 1 道门，行为与升级前一致**（零回归）。
->    并新增专项测试 `actus/tests/test_action_readiness_intent.py`（329 行 / **9 用例，实测全过**）。
->    ⚠️ **仍算进行中**：本轮未验收，故不写「已完成」。
+> **两个已知缺口（✅ 已收口 —— 统帅轮-09时 2026-11-09）**：
+> 1. **`runtime:` 依赖前缀进 resolver**：✅ **已收口**。分支落地
+>    （`_DepKind.RUNTIME`、抽象名展开表、`fix_command`、`_check_runtime`）+
+>    专项单测 `actus/tests/test_runtime_dep_resolution.py`（15 用例全绿：
+>    解析分型/前缀回归/fix_command/检查层可用与缺失/混合列表分型/枚举还原/
+>    probe 侧联动/端到端 ready 与 blocked 两条）。
+> 2. **`intent.py` 的 ready 判据接 `verdicts`**：✅ **已收口**。两道门实现
+>    （`_extract_blocked_ids` + `_is_ready`）+ 专项测试
+>    `actus/tests/test_action_readiness_intent.py`（9 用例，2026-11-09 正式验收
+>    实测全过）。
+> 另：§977-982 提到的 `analyze_actions` 细粒度信号测试缺口也已收口——
+> `actus/tests/test_analyze_actions_signals.py`（21 用例全绿，覆盖 verdicts
+> 契约字段/undeclared 三态/invalid_deps_field/五类依赖判定/action 不动点/
+> degraded/parse_failed/duplicate_ids/index_source）。degraded 触发实证修正：
+> 此处记载的 calculator `devtools` 反例在 0.9.0 后已被 bridge 白名单收编
+> （webview2+devtools 现合法），degraded 触发须用真正未知指令名。
 
 ```python
 # vools/actus/probe/actions.py —— 以下是**最初的设计草图**（实现见上方表格）
