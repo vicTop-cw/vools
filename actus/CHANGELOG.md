@@ -11,6 +11,76 @@
 > 本段记录 **0.9.0 发布之后**、尚未发版的改动。版本号（0.9.1 / 1.0.0）待下次发布时确定，
 > 此处不预设。核心是 `actus probe` 环境探测器从「能跑」做到「跑得快、数据可信」。
 
+### ✅ 统帅轮-11时（2026-11-10）：HANDOFF 复查清零 + Find_BUG 存档收尾 + 落库方案
+
+- **vools 核心 HANDOFF 三点复查（2026-08-10 老情报实测核实，全清零）**：
+  ①curry @classmethod 失败 → `test_curry_class_method` **passed**（已修）；
+  ②msgpack 缺依赖硬失败 → 44 passed + 1 skipped（优雅 skip 替代硬 ERROR）；
+  ③Nim dll 重复产物 → `vools/oop/lib/` 重复已消失（9 个 dll 全在 lib/windows/
+  与 data/，均未入 git 追踪），HANDOFF_SUMMARY 情报彻底过时。
+- **BD-SC1 侦察即收口**：`_ScatteredIface` dry_run 语义已由 V-04（2026-10-22）
+  修复——dry_run=True 短路走 `check_scattered` 返回 skipped 预览态（三通道
+  executor/adapter/scattered 全接），且 `test_exec_iface_contracts_r81.py` 已有
+  `test_dry_run_check`/confirmed 映射契约测试双保险。上轮留档专项无需再做。
+- **Find_BUG STALE 头注释批**：12 个已定性脚本过期 repro 加「STALE-已修」头注释
+  （指向 TRIAGE_R103.md 逐条修复证据，原脚本逻辑零改动，py_compile 抽验通过）。
+- **在途改动落库方案**：`analysis/COMMIT_PLAN_R104.md`——两轮统帅轮改动按 4 组
+  commit 方案（测试基建修复/SIP 修复/Find_BUG 存档/账本对齐）+ 不入库项处置建议
+  （OUTFILE/nul 残留、T1 验收报告归位 reports/ 的 AIGC 合规块拍板点），交主人拍板。
+- **全量基线**：8 段复跑 **5722 passed + 76 skipped + 0 failed + 0 error**，
+  与统帅轮-10时完全一致（零回归）。
+
+### ✅ 统帅轮-10时（2026-11-10）：Find_BUG 全景甄别 + SIP 误判修复 + 尖峰取证
+
+- **Find_BUG 14 个 repro 全景甄别收官**（`Find_BUG/TRIAGE_R103.md`）：12 个 rc=1
+  逐个细读断言语义终裁——这批 repro 的断言是「bug 存在的证据」形态（assert bug
+  现象成立），失败=已修。**全部 14 个对应缺陷均已修复，零真 bug 遗留**（exec_iface
+  映射表对齐/双路一致/awaiting→skipped、featured 交集、multi_field 截断、假重复
+  消失、conflict 有痕、缓存键带根身份、cron 值域、V-19 归一、哈希消歧、V-07
+  internal 判据、artifacts 收编、X1 指标不污染）。目录性质转为历史寻虫证据存档。
+- **🐛 修复 macOS SIP 探测安全语义反转**（`probe/platform.py::_get_sip_status`）：
+  原判据 `"enabled" in stdout.lower()` 在 SIP **disabled** 时同样命中
+  （「status: **disabled**.」包含 enabled 子串）→ 关闭态误报开启态。改判据
+  `"status: enabled"`，回归 `tests/test_platform_sip_r103.py` 4 用例
+  （enabled/disabled/未知输出/csrutil 缺失四形态，假 subprocess 世界不依赖真机）。
+- **system_tools 尖峰取证（CHANGELOG 已知问题复核）**：安静态均值 811ms
+  （items=65），动作目录缓存冲刷后 761-779ms（x0.94-0.96，反而略快）——
+  **尖峰未复现**，维持「磁盘缓存效应」环境归因判读，条目补定量数据。
+- **仓库卫生**：`actus/OUTFILE`（repro 输出残留 11 字节）与根目录 `nul` 设备名
+  残留清理。
+- **全量基线**：8 段复跑 **5722 passed + 76 skipped + 0 failed + 0 error**
+  （较 09时 +12，为新增用例归位；分段证据 temp/baseline_seg0-7.txt）。
+
+### ✅ 统帅轮-09时（2026-11-09）：测试缺口收口 + 基线全绿 + 账实对齐
+
+- **CHANGELOG「两个测试缺口」全部收口**：`analyze_actions` 细粒度信号专项单测
+  （`tests/test_analyze_actions_signals.py`，21 用例：verdicts 契约字段/undeclared 三态/
+  invalid_deps_field/五类依赖判定/action 不动点迭代/degraded/parse_failed/duplicate_ids/
+  index_source 双源）；`runtime:` 依赖解析分支单测
+  （`tests/test_runtime_dep_resolution.py`，15 用例：解析分型/前缀回归/fix_command/
+  `_check_runtime` 可用与缺失/混合列表分型/probe 侧联动/端到端两条）。
+- **REFACTOR_COMPLETION §六.1 实测反转**：直调审计显示 33 个错误码里 30 个已有测试引用
+  （0.9.0 后各轮补测收敛，"42 个无引用"账目过时）；唯一零引用的 `resource_not_found`
+  已补测收口（`tests/test_error_codes_coverage_r102.py`，8 用例，含 ERROR_CODES 名单
+  闭环契约与直调码一致性守卫）。
+- **REFACTOR_COMPLETION §六.4 账实对齐**：`parser_fingerprint` 索引自动失效机制
+  实为已实现状态（`indexer.py` + `tests/test_index_invalidation_r10h.py` 6 用例全绿），
+  账本 [待定] 标记改判已收口。
+- **PROBE_PLAN §984 两个「进行中」缺口正式验收**（runtime: 分支 + intent 两道门），
+  状态改写已收口；degraded 触发实证修正（calculator `devtools` 反例已被 bridge
+  白名单收编，须用真正未知指令名触发）。
+- **全量测试基线修复（5 处测试基建）**：tkdialog/panel 两个 GUI 契约文件加真 `tk.Tk()`
+  探测守卫（embedded Python 缺 lib/tcl8.6 的半可用环境下 importorskip 挡不住，
+  52 个 ERROR → skip）；desktop readonly 用例补 fastapi importorskip；
+  `test_detail_module_not_found_is_not_error` 按 pkg_resources 可用性分档
+  （py3.12+ 无 setuptools 环境下途径留痕是 r95 契约的正确行为）；
+  `test_get_version_detail_decode_degradation` 按 locale 分档
+  （UTF-8 mode 下 GBK 字节直落 replace 档）。修复后 8 段基线
+  **5710 passed + 76 skipped + 0 failed + 0 error**。
+- **pyproject 资源打包面清理**：删 `config.template.py` 与 `static/*` 两条死 glob
+  （0 文件）；`templates/*` 有真实文件（`templates/index.html`，desktop Web UI）
+  保留；wheel 构建核验 7 项 package-data 全 PASS。
+
 ### ⚡ 性能：`actus probe` 冷启动 **79 052ms → 稳态 ~2 000ms（≈41x）**
 
 | 探测器 | 改造前 | 改造后 | 手段 |

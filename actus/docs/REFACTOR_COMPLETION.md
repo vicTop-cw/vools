@@ -98,11 +98,25 @@
 ## 六、遗留（按价值排序，含收口状态）
 
 > 统帅轮-05时 收口更新（2026-11-06）：
+> 统帅轮-09时 再收口（2026-11-09）：
 
-1. **42 个错误码无测试引用（67%）** —— [待定] 建议按「发生频率 × 影响面」分批补；本轮未启动批量补测，需专项排期。
+1. **42 个错误码无测试引用（67%）** —— ✅ **已收口（统帅轮-09时实测反转）**。
+   用直调审计（grep `ActionError('<code>'` 全仓 → 对照 tests/ 引用）实测：
+   33 个直调码里 30 个已有测试引用；唯一零引用的 `resource_not_found`
+   （mcp_server 资源读取两条触发路径）已补测收口
+   （`tests/test_error_codes_coverage_r102.py`，8 用例全绿：两条触发路径 +
+   runs 存在对照 + ERROR_CODES 名单闭环 + 码形态 lint + 直调码与名单一致性守卫）。
+   docs/08 §5 名单里的间接发出码（confirmation_timeout / language_unavailable /
+   entry_no_output / block_failed）引用数 1-4 全部非零。
+   审计口径与守卫已固化为测试（新码出现须先登记名单或扩展集，不许静默漂移）。
 2. `deps_` / `dependency_` 前缀不一致 —— [不适用] 命名风格问题，改动面大、收益低，经评估维持现状。
 3. **更深边界：template 生成失败路径、demo 递归、workflow 节点重试** —— ✅ **已收口**。`tests/test_deep_boundary_r101.py`（8 用例全过）覆盖：template 生成失败路径、demo 递归防护、workflow 节点重试+退避+fallback。
-4. **索引重建手工触发** —— [待定] "格式解析逻辑变更时自动失效"机制尚未实现，需跨模块设计。
+4. **索引重建手工触发** —— ✅ **已收口（账实对齐）**。`parser_fingerprint` 指纹方案已在
+   `indexer.py` 落地（`_fingerprint_source_texts` 覆盖 model.py + frontmatter.py 解析链源码
+   的 sha256 前 16 hex；`build_index` 落盘写入、`load_index` 读回比对，不匹配或老缓存无字段
+   ⇒ 自动重建并附 `rebuild_reason` + logging.info；`build=False` 只读路径零副作用契约不变），
+   回归测试 `tests/test_index_invalidation_r10h.py`（6 用例全绿，2026-11-09 复跑通过）。
+   本条此前标 [待定] 与代码实况漂移——实现先于账本更新，本轮核验后改判已收口。
 
 ## 七、一条工程结论
 
