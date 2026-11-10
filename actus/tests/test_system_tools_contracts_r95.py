@@ -281,11 +281,22 @@ def test_get_version_detail_timeout_kills_tree():
 
 
 def test_get_version_detail_decode_degradation():
-    # GBK 编码输出版本号 → locale 解码降级并留痕
+    # GBK 编码输出版本号 → 解码降级并留痕
     v, e, x = S._get_version_detail(
         PY, ['-c', 'import sys; sys.stdout.buffer.write("版本 1.2.3".encode("gbk"))'])
     assert e is None and v.endswith('1.2.3')
-    assert x.get('version_decode') == 'locale'
+    # 三级降级链：utf-8 严格 → locale → utf-8(replace)。GBK 字节在
+    # utf-8 严格档必失败；落到哪一档取决于本机 locale——
+    #  * cp936/GBK locale → locale 档成功解出 → 'locale'；
+    #  * UTF-8 mode（PYTHONUTF8=1 / py3.15+ 默认）→ locale 也是 utf-8，
+    #    GBK 字节同样过不了 → 再降 'replace'。
+    # 两种都是降级留痕的正确行为，按环境分档断言（不许假设固定 cp936）。
+    import locale as _locale
+    preferred = (_locale.getpreferredencoding(False) or '').lower()
+    if preferred in ('utf-8', 'utf8'):
+        assert x.get('version_decode') == 'replace'
+    else:
+        assert x.get('version_decode') == 'locale'
     # 两边都解不动的字节 → replace 档位
     assert S._decode_output(b'\xff\xfe\xff 1.2')[1] == 'replace'
     # None / str 直通

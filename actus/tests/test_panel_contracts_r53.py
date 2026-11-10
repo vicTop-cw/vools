@@ -20,6 +20,21 @@ import pytest
 
 tk = pytest.importorskip("tkinter")
 
+# 环境守卫（统帅轮-09时）：tkinter 模块可导入但 Tcl 运行库缺失的「半可用」
+# 环境（embedded Python 无 lib/tcl8.6）下 importorskip 挡不住 —— tk.Tk() 才
+# 报 Can't find a usable init.tcl。真建一个 root 探测，不可用则整模块 skip
+# （与 test_tkdialog_gui_contracts_r77.py 同款纪律）；CI / 桌面 Python 照常全跑。
+try:
+    _probe_root = tk.Tk()
+    _probe_root.destroy()
+    _TK_AVAILABLE = True
+except tk.TclError:
+    _TK_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(
+    not _TK_AVAILABLE,
+    reason="Tcl/Tk 运行库不可用（embedded Python 无 lib/tcl8.6），GUI 契约测试跳过")
+
 import vools.actus.panel as panel_mod
 from vools.actus.panel import PanelApp, _load_actions, _register_global_hotkey, run_panel
 

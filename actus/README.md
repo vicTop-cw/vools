@@ -69,8 +69,10 @@ with open(path, encoding="utf-8") as f:      # 必须写 encoding
 - `contracts/` 保留在宿主仓库（`ACTUS_REPO_ROOT/contracts/`），**不在 wheel 内**
 - `vools/actus/schemas/*.json` 是打包进来的**可移植副本**，供安装态回退
 - `pyproject.toml` 的 `package-data "vools.actus"` 已包含 `_shiki/*.mjs`、
-  `_shiki/*.json`、`schemas/*.json` 等资源；`templates/*`、`static/*`、
-  `config.template.py` 三条 glob **指向不存在的路径**（0 文件），保留无害但已过时
+  `_shiki/*.json`、`schemas/*.json` 等资源；`templates/*` 有真实文件
+  （`templates/index.html`，desktop server 的 Web UI 页面）保留。
+  统帅轮-09时已清理两条死条目：`config.template.py` 与 `static/*`
+  （曾指向不存在的路径，0 文件）。
 
 ## 核心功能
 
