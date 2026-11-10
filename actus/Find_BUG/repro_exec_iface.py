@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+# =====================================================================
+# STALE-已修（2026-11-10 定性）：本脚本复现的缺陷已全部修复，保留仅作
+# 历史寻虫证据。注意：断言语义为「bug 存在的证据」形态——现在跑会
+# AssertionError（=已修的正常现象），不是坏账。
+# 逐条修复证据见 actus/Find_BUG/TRIAGE_R103.md。本脚本逻辑零改动，仅加本头注释。
+# BUG-1/2/3 已修（TRIAGE_R103 #4）：映射表对齐 dependency_missing→unreachable；_classify_exception 双路一致 timeout→timeout/permission_denied→resource；awaiting_confirmation 归一 status='skipped'
+# =====================================================================
 """复现 exec_iface.py 三处缺陷：
 BUG-1: _ERROR_CODE_MAP 的死键（dep_missing/trust_denied/max_instances 等）与
        executor/ActionError 实际 code（deps_missing/dependency_missing/trust_rejected/

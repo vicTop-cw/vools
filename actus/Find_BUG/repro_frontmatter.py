@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+# =====================================================================
+# STALE-已修（2026-11-10 定性）：本脚本复现的缺陷已全部修复，保留仅作
+# 历史寻虫证据。注意：断言语义为「bug 存在的证据」形态——现在跑会
+# AssertionError（=已修的正常现象），不是坏账。
+# 逐条修复证据见 actus/Find_BUG/TRIAGE_R103.md。本脚本逻辑零改动，仅加本头注释。
+# 脚本过期-符号消失（TRIAGE_R103 #3）：_AIGC_KEYS 已随产品重构移除，本脚本 ImportError 无法运行
+# =====================================================================
 """复现 frontmatter.py: _AIGC_KEYS 含 'generated-by-at'，但判别 startswith 元组
 只有 ('AIGC:','aigc:','generated-by:') —— 'generated-by-at:' 不命中 'generated-by:'
 （第 12 字符 'a' vs ':'）。结果：仅含 generated-by-at 的 AIGC 合规块被判成 meta，

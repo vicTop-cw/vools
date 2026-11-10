@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+# =====================================================================
+# STALE-已修（2026-11-10 定性）：本脚本复现的缺陷已全部修复，保留仅作
+# 历史寻虫证据。注意：断言语义为「bug 存在的证据」形态——现在跑会
+# AssertionError（=已修的正常现象），不是坏账。
+# 逐条修复证据见 actus/Find_BUG/TRIAGE_R103.md。本脚本逻辑零改动，仅加本头注释。
+# BUG-Q1/Q3/Q2 已修（TRIAGE_R103 #12）：_probe_omega 认真源路径 actions/{private,public}/omega/；_SELF_TOOLS 接线（4 行）；internal 档 V-07 判据重构（visibility=internal 短路）
+# =====================================================================
 """复现 quality.py + executor 埋点 + calllog 三处缺陷：
 
 BUG-Q1（契约漂移/功能死锁）：模块表承诺 gold/platinum 判据含 “Omega spec 通过”，
