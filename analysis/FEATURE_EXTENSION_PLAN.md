@@ -430,15 +430,15 @@ def ignore(fn):
 | API 文档 | 待编写 | 第5周 |
 | 功能对比矩阵更新 | 待更新 | 第5周 |
 
-**实际状态（核实于 2026-10-29）**
+**实际状态（核实于 2026-11-11）**
 
 | 输出物 | 实际状态 | 证据（文件 / 行数 / 测试） |
 |--------|----------|-----------------------------|
-| `vools/functional/result.py` | ✅ 已实现 | 文件存在，314 行；`tests/functional/` 下有 Result 相关回归用例 |
-| `vools/curried/collection.py`（增强） | ✅ 已实现 | 文件存在，930 行；`tests/curried/` 覆盖 |
-| `vools/curried/iteration.py`（增强） | ✅ 已实现 | 文件存在，355 行 |
-| `vools/curried/composition.py`（增强） | ✅ 已实现 | 文件存在，255 行 |
-| `vools/decorators/control.py`（增强） | ✅ 已实现 | 文件存在，600 行；`tests/test_decorators_control_validation_regression.py` |
+| `vools/functional/result.py` | ✅ 已实现 | 文件存在，251 行；`tests/functional/` 下有 Result 相关回归用例 |
+| `vools/curried/collection.py`（增强） | ✅ 已实现 | 文件存在，749 行；`tests/curried/` 覆盖 |
+| `vools/curried/iteration.py`（增强） | ✅ 已实现 | 文件存在，276 行 |
+| `vools/curried/composition.py`（增强） | ✅ 已实现 | 文件存在，204 行 |
+| `vools/decorators/control.py`（增强） | ✅ 已实现 | 文件存在，488 行；`tests/test_decorators_control_validation_regression.py` |
 | 单元测试套件 | ✅ 已实现 | 上述范围实测 **506 passed**（命令见下） |
 | API 文档 | ⚠️ 未单独产出 | 各模块有 docstring；本计划未产出独立 API 文档（**交付物，不计入 31 条功能条目**） |
 | 功能对比矩阵更新 | ⚠️ 未单独拆分 | §1 对比矩阵仍在本文档内（历史快照）（**交付物，不计入 31 条功能条目**） |
