@@ -43,7 +43,7 @@ tmp 仓库做递归快照（路径 + size + **mtime_ns** + **sha256**，覆盖 `
 `ACTUS_REPO_ROOT` / `ACTUS_META_DIR` / `ACTUS_CONFIG_DIR` / `HOME` 全部指到 tmp；
 真实仓库本身不被写入（跑完整套件后 `git status` 为空，见汇报证据）。
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import hashlib

@@ -27,7 +27,7 @@
 动作全部 `tmp_path` 现造，扫描根用产品自带覆盖点 `ACTUS_REPO_ROOT`；探测缓存
 重定向到 tmp（不写工作区 `_meta/probe_cache.json`）。
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import json

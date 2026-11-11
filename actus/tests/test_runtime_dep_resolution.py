@@ -30,7 +30,7 @@ blocked（probe 侧实测到该缺口）。分支已在工作区落地（DepType
 * 「不可用」分支用刻意不存在的名字（`definitely-not-a-runtime-xyz`）；
 * probe 侧联动用计划形态构造报告 dict（{"runtimes": [...]}），不真跑 probe。
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import os

@@ -36,7 +36,7 @@
 * 唯一一条真跑 `probe()` 的冒烟用例把缓存目录也重定向到 tmp（不写工作区
   `_meta/probe_cache.json`）；当前整条 probe 实测约 2s。
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import json

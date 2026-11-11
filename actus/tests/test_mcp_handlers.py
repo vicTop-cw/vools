@@ -20,7 +20,7 @@ handler 行为零覆盖**。审计探针实测：把 `_call_tool` / `_list_tools
 隔离：`tmp_path` 假仓库（复制 contracts/action.schema.json 供 scaffold/author 校验），
 HOME/USERPROFILE 指 tmp（visibility 引擎的 `~/.actus` 因此被圈住），跑完不碰真实仓库。
 
-py3.6 兼容：标准库 + % 格式化。
+py3.8+（requires-python>=3.8）：标准库 + % 格式化。
 """
 
 import json

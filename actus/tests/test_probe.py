@@ -12,7 +12,7 @@
 测试不依赖机器上真装了哪些工具（那会让断言随环境漂移）：只断言报告结构完整、
 维度非空、以及"已知存在的包能拿到版本号"这类确定性事实。
 
-py3.6 兼容：无 capture_output/text 之外的新语法依赖，无 walrus，f-string 限于 py3.6 支持形态。
+py3.8+（requires-python>=3.8）：无 capture_output/text 之外的新语法依赖，无 walrus，f-string 限于 py3.6 支持形态。
 """
 
 import copy

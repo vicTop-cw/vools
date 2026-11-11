@@ -11,6 +11,33 @@
 > 本段记录 **0.9.0 发布之后**、尚未发版的改动。版本号（0.9.1 / 1.0.0）待下次发布时确定，
 > 此处不预设。核心是 `actus probe` 环境探测器从「能跑」做到「跑得快、数据可信」。
 
+### 🚀 统帅轮-12时（2026-11-10）：probe 尾巴真凶揪出并修复——runtimes 5.1s→256ms
+
+- **🐛 修复 WSL bash 转发器拖垮 runtimes 探测（性能尾巴真凶）**：
+  `probe/runtimes.py::_probe_one_runtime` 对 shell runtime 找到的
+  `C:\Windows\system32\bash.EXE`（WSL 网关，非 git-bash）照常发 `bash --version`
+  ——该命令要拉起 WSL VM：热态 ~2.3s、冷态 >5s 撞满 per-tool timeout。实测
+  runtimes 探测器 **5.1s 恒定**（两轮分布探针 5092/5092ms，非缓存效应），
+  probe 并行墙钟 2.5-5.4s 的真凶手。修复：version 探测前特判 system32\bash.exe
+  ——跳过 version、available 语义不变、`extra["wsl_forwarder"]=True` 标注网关
+  身份（真 git-bash 在 Git\bin\ 候选链后续命中）。**修复后 runtimes 256ms
+  （-95%），probe force_refresh 全量墙钟 1043ms（历史首进 1 秒档）**。
+  回归 `tests/test_runtimes_wsl_bash_r106.py` 4 用例（跳过实锤/对照/大小写
+  不敏感/墙钟上限 3s 集成锚）。
+- **耗时分布基线留档**（修复后）：system_tools 990ms（新尾巴，47%——磁盘
+  缓存敏感）、compilers 262ms、runtimes 256ms、platform_tools 222ms、
+  python_pkgs 176ms，其余 <100ms；串行 sum 2087ms / 并行墙钟 1043ms。
+  probe/__init__ 注释预言的「新尾巴」实为 system_tools 而非 platform_tools。
+- **py3.6 兼容注释漂移纠正**：tests/ 头注释惯例写「py3.6 兼容」，但
+  pyproject `requires-python >= "3.8"`（24ea2d53 有意升级）——20 个测试文件
+  头注释批量纠正为 py3.8+ 口径（改动仅注释行，抽验 35 passed 零影响）。
+- **wheel 重构核验**（C1 清理后回归）：setuptools.build_meta 直构 +
+  zipfile **9 项 ALL PASS**（原 7 项资源 + 新增 2 条死条目不回流守卫）。
+- **模块级覆盖审计**：`analysis/COVERAGE_AUDIT_R105.md`——53 个零覆盖公开
+  函数分布清单（sigma check_* 家族 14 + constants 谓词族 6 为高价值第一批，
+  其余按价值分档/建议 API 收敛评审），交下轮排期，本轮不擅自补测。
+- **全量基线**：8 段复跑 **5722+76** 零回归。
+
 ### ✅ 统帅轮-11时（2026-11-10）：HANDOFF 复查清零 + Find_BUG 存档收尾 + 落库方案
 
 - **vools 核心 HANDOFF 三点复查（2026-08-10 老情报实测核实，全清零）**：
@@ -27,8 +54,12 @@
 - **在途改动落库方案**：`analysis/COMMIT_PLAN_R104.md`——两轮统帅轮改动按 4 组
   commit 方案（测试基建修复/SIP 修复/Find_BUG 存档/账本对齐）+ 不入库项处置建议
   （OUTFILE/nul 残留、T1 验收报告归位 reports/ 的 AIGC 合规块拍板点），交主人拍板。
-- **全量基线**：8 段复跑 **5722 passed + 76 skipped + 0 failed + 0 error**，
-  与统帅轮-10时完全一致（零回归）。
+- **全量基线**：8 段复跑，除段 1 的 10 个 clipboard 用例（test_clipboard_integration
+  8 + test_examples_smoke 2）因 **Loomy 主程序持剪贴板锁** 失败外全绿——
+  实测 owner hwnd=1969754/pid=19256（Loomy 桌面进程），本机任何进程
+  Set-Clipboard 全局失败佐证；rx 库 clipboard.py 已有 10 次重试+递增退避
+  设计到位，10 连败=外部长持锁，环境归因非回归。其余 7 段
+  **5716 passed + 76 skipped + 0 failed**，与本轮改动相关段落零回归。
 
 ### ✅ 统帅轮-10时（2026-11-10）：Find_BUG 全景甄别 + SIP 误判修复 + 尖峰取证
 

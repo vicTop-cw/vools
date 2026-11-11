@@ -18,7 +18,7 @@
 隔离：全部走 `tmp_path` + `ACTUS_META_DIR` / `ACTUS_REPO_ROOT` / `HOME` 与
 `probe.cache._CACHE_FILE` 覆盖，**零仓库污染**（跑完真实仓库 `git status` 不变）。
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import io

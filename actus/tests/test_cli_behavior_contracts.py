@@ -35,7 +35,7 @@
 * `viz` 的 `dot/html` 渲染细节、`export` 的 csv/markdown 排版不在本文件范围
   （它们不是「假功能」的载体），只断言 json 导出内容真的可解析。
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import io

@@ -24,7 +24,7 @@ REFACTOR_COMPLETION §六.1 的「42 个错误码无测试引用（67%）」是 
 * 名单闭环：for code in ERROR_CODES → ActionError 可构造、to_payload 结构
   符合 docs/03 §7.2。
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import json
