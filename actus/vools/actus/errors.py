@@ -96,9 +96,14 @@ def check_path_target(path: str, force: bool = False, what: str = '目标',
     共用范围（本轮）：
       * `scaffold.scaffold_action()` —— 与这里等价（它原本就是这套语义）；
       * `template.create_action_from_template()` —— 本轮改为调用本函数（此前**没有**保护）。
-    `installer` / `publisher` 的覆盖判定暂时**没有**合并：它们还带「内容相同则幂等
-    no-op」的语义（installer 还带用户配置快照/还原），语义比"存在即拒绝"宽；
-    将来要统一，应当给本函数加 `idempotent_if_same=` 之类的参数，而不是各写一份。
+    `installer` / `publisher` 的覆盖判定暂时**没有**合并：
+      * installer 的实际语义是「存在即 rmtree 重装 + 用户配置（scope/可见性）快照
+        与还原」（installer.py:261-267 实测），**不是**幂等 no-op——重装动作
+        每次都会删目录重建，靠配置快照保护用户手改内容；将来若要统一覆盖
+        规则，installer 需要的是「存在时先比内容/标记，一致才 no-op」的语义，
+        应该给本函数加 `idempotent_if_same=` 之类的参数，而不是各写一份；
+      * publisher 是「存在且内容不同 → action_exists 拒绝，force 放行」
+        （publisher.py:299-303），语义更接近本函数但多一层内容比对。
     """
     import os
     if force or not os.path.exists(path):
