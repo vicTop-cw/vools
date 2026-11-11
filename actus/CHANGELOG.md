@@ -11,6 +11,48 @@
 > 本段记录 **0.9.0 发布之后**、尚未发版的改动。版本号（0.9.1 / 1.0.0）待下次发布时确定，
 > 此处不预设。核心是 `actus probe` 环境探测器从「能跑」做到「跑得快、数据可信」。
 
+### ✅ 统帅轮-17时（2026-11-11）：OUTFILE 泄漏真凶根治 + 审计终态回写
+
+- **🐛 OUTFILE 反复再生真凶根治**：删三次还冒的 `actus/OUTFILE`（11 字节）
+  此前误归因 repro_a1_debug（实测它写 tempfile）——真凶是
+  `test_adapter_contracts_r32.py::test_run_with_output_path` 的子进程在 pytest
+  cwd 写相对路径 `OUTFILE` 且不清理。双重修正：①子进程改写 `tmp_path` 内
+  文件（零泄漏）；②output.path 链路真实化（原测试写的文件与 output 配置
+  指向不同，读取逻辑根本没被验证——补「文件确实被写出+内容一致」断言）。
+  71/71 全绿。
+- **docs: probe/__init__ 注释漂移订正**：原注释预言「platform_tools 会成为
+  新尾巴」——12时 实测回填：新尾巴是 system_tools 自身（990ms，磁盘缓存
+  敏感）而非 platform_tools（~222-437ms），注释补 16时 实测数据。
+- **R105 审计终态回写**：三批兑现后高/中价值标的全部收口（三批累计 141 新
+  用例）；剩余函数两档终态——10 个 API 收敛候选（待拍板降级而非补测）+
+  tkdialog 6 个 GUI 回调（Tcl 环境受害者非真缺口）。
+- **16时 产出落库**：`a219abd4`（R105 第三批+R110 备料）+ `ca4479ec`
+  （errors.py docstring 订正）已在前轮落库；本轮补 R111 发布材料/R110 定案节
+  /CHANGELOG 16时 条目。均未 push。
+- **全量基线**：8 段复跑全绿锚定（adapter 测试修正零回归）。
+
+### ✅ 统帅轮-16时（2026-11-11）：R110 定案 + 语义漂移修正 + 0.9.1 发布材料备料
+
+- **R110 🔍 待查 8 函数调用面定案**（grep 分析回写 R110 备料）：
+  7 个零外部调用确认降级候选（catalog.union / adapter.replacer /
+  cost.alert_budget_if_over / selfdrive.strong_enabled /
+  platform_tools.is_capability_item / vault.default_meta_dir /
+  vault2.default_vault_dir），**intent.get_default_router 被 mcp_server 调用
+  保留公开**。定案仅备料，降级动作待主人拍板。
+- **docs: errors.check_path_target docstring 语义漂移订正**：16时 实测
+  installer.py:261-267 确认 installer 语义是「存在即 rmtree 重装 + 用户配置
+  （scope/可见性）快照/还原」，**不是** docstring 原先写的「内容相同则幂等
+  no-op」——文档与实现漂移，已订正为实际语义并留实测依据。publisher 语义
+  （存在+内容不同拒绝，force 放行）同步写明。
+- **0.9.1 版本发布材料备料**：`analysis/RELEASE_NOTES_R111.md`——版本号
+  双处同步核对（pyproject/__init__ 兜底当前双 0.9.0 一致）、Unreleased 六轮
+  条目聚合为 0.9.1 发布说明候选（性能/修复/测试/治理/备料五节）、发布动作
+  清单（版本号→CHANGELOG→commit→tag→wheel→push）、决策点清单。**只备料
+  不擅自发版**，交主人拍板。
+- **15时 产出落库**：`a219abd4` test: R105 第三批 9 用例 + R110 备料；
+  `ca4479ec` docs: errors.py docstring 订正。均未 push。
+- **全量基线**：8 段复跑全绿锚定（errors.py 仅 docstring 变更零行为影响）。
+
 ### ✅ 统帅轮-15时（2026-11-10）：R105 第三批 9 用例收口 + 收敛评审备料
 
 - **errors.check_path_target 专项**：新增 `tests/test_errors_path_guard_r109.py`

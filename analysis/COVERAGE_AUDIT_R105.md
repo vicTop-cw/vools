@@ -27,10 +27,24 @@
    （统帅轮-14时，`tests/test_model_security_props_r108.py` 14 用例 +
    `tests/test_visibility_gated_r108.py` 5 用例，19 新用例；net_connect/net_listen/
    reserved_env 的收紧默认方向已锚死）。
-3. **errors.check_path_target / indexer.filter_by_dimension**——确认零覆盖，
-   两个是真实调用面（写前检查/维度查询），建议下一批补测。
+3. **errors.check_path_target / indexer.filter_by_dimension**——✅ **已收口**
+   （统帅轮-15时，`tests/test_errors_path_guard_r109.py` 5 用例 +
+   `tests/test_filter_by_dimension_r109.py` 4 用例，9 新用例）。
+
+> **17时 审计终态**：三批兑现后，R105 清单的高/中价值标的全部收口
+> （三批累计 141 新用例）。剩余函数分两档终态：
+> * **API 收敛候选（待主人拍板）**：validate.dfs / validate.dfs_cycle /
+>   scattered.dfs / catalog.union / adapter.replacer / cost.alert_budget_if_over /
+>   selfdrive.strong_enabled / platform_tools.is_capability_item /
+>   vault.default_meta_dir / vault2.default_vault_dir（10 个，R110 已定案
+>   7 个零外部调用 + dfs 系 3 个内部图算法）——**降级而非补测**（待拍板）；
+> * **GUI 环境性（非真缺口）**：tkdialog.py 的 6 个事件回调——Tcl/Tk 环境
+>   守卫 skip 的受害者，有 Tcl 的 CI 环境自然覆盖，本机 skip 合理。
+> 另：16时 实测 OUTFILE 反复再生的真凶为 test_adapter_contracts_r32.py
+> 子进程写 cwd 相对路径（17时 已修：子进程改写 tmp_path + 链路真实化断言），
+> 非本审计范围内函数，属测试卫生问题——审计维度外的一个意外收获。
 4. **net_*/dfs* 等 9 个函数建议先走「公开面收敛」评审**：内部工具升 `_` 前缀
-   比补测试更省（缩小维护承诺面），需主人拍板 API 收敛口径。
+   比补测试更省（缩小维护承诺面），需主人拍板 API 收敛口径（见 17时 终态）。
 5. **API 一致性观察**（14时 新增）：Action 便捷读取面不对称——id/trust/entry
    有 property 而 version/name 没有（测试被迫 meta 直读），收敛评审时一并定。
 6. 审计脚本 `temp/coverage_audit.py`（可复跑，AST 口径）；核实脚本
