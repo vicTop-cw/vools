@@ -21,7 +21,7 @@ AIGC:
 > `by_name` / `by_md5` / `by_kind` 反向索引（`build_index`）、`brief` 增加 `name`/`kind`/`md5`/`platform`/**`languages`**（复跑实测已落盘）、
 > verify 校验面扩展（入口语言白名单、无源码动作入口豁免、kind 合法性 `validate.is_known_kind`、link/alias target 存在性校验、md5 一致性告警，均复跑实测 OK）、
 > `actus run` 多形态 target 解析（resolver）、文档同步等。
-> 遗留开放问题（非实现条目）：§六.6 `_find_action_file` 旧式查找仍存在于 `vools/actus/{author,dependency,omega}.py`，待评估清理。
+> 遗留开放问题（非实现条目，已核实澄清 2026-11-11）：§六.6 `_find_action_file` **并非旧式残留**——`785601e6` 已收口到 `resolver.find_action_file`，`vools/actus/{author,dependency,omega}.py` 三处保留的 `_find_action_file` 均为**委托 resolver 的兼容薄壳**（保留签名供测试/调用方引用，见 §六.6 更新声明），审计脚本已同步改为区分旧式实现与薄壳，复跑不再误报 MISS。
 > 核实方法（**可复跑**）：`cd actus && python tools/audit/plan_audit_actus.py`
 > （脚本自建临时 `ACTUS_META_DIR`，不污染仓库）。
 
@@ -210,5 +210,5 @@ AIGC:
 3. **远程动作信任模型**：下载即执行的供应链风险；建议默认 audit + 指纹校验 + 白名单域名（`--allow-host`），开放问题：是否支持签名（如 demo 目录已有 `.sig` 文件先例，可复用）。
 4. **link 参数合并深度**：浅合并是否满足组合场景；深合并的递归规则需示例验证。
 5. **存量 92 error**：多语言入口放开后可能新增校验噪音，阶段六需先冻结规则再修存量，避免来回改。
-6. **`_find_action_file`**：`__main__.py` 中存在旧式文件查找逻辑（未被 run 使用），实施时评估删除或并入 resolver，避免双轨漂移。
+6. **`_find_action_file`（已核实澄清 2026-11-11）**：原声明「`__main__.py` 中存在旧式文件查找逻辑」已过时——`__main__.py` 已不存在；`785601e6` 已将 author/dependency/omega/installer/publisher 五处旧式查找**收口为 `resolver.find_action_file` 单一实现**，消除双轨漂移。`vools/actus/{author,dependency,omega}.py` 三处 `_find_action_file` 为**委托 resolver 的兼容薄壳**（异常吞掉返回 None），保留函数名仅为兼容下游引用（`test_author_contracts_r84`、`test_omega`、`test_dependency_contracts_r52` 等 monkeypatch/import 依赖此名）。审计脚本按 `def _find_action_file` 名称匹配会产生**误报**（author.py:32 / dependency.py:644 / omega.py:99 均为薄壳而非旧式查找），已同步改进审计判定：仅将含 glob/os.walk/字符串搜内容等旧式特征、未委托 resolver 的实现计入 MISS；`build/lib/vools/actus/` 下副本与源文件 MD5 一致，随构建重新生成，无需单独处理。
 *（内容由AI生成，仅供参考）*
