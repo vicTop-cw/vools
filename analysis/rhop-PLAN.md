@@ -1317,13 +1317,13 @@ def test_inject_partial_transfer():
 | daemon 被杀死未恢复 | 任务卡住 | 启动时恢复 processing/ 里的任务 |
 | Py3.6 无 dataclasses | 数据类不可用 | attrs (vools 已有依赖) |
 
-### 15.2 开放问题（待你确认）
+### 15.2 开放问题（处置标注 2026-11-11）
 
-1. **Q1: TextDP 具体是什么？** 是某个工具？某个协议？还是需要我设计一个文本数据平面？目前只搭了骨架。
-2. **Q2: 执行器怎么注册？** 任务端收到 payload 后，怎么知道用什么命令执行？是 payload 里写 `cmd` 字段直接执行？还是注册 handler？
-3. **Q3: 需求端是否需要"撤回"能力？** 任务提交后能不能取消？目前状态机支持 PENDING → CANCELLED，但 daemon 推送后对端可能已领走。
-4. **Q4: 信封 payload 大小限制？** SFTP 和 Git 都有文件大小限制。大文件走独立通道？
-5. **Q5: 多工作地/多仓库？** 如果需求端要同时和多个任务端通信（不同 Git 仓库），怎么配置？目前只支持一对一边。
+1. **Q1: TextDP 具体是什么？** 是某个工具？某个协议？还是需要我设计一个文本数据平面？目前只搭了骨架。→ **待决（需用户决策）**：`transport/textdp.py` 仍为骨架（`NotImplementedError`），无明确形态，需用户确认 TextDP 是既有工具/协议还是自研数据平面后再落地。
+2. **Q2: 执行器怎么注册？** 任务端收到 payload 后，怎么知道用什么命令执行？是 payload 里写 `cmd` 字段直接执行？还是注册 handler？→ **已解决**：D6 执行通道 + 白名单（action / cli / handler，默认只放行代码内注册集合），落点 `vools/rhop/task/exec.py`；未放行命令落 `FAILED` 且不重试，`allow_any` 才放开。
+3. **Q3: 需求端是否需要"撤回"能力？** 任务提交后能不能取消？目前状态机支持 PENDING → CANCELLED，但 daemon 推送后对端可能已领走。→ **已解决**：D3 队列主流程已含取消（状态机 PENDING→…→CANCELLED，仅 PENDING 可取消），落点 `vools/rhop/task/queue.py`；D9 daemon CLI 提供 close/status 支撑撤收回传。
+4. **Q4: 信封 payload 大小限制？** SFTP 和 Git 都有文件大小限制。大文件走独立通道？→ **已解决**：transport 抽象可插拔（Git / SFTP / TextDP / Local，`select_transport` 按可用性选择），大文件可通过独立介质/通道承载，无单一通道强绑定。
+5. **Q5: 多工作地/多仓库？** 如果需求端要同时和多个任务端通信（不同 Git 仓库），怎么配置？目前只支持一对一边。→ **已解决**：D8 本地库模式加密同步收敛（sqlite-local + TaskSync，两个单向文档 + 版本单调，结果回流/取消传播/旧版本不覆盖新状态），落点 `vools/rhop/task/sync.py`；D2 存储抽象支持单一共享库/双方各自持库/PG 可注册。
 
 ---
 
