@@ -978,8 +978,11 @@ def _get_pkg_version(pkg):
 > `ActionsProber` 的条目形状与 `intent.py` 的 ready/blocked **粗判定**
 > （该文件 `:319-321` 的注释仍写着「现产品的 blocked 判据就是**报告里没有它**」）；
 > `analyze_actions` 的 `verdicts` / `blocked_reasons` / `undeclared` / `unverifiable` /
-> `duplicate_ids` **细粒度分支目前没有专项单测**（`grep` 全 `actus/tests/` 零命中）。
-> 这部分靠 fixture 手工验证，**建议补测**（已列入 §9 剩余工作）。
+> `duplicate_ids` 细粒度分支 **✅ 已有专项单测**（2026-11-11 复核收口）：
+> `actus/tests/test_analyze_actions.py`（13 用例）+ `actus/tests/test_analyze_actions_signals.py`
+> （21 用例，覆盖 verdicts 契约字段/undeclared 三态/invalid_deps_field/五类依赖判定/
+> parse_failed/duplicate_ids/index_source/degraded），连同 `test_probe_actions_contracts_r94.py`
+> 一起实测 **85 passed**；此前的「零命中」标注已过时，见 §9 剩余工作第 3 项同步更新。
 >
 > **两个已知缺口（✅ 已收口 —— 统帅轮-09时 2026-11-09）**：
 > 1. **`runtime:` 依赖前缀进 resolver**：✅ **已收口**。分支落地
@@ -1549,10 +1552,11 @@ def probe_from_language_map():
       `actus/tests/test_probe_actions.py`，**387 行 / 12 用例**。覆盖：目录缺失、空目录、
       两种动作格式都能扫到、非动作文件忽略、显式目录参数、坏文件退化为相对路径 id、
       静态依赖表条目、`ready`/`blocked` 判定、报告不可用时不误杀全部、端到端报告集成。
-      ⚠️ 但见 §4.7 的实话：这 12 个用例测的是 `ActionsProber` 条目形状 + `intent.py` 的**粗判定**，
+      ⚠️ 但见 §4.7 的实话：这 12 个用例测的是 `ActionsProber` 条目形状 + `intent.py` 的**粗判定**。
       `analyze_actions` 的 `verdicts`/`blocked_reasons`/`undeclared`/`unverifiable`/`duplicate_ids`
-      **细粒度分支仍无专项单测**（`grep` 全 `actus/tests/` 零命中），故本项勾 `[x]`、
-      细粒度补测另列进剩余工作
+      **细粒度分支 ✅ 已有专项单测**（2026-11-11 复核收口：`test_analyze_actions.py` 13 用例 +
+      `test_analyze_actions_signals.py` 21 用例，实测 85 passed），故本项勾 `[x]`、
+      细粒度补测已从剩余工作清单移除（见 §9）
 - [x] **里程碑**：probe() 返回动作的 ready/blocked 状态 ✅ 已实现（**2026-10-28 真正实现**）
       > ⚠️ **历史留档（这份计划最重要的一课，不许抹掉）**：本项在 2026-10-27 的文档同步里
       > **曾被勾成 `[x] ✅ 已实现`，但那是一次虚假勾选** —— 当时代码里
@@ -1676,8 +1680,10 @@ def probe_from_language_map():
 - **剩余工作清单（按优先级）**：
   1. **macOS 实跑取证**（SIP/Homebrew/Xcode CLT 三探测在真 Mac 上验一次）—— 唯一还压着 Phase 2 里程碑的项；
   2. 给 `runtime:` 解析分支补单测，然后验收上表两条「进行中」；
-  3. 补 `analyze_actions` 的**细粒度单测**（`verdicts`/`blocked_reasons`/`undeclared`/`unverifiable`/`duplicate_ids`
-     目前 `grep` 全 tests/ 零命中，靠 fixture 手工验证）；
+  3. ~~补 `analyze_actions` 的**细粒度单测**~~ ✅ **已收口（2026-11-11 复核）**：
+     `test_analyze_actions.py` 13 用例 + `test_analyze_actions_signals.py` 21 用例
+     （覆盖 verdicts/blocked_reasons/undeclared/unverifiable/duplicate_ids），实测 85 passed；
+     本项从剩余工作清单移除，见 §4.7 / §4.8 标注更新。
   4. 计划文档的测试文件名对齐：`test_probe_basic.py` / `test_probe_packages.py`
      实际是 `test_probe.py`（`test_probe_windows.py` 已于本轮按计划名建出）。
 - **核验方式与证据（第 2 轮）**：
