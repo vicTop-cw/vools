@@ -59,6 +59,9 @@ except ImportError:          # 平台司令尚未交付时不影响本体
 #     platform_tools 无 ThreadPoolExecutor，actions 是短任务）。
 #   * 但 10 去掉的是 platform_tools 启动上那 100-165ms 的**人为延迟**：等 system_tools
 #     被优化到 1s 以内，platform_tools 就会成为新的尾巴，那时这 100ms 直接进墙钟。
+#     （16时 实测回填：system_tools 已进 1s 档（热态 ~811ms，WSL bash 特判修复
+#     runtimes 后），但**新尾巴不是 platform_tools**（~222-437ms）而是 system_tools
+#     自身（990ms，磁盘缓存敏感）——分布数据见 CHANGELOG 统帅轮-12时 条目。）
 # 所以取 10（而不是更大）：`_MAX_PROBE_WORKERS` 只需覆盖探测器总数，
 # 线程数在下面按 `min(常量, len(probers))` 现算 —— 填 12 与填 10 **完全等价**，
 # 是个不生效的死旋钮，反而让人误以为还有更大的并行度。

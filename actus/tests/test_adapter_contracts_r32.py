@@ -498,18 +498,32 @@ class TestCLIAdapter:
         assert ok is True
 
     def test_run_with_output_path(self, tmp_path):
-        """退步了会怎样：output_path 为文件时应读取文件内容。"""
+        """退步了会怎样：output_path 为文件时应读取文件内容。
+
+        统帅轮-17时 卫生修正：原实现子进程在 pytest cwd（仓库根）写
+        相对路径 `OUTFILE`（11 字节残留反复再生进 git status，删三次还冒），
+        且写的文件与 output.path（tmp_path/out.txt）不同——output 读取链路
+        根本没被真实验证。现改为子进程直接写 output.path 指向的文件：
+        零泄漏 + 链路真实化。
+        """
         from vools.actus.adapter import CLIAdapter, AdapterSpec
         out_file = tmp_path / "out.txt"
+        payload = ("import sys\n"
+                   "open(sys.argv[1], 'w', encoding='utf-8')"
+                   ".write('file output')\n")
         spec = AdapterSpec.from_dict({
             "id": "act.a",
-            "adapter": {"command": "python", "args": ["-c", "open('OUTFILE', 'w').write('file output')"]},
+            "adapter": {"command": "python",
+                        "args": ["-c", payload, str(out_file)]},
             "output": {"type": "file", "path": str(out_file)},
         })
-        # 先执行生成文件
+        # 执行生成 output.path 指向的文件（零泄漏：产物在 tmp_path 内）
         ca = CLIAdapter(spec)
         result = ca.run()
         assert result.success is True
+        # output 链路真实化：output.path 指向的文件确实被子进程写出
+        assert out_file.exists() and out_file.read_text(encoding="utf-8") == \
+            "file output"
 
 
 class TestQuickerAdapter:
