@@ -199,7 +199,7 @@ AIGC:
 | 2 | 任意语言入口：runner 路由放开 + only-code 扩展 | powershell/cmd/bat/node/go 入口可执行 |
 | 3 | link/alias/bundle/doc 执行语义（无源码动作族） | link 合并参数执行、template 走 scaffold、demo 可演示 |
 | 4 | 索引扩展：name/md5/kind 索引 + verify 校验面扩展 | `by_name/by_md5` 落盘；verify 对 kind/语言/契约新规则报错 |
-| 5 | 存量修复与回归：全量 verify 0 error（目标），回归锁跑通 | verify 基线达标 |
+| 5 | 存量修复与回归：全量 verify 0 error（目标），回归锁跑通 | 已达标（2026-11-11 实测 14 动作全量 validate 0 error / 0 warning） |
 
 依赖关系：0 →（1,3 可并行）→ 2 → 4 → 5 → 6。
 
@@ -207,10 +207,10 @@ AIGC:
 
 ## 六、风险与开放问题
 
-1. **powershell/cmd 路由**：runner 直接分支与 ShellRuntime 方言检测（`_detect_shell` 按内容猜 bash/powershell）之间需对齐；bat 文件调用（`.bat` 直接 spawn）与 `cmd /c` 包装二选一，实施时定。
-2. **名称消歧 UX**：多命中时 CLI 交互与 MCP 工具描述如何呈现（候选列表 vs `--choose`），需与 MCP 层对齐。
-3. **远程动作信任模型**：下载即执行的供应链风险；建议默认 audit + 指纹校验 + 白名单域名（`--allow-host`），开放问题：是否支持签名（如 demo 目录已有 `.sig` 文件先例，可复用）。
-4. **link 参数合并深度**：浅合并是否满足组合场景；深合并的递归规则需示例验证。
-5. **存量 92 error**：多语言入口放开后可能新增校验噪音，阶段六需先冻结规则再修存量，避免来回改。
+1. **powershell/cmd 路由**（已关闭 2026-11-11 / T0r5.4.1）：已对齐。`vools/actus/runtimes.py` L167 `aliases = ['bash','sh','powershell','pwsh','cmd']`；L178-182 `_detect_shell` 分支 powershell → `['powershell','-NoProfile','-Command',code]`、cmd/win32 → `['cmd','/c',code]`、else bash/sh；L208-214 按内容返回 `'powershell'/'cmd'/'bash'/'sh'`。bat 调用统一走 `cmd /c` 包装（executor 无 `.bat` 直接 spawn 分支）。测试：`tests/test_runtimes_contracts_r32.py` L284-287（Write-Host→powershell、`$env:PATH`→powershell、`@echo off`→cmd、echo hi→bash）全绿。
+2. **名称消歧 UX**（已关闭 2026-11-11 / T0r5.4.1）：已对齐。CLI 统一 `_ambiguous_error(target, candidates)`（`vools/actus/cli.py` L940/967/974/978/1844-1880），候选来源 `details.get('candidates') or details.get('ambiguous')`；MCP 层抛结构化 `ambiguous`（含 candidates）（`vools/actus/mcp_server.py` L254-267）。测试：`tests/test_cli_mcp_cross_entry.py`、`tests/test_mcp_target_forms.py` 全绿。
+3. **远程动作信任模型**（已关闭 2026-11-11 / T0r5.4.1）：已落地。`vools/actus/resolver.py` L136-149 `_assert_host_allowed` 空白名单即拒、需显式 `--allow-host`；L44-52 `source/url/sha256/digest_verified` 字段；L70-77 `_is_url/_is_fingerprint`；L90-108 URL 与 32 位 hex 指纹回退。签名支持：L318-338 `--require-signature` 下载同名 `.sig` 并本地可信公钥验签（`SignatureVerifier`），缺失/非法即拒（`remote_signature_missing/remote_signature_invalid`）；CLI `sign` 子命令（`cli.py` L624-626）；demo 目录 `.sig` 先例已复用。测试：`tests/test_trust_model_contracts_r96.py`、`tests/test_trust_model_approval_contracts_r32.py`、`tests/test_resolver_contracts_r100.py` 全绿。
+4. **link 参数合并深度**（已关闭 2026-11-11 / T0r5.4.1）：已实现。`vools/actus/executor.py` L228-244 `_deep_merge_params(base, override)` 递归合并 dict、其它类型整体替换；L245-260 `_merge_link_params` 由 `action.meta.get('merge')` 决定，`'deep'` 深合并否则浅合并。测试：`tests/test_link_merge.py`（浅合并不保留 base 的 B、deep 递归合并保留 B 覆盖 A）全绿。
+5. **存量 92 error**（已关闭 2026-11-11 / T0r5.4.1）：口径复核——§6 中「92 error」为计划阶段预估；当前代码实际状态为全量 validate 0 error / 0 warning（2026-11-11 实测 `scan_actions` 14 动作 + `validate_action`，check_index=False 与 True 均为 0），阶段五目标「全量 verify 0 error」已达标（见上表）。「42 个错误码无测试引用」口径已另行收口（`tests/test_error_codes_coverage_r102.py` 8 用例全绿，与 92 error 无冲突）。
 6. **`_find_action_file`（已核实澄清 2026-11-11）**：原声明「`__main__.py` 中存在旧式文件查找逻辑」已过时——`__main__.py` 已不存在；`785601e6` 已将 author/dependency/omega/installer/publisher 五处旧式查找**收口为 `resolver.find_action_file` 单一实现**，消除双轨漂移。`vools/actus/{author,dependency,omega}.py` 三处 `_find_action_file` 为**委托 resolver 的兼容薄壳**（异常吞掉返回 None），保留函数名仅为兼容下游引用（`test_author_contracts_r84`、`test_omega`、`test_dependency_contracts_r52` 等 monkeypatch/import 依赖此名）。审计脚本按 `def _find_action_file` 名称匹配会产生**误报**（author.py:32 / dependency.py:644 / omega.py:99 均为薄壳而非旧式查找），已同步改进审计判定：仅将含 glob/os.walk/字符串搜内容等旧式特征、未委托 resolver 的实现计入 MISS；`build/lib/vools/actus/` 下副本与源文件 MD5 一致，随构建重新生成，无需单独处理。
 *（内容由AI生成，仅供参考）*
