@@ -11,6 +11,25 @@
 > 本段记录 **0.9.0 发布之后**、尚未发版的改动。版本号（0.9.1 / 1.0.0）待下次发布时确定，
 > 此处不预设。核心是 `actus probe` 环境探测器从「能跑」做到「跑得快、数据可信」。
 
+### ✅ 统帅轮-13时（2026-11-10）：R105 第一批补测 113 用例收口 + clipboard 环境失败消账
+
+- **sigma 门禁校验家族专项**：新增 `tests/test_sigma_checks_r107.py`（44 用例）
+  ——Law I-XVII 逐条覆盖（合法 module 通过 + 针对性破坏命中 + 边界形态），
+  重点锚定两处审计修正口径：Law II 空壳 encoder 不算数（有指纹/有定义才算）+
+  Law IX 校准锚必须独立 0/1 字面量（`1.0`/`10` 夹带不算，_CALIBRATION_ANCHOR_RE
+  边界回归）。签名契约形态为 `name : A × B → C`（参数无括号，param_types 口径）。
+- **constants 谓词族专项**：新增 `tests/test_constants_predicates_r107.py`
+  （69 用例）——6 个零覆盖判定谓词正反例+边界（license/pricing/declared_feature
+  闭集 lower 归一不 trim；namespaced_id 两段点分形态边界；testish_id **按段**
+  判定——'contest.target' 不误伤；secret 敏感字样正则族 + None 防御）。
+  R105 第一批补测标的（20+ 函数）就此收口，累计 113 新用例。
+- **clipboard 环境失败消账**：上轮段 1 的 10 个 clipboard 用例失败经复查——
+  Loomy 主程序剪贴板锁已释放（owner 复查为瞬态探测进程），段 1 复跑
+  **640 passed + 6 skipped 全绿**，8 段基线全部 rc=0。
+- **12时 改动落库**（沿用 R104 已认可分组模式）：`e2f9fe85` fix: WSL bash
+  转发器特判（runtimes 5.1s→256ms）+ `64809edd` docs: py3.8 口径对齐
+  20 文件 + R105 审计报告 + COMMIT_PLAN_R104 执行标注。均未 push。
+
 ### 🚀 统帅轮-12时（2026-11-10）：probe 尾巴真凶揪出并修复——runtimes 5.1s→256ms
 
 - **🐛 修复 WSL bash 转发器拖垮 runtimes 探测（性能尾巴真凶）**：
