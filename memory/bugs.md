@@ -6931,7 +6931,7 @@ severity medium。
 
 
 ## OPEN 项全量核验记录 (T0r3.3.2, 2026-11-08)
-- scope: 全量扫描 memory/bugs.md（6930 行），标题状态统计：FIXED 360 / CLOSED 1（BUG-80）/ OPEN 1（BUG-371）。
+- scope: 全量扫描 memory/bugs.md（6930 行），标题状态统计（条目登记口径）：FIXED 335 / FALSE_POSITIVE 25 / CLOSED 1（BUG-80）/ WORKS-AS-DESIGNED 1（BUG-363）；OPEN 1（BUG-371，核验后更新为 FIXED → 修正后 OPEN=0）。
 - 核验发现并处置：BUG-371 标题仍标 OPEN，但其修复已由 T0r2.1.1 落盘（commit 7dfc471e "fix(actus-clip): BUG-371 clip_watch interval lower-bound guard"，回归测试 actus test_clipboard_integration.py 23 passed 等）——状态失实，本轮更新为 FIXED 并对齐 FIXED 段标注（BUG-371, T0r2.1.1）。
 - 修正后 vools 侧台账：OPEN = 0（无待修缺陷条目）；BUG-80 已归档 CLOSED（见上，feature 请求刻意不补）。
 - 平台一致性：fist-mbt bug_list 平台返回 2 条 OPEN（BUG-1、BUG-2），均属 FIST-Mbt 框架自身、不在 vools bugs.md 台账（vools 台账中 BUG-1/BUG-2 为 vools 自身缺陷且均已 FIXED，编号体系独立，无跨台账同名混淆）。结论：vools 侧 OPEN 台账（0 条）与平台口径一致，无冲突项。
