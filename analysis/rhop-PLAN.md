@@ -1384,10 +1384,10 @@ rhop 地基 = 传输介质（可插拔） + 公开动作（可验证） + 三角
 
 | # | 改造项 | 现状 | 目标 | 落点 |
 |---|---|---|---|---|
-| C2.1 | SftpChannel paramiko 优先 | 仅 TCP 探测 + reader/writer 注入，读写未实现 | paramiko 可用时走 paramiko（put/get/listdir/mkdirs/exists/read_text/write_text），导入失败或连接失败回退注入式 reader/writer；探测升级为「TCP 探测 + paramiko 真实连接（可选）」 | `vools/rhop/transport/online.py`（或拆 `sftp.py`） |
-| C2.2 | actus jump 改装公开动作 | actus/jump.py 已验证（test_jump_* 全绿），但仅为 actus 内部动作 | 升级为 rhop 公开动作集：`jump.probe / jump.push / jump.pull / jump.sync`，统一入参/出参/状态 schema；跨动作 execute 保留 Ω-gate 容错解包（内层 `data.status==ok` 即成功） | 新建 `vools/rhop/actions/`（包装 actus jump 或独立实现） |
-| C2.3 | A/B/C 三角拓扑 | 隐含两端对等，RelayServer 仅单向投递 | 显式角色模型 `Role = SEND | RECV | RELAY`；同一方多角色；反向传递=互换角色；配置里声明本端角色、对端/中转 endpoint | 新建 `vools/rhop/session.py` + 配置抽象 |
-| C2.4 | 配置驱动入口 | 配置零散（configs.py / 注入函数） | 一份配置（JSON/dict）描述密钥、角色、介质、动作集；`rhop.interact()` 一键交互；vq/sparksql-exe 只需提供配置+指定动作 | 新建 `vools/rhop/config.py` + `interact.py` |
+| C2.1 | SftpChannel paramiko 优先 | 已完成（2026-10-18）：paramiko 可用时内建 `_ParamikoSftpBackend`（online.py:124）走真实 put/get/listdir/mkdirs/exists/read_text/write_text，导入失败或连接失败回退注入式 reader/writer（SftpChannel:253）；探测升级为「注入 probe 优先 → probe_mode=sftp 走真实连接 → TCP 端口探测」 | paramiko 可用时走 paramiko（put/get/listdir/mkdirs/exists/read_text/write_text），导入失败或连接失败回退注入式 reader/writer；探测升级为「TCP 探测 + paramiko 真实连接（可选）」 | `vools/rhop/transport/online.py`（或拆 `sftp.py`） |
+| C2.2 | actus jump 改装公开动作 | 已完成（2026-10-20）：`vools/rhop/actions/jump.py` 提供 `jump.probe/push/pull/sync`（独立 paramiko 实现，对齐 actus 语义）；`actions/__init__.py` 聚合 ACTIONS + `run_action` + `omega_unwrap`；跨动作调用带 Ω-gate 容错解包；test_actions.py 14 用例全绿（含本地 SFTPServer 真实 push/pull 往返一致） | 升级为 rhop 公开动作集：`jump.probe / jump.push / jump.pull / jump.sync`，统一入参/出参/状态 schema；跨动作 execute 保留 Ω-gate 容错解包（内层 `data.status==ok` 即成功） | 新建 `vools/rhop/actions/`（包装 actus jump 或独立实现） |
+| C2.3 | A/B/C 三角拓扑 | 已完成（2026-10-20）：`session.py` 显式角色模型（Role=SEND/RECV/RELAY）+ 对端/中转 endpoint；A→B 直连、A→C→B 中转两条路径；`reverse()` 互换角色复用同一份配置/介质；test_session.py 12 用例全绿 | 显式角色模型 `Role = SEND | RECV | RELAY`；同一方多角色；反向传递=互换角色；配置里声明本端角色、对端/中转 endpoint | 新建 `vools/rhop/session.py` + 配置抽象 |
+| C2.4 | 配置驱动入口 | 已完成（2026-10-20 核心 + 2026-10-21 vq 联调）：`config.py` 提供 RhopConfig（密钥/角色/介质/动作集）；`interact()` execute/request/roundtrip 三模式 + `handle_request()` 接收侧闭环回传；test_interact.py 16 用例全绿；vq/sparksql-exe 侧 configs.py ROLE p0..p3 废弃/映射到 A/B/C，utils/sftp.py 增 backend="rhop" 切换（auto 默认保持 vic_relay），真机联调 put/get 往返一致 | 一份配置（JSON/dict）描述密钥、角色、介质、动作集；`rhop.interact()` 一键交互；vq/sparksql-exe 只需提供配置+指定动作 | 新建 `vools/rhop/config.py` + `interact.py` |
 
 ### C.3 通道选择链（升级后）
 
