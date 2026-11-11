@@ -11,6 +11,27 @@
 > 本段记录 **0.9.0 发布之后**、尚未发版的改动。版本号（0.9.1 / 1.0.0）待下次发布时确定，
 > 此处不预设。核心是 `actus probe` 环境探测器从「能跑」做到「跑得快、数据可信」。
 
+### ✅ 统帅轮-14时（2026-11-10）：R105 第二批 19 用例收口 + 审计假阴性核实反转
+
+- **model.py 安全白名单与解析入口专项**：新增 `tests/test_model_security_props_r108.py`
+  （14 用例）——docs/46 #5/#6/#7 安全契约便捷读取面锚死：reserved_env/
+  net_connect/net_listen 的**收紧默认方向**（缺声明 → 空白名单/全禁，不是放开）+
+  资源限额 int 归一 + context_applies 单值包装 + parse_action_from_schema_md
+  解析入口（指纹确定性/必填校验 action_invalid/entry 仅 kind=exec 必填）。
+  顺带发现 API 一致性观察：Action 便捷读取面不对称（id/trust/entry 有 property
+  而 version/name 没有），记入收敛评审候选。
+- **visibility gated key 专项**：新增 `tests/test_visibility_gated_r108.py`
+  （5 用例）——grant 明文只返回一次 / grant→revoke→幂等 revoke False roundtrip /
+  多 action 授权互不干扰 / 引擎与 gated key 同 config_dir 协作。
+- **R105 审计假阴性核实反转**：零散 12 个函数精确核实（import/qualified/
+  call-site 三口径 grep）——**全部确认零覆盖，无假阴性**（R105 初版对
+  check_path_target/filter_by_dimension 的「疑似假阴性」怀疑不成立，已撤回）。
+  审计报告修订：13时/14时 收口状态回写 + errors.check_path_target/
+  indexer.filter_by_dimension 判定下一批优先补测标的。
+- **13时 产出落库**：`b6975a32` test: R105 第一批补测兑现（sigma 44 + constants
+  69，556+ 行）。均未 push。
+- **全量基线**：8 段复跑全绿锚定（clipboard 锁已释放环境）。
+
 ### ✅ 统帅轮-13时（2026-11-10）：R105 第一批补测 113 用例收口 + clipboard 环境失败消账
 
 - **sigma 门禁校验家族专项**：新增 `tests/test_sigma_checks_r107.py`（44 用例）
