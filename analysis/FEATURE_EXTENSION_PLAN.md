@@ -440,8 +440,8 @@ def ignore(fn):
 | `vools/curried/composition.py`（增强） | ✅ 已实现 | 文件存在，204 行 |
 | `vools/decorators/control.py`（增强） | ✅ 已实现 | 文件存在，488 行；`tests/test_decorators_control_validation_regression.py` |
 | 单元测试套件 | ✅ 已实现 | 上述范围实测 **506 passed**（命令见下） |
-| API 文档 | ⚠️ 未单独产出 | 各模块有 docstring；本计划未产出独立 API 文档（**交付物，不计入 31 条功能条目**） |
-| 功能对比矩阵更新 | ⚠️ 未单独拆分 | §1 对比矩阵仍在本文档内（历史快照）（**交付物，不计入 31 条功能条目**） |
+| API 文档 | ✅ 已产出 | [docs/actus-api.md](../docs/actus-api.md)（2026-11-11，覆盖 actus 公共 API 面：resolver/cli/validate/indexer/executor/model/errors/公共导出，按代码事实为准） |
+| 功能对比矩阵更新 | ✅ 已产出 | [docs/feature-comparison-matrix.md](../docs/feature-comparison-matrix.md)（2026-11-11，31 项功能按类别/实现状态整理，含代码位置与复跑命令） |
 
 **复跑命令（核实文件与测试）**
 ```bash
