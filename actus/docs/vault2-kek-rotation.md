@@ -1,11 +1,12 @@
-# vault2 KEK 轮换设计（**本轮不实现**）
+# vault2 KEK 轮换设计（**已实现**）
 
-> 状态：**设计稿，未实施** · 第 17 轮审计产出（`cmd-polish`），2026-10-29
+> 状态：**设计稿已实施** · 第 17 轮审计产出（`cmd-polish`），2026-10-29；实现落地于 2026-11-11（T0r5.1.2）
 > 关联代码：`vools/actus/vault2.py`（`_kek_for` / `_encrypt_seed_hex` /
 > `_reencrypt_seed_envelope` / `_decode_seed_hex` / `_migrate_key_protection` /
-> `rotate_seed_key`）；关联文档：`docs/vault2-hardening.md`（三种保护方式）、
+> `rotate_seed_key` / `_rotate_kek_keyring` / `_rotate_kek_filekey` /
+> `_recover_pending_kek_gc`）；关联文档：`docs/vault2-hardening.md`（三种保护方式）、
 > `docs/vault-v1-v2-merge.md`（v1/v2 合并背景）。
-> **本轮只写设计，不改代码** —— 原因见 §10。
+> **本轮只写设计，不改代码** —— 原因见 §10（该声明已过期，缺口①②已实现）。
 
 ---
 
@@ -75,6 +76,9 @@ T4  COMMIT ← 失败 / 进程崩溃 / 断电
 T0  keyring: K_old        DB: envelope = E(K_old, seed_old)
 T1  BEGIN
 T2  UPDATE identities SET seed_key = E(K_new, seed_old)  ← K_new 尚未写入 keyring
+（注：此为**方向 II 备选方案的崩溃风险标注**，非实现缺口。最终实现采用方向 I：
+`_rotate_kek_keyring` 在事务外先 `set_password` 写入 K_new（满足 I1 先建后引），
+再单事务切 DB 并回读确认删除 K_old。）
 T3  COMMIT 成功
 T4  set_password(identity, K_new) ← 失败 / 崩溃
 ⇒ 现状：DB 指向 K_new 的密文；keyring 仍是 K_old（或根本没有）
@@ -131,6 +135,10 @@ DB 记录"当前代数 N"，外部 store 同时保留 N 与 N-1 两代；解密�
 
 - DB 增加 `kek_rotations(identity_id, from_gen, to_gen, state, created_at, ...)`：
   `prepared → committed → cleaned`；进程启动/下次打开库时扫未完成记录并补齐。
+  **（已实现于 T0r5.1.2：`kek_retired(identity_id, kek_gen, locator, retired_at, cleaned)`
+  表 + `_recover_pending_kek_gc()`，挂于 `_ensure_ready()` 末尾；每次打开库扫描
+  cleaned=0 记录，keyring/file-key 双模式回读确认后补齐，delete_lag/fail_delete/
+  shared 场景保持 pending 不误删；`status()` 新增 `kek_gc_recovery` 字段。）**
 - 若**没有 A 的双代**：日志只能记录"打算换"，却无法在"旧 KEK 已被覆盖"后恢复旧
   KEK（要么把旧 KEK 写进日志 = 违反 I3，要么把旧 KEK 留在原位置 = 就是 A）。
 - 若**与 A 组合**：日志解决 A 的"keyring 无 list API、孤儿无法枚举"问题 —— 状态机
@@ -497,12 +505,19 @@ MCP `confirm=false`、`dry_run` 免 confirm、`confirm=true`、工具 `required=
   协议、按保护方式三套实现、以及 6 个崩溃窗口的故障注入测试；属于"独立课题"，
   值得单独排期与评审，避免在只读路径/轮换热路径上引入新的半途状态。
 
-## 9. 本轮不实现的声明
+## 9. 实现状态声明（原"本轮不实现"，已于 T0r5.1.2 落地）
 
-本文档**只做设计与结论**，`vault2.py` 未做任何修改；`rotate_seed_key` 继续
-"只换 seed、复用现有 KEK"（其返回值 `note` 已明示 KEK 未轮换，`:1463-1464`）。
-若批准实施，按 §4.4 阶段 0→4 执行，先落 schema 与诊断，再逐模式实现并逐模式
-做崩溃注入；每阶段独立可回滚。
+本文档设计已按 §4.4 阶段 0→4 全部实施：schema 与诊断、三种模式（passphrase /
+keyring / file-key）轮换、6 个崩溃窗口的故障注入与审计脚本、以及方案 C 的
+打开库恢复扫描（缺口①②）。`vault2.py` 新增/修改：
+`kek_gen_of_meta` / `_get_keyring_kek` / `_put_keyring_kek` / `_rotate_kek_keyring` /
+`_rotate_kek_filekey` / `rotate_kek` / `_recover_pending_kek_gc` /
+`_retry_pending_gc` / `_mark_pending_cleaned` / `_scan_file_kek_orphans` 等；
+`_ensure_ready` 末尾调用 `_recover_pending_kek_gc()`，`status()` 输出
+`kek_gen/kek_gen_max/kek_retired_count/kek_file_orphans/kek_gc_recovery`。
+验收：`tools/audit/verify_vault2_kek_step0.py`（22）、`verify_vault2_kek_step1.py`（29）、
+`kek_crash_matrix.py`（正确实现 6/6、错误实现在 C1/C2 被抓）通过；配套测试
+`tests/test_kek_rotation_crash_matrix.py`、`tests/test_vault2_pending_gc_recovery.py`。
 
 ---
 

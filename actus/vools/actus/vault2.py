@@ -443,6 +443,9 @@ class Vault2:
         self._resolve_key_protection()
         self._check_existing_key_protection()
         self._migrate_key_protection()
+        # 打开库：补齐 kek_retired 里 cleaned=0 的未完成 GC（方案 C，L133）。
+        # 自身绝不抛（打开库路径不容失败）；结果进 status() 的 kek_gc_recovery。
+        self._recover_pending_kek_gc()
         self._ready = True
         return self
 
@@ -1794,6 +1797,118 @@ class Vault2:
                 "warnings": warnings,
                 "note": ("O_EXCL 创建 + 写后回读 + 删后存在性回读；孤儿**只报告不删除**")}
 
+    # ── KEK 轮换 · 打开库恢复扫描（方案 C：prepared→committed→cleaned 补齐）──
+    #
+    # rotate 内部 GC 失败（delete_lag / fail_delete / shared）或进程在 C5 窗口
+    # 崩溃（旧代已删但未标 cleaned=1）都会在 `kek_retired` 留下 cleaned=0 行。
+    # 本方法在**每次打开库**（_ensure_ready：auth / status / register / rotate 的
+    # 公共前置）时扫描这些未完成记录并重试 GC —— 对应设计文档 §4.4.3 方案 C 的
+    # 「进程启动/下次打开库时扫未完成记录并补齐」（docs/vault2-kek-rotation.md L133）。
+    #
+    # 与 rotate 内部 GC 同一套保守判据（I3：绝不谎报 cleaned）：
+    #   keyring  ：先读——条目已不在 → 直接补标 cleaned=1（C5 残留）；仍在 →
+    #              delete_password → **回读确认不在** → 才标 1；
+    #              delete 抛异常 / 条目仍在 / keyring 后端不可用 → 保持 0；
+    #   file-key ：文件已不在 → 直接补标 1（C5 残留）；仍在 → 先查
+    #              _file_kek_referenced_by_others（有共享不删）→ 删文件 →
+    #              os.path.exists 回读确认 → 才标 1；
+    #   passphrase / 未知：kek_retired 理论无行；有则跳过保持 0（不臆测清理）。
+    # 本方法自身**绝不抛异常**（打开库路径不容失败）；每行独立 try。
+
+    def _recover_pending_kek_gc(self) -> dict:
+        """打开库时恢复扫描：补齐 `kek_retired` 里 cleaned=0 的未完成 GC。
+
+        返回 {"status","scanned","recovered","skipped","deferred"}；结果缓存到
+        `self._pending_gc_recovery`（status() 诊断可见）。
+        """
+        result = {"status": "ok", "scanned": 0, "recovered": 0,
+                  "skipped": 0, "deferred": []}
+        try:
+            with self._db() as conn:
+                rows = conn.execute(
+                    "SELECT identity_id, kek_gen, locator FROM kek_retired "
+                    "WHERE cleaned=0 ORDER BY identity_id, kek_gen").fetchall()
+        except sqlite3.Error as exc:                 # 理论不可达：_init_schema 已建表
+            result["status"] = "error"
+            result["error"] = "%s: %s" % (type(exc).__name__, exc)
+            self._pending_gc_recovery = result
+            return result
+        for (identity_id, kek_gen, locator) in rows:
+            result["scanned"] += 1
+            ok, note = self._retry_pending_gc(identity_id, kek_gen, locator)
+            if ok:
+                result["recovered"] += 1
+            elif note.startswith("skip"):
+                result["skipped"] += 1
+            else:
+                result["deferred"].append(
+                    {"identity_id": identity_id, "kek_gen": kek_gen,
+                     "locator": locator, "reason": note})
+        self._pending_gc_recovery = result
+        return result
+
+    def _retry_pending_gc(self, identity_id: str, kek_gen: int, locator: str):
+        """对单行 cleaned=0 记录重试 GC。返回 (ok: bool, note: str)：
+        ok=True → 已补齐（cleaned=1）；note 以 "skip" 开头 → 当前模式不该清理；
+        否则 → 保持 pending，note 为具体原因。**绝不抛异常**。"""
+        if self.key_protection == PROTECTION_KEYRING:
+            if self._keyring is None:
+                return (False, "skip: keyring backend unavailable")
+            try:
+                present = self._get_keyring_kek(locator)
+            except Exception as exc:                   # noqa: BLE001
+                # 条目损坏（解码/长度异常）—— 保守：不删不标，留人工确认
+                return (False, "read_error: %s: %s" % (type(exc).__name__, exc))
+            if present is None:
+                # 旧代条目已不在（C5 残留：删了但没来得及标 cleaned）→ 直接补标
+                return (self._mark_pending_cleaned(identity_id, kek_gen),
+                        "already gone")
+            try:
+                self._keyring.delete_password(KEYRING_SERVICE, locator)
+                still = self._get_keyring_kek(locator)   # ★ 删后回读确认（delete_lag）
+                if still is not None:
+                    return (False, "delete_lag: 条目仍在")
+            except Exception as exc:                     # noqa: BLE001
+                return (False, "delete_failed: %s: %s" % (type(exc).__name__, exc))
+            return (self._mark_pending_cleaned(identity_id, kek_gen),
+                    "deleted+readback")
+        if self.key_protection == PROTECTION_FILE:
+            # 防穿越：locator 只能是纯文件名（日志内部写入，但仍防御性校验）
+            if os.path.basename(locator) != locator or '..' in locator:
+                return (False, "skip: unsafe locator")
+            path = self._file_key_path(locator)
+            try:
+                present = os.path.exists(path)
+            except OSError:
+                present = True                           # 无法 stat：走保守删除路径
+            if not present:
+                # 旧代文件已不在（C5 残留）→ 直接补标
+                return (self._mark_pending_cleaned(identity_id, kek_gen),
+                        "already gone")
+            if self._file_kek_referenced_by_others(identity_id, locator):
+                return (False, "shared: 其它身份仍引用该 KEK 文件")
+            try:
+                self._delete_file_kek(locator)
+                if os.path.exists(path):
+                    return (False, "unlink_lag: 文件仍在")
+            except Exception as exc:                     # noqa: BLE001
+                return (False, "delete_failed: %s: %s" % (type(exc).__name__, exc))
+            return (self._mark_pending_cleaned(identity_id, kek_gen),
+                    "deleted+readback")
+        # passphrase / legacy-plaintext / unavailable：无外部条目可清理 → 保持 0
+        return (False, "skip: 当前保护模式无外部条目可清理")
+
+    def _mark_pending_cleaned(self, identity_id: str, kek_gen: int) -> bool:
+        """把确认已清理的日志行标 cleaned=1；标记写失败 → 返回 False（下次重试）。"""
+        try:
+            with self._db() as conn:
+                conn.execute("UPDATE kek_retired SET cleaned=1 "
+                             "WHERE identity_id=? AND kek_gen=?",
+                             (identity_id, kek_gen))
+            return True
+        except Exception as exc:                         # noqa: BLE001
+            return False
+
     def _rotate_kek_keyring(self, identity_id: str, seed_hex: str,
                             key_meta_old, old_gen: int, caller: str = None) -> dict:
         locator_old = self._keyring_locator(identity_id, key_meta_old)
@@ -2727,6 +2842,17 @@ class Vault2:
         base["kek_gen"] = 0
         base["kek_gen_max"] = 0
         base["kek_retired_count"] = 0
+        # 打开库恢复扫描摘要（_ensure_ready 时执行的 _recover_pending_kek_gc 结果；
+        # 便于诊断"崩溃残留是否已被补齐"）。无残留/未执行时不出现。
+        gc_recovery = getattr(self, "_pending_gc_recovery", None)
+        if gc_recovery:
+            base["kek_gc_recovery"] = {
+                "status": gc_recovery["status"],
+                "scanned": gc_recovery["scanned"],
+                "recovered": gc_recovery["recovered"],
+                "skipped": gc_recovery["skipped"],
+                "deferred": gc_recovery["deferred"],
+            }
         base["kek_rotation_supported"] = self.key_protection in (
             PROTECTION_KEYRING, PROTECTION_PASSPHRASE, PROTECTION_FILE)
         if exists and state != "corrupt":
