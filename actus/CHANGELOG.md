@@ -11,6 +11,24 @@
 > 本段记录 **0.9.0 发布之后**、尚未发版的改动。版本号（0.9.1 / 1.0.0）待下次发布时确定，
 > 此处不预设。核心是 `actus probe` 环境探测器从「能跑」做到「跑得快、数据可信」。
 
+### ✅ 统帅轮-15时（2026-11-10）：R105 第三批 9 用例收口 + 收敛评审备料
+
+- **errors.check_path_target 专项**：新增 `tests/test_errors_path_guard_r109.py`
+  （5 用例）——跨模块写前检查契约锚定：目标不存在原样放行 / 存在未 force 抛
+  ActionError(action_exists) 带 details.path / force=True 放行 / code 与 what
+  消息词透传（template_conflict 自定义码场景）/ 目录目标同样受保护。
+- **indexer.filter_by_dimension 专项**：新增 `tests/test_filter_by_dimension_r109.py`
+  （4 用例）——真实 build_index 端到端口径：V-19 归一语义（大小写/空白 trim
+  查询命中小写键）+ 结果已排序 + 未知维度键空列表不报错（旧索引兼容）+ 值未
+  命中空列表。
+- **R105 第三批收口**：两批确认零覆盖的真实调用面（check_path_target/
+  filter_by_dimension）转全覆盖，三批累计 141 新用例（113+19+9）。
+- **API 收敛评审备料**：`analysis/API_CONVERGENCE_REVIEW_R110.md`——9 个零
+  覆盖内部函数的降级候选表（分⚠️不建议/✅建议/🔍待查三档）+ Action property
+  对称性 B1/B2 方案，**只备料不拍板不擅自改**，交主人定口径。
+- **14时 产出落库**：`38bf7907` test: R105 第二批兑现（4 文件 296+）。均未 push。
+- **全量基线**：8 段复跑全绿锚定。
+
 ### ✅ 统帅轮-14时（2026-11-10）：R105 第二批 19 用例收口 + 审计假阴性核实反转
 
 - **model.py 安全白名单与解析入口专项**：新增 `tests/test_model_security_props_r108.py`
