@@ -33,17 +33,19 @@ AIGC:
 
 `actus run <target> <jsonexpr>` 中的 `<target>` 需支持以下全部形态，其它子命令按需对齐：
 
-> **实现状态（2026-10-29）**：**部分** —— `actus run` 已接入 resolver 并支持全部形态；
-> 其它子命令（`validate`/`info`/`preview` 等）**尚未**全部改用 resolver。
+> **实现状态（2026-11-11）**：**完成** —— 全部子命令已接入 resolver：
+> `run` 走 `resolve_target`（cli.py:935）；`validate`/`info`/`preview` 走
+> `_resolve_cli_target`（cli.py:1858，内部调用 `resolve_target(raw, allow_hosts=[])`）。
+> 目标五源（id/name/md5/path/url）与扩展入参（JSON URL / `@action:`）均已落地。
 
 | 形态 | 示例 | 现状 |
 |---|---|---|
 | 动作 id（反域名） | `actus.cli.jq` | ✅ 支持 |
 | 本地零散动作路径（文件） | `./actions/foo.actus.md` | ✅ 支持 |
 | 本地零散动作路径（目录） | `./lib/foo.actus/` | ✅ 支持 |
-| 动作名称（可读名） | `bench_polyglot` | ❌ 不支持 |
-| 动作唯一指纹（内容 MD5） | `9f2c…`（32 hex） | ❌ 不支持 |
-| URL（http/https 动作源） | `https://…/foo.actus.md` | ❌ 不支持 |
+| 动作名称（可读名） | `bench_polyglot` | ✅ 支持（resolver 五源含 name，查索引 `by_name`） |
+| 动作唯一指纹（内容 MD5） | `9f2c…`（32 hex） | ✅ 支持（resolver 五源含 md5，查索引 `by_md5`） |
+| URL（http/https 动作源） | `https://…/foo.actus.md` | `run` ✅ 支持（需 `--allow-host`，远程未校验默认拒绝）；`validate`/`info`/`preview` ❌ 拒绝 —— **设计决策**，非缺口：这三个命令不提供隐式下载，远程请用 `run --allow-host`（见 cli.py:1858 docstring） |
 
 `<jsonexpr>` 入参需支持：
 
@@ -52,8 +54,8 @@ AIGC:
 | JSON 字面量 | `'{"a":1}'` | ✅ 支持 |
 | 本地 JSON 文件 | `@args.json` | ✅ 支持 |
 | stdin | `-` | ✅ 支持 |
-| JSON URL | `@https://…/args.json` / `https://…/args.json` | ❌ 不支持 |
-| 无参动作引用（执行后取其返回 JSON 作入参） | `@action:actus.demo.produce` | ❌ 不支持 |
+| JSON URL | `@https://…/args.json` / `https://…/args.json` | ✅ 支持（`resolve_params_extended`，resolver.py:409；远程下载默认禁，需 `--allow-host` 白名单） |
+| 无参动作引用（执行后取其返回 JSON 作入参） | `@action:actus.demo.produce` | ✅ 支持（`resolve_params_extended`，最大递归深度默认 3，含环检测） |
 
 ### 1.2 目标 B：动作规范性扩展
 
