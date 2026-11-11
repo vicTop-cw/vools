@@ -25,7 +25,7 @@
 | 适配器引用形态 | ✅ **已完成** | P2：id 引用 / 内联 spec / 缺引用三类报错信息齐备 |
 | **全量回归** | ✅ **跑通** | `pytest tests/` exit 0：367+ passed + 1 skipped + 0 failed |
 
-**P0/P1 缺口全部清零**；P2 仅剩 1 项（DEVELOPMENT_STANDARDS 同步，主仓文件，见第五节）。
+**P0/P1 缺口全部清零，P2 全部完成**（DEVELOPMENT_STANDARDS 已于 2026-11-11 同步收口，见第五节）。
 
 ---
 
@@ -231,7 +231,7 @@ usage 示例的 python 块、permissions 的 yaml 块 fence 行同样带 `#!run`
 
 | # | 缺口 | 状态 |
 |---|------|------|
-| 4 | `docs/DEVELOPMENT_STANDARDS.md` 未同步 | ❌ 主仓文件，本工作区无（唯一剩余项） |
+| 4 | `docs/DEVELOPMENT_STANDARDS.md` 未同步 | ✅ 已完成：`actus/docs/DEVELOPMENT_STANDARDS.md`（67 行）已落地，四节规范与基建现状一致；2026-11-11 修正其引用失准（schema 路径 `contracts/`、校验函数 `validate_action()`、验收测试 `test_validate_contracts_r32.py`/`test_kind_dispatch.py`） |
 | 5 | 安装态指标落点只读风险 | ✅ 已加 `ACTUS_METRICS_DIR` 逃生门（calllog._default_meta 最高优先级） |
 | 6 | `exec_iface._AdapterIface` 兜底 id 不明确 | ✅ 已修复：缺引用 → `invalid` + 声明方式说明；未知 id → 列出已注册适配器与放置目录；新增内联 spec（`adapter: {type: cli, ...}` 平铺写法）；text 输出 data 兜底 stdout |
 | 7 | 种子动作 demo 值 | ✅ 已完成：4 个 `*.demo.actus.md` + `demo:` 指向；连带修复 demo 相对路径解析 |
@@ -271,5 +271,5 @@ demo 演示文件，指标有安装态逃生门。
 
 **剩余待办（不阻塞使用）**：
 
-1. **P2-4**：`docs/DEVELOPMENT_STANDARDS.md` 同步（主仓文件，需在主仓改）
+1. ~~**P2-4**：`docs/DEVELOPMENT_STANDARDS.md` 同步（主仓文件，需在主仓改）~~ ✅ **已完成**（2026-11-11）：文件已落地 `actus/docs/DEVELOPMENT_STANDARDS.md`，四节规范与基建现状一致；引用失准（schema 路径、校验函数名、验收测试名）已修正
 2. **远期**：点赞/收藏/讨论等社区社交指标（需云端注册表，见 §7 Quicker 对比）
