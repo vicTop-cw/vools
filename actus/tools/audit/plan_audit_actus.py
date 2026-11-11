@@ -138,13 +138,32 @@ if os.path.isfile(doc03):
 # §六.6 _find_action_file — 检测函数定义（def _find_action_file），而非任意字符串
 # 原检测只看 `_find_action_file` 字符串出现，会把注释里的历史说明也命中
 # （paths.py 注释「5 份 _find_action_file 实现吃过亏」）。真正的清理判据是
-# 函数定义消失——薄封装调用 resolver 的写法不算漂移源。
-hits = []
+# 旧式实现（自行 glob/os.walk/字符串搜内容）消失——薄封装委托
+# resolver.find_action_file 的写法不算漂移源（785601e6 收口后保留为兼容签名，
+# 供 test_author_contracts_r84 / test_omega / test_dependency_contracts_r52 等引用）。
+legacy_hits = []
+shell_hits = []
 for dp, _d, fs in os.walk(os.path.join(ROOT, 'vools', 'actus')):
     for f in fs:
         if f.endswith('.py'):
             pth = os.path.join(dp, f)
             content = io.open(pth, encoding='utf-8', errors='replace').read()
             if _re.search(r'def\s+_find_action_file', content):
-                hits.append(os.path.relpath(pth, ROOT))
-show('§六.6 _find_action_file 已清理', not hits, '仍存在: %r' % (hits,))
+                m = _re.search(r'def\s+_find_action_file.*?(?=\n\S|\Z)', content, _re.S)
+                body = m.group(0)
+                # 跳过 docstring（历史说明里可能提到旧式实现特征词，如 omega.py 的
+                # 「用 f'"..." in content 判断」），只看可执行代码体。
+                for _q in ('"""', "'''"):
+                    _parts = body.split(_q)
+                    if len(_parts) >= 3:
+                        body = _parts[2]
+                        break
+                delegating = ('find_action_file(' in body and 'glob' not in body
+                              and 'os.walk' not in body and 'in content' not in body)
+                if delegating:
+                    shell_hits.append(os.path.relpath(pth, ROOT))
+                else:
+                    legacy_hits.append(os.path.relpath(pth, ROOT))
+show('§六.6 _find_action_file 已清理（无旧式实现）', not legacy_hits, '旧式仍存在: %r' % (legacy_hits,))
+if shell_hits:
+    print('  兼容薄壳（委托 resolver.find_action_file，保留签名）: %r' % (shell_hits,))
