@@ -1625,7 +1625,7 @@ def probe_from_language_map():
       |---|---|---|
       | Windows | ✅ 真机实跑 | `probe()` 完整报告（items **173**、`elapsed_ms≈2212`）+ `platform_tools` Windows 三探测 + 9 用例 |
       | Linux | ✅ 借 WSL 真跑 | WSL Ubuntu 22.04.5 内加载真实产品代码：systemd 真 PID1、apt/dpkg/snap、`is_wsl=true`，自检 17/17 |
-      | macOS | ❌ **未实跑** | 无 Mac 环境；仅平台钩子模拟 + 伪造 brew 验解析链路（11/11），`csrutil` 未验证 |
+      | macOS | ❌ **未实跑**（外部环境限制，2026-11-12 补记） | 核实环境为 Windows，无法执行 `csrutil` / `brew` / `xcode-select` 等 macOS 专属命令；仅平台钩子模拟 + 伪造 brew 验解析链路（11/11），`csrutil` 未验证。实跑清单见「macOS 特有探测」项下标注 |
 
 ### Phase 3 — CLI + 集成（1 周）
 
@@ -1679,6 +1679,14 @@ def probe_from_language_map():
      的注释**已落后于代码**（现有两道门），建议随验收一并更新。
 - **剩余工作清单（按优先级）**：
   1. **macOS 实跑取证**（SIP/Homebrew/Xcode CLT 三探测在真 Mac 上验一次）—— 唯一还压着 Phase 2 里程碑的项；
+     ⚠️ **外部环境限制（2026-11-12 补记，T0r5.5.2）**：核实环境为 **Windows 11**、无 macOS 环境，
+     本机**不执行 macOS 专属命令**，该项在当前环境下**无法实跑**，需真 Mac 或 macOS CI 完成；
+     **阻塞性结论：该限制不阻塞其余 Phase 交付** —— Phase 0/1/3 与 Phase 2 其余各项
+     （Windows 特有、Linux 特有、线程池、`test_probe_windows.py`）均有本机/WSL 实跑证据，
+     macOS 探测代码在非 darwin 平台**自动跳过、不进报告条目**（`platform_tools.py` 跨平台安全约束 +
+     `platform.py` 仅 `is_macos` 时调 `_get_sip_status`），不影响 Windows/Linux 分支；
+     唯一影响是 Phase 2 里程碑「三个平台各自跑通」的 macOS 列保持 `[~]`。
+     建议实跑清单（命令/预期结果）见 Phase 2「macOS 特有探测」项下标注；
   2. 给 `runtime:` 解析分支补单测，然后验收上表两条「进行中」；
   3. ~~补 `analyze_actions` 的**细粒度单测**~~ ✅ **已收口（2026-11-11 复核）**：
      `test_analyze_actions.py` 13 用例 + `test_analyze_actions_signals.py` 21 用例
