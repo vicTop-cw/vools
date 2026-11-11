@@ -104,6 +104,19 @@ def _probe_one_runtime(runtime, path_index, timeout):
                                    "was found on PATH")
                 return result
 
+            # WSL bash 转发器特判（统帅轮-12时，尾巴验证实测）：
+            # C:\Windows\system32\bash.EXE 是 WSL 网关，`bash --version` 要拉起
+            # WSL VM——热态 ~2.3s、冷态 >5s 撞满 per-tool timeout，把 runtimes
+            # 探测器拖成 5.1s 恒定尾巴（并行墙钟 2.5-5.4s 的真凶手）。它不是
+            # 「开发运行时」的 version 信号源，跳过 version 探测、available 语义
+            # 不变，extra 标注 wsl_forwarder=True 让调用方知道这是网关不是原生
+            # bash（真 git-bash 在 Git\bin\bash.exe，候选链 _CMD_MAP 后续命中）。
+            if os.path.normcase(path) == os.path.normcase(
+                    os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                                 "system32", "bash.exe")):
+                result["extra"] = {"wsl_forwarder": True}
+                return result
+
             version, error, extra = _get_version_detail(
                 path, _VERSION_ARGS.get(runtime.name, ["--version"]), timeout)
             result["version"] = version
