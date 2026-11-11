@@ -13,7 +13,7 @@ AIGC:
 
 > 状态：**规划稿（暂不实施）** · 2026-10-16
 > 范围：① `actus run` 及子命令的目标/入参多形态解析；② 动作规范性扩展（无源码动作、任意语言入口、link/demo/template 等动作类型）
-> 依据代码：`engine/actus/__main__.py`、`vools/actus/{indexer,executor,scattered,runtimes}.py`、`vools/bridges/vools/bridge/md/runner.py`、`contracts/action.schema.json`、`docs/03-动作规范.md`、`docs/DEVELOPMENT_STANDARDS.md`
+> 依据代码：`vools/actus/cli.py`（CLI 主入口，`main` L115 / `_dispatch` L805）、`vools/actus/{indexer,executor,scattered,runtimes}.py`、`bridges/vools/bridge/md/runner.py`、`contracts/action.schema.json`、`docs/03-动作规范.md`、`docs/DEVELOPMENT_STANDARDS.md`
 
 > **实现状态（核实于 2026-11-08，T0r3.2.2 复跑）** —— 上方「规划稿（暂不实施）」**已过时**，实际已实施 **100%（28/28）**：
 > 已实现（28）：任意语言入口（`known_languages`/`is_routable` 路由）、
@@ -70,14 +70,14 @@ AIGC:
 
 | 层 | 文件 | 事实 |
 |---|---|---|
-| CLI 主入口 | `engine/actus/__main__.py` | `run` 在 1422 行 dispatch：`is_scattered_path()` 命中走 scattered 管线，否则 `actuscore.execute(id, _parse_params(params))`；`info/preview/validate` 直接 `get_action(id)`；`check` 吃 path；`author/workflow/triggers` 吃 id |
-| 入参解析 | 同上 `_parse_params`（2909 行） | 仅三种：JSON 字面量 / `@file` / `-`；要求最终是 JSON object |
-| 索引层 | `vools/actus/indexer.py` | `get_action(action_id)` 仅精确 id 匹配 `scan_actions` dict，无 name/md5/url 回退；`build_index` 落盘 `_meta/actions.index.json`，条目只有 `brief`（无 name 索引、无指纹） |
+| CLI 主入口 | `vools/actus/cli.py`（`main` L115 / `_dispatch` L805；唯一 vools 级 `__main__.py` 为 `vools/__main__.py`） | `run`（L925）走 `resolver.resolve_target`：id/name/md5/path/url 六形态（scattered 由 `is_scattered_path()` 判定前置分流），URL 需 `--allow-host` 白名单 + 指纹校验；入参走 `resolve_params_extended`；`info/preview/validate`（L882/L900/L860）走 `_resolve_cli_target`（内部 `resolve_target(raw, allow_hosts=[])`，URL 明确拒绝）；`author`（L1049）/`workflow`（L1058）/`triggers`（L1088）各走专属分支 |
+| 入参解析 | `vools/actus/cli.py` `_parse_params`（L1902）/ `resolve_params_extended`（L984，resolver.py L409） | `run` 支持七种入参：JSON 字面量 / `@file` / `-` / `@https://…*.json` URL 下载 / `@action:<action_id>` 递归引用（默认最大深度 3、含环检测）；`preview` 等仍用 `_parse_params`（仅 JSON 字面量 / `@file` / `-`；要求最终是 JSON object） |
+| 索引层 | `vools/actus/indexer.py` | `get_action(action_id)` 仅精确 id 匹配 `scan_actions` dict，无 name/md5/url 回退；`build_index` 落盘 `_meta/actions.index.json`，条目为 `brief`（含 name/md5/kind/languages），并含 `by_name` / `by_md5` / `by_kind` 反向索引（indexer.py L403-446） |
 | 执行层 | `vools/actus/executor.py` | `execute(action_id, params)` 内部 `get_action(id)` → `load_and_validate` → 依赖/信任/沙箱门禁 → `run_md(path, only=[entry])`；出参 = 入口块 stdout 优先 JSON 解析（docs/03 §7.3.7） |
 | 零散动作 | `vools/actus/scattered.py` | `is_scattered_path` 判 `.actus.md` 文件 / `.actus/` 目录；含授权根与路径逃逸防护 |
 | 运行时 | `vools/actus/runtimes.py` | 已注册 python / shell(bash,sh,powershell,pwsh,cmd) / node / go / rust / ruby / php |
-| 块执行器 | `vools/bridges/vools/bridge/md/runner.py` | `_execute_block` 直接分支：python、shell/bash/sh、webview2、sigma；其余走 `_execute_via_bridge`（编译器桥包 / 注册表别名）；已有 `only-code` 指令（源码展开不执行） |
-| 动作 schema | `contracts/action.schema.json` | 字段：id/name/version/trust/visibility/entry(tag)/platform/deps/permissions/args/secrets/triggers/workflow/tags…；**无 kind、无 md5 字段** |
+| 块执行器 | `bridges/vools/bridge/md/runner.py` | `_execute_block` 直接分支：python、shell/bash/sh、webview2、sigma；其余走 `_execute_via_bridge`（编译器桥包 / 注册表别名）；已有 `only-code` 指令（源码展开不执行） |
+| 动作 schema | `contracts/action.schema.json` | 字段：id/name/version/trust/visibility/entry(tag)/platform/deps/permissions/args/secrets/triggers/workflow/tags…；已含 `kind` 与 `md5` 字段（kind=exec 时强制 `entry`） |
 | 规范文档 | `docs/03-动作规范.md` | §1 定义 / §2 config / §3 trust / §4 代码块规范 / §5 最小示例 / §6 校验（6.1 verify 前置门槛）/ §7 入参出参契约 |
 | 开发规范 | `docs/DEVELOPMENT_STANDARDS.md` | 与动作规范交叉引用；改动需同步两处 |
 
