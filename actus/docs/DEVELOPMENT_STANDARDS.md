@@ -34,9 +34,9 @@ Kind 指动作的执行分类。当前支持的 kind：`exec`、`link`、`demo`�
 | 步骤 | 动作 | 产出 | 验收 |
 |------|------|------|------|
 | **1** | **注册 KIND_LEVELS**：在 `actus/vools/actus/constants.py` 的 `KIND_LEVELS` 字典中新增条目，定义 trust 等级与默认权限 | 新 kind 的常量 | `from vools.actus.constants import KIND_LEVELS; assert '<新kind>' in KIND_LEVELS` |
-| **2** | **更新 schema**：在 `actus/vools/actus/schemas/action.schema.json` 的 `kind` 枚举列表中添加新值 | JSON Schema 更新 | `jsonschema.validate(...)` 通过 |
-| **3** | **写 verify 规则**：在 `actus/vools/actus/validate.py` 的 `verify_action()` 中为新 kind 添加专项校验逻辑（如 `kind=bundle` 必须有 `bundle.actions` 字段） | 校验函数 | `pytest actus/tests/test_validate.py -q` 绿 |
-| **4** | **落地 executor 分支**：在 `actus/vools/actus/executor.py` 的 `execute()` 主流程中新增 `kind == '<新kind>'` 的分支处理 | executor 分支 | `pytest actus/tests/test_executor_kind.py::test_<newkind>_dispatch -q` 绿 |
+| **2** | **更新 schema**：在 `actus/contracts/action.schema.json` 的 `kind` 枚举列表中添加新值 | JSON Schema 更新 | `jsonschema.validate(...)` 通过 |
+| **3** | **写校验规则**：在 `actus/vools/actus/validate.py` 的 `validate_action()` 中为新 kind 添加专项校验逻辑（如 `kind=bundle` 必须有 `bundle.actions` 字段；注意 `trust_model.verify_action()` 是签名验证，不在此列） | 校验函数 | `pytest actus/tests/test_validate_contracts_r32.py -q` 绿 |
+| **4** | **落地 executor 分支**：在 `actus/vools/actus/executor.py` 的 `execute()` 主流程中新增 `kind == '<新kind>'` 的分支处理 | executor 分支 | `pytest actus/tests/test_kind_dispatch.py -q` 绿 |
 | **5** | **补种子动作**：在 `actus/vools/actus/actions/` 下新增一个 `.actus.schema.md` 种子文件，front-matter 声明 `kind: <新kind>`，并生成合法 `.sig` 签名 | 种子 + 签名 | `pytest actus/tests/test_seed_signatures.py -q` 绿 |
 | **6** | **文档同步**：在 `docs/actus/03-动作规范.md` 的 §2 分类体系章节补充新 kind 的说明 | 文档更新 | 人工 review |
 
@@ -62,5 +62,5 @@ Kind 指动作的执行分类。当前支持的 kind：`exec`、`link`、`demo`�
 - `docs/actus/03-动作规范.md`：动作分类体系与元数据规范
 - `actus/vools/actus/resolver.py`：target 形态解析实现
 - `actus/vools/actus/constants.py`：KIND_LEVELS 常量
-- `actus/vools/actus/validate.py`：verify 规则实现
+- `actus/vools/actus/validate.py`：校验规则实现（`validate_action()`）
 - `actus/vools/actus/executor.py`：kind 分发实现
