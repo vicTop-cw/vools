@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import re as _re
 import sys
 import tempfile
 
@@ -68,19 +69,18 @@ show('params: @action 递归深度保护', 'max_action_depth' in
      io.open(os.path.join(ROOT, 'vools/actus/resolver.py'), encoding='utf-8').read(),
      'resolver.resolve_params_extended(max_action_depth=3)')
 
-# kind 体系 — 检测逻辑放宽：`kind == 'X'` 或 `kind in (..., 'X')` 都算已落地
-# 原检测只看 `kind == 'alias'` 字面匹配，但 executor.py 用 `kind in ('alias', 'link')`
-# 更优雅的写法，导致 alias 被误报 MISS。
+# kind 体系 — 判定收紧：AST 精确匹配（真实代码节点），不再用正则/字符串包含
+# 原检测只看 `kind == 'alias'` 字面匹配，会漏掉 `kind in ('alias', 'link')`；
+# 放宽为正则后仍可能被注释 / 字符串字面量里的字样误报。现在解析 AST 收集
+# 真实代码中的 `kind == 'X'` / `kind in (..., 'X')` 判定（单一实现见
+# _plan_audit_helpers.code_kind_comparisons，审计测试同引用）。
 exec_src = io.open(os.path.join(ROOT, 'vools/actus/executor.py'),
                    encoding='utf-8').read()
-import re as _re
+from _plan_audit_helpers import code_kind_comparisons  # noqa: E402
+exec_kinds = code_kind_comparisons(exec_src)
 for kind in ('link', 'alias', 'bundle', 'doc', 'template', 'demo'):
-    pattern = _re.compile(
-        r"kind\s*==\s*['\"]%s['\"]|kind\s+in\s*\([^)]*['\"]%s['\"]" % (
-            _re.escape(kind), _re.escape(kind))
-    )
-    show('kind 执行语义: ' + kind, bool(pattern.search(exec_src)),
-         'executor.py (%s)' % ('kind== or kind in') if pattern.search(exec_src) else 'executor.py')
+    show('kind 执行语义: ' + kind, kind in exec_kinds,
+         'executor.py AST 判定集合=%s' % (sorted(exec_kinds),))
 show('kind 非执行豁免清单', 'demo' in V._NON_EXEC_KINDS,
      '_NON_EXEC_KINDS=%r' % (V._NON_EXEC_KINDS,))
 kinds = {}
@@ -104,15 +104,48 @@ show('校验: 代码块语言检查', hasattr(V, 'check_block_languages'),
 show('校验: kind 合法性',
       hasattr(V, 'check_kind') or hasattr(V, 'is_known_kind'),
       'validate.is_known_kind' if hasattr(V, 'is_known_kind') and not hasattr(V, 'check_kind') else 'validate.check_kind' if hasattr(V, 'check_kind') else '未找到')
+# 校验面 — 判定收紧：真实行为验证（不再做字符串包含）
+# 原判定 `'target' in validate.py 全文` / `'md5' in validate.py 全文` 恒真
+# （validate.py 必然出现这些字样），无法核查校验是否覆盖真实路径/内容。
+# 现在直接调用 V.check_link_target / V.check_md5_consistency 构造真实场景断言：
+#   * link/alias target 缺失 → error；target 不在索引 → warning；命中 → 无告警；
+#   * 索引 md5 与实际文件内容 md5 不一致 → warning；一致 → 无告警。
+from types import SimpleNamespace as _SN  # noqa: E402
+import hashlib as _hashlib  # noqa: E402
+
+def _write_mini_index(entries):
+    with io.open(os.path.join(os.environ['ACTUS_META_DIR'], 'actions.index.json'),
+                 'w', encoding='utf-8') as _f:
+        json.dump({'actions': entries}, _f)
+
+# link/alias target 存在性：target 缺失 → error；target 不在索引 → warning
+_missing_t = V.check_link_target(
+    _SN(meta={'kind': 'link', 'target': '', 'id': 'stub.link'}), check_index=False)
+_write_mini_index({'actus.real': {'id': 'actus.real', 'md5': '0' * 32}})
+_absent_t = V.check_link_target(
+    _SN(meta={'kind': 'alias', 'target': 'actus.missing', 'id': 'stub.alias'}),
+    check_index=True, meta_dir=os.environ['ACTUS_META_DIR'])
+_known_t = V.check_link_target(
+    _SN(meta={'kind': 'link', 'target': 'actus.real', 'id': 'stub.link2'}),
+    check_index=True, meta_dir=os.environ['ACTUS_META_DIR'])
+show('校验: link/alias target 缺失拦截',
+     any('缺少 target' in e for e in _missing_t), repr(_missing_t))
 show('校验: link/alias target 存在性',
-     'target_not_found' in io.open(os.path.join(ROOT, 'vools/actus/validate.py'),
-                                   encoding='utf-8').read()
-     or 'target' in io.open(os.path.join(ROOT, 'vools/actus/validate.py'),
-                            encoding='utf-8').read(),
-     'validate.py 含 target 校验')
-show('校验: md5 一致性告警',
-     'md5' in io.open(os.path.join(ROOT, 'vools/actus/validate.py'),
-                      encoding='utf-8').read(), 'validate.py 含 md5')
+     any('未在索引中找到' in e for e in _absent_t), repr(_absent_t))
+show('校验: link/alias target 命中索引', not _known_t, repr(_known_t))
+
+# md5 一致性：索引 md5 vs 文件实际内容 md5 的真实比对
+_md5_file = os.path.join(os.environ['ACTUS_META_DIR'], 'stub_md5.txt')
+io.open(_md5_file, 'w', encoding='utf-8').write('stub md5 body')
+_real_md5 = _hashlib.md5(io.open(_md5_file, 'rb').read()).hexdigest()
+_write_mini_index({'stub.md5': {'id': 'stub.md5', 'md5': 'f' * 32}})
+_md5_stub = _SN(meta={'id': 'stub.md5'}, md5=_real_md5, path=_md5_file)
+_md5_bad = V.check_md5_consistency(_md5_stub, meta_dir=os.environ['ACTUS_META_DIR'])
+_write_mini_index({'stub.md5': {'id': 'stub.md5', 'md5': _real_md5}})
+_md5_ok = V.check_md5_consistency(_md5_stub, meta_dir=os.environ['ACTUS_META_DIR'])
+show('校验: md5 一致性（真实比对）',
+     any('索引 md5 与文件不一致' in e for e in _md5_bad), repr(_md5_bad))
+show('校验: md5 一致无告警', not _md5_ok, repr(_md5_ok))
 
 # 语言可路由
 try:
