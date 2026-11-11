@@ -26,7 +26,7 @@ PROBE_PLAN.md §4.7 把 `runtime:python` 列为合法依赖写法，但 `Depende
   `dep.name` 的缓存（单例上缓存了打桩结果会污染后续用例）；
 * 「本机确定没有的运行时」用一个不存在的名字，不靠机器快照。
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import os

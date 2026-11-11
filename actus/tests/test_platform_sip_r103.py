@@ -14,7 +14,7 @@
   * status: disabled → False（关键回归点：旧判据在此误报 True）
   * csrutil 不存在/异常 → None
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import os

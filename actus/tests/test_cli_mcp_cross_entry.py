@@ -13,7 +13,7 @@
 CLI 的 `status=ok` 对应 MCP 的 `isError=False`，CLI 的 `data` 对应 MCP payload 里的 `data`。
 
 隔离：tmp_path 假仓库，HOME/USERPROFILE/ACTUS_META_DIR/ACTUS_REPO_ROOT 全部指向 tmp。
-py3.6 兼容：标准库 + % 格式化。
+py3.8+（requires-python>=3.8）：标准库 + % 格式化。
 """
 
 import io

@@ -30,7 +30,7 @@
 * degraded 分支依赖 bridge 指令白名单：入口块写引擎不认识的指令
   （devtools=…）触发，复用 PROBE_PLAN 记载的 calculator 实测形态。
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import os

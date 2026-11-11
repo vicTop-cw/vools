@@ -16,7 +16,7 @@
    而不是逐个点名 —— 将来再加探测模块漏写时这里也会亮。
 
 测试不挑环境（不真跑探针）：只做静态的 __all__ 兑现性检查，快且确定。
-py3.6 兼容：无 walrus / f-string 之外的新语法依赖。
+py3.8+（requires-python>=3.8）：无 walrus / f-string 之外的新语法依赖。
 """
 
 import importlib

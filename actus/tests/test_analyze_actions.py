@@ -32,7 +32,7 @@ unverifiable|duplicate_ids" actus/tests/` 只在别的文件里作为 fixture �
   为空时 skip，不硬编码任何真实动作 id；
 * 不跑 `probe()`，全部是纯内存 + tmp 文件，整份套件秒级。
 
-py3.6 兼容：只用标准库，% 格式化，不用 f-string。
+py3.8+ 口径（pyproject requires-python>=3.8，24ea2d53 升级）：只用标准库，% 格式化（保持文件间一致风格）。
 """
 
 import json

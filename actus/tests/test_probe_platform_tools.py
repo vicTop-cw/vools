@@ -41,7 +41,7 @@ Linux 的 systemd / 包管理器、macOS 的 Xcode CLT。
 模块尚未落地时（平台能力司令编写中）每个用例 skip 而不是让套件变红 ——
 落地后本文件自动生效，不需要改一行。
 
-py3.6 兼容：只用 contextlib/importlib/标准库，% 格式化，不用 f-string。
+py3.8+（requires-python>=3.8）：只用 contextlib/importlib/标准库，% 格式化，不用 f-string。
 """
 
 import glob

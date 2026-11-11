@@ -32,7 +32,7 @@ probe() 已从「串行遍历探测器」改为 ThreadPoolExecutor 8 线程
 summary 计数）、items 合并顺序稳定性、verbose 进度行完整性分别断言 ——
 「并行度退化成 1」和「按完成顺序乱序合并」这两类隐性回归都会在这里亮红。
 
-py3.6 兼容：只用 contextlib/typing 之外的标准库，% 格式化，不用 f-string。
+py3.8+（requires-python>=3.8）：只用 contextlib/typing 之外的标准库，% 格式化，不用 f-string。
 """
 
 import inspect
