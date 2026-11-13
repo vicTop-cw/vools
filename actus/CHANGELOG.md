@@ -10,12 +10,55 @@
 
 > 本段记录 **0.9.1 发布之后**、尚未发版的改动。
 
-## [0.9.1] - 2026-11-11
+### ✅ 统帅轮-19时（2026-11-13）：R110 收敛降级执行（用户拍板「应用 R110 降级」）
 
-> 本次发布汇总 **九轮统帅轮迭代**（09时-17时）与 0.9.0 之后的 probe 性能优化积累：
-> probe 全量墙钟首进 1 秒档（WSL bash 特判修复 runtimes 5.1s→256ms）、SIP 探测
-> 安全语义反转修复、R105 覆盖审计三批 141 新用例兑现、Find_BUG 全景甄别存档、
-> 三本账实测对齐、0.9.1 之前的全部测试基建修复。详见下方各轮条目与验收节。
+- **🔧 R110 收敛降级落地**：将 R105 审计终态的 10 个 API 收敛候选**全部降级为
+  `_` 前缀私有函数**（不补测，直接收缩公开面以兑现 100% 公开覆盖）。清单：
+  ①`cost.alert_budget_if_over` → `_alert_budget_if_over`（移出 `__all__`，无内部调用点）；
+  ②`selfdrive.strong_enabled` → `_strong_enabled`（2 处调用点同步）；
+  ③`vault.default_meta_dir` → `_default_meta_dir`（移出 `__all__`，5 处调用点同步）；
+  ④`vault2.default_vault_dir` → `_default_vault_dir`（含 `DEFAULT_VAULT_DIR` 默认值与 1 调用点）；
+  ⑤`probe/platform_tools.is_capability_item` → `_is_capability_item`（移出 `__all__`，1 调用点 + 注释引用同步）；
+  ⑥`ai/catalog.union`（嵌套局部）→ `_union`；⑦`adapter.replacer`（嵌套局部）→
+  `_replacer`；⑧`validate.dfs`/`validate.dfs_cycle`（嵌套局部）→ `_dfs`/`_dfs_cycle`；
+  ⑨`scattered.dfs`（嵌套局部）→ `_dfs`。
+- **引用复核（R112 前置）**：降级后全仓 grep 复核，`base.py:238` 与
+  `platform_tools.py:1117` 两处**纯 docstring 引用**同步改为 `_` 前缀，零遗漏。
+- **门禁（全量基线，本轮口径）**：非忽略套件 **5908 用例 / 205 文件 / 0 failed /
+  0 error**（7 个隔离批次 RC=0 全绿）。8 文件环境屏蔽——7 个 wsl/bash 运行时真探测
+  测试（`test_platform_enum_alignment`、`test_probe_parallel`、
+  `test_probe_platform_contracts_r61`、`test_probe_platform_tools`、`test_probe_windows`、
+  `test_runtimes_wsl_bash_r106`、`test_language_entries`）+ 1 个既有坏导入
+  （`check_html_generation.py`，与本次改动无关）。`compileall` 全包 EXIT=0。
+  > 注：沙箱 `wsl.EXE` 黑名单会在「整段连续 pytest 会话」下因某测试的 state 泄漏
+  > 触发非优雅 `wsl` 调用而 SIGTERM 整进程——属**预存套件健壮性缺陷**，与本次
+  > 10 函数降级无关（重命名为纯私有化，不可能新增 wsl 依赖）；按隔离批次运行即可全绿。
+
+### ✅ 统帅轮-18时（2026-11-11）：基线工具双坑根治 + 全仓计划落地全景确认
+
+- **🔧 基线工具双坑根治（`temp/run_baseline_segments.py`）**：①**死锁**——
+  主跑与 collect-only 两处 `subprocess PIPE` 在大输出量下死锁（测试内 spawn 的
+  孙进程继承管道写端，pytest 退出后管道不闭合）→ 改为 stdout 直连文件（不经
+  PIPE）；②**段边界漂移**——collect 顺序随文件系统枚举漂移，同「段 3」在不同
+  轮次圈进完全不同文件集（116s~757s 剧烈波动假象）→ `files.sort()` 固定切分。
+  配套加 collect 阶段耗时打点。修复后 8 段边界稳定跨轮可比。
+- **段 3 慢的真相**：排序后段 3 固定为 `test_mcp_handlers..test_platform_sip_r103`
+  （27 文件，含 probe 真探测慢测试系）——**720 秒是真实耗时非死锁**（rc=0，
+  738 passed + 33 skipped）。
+- **全仓计划落地全景确认**：`analysis/PLAN_LANDING_STATUS_R112.md`——
+  ①38 个桥接模块**全部已实现**（rust 52 文件/10MB、freebasic 3154 文件、
+  scala 153、md 84 等），37/38 有测试覆盖（bat 薄模块无测试）；②`.AI/trae/
+  documents/` 20 个 plan 文档定性为**历史过程记录**（主体已落地，典型反例：
+  rust-bridge plan 写「bridge/rust/ 当前为空模块」而实测 52 文件已实现）；
+  ③代码内 TODO 全仓仅 5 处且**全是模板文本**（actus 2 脚手架注释 + bridges 1
+  用户侧提示 + rx/vools 核心 0）——**无真实未完成遗留**。
+- **0.9.1 发布后校验**：CHANGELOG [0.9.1] 段九轮条目完整性核对 ✅ / 版本双处
+  一致（pyproject+__init__ 0.9.1）✅ / **0.9.1 wheel 归档 dist/**（818KB，
+  METADATA 版本核验 + 4 项打包面 ALL PASS）。
+- **R110 收敛执行工具包**：`analysis/CONVERGENCE_EXEC_KIT_R112.md`——B1
+  Action property 补全的 git apply diff 草稿 + 7 降级候选的批量脚本草稿
+  （含引用复核前置），**拍板即执行**，本轮不擅自改。
+- **全量基线**：8 段（排序固定切分）**5882 passed + 76 skipped + 0 failed**。
 
 ### ✅ 统帅轮-17时（2026-11-11）：OUTFILE 泄漏真凶根治 + 审计终态回写
 

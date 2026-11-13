@@ -20,7 +20,7 @@ from typing import Dict, List, Optional
 from .paths import meta_dir
 
 __all__ = ['record_cost', 'get_cost_summary', 'check_budget',
-           'alert_budget_if_over', 'COSTS_DIR']
+           'COSTS_DIR']
 
 # 账本行分类：
 #   skip_*       —— 这一行的成本**无法计入**（total_usd 里没有它，是"账本缺口"）
@@ -260,7 +260,7 @@ def check_budget(month_limit_usd: float = 10.0) -> dict:
     }
 
 
-def alert_budget_if_over(month_limit_usd: float = 10.0, notify: bool = True) -> dict:
+def _alert_budget_if_over(month_limit_usd: float = 10.0, notify: bool = True) -> dict:
     """预算告警最小版（docs/31 阶段 4）：超支时经 notify 模块发告警。
 
     返回 check_budget 的状态 + alerted 标志；告警失败不影响判定结果。

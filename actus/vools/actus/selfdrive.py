@@ -69,7 +69,7 @@ def _new_id(prefix: str = 'sd') -> str:
     return f'{prefix}-{uuid.uuid4().hex[:8]}'
 
 
-def strong_enabled(config: Optional[dict] = None) -> bool:
+def _strong_enabled(config: Optional[dict] = None) -> bool:
     """Ω 强验证是否开启（显式 config 优先，其次环境变量）。"""
     if config is not None and 'omega_strong' in config:
         return bool(config['omega_strong'])
@@ -193,8 +193,8 @@ class SelfDrive:
         self.max_depth = max_depth
         self.worker = worker or self._echo_worker
         self.spec_resolver = spec_resolver
-        self.strong = strong_enabled({'omega_strong': strong}) if strong is not None \
-            else strong_enabled()
+        self.strong = _strong_enabled({'omega_strong': strong}) if strong is not None \
+            else _strong_enabled()
         self.meta_dir = meta_dir or _default_meta()
         self.max_rounds = max(1, max_rounds)
         self.decomposer = decomposer or Decomposer(max_depth=max_depth)

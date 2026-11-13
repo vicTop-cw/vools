@@ -235,7 +235,7 @@ class LLMClient(object):
 # 用量记账（best-effort）
 #
 # 审计背景：`cost.record_cost()` 全库从未被调用 —— 账本永远是空的，于是
-# `check_budget()` 恒 `spent_usd=0`、`alert_budget_if_over()` 的告警分支在生产
+# `check_budget()` 恒 `spent_usd=0`、`_alert_budget_if_over()` 的告警分支在生产
 # 路径上永远走不到（"承诺了但没做"）。现在两个真实 provider 的 `complete()`
 # 成功后由 `@records_usage` 记账：一处实现，两处挂载；不碰 Selector/Planner 的
 # 调用点，也不让测试里的 FakeClient 往真实账本里写垃圾行。

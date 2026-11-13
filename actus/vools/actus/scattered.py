@@ -479,7 +479,7 @@ def _detect_path_cycle(edges: Dict[str, List[str]], start: str) -> Optional[List
     color: Dict[str, int] = {}
     stack: List[str] = []
 
-    def dfs(node: str) -> Optional[List[str]]:
+    def _dfs(node: str) -> Optional[List[str]]:
         color[node] = 1
         stack.append(node)
         for nxt in edges.get(node, []):
@@ -487,14 +487,14 @@ def _detect_path_cycle(edges: Dict[str, List[str]], start: str) -> Optional[List
             if c == 1:
                 return stack[stack.index(nxt):] + [nxt]
             if c == 0:
-                got = dfs(nxt)
+                got = _dfs(nxt)
                 if got:
                     return got
         stack.pop()
         color[node] = 2
         return None
 
-    return dfs(start)
+    return _dfs(start)
 
 
 def _collect_path_dep_graph(start_entry: str, root: str,
