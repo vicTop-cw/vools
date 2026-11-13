@@ -10,6 +10,47 @@
 
 > 本段记录 **0.9.1 发布之后**、尚未发版的改动。
 
+### ✅ 统帅轮-22时（2026-11-13）：R115 修复 wsl 连续会话 SIGTERM（整段门禁首次完整跑完）
+
+- **根因（精确化）**：沙箱对 `wsl.EXE` 有黑名单；整段连续 pytest 会话中只要某个用例
+  （或 state 泄漏）**真实 spawn `wsl.exe`**——最典型是 `probe/platform_tools._probe_windows_wsl`
+  跑 `wsl.exe -l -v`——沙箱即 **SIGTERM 整个 pytest 进程**，导致整段门禁永远跑不完
+  （R110 起只能拆 7 个隔离批次）。此前 `test_platform_enum_alignment.py` 被误列为触发源，
+  实测其为**纯 schema/校验逻辑、零 subprocess**，是相邻顺序的误归因。
+- **修法（`tests/conftest.py`，仅测试侧）**：conftest 载入期把 `subprocess.Popen` 包一层——
+  命令首参为 `wsl`/`wsl.exe` 时**直接抛 `FileNotFoundError`**，走产品代码既有优雅降级
+  （`platform_tools._run` 已捕获 `FileNotFoundError` → 返回 `(None, b"")`，即「WSL 不可用」）。
+  ① 沙箱内绝不真正 exec `wsl.exe` → 不再 SIGTERM；② 不改任何产品代码；③ 如实覆盖
+  「WSL 不可用」路径；④ `ACTUS_TEST_ALLOW_WSL=1` 可解除守卫跑真 WSL 集成用例。
+- **兼容性审计**：源码 8 处 `import subprocess` 全为模块属性访问且 Popen 首参为位置参数；
+  `subprocess.run` 内部引用模块级 `Popen`，一并生效；测试内 `monkeypatch.setattr(..., 'Popen', fake)`
+  在用例内覆盖、teardown 自动恢复守卫；仅拦 `wsl.exe`，`bash`/`cmd`/`python` 放行；
+  测试启动的 CLI 子进程只测 `run`/`--version`/`--help`/参数错误，**不经 `probe`**，无绕过路径。
+- **门禁（真实运行时 = WindowsApps Python 3.13.14 / pytest 9.0.2）**：
+
+  | 项 | 结果 |
+  |---|---|
+  | **整段连续全量** `pytest tests/` | **6006 用例跑到 100% 完整结束，29m03s，无 SIGTERM** ✅ |
+  | 计数 | **5997 passed / 5 skipped / 4 failed**（RC=1，见下方归因） |
+  | wsl/probe 12 文件连续批次 | RC=0 |
+  | R113 新文件 | 6/6 RC=0 |
+  | 仓库污染 | `git status` 无真实动作文件变更 ✅ |
+
+- **4 个 F 全部与本次改动无关（按范围纪律记录、不改动）**：
+  1. `test_seed_signatures.py` 3 例：真实 `~/.actus/keys/default.key|pub` 于 **21:19 被轮换**，
+     种子动作用旧公钥签名 → 验证失败。**隔离单跑即复现，且 `ACTUS_TEST_ALLOW_WSL=1`
+     （守卫关闭）同样复现**，与守卫无关，属环境密钥状态。
+  2. `test_validate_contracts_r32.py::test_action_path_of`：路径断言
+     `E:\...\actus\actions/a.actus.md` ≠ `actions/a.actus.md`，**隔离单跑通过、仅整段连续
+     会话失败** → 连续会话 state 泄漏（cwd / `ACTUS_REPO_ROOT` 未还原），属 R110 注释中
+     已记载的同族既有缺陷，此前被整段 SIGTERM 掩盖、从未暴露。
+- **口径纠正（重要）**：以 `aider-venv` 跑全量会产生 **假 F**（缺 `cryptography` /
+  `uvicorn` / `paramiko` / `keyring`）与成片失败；R110 基线与本轮验收**必须用 WindowsApps
+  Python 3.13**。此前误用 aider-venv 的那次全量（14m20s、44%）已作废终止。
+- **交付物**：`tests/conftest.py` 守卫 + 诊断报告 `analysis/R115_WSL_SIGTERM_FIX.md`。
+- **结论**：R115 目标（整段门禁可在沙箱**跑通**）达成；但整段连续会话尚非全绿，
+  4 个既有 F 已逐条归因并留待下一轮决策，不作虚假「全绿」声明。
+
 ### ✅ 统帅轮-20时（2026-11-13）：R113 收口——公开覆盖重审计发现 9 漏算 + 真实 100%
 
 - **重审计更正（关键）**：按 R105 原口径（AST 提取公开函数 → `tests/` 引用对照）
@@ -30,6 +71,46 @@
   （tkdialog 6 回调走 Tcl-skip 且测试按名引用，非真缺口）；`compileall` 全包 EXIT=0；
   viz+sigma 回归套件（~320 用例）RC=0；R113 新文件 6 用例 RC=0。
 - **结论**：vools-actus 公开覆盖指标至此**真实达 100%**（按 R105 字符串口径），非此前误报。
+
+### ✅ 统帅轮-21时（2026-11-13）：R114 CLI 启动慢诊断（实测，结论：代码侧已最优，主因在环境）
+
+> 用户 complain「actus 命令响应太慢」，本轮回应用 `-X importtime` + 多运行时实测定位。
+
+- **实测（warm，3 次取稳值；真实运行时 = Windows Store Python 3.13，UWP 别名重定向）**：
+
+  | 测量项 | 耗时 |
+  |---|---|
+  | `python --version`（UWP 别名 + 解释器冷启动基线） | ~260–313 ms |
+  | `import vools.actus.cli` 子树（site + sitecustomize + 可编辑 finder + vools 全部） | ~67 ms |
+  | `actus --help` | ~620 ms（首跑冷 ~1008 ms） |
+  | `actus`（无参，打印帮助） | ~634 ms |
+  | `actus list`（读索引） | ~622 ms warm / **~2619 ms 冷首跑** |
+  | `actus runtimes`（探测运行时） | ~920 ms |
+
+- **import 树热点**（`-X importtime`，累计 µs）：`site` 218,311 / `sitecustomize` 104,497 /
+  `__editable___cypyc_0_1_0_finder` **88,014**（**另一 editable 包 cypyc 的 finder 钩子，
+  actus 根本不用 cypyc，每次启动白白耗费**）；代码侧 `vools.actus.cli` 66,864 /
+  `vools.actus.model` 52,639 / `vools.core(+dataclass_compat)` ~64,000 / `vools.actus.dependency` 19,238。
+- **结论**：
+  1. **旧「import tax ~3.16s」不可复现**——真实 warm 启动 620–920 ms；旧值来自空闲后
+     冷盘/导入缓存失效的首跑（`actus list` 冷首跑实测 2.6 s）。
+  2. **代码侧已最优**：① 子命令模块（mcp/ai/scaffold/author…）在 `main`→`_dispatch`
+     内**懒加载**（cli.py:130/133 已验证，import 树未拉入重模块）；② `vools.actus` 启动链
+     **零可避免第三方重依赖**（yaml/toml/numpy/pandas/fastapi/uvicorn/requests 均未在
+     `__init__`/`model`/`dependency`/`constants`/`frontmatter`/`errors` 顶层导入）；③ 自身导入仅 ~67 ms。
+  3. **主因在环境，不在代码**：Windows Store Python 的 **UWP 别名 + 解释器启动 ~260 ms**
+     （最大固定项）；**可编辑安装 finder 钩子**（cypyc 一个包就 88 ms，且 actus 不用）；
+     冷盘/导入缓存（空闲首跑 1–2.6 s）。
+- **可落地的降耗手段（环境级，非代码）**：
+  - **A（最大收益）**：hot CLI 路径改用「非 Store 标准 Python 3.13 直接 python.exe」，
+    绕过 UWP 别名 → 基线约省 ~200 ms。
+  - **B**：vools-actus 以**非可编辑 wheel** 装入独立 venv 供日常 CLI（开发仍用 editable），
+    消除可编辑 finder 钩子（cypyc 88 ms + vools-actus 自身）。
+  - **C**：保持解释器温态；冷首跑 1–2.6 s 为 OS 磁盘缓存，代码无法根治。
+- **不建议的代码改动**：把 `model`/`core` 从 `__init__` 改懒加载可省 ~50 ms，但爆破半径大
+  （全仓 `from vools.actus import Action/parse_cfg` 多处依赖顶层可用），风险 > 收益，按
+  「护栏优先」原则不做。
+- **交付物**：完整诊断报告 `analysis/R114_CLI_STARTUP_DIAGNOSIS.md`。
 
 ### ✅ 统帅轮-19时（2026-11-13）：R110 收敛降级执行（用户拍板「应用 R110 降级」）
 
