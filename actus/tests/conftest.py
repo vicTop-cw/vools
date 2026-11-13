@@ -239,13 +239,26 @@ def _pin_isolated_dirs(tmp_path_factory):
     for directory in dirs.values():
         directory.mkdir(parents=True, exist_ok=True)
 
-    # 种子动作签名验证依赖 `~/.actus/keys`（KeyManager 默认路径）——
-    # 把真实公钥**只读复制**到会话 HOME，保持既有签名用例语义，同时不写真实 HOME。
+    # 种子动作的 .sig 由**包内置** `vools/actus/keys/default.pub` 验签：
+    # `trust_model.KeyManager.load_public_key` 是「HOME 密钥目录优先 → 包内置
+    # keys/ 回退兜底」，而种子签名本就是为「干净 checkout / pip 安装（HOME 无
+    # ~/.actus/keys）」设计的（统帅轮-02时 T0r4.1）。
+    #
+    # 若把真实 HOME 的 `default.*` 复制进会话 HOME，一旦本机轮换过默认密钥，
+    # 错误公钥会**遮蔽包内置真源** → 4 个种子动作恒报
+    # `Signature verification failed`（2026-11-13 实测：真实 default.pub 与包内置
+    # sha256 不同，前者验签 4/4 失败、后者 4/4 通过）。
+    #
+    # 所以只复制非 default 的 key 文件（如 test.*）供自签用例，default 交给
+    # 包内置兜底；仍不写真实 HOME。
     real_keys = os.path.expanduser("~/.actus/keys")
     if os.path.isdir(real_keys):
         target_keys = dirs["home"] / ".actus" / "keys"
         target_keys.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(real_keys, str(target_keys))
+        shutil.copytree(
+            real_keys, str(target_keys),
+            ignore=shutil.ignore_patterns("default.key", "default.pub"),
+        )
 
     original = {name: os.environ.get(name) for name in _PINNED_ENV}
     pinned = {
