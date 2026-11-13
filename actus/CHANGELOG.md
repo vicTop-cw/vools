@@ -10,6 +10,27 @@
 
 > 本段记录 **0.9.1 发布之后**、尚未发版的改动。
 
+### ✅ 统帅轮-20时（2026-11-13）：R113 收口——公开覆盖重审计发现 9 漏算 + 真实 100%
+
+- **重审计更正（关键）**：按 R105 原口径（AST 提取公开函数 → `tests/` 引用对照）
+  重跑公开覆盖审计，发现 R105 残差清单（"10 降级 + 6 tkdialog"）**漏算 9 个零测试引用
+  公开函数**——此前"100% 公开覆盖"声明不准确（真实约 98.2%）。漏算项：viz.py 3
+  （`to_ascii`/`to_mermaid`/`to_html`，原列于 R105 的 53 但被漏出残差表）+ sigma.py 2
+  （`return_type_of`/`run_canonical_tests`）+ `eventbus.emit` / `intent.get_default_router` /
+  `webhook.start_webhook`。上述 9 个在 `vools` 核心与 `bridges/` 均**无消费者**（仅 actus 包内使用）。
+- **R113-A 死函数降级**：5 个 `prod` 引用=0 的模块内辅助函数降级 `_` 前缀——
+  `sigma._run_canonical_tests`、`sigma._return_type_of`、`viz._to_ascii`/`_to_mermaid`/
+  `_to_html`（含 `visualize_workflow` 的 `renderers` 字典与 `__all__` 同步）。
+- **R113-B 在用函数补测**：4 个 `prod` 引用>0 的公开函数补直接契约测试
+  （`tests/test_r113_residual_coverage.py`，6 用例）：`eventbus.emit` 送达订阅者 /
+  `intent.get_default_router` 返回带默认 `keyword_map` 的路由器 /
+  `webhook.start_webhook` 接线 `create_receiver`+`start`+返回接收器（mock `start` 避免真实绑端口）/
+  `viz.visualize_action_workflow` 渲染与坏格式抛 `ValueError`。
+- **门禁（重审计后）**：公开函数总数 **493**（较 498 减 5），**零测试引用公开函数 = 0**
+  （tkdialog 6 回调走 Tcl-skip 且测试按名引用，非真缺口）；`compileall` 全包 EXIT=0；
+  viz+sigma 回归套件（~320 用例）RC=0；R113 新文件 6 用例 RC=0。
+- **结论**：vools-actus 公开覆盖指标至此**真实达 100%**（按 R105 字符串口径），非此前误报。
+
 ### ✅ 统帅轮-19时（2026-11-13）：R110 收敛降级执行（用户拍板「应用 R110 降级」）
 
 - **🔧 R110 收敛降级落地**：将 R105 审计终态的 10 个 API 收敛候选**全部降级为

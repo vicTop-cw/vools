@@ -73,7 +73,7 @@ def parse_workflow_nodes(workflow_def: dict) -> Tuple[List[dict], List[tuple]]:
     return nodes, edges
 
 
-def to_ascii(nodes: List[dict], edges: List[tuple]) -> str:
+def _to_ascii(nodes: List[dict], edges: List[tuple]) -> str:
     """生成 ASCII 文本图。
 
     简单的层级布局，展示节点和依赖关系。
@@ -136,7 +136,7 @@ def to_ascii(nodes: List[dict], edges: List[tuple]) -> str:
     return "\n".join(lines)
 
 
-def to_mermaid(nodes: List[dict], edges: List[tuple]) -> str:
+def _to_mermaid(nodes: List[dict], edges: List[tuple]) -> str:
     """生成 Mermaid 流程图格式。
 
     可直接嵌入 Markdown 渲染。
@@ -190,7 +190,7 @@ def to_dot(nodes: List[dict], edges: List[tuple]) -> str:
     return "\n".join(lines)
 
 
-def to_html(nodes: List[dict], edges: List[tuple],
+def _to_html(nodes: List[dict], edges: List[tuple],
             title: str = "Actus Workflow") -> str:
     """生成 HTML + D3.js 交互式可视化。
 
@@ -309,10 +309,10 @@ def visualize_workflow(workflow_def: dict, format_: str = "ascii") -> str:
     nodes, edges = parse_workflow_nodes(workflow_def)
 
     renderers = {
-        "ascii": to_ascii,
-        "mermaid": to_mermaid,
+        "ascii": _to_ascii,
+        "mermaid": _to_mermaid,
         "dot": to_dot,
-        "html": to_html,
+        "html": _to_html,
     }
     # 未知格式此前**静默回退成 ascii**：调用方要 mermaid 却拿到 ASCII 图，
     # 毫无提示（与 export_history 的 format_ 是同一个坑）。
@@ -341,10 +341,7 @@ def visualize_action_workflow(action_meta: dict, format_: str = "ascii") -> str:
 __all__ = [
     'logger',
     'parse_workflow_nodes',
-    'to_ascii',
     'to_dot',
-    'to_html',
-    'to_mermaid',
     'visualize_action_workflow',
     'visualize_workflow'
 ]
