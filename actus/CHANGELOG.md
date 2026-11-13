@@ -10,6 +10,71 @@
 
 > 本段记录 **0.9.1 发布之后**、尚未发版的改动。
 
+### ✅ 统帅轮-23时（2026-11-13）：R116 收口整段连续门禁 4 个既有 F（RC=0）+ R114-B 环境 A/B 量化
+
+- **R116-A 种子签名 3 例**：`trust_model.KeyManager.load_public_key` 是
+  「HOME keys 优先 → 包内置 `keys/` 兜底」，种子 `.sig` 本就为「干净 checkout」签发；
+  而 conftest 把**真实** `~/.actus/keys` 整个复制进会话 HOME，本机 21:19 轮换过的
+  `default.pub`（sha256 `2b613384…`）**遮蔽**了包内置真源（`3435d630…`），
+  实测前者验签 4/4 失败、后者 4/4 `ok`。修法：`shutil.copytree(..., ignore=
+  ignore_patterns("default.key","default.pub"))`，default 走包内置兜底，`test.*` 仍复制。
+- **R116-B `test_action_path_of`**：`executor._apply_env_injections` **裸写**
+  `ACTUS_REPO_ROOT=_repo_root()`，`monkeypatch` 追踪不到；r69 原先只在部分用例做裸
+  `os.environ.pop`，抛异常路径「先注入再抛」根本没清理，还会误删 conftest session 钉死的
+  `ACTUS_META_DIR`/`ACTUS_VAULT2_DIR`。运行期探针实锤
+  `test_apply_env_vault_conflict : None -> 'E:\IDEProjects\AI\vools\actus'`，
+  泄漏给后续全部用例 → `validate.action_path_of` 把相对路径拼成绝对路径。
+  修法：4 个用例统一改**产品既有手势** `_env_snapshot() → try → finally: _env_restore(snap)`，
+  逐字回写、异常路径同样还原。
+- **改动面（G4）**：仅 `tests/conftest.py` + `tests/test_executor_contracts_r69.py`
+  两文件 **+53 −22**，**零产品代码、零种子动作/`.sig`、零真实 HOME 密钥写入**。
+
+- **门禁（真实运行时 = WindowsApps Python 3.13.14 / pytest 9.0.2）**：
+
+  | 项 | R115 基线 | **R116-C 实测** |
+  |---|---|---|
+  | 整段连续 `pytest tests/` | 100%、29m03s、无 SIGTERM | **100%、27m32s、无 SIGTERM** |
+  | 收集 / 进度标记 | 6006 | **6006 / `.`5969 + `s`37 + `F`0 + `E`0** |
+  | passed / skipped / failed | 5997 / 5 / **4** | **5969 / 37 / 0** |
+  | **RC** | **1** | **0** ✅ |
+  | 原 4 个 F 显式复跑 | — | **5/5 通过，RC=0** |
+  | `py_compile` 变更文件 / 仓库污染 | — | EXIT=0 / `actions/`、`keys/` clean |
+
+- **计数口径**：`pyproject.toml` 的 `addopts="--tb=short -q"` 叠加命令行 `-q` = `-qq`，
+  pytest 9 **不打印末尾汇总行**；故计数由 `--collect-only`（213 文件求和 6006）
+  与进度标记统计（6006）**双证据交叉核对**。后续门禁建议加 `-o addopts=""` 或 `-ra`。
+- **skipped 5→37 如实披露**：87% 处 32 连 `s` = `test_tkdialog_gui_contracts_r77.py`
+  （32 用例）模块级 `tk.Tk()` 守卫在 Tcl 库不可用时整文件跳过；conftest/r69 及本轮 diff
+  `tcl|tk|display` 零命中，属既有环境级波动（隔离复跑在 Tcl 可用环境下 32/32 RC=0）。
+  对账 `5997 + 4 − 32 = 5969`、`5 + 32 = 37`，**总数恒 6006，零用例丢失**。
+  严格口径下本轮 GUI 契约未实际执行，已标注，不作「全绿无保留」宣称。
+- **结论**：R115 解决「跑得完」（无 SIGTERM），R116 解决「跑得绿」（RC=0）；
+  至此沙箱内整段连续全量门禁可**单次、无拆分**作为唯一权威门禁。
+
+- **R114-B 环境级启动优化 A/B 量化**（用户选项 2）：E0 UWP 别名+editable /
+  E1 直接真实 `python3.13.exe`+editable / E2 临时 venv+当前源码 wheel 非 editable
+  （已确认 site-packages 无 `__editable__`/`.pth`，finder 钩子确实消除），
+  每项 7 次取中位数、空载 CPU、进程墙钟口径：
+
+  | 项 | E0 | E1 | E2 |
+  |---|---:|---:|---:|
+  | `python --version` | 437 | **353** | 388 |
+  | `import vools.actus.cli` | 670 | **657** | 710 |
+  | CLI `--help` | 769 | **692** | 711 |
+
+  - **手段 A 方向对但幅度下修**：`--help` **-77 ms（-10%）**、基线 **-84 ms（-19%）**，
+    非 R114 预估的 ~200 ms；收益全在别名解析/进程启动，import 树几乎不变（-13 ms，噪声内）。
+  - **手段 B 证伪**：E2 已消除 88 ms editable finder 却比 E1 慢 19–53 ms（venv
+    `pyvenv.cfg` 解析 + Temp 盘 locality；且 importtime 的 88 ms 是累计值非净省），
+    **无可测收益，不建议为启动速度引入第二套 venv**。
+  - 三组「`--help` − `--version`」CLI 层增量恒为 **323–339 ms** → 启动主体是解释器 +
+    `site` + 标准库，与别名/editable/venv 无关，**代码侧维持现状**（R114 §4.2 结论再确认）。
+  - **建议（仅建议，未执行；G3 不改动系统）**：只采纳 A 且用非侵入本地包装直接调用已有真实 exe，
+    不改 PATH、不装系统 Python；手段 C（保持温态）仍是最大杠杆（E0 首跑 2889 ms 冷盘
+    离群点再次佐证）；「用 lz 换芯」仍不优先——瓶颈不在业务计算，且需重做 6006 用例契约体系。
+- **交付物**：两份报告 `analysis/R116_CONTIGUOUS_GATE_FIX.md`、
+  `analysis/R114_ENV_OPT_MEASUREMENT.md`；本轮无产品代码变更。
+
 ### ✅ 统帅轮-22时（2026-11-13）：R115 修复 wsl 连续会话 SIGTERM（整段门禁首次完整跑完）
 
 - **根因（精确化）**：沙箱对 `wsl.EXE` 有黑名单；整段连续 pytest 会话中只要某个用例

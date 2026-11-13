@@ -563,52 +563,70 @@ class TestEnv:
         ex._env_restore(snap)
         assert 'ACTUS_TEST_NEW' not in os.environ
 
+    # 环境卫生（R116）：_apply_env_injections 会**裸写** os.environ（含
+    # ACTUS_REPO_ROOT=_repo_root() 真实仓库根），monkeypatch 追踪不到它后设的键。
+    # 抛异常路径同样先注入再抛，裸 pop 又会删掉 conftest session 钉死的
+    # ACTUS_META_DIR/ACTUS_VAULT2_DIR。统一用产品既有手势
+    # snap → try → finally: _env_restore(snap)，逐字回写、零跨用例泄漏。
+    # 实测：此前 vault_conflict 把 ACTUS_REPO_ROOT 泄给后续全部用例，导致
+    # test_validate_contracts_r32.py::test_action_path_of 在整段连续会话里拿到
+    # 绝对路径而失败（隔离单跑复现不出）。
+
     def test_apply_env_injections_basic(self, iso, tmp_path):
         a = _Act(aid='demo.e', meta={}, path=str(tmp_path / 'a.md'))
         ex.PROCESS_STATE_LOCK.acquire()
+        snap = ex._env_snapshot()
         try:
             build = ex._apply_env_injections(a, {'p': 1}, 'e-1',
                                              str(tmp_path / 'art'),
                                              sandboxed=False, meta_dir=None)
+            assert os.environ['ACTUS_EXEC_ID'] == 'e-1'
+            assert os.environ['ACTUS_ACTION_PATH'] == str(tmp_path / 'a.md')
+            assert 'demo' in build  # artifacts/<id>/<version>/<exec_id>
         finally:
             ex.PROCESS_STATE_LOCK.release()
-        assert os.environ['ACTUS_EXEC_ID'] == 'e-1'
-        assert os.environ['ACTUS_ACTION_PATH'] == str(tmp_path / 'a.md')
-        assert 'demo' in build  # artifacts/<id>/<version>/<exec_id>
-        # 清理注入键
-        for k in ('ACTUS_EXEC_ID', 'ACTUS_ACTION_PATH', 'ACTUS_PARAMS',
-                  'ACTUS_REPO_ROOT', 'ACTUS_META_DIR'):
-            os.environ.pop(k, None)
+            ex._env_restore(snap)
 
     def test_apply_env_vault_conflict(self, iso, tmp_path, monkeypatch):
         monkeypatch.setattr('vools.actus.vault.resolve_vault_refs',
                             lambda refs, **k: {'status': 'conflict',
                                                'message': 'v1 vs v2'})
         a = _Act(aid='demo.v', meta={'secrets': [{'key': 'vault://x'}]})
-        with pytest.raises(ActionError) as ei:
-            ex._apply_env_injections(a, {}, 'e-2', str(tmp_path),
-                                     sandboxed=False, meta_dir=None)
-        assert ei.value.code == 'vault_secret_conflict'
+        snap = ex._env_snapshot()
+        try:
+            with pytest.raises(ActionError) as ei:
+                ex._apply_env_injections(a, {}, 'e-2', str(tmp_path),
+                                         sandboxed=False, meta_dir=None)
+            assert ei.value.code == 'vault_secret_conflict'
+        finally:
+            ex._env_restore(snap)
 
     def test_apply_env_vault_error(self, iso, tmp_path, monkeypatch):
         monkeypatch.setattr('vools.actus.vault.resolve_vault_refs',
                             lambda refs, **k: {'status': 'error',
                                                'message': '读取失败'})
         a = _Act(aid='demo.v', meta={'secrets': [{'key': 'vault://x'}]})
-        with pytest.raises(ActionError) as ei:
-            ex._apply_env_injections(a, {}, 'e-3', str(tmp_path),
-                                     sandboxed=False, meta_dir=None)
-        assert ei.value.code == 'vault_read_failed'
+        snap = ex._env_snapshot()
+        try:
+            with pytest.raises(ActionError) as ei:
+                ex._apply_env_injections(a, {}, 'e-3', str(tmp_path),
+                                         sandboxed=False, meta_dir=None)
+            assert ei.value.code == 'vault_read_failed'
+        finally:
+            ex._env_restore(snap)
 
     def test_apply_env_vault_resolved(self, iso, tmp_path, monkeypatch):
         monkeypatch.setattr('vools.actus.vault.resolve_vault_refs',
                             lambda refs, **k: {'status': 'ok',
                                                'resolved': {'TOK': 'abc'}})
         a = _Act(aid='demo.v', meta={'secrets': [{'key': 'vault://x'}]})
-        ex._apply_env_injections(a, {}, 'e-4', str(tmp_path),
-                                 sandboxed=False, meta_dir=None)
-        assert os.environ['TOK'] == 'abc'
-        os.environ.pop('TOK', None)
+        snap = ex._env_snapshot()
+        try:
+            ex._apply_env_injections(a, {}, 'e-4', str(tmp_path),
+                                     sandboxed=False, meta_dir=None)
+            assert os.environ['TOK'] == 'abc'
+        finally:
+            ex._env_restore(snap)
 
     def test_apply_env_sandboxed_build_dir(self, iso, tmp_path, monkeypatch):
         # 注入键经 monkeypatch 登记，teardown 自动还原——不能裸 pop ACTUS_*：
