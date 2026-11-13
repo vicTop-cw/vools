@@ -1932,7 +1932,7 @@ def check_package_signature(module: Dict[str, Any]) -> List[str]:
     return out
 
 
-def run_canonical_tests(module: Dict[str, Any]) -> Dict[str, Any]:
+def _run_canonical_tests(module: Dict[str, Any]) -> Dict[str, Any]:
     """跑全部规范测试（Law IV 的实质部分）：返回 {passed,total,failures}。"""
     passed = total = 0
     failures = []
@@ -1998,7 +1998,7 @@ def check_iron_laws(module: Dict[str, Any], strict: bool = True) -> Dict[str, An
         supplemental[name] = vs
         all_violations.extend(vs)
 
-    tests = run_canonical_tests(module)
+    tests = _run_canonical_tests(module)
     # 审计修复（P1）：改前 `passed` 只看 failed_laws + supplemental，
     # **完全不含规范测试结果** —— 一条 `0/2 全挂` 的规约照样 pass、verdict=pass、
     # run_sigma_block exit 0（报告正文却打印 "0/2 passed"）。
@@ -3040,7 +3040,7 @@ def _module_from_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
         m['ops'].append({'name': op.get('name'), 'fp': op.get('fingerprint'),
                          'sig': f"{op.get('name')} : "
                                 f"{' × '.join((op.get('signature') or {}).get('params') or [])}"
-                                f" → {return_type_of(op)}",
+                                f" → {_return_type_of(op)}",
                          'laws': [l.get('predicate', '') for l in op.get('laws') or []],
                          'tests': tests, 'mode': 'sig', 'has_pre': False, 'has_post': False,
                          'pre': None, 'post': None, 'definition': []})
@@ -3073,7 +3073,7 @@ def _plain_to_sigma(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def return_type_of(op: Dict[str, Any]) -> str:
+def _return_type_of(op: Dict[str, Any]) -> str:
     return (op.get('signature') or {}).get('returns') or 'Any'
 
 
@@ -3132,7 +3132,7 @@ def render_impl_skeleton(spec: Dict[str, Any]) -> str:
                  [f'a{i}' for i in range(len((op.get('signature') or {}).get('params') or []))]
         out.append(f"def {name}({', '.join(params)}):")
         out.append(f'    """{name} : {" × ".join((op.get("signature") or {}).get("params") or [])}'
-                   f' → {return_type_of(op)}  [fingerprint {op.get("fingerprint")}]"""')
+                   f' → {_return_type_of(op)}  [fingerprint {op.get("fingerprint")}]"""')
         for pre in op.get('preconditions') or []:
             out.append(f'    # pre: {pre.get("expr")}  else -> {pre.get("error")}')
         for law in op.get('laws') or []:
