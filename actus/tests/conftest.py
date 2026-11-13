@@ -117,6 +117,47 @@ import time as _real_time
 
 import pytest
 
+# ---------------------------------------------------------------------------
+# ② WSL 防 SIGTERM 守卫（R115 / 统帅轮-21时）
+#
+# 问题：沙箱对 `wsl.EXE` 有黑名单——任何 pytest 会话里只要某个用例（或 state
+# 泄漏）实际 spawn 了 `wsl.exe`（最典型是 `probe/platform_tools._probe_windows_wsl`
+# 跑 `wsl.exe -l -v`），沙箱会直接 SIGTERM 整个 pytest 进程，导致整段门禁无法在
+# 沙箱内跑通（此前只能隔离分批）。
+#
+# 修法：在 conftest 载入期（仅 pytest 进程，不影响 `actus` 运行时二进制）把
+# `subprocess.Popen` 包一层——命令可执行文件是 `wsl`/`wsl.exe` 时**不改产品代码、
+# 直接抛 FileNotFoundError**，让来源代码走其既有「命令没跑起来 → (None,b"")」的优雅
+# 降级分支（platform_tools._run 已捕获 FileNotFoundError）。于是：
+#   * 沙箱内绝不真正 exec wsl.exe → 不会再被 SIGTERM；
+#   * 代码既有的「WSL 不可用」路径被如实覆盖（正是沙箱 / 无 WSL 机的真实语义）；
+#   * 需要真跑 WSL 的集成用例，设 `ACTUS_TEST_ALLOW_WSL=1` 即解除守卫。
+# 仅拦截 wsl.exe（沙箱黑名单项），bash/cmd/python 等一律放行，爆破半径最小。
+# 所有源码均 `import subprocess`（模块属性访问），故补丁对全部调用方（含
+# subprocess.run，其内部引用模块级 Popen）生效。
+# ---------------------------------------------------------------------------
+import subprocess as _subprocess
+
+_ACTUS_ALLOW_WSL = os.environ.get("ACTUS_TEST_ALLOW_WSL") == "1"
+
+if not _ACTUS_ALLOW_WSL and not getattr(_subprocess.Popen, "_actus_wsl_guard", False):
+    _actus_orig_popen = _subprocess.Popen
+
+    def _actus_guarded_popen(cmd, *args, **kwargs):
+        exe = ""
+        if isinstance(cmd, (list, tuple)) and cmd:
+            exe = cmd[0]
+        elif isinstance(cmd, str) and cmd:
+            exe = cmd.split(None, 1)[0]
+        if os.path.basename(exe).lower() in ("wsl", "wsl.exe"):
+            raise FileNotFoundError(
+                "wsl.exe blocked by actus test guard "
+                "(set ACTUS_TEST_ALLOW_WSL=1 to allow real WSL): %r" % (cmd,))
+        return _actus_orig_popen(cmd, *args, **kwargs)
+
+    _actus_guarded_popen._actus_wsl_guard = True  # type: ignore[attr-defined]
+    _subprocess.Popen = _actus_guarded_popen
+
 
 # ---------------------------------------------------------------------------
 # ① session 级目录钉死 + 污染检测器（第 19 轮，终结 `~/.actus` 污染）
