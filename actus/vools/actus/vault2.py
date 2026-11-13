@@ -91,8 +91,8 @@ except ImportError:
 # 后果：密钥库 + `seed_key` 进当前项目目录（极易被 git 提交 / 同步盘 / 打包带走）。
 # 现在默认与 vault.py 对齐到 `~/.actus/vault2/`，可用 ACTUS_VAULT2_DIR 覆盖；
 # 旧位置的库由 `_maybe_migrate_legacy()` 自动迁移（见下）。DEFAULT_VAULT_DIR 仍保留
-# 作为"默认值快照"，运行时一律走 `default_vault_dir()`（让 env 覆盖与 cwd 无关）。
-def default_vault_dir() -> str:
+# 作为"默认值快照"，运行时一律走 `_default_vault_dir()`（让 env 覆盖与 cwd 无关）。
+def _default_vault_dir() -> str:
     """默认密钥库目录：`~/.actus/vault2`（可用 ACTUS_VAULT2_DIR 覆盖）。"""
     override = (os.environ.get("ACTUS_VAULT2_DIR") or "").strip()
     if override:
@@ -100,7 +100,7 @@ def default_vault_dir() -> str:
     return os.path.join(os.path.expanduser("~"), ".actus", "vault2")
 
 
-DEFAULT_VAULT_DIR = default_vault_dir()      # 兼容旧引用（常量仅是快照）
+DEFAULT_VAULT_DIR = _default_vault_dir()      # 兼容旧引用（常量仅是快照）
 LEGACY_VAULT_SUBDIR = os.path.join("_meta", "vault")   # 旧位置：<cwd>/_meta/vault
 DEFAULT_TIME_STEP = 60
 MAX_FAILED_ATTEMPTS = 5
@@ -401,7 +401,7 @@ class Vault2:
         """
         explicit = vault_dir is not None
         self._explicit_dir = explicit
-        self.vault_dir = os.path.abspath(vault_dir or default_vault_dir())
+        self.vault_dir = os.path.abspath(vault_dir or _default_vault_dir())
         self.db_path = os.path.join(self.vault_dir, "vault2.db")
         self.audit_path = os.path.join(self.vault_dir, "audit.log")
         # 迁移状态（status() 会如实回报；None = 无需迁移）

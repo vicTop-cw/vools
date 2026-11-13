@@ -1293,7 +1293,7 @@ def validate_graph(actions: Dict[str, Action]) -> None:
     color = {aid: WHITE for aid in actions}
     path: List[str] = []
 
-    def dfs(node: str) -> None:
+    def _dfs(node: str) -> None:
         """DFS 三色标记：检测循环依赖（GRAY=在栈上，遇到即为环）。"""
         color[node] = GRAY
         path.append(node)
@@ -1305,13 +1305,13 @@ def validate_graph(actions: Dict[str, Action]) -> None:
                     '检测到循环依赖: ' + ' → '.join(cycle),
                     {'cycle': cycle})
             if color.get(dep, BLACK) == WHITE:
-                dfs(dep)
+                _dfs(dep)
         path.pop()
         color[node] = BLACK
 
     for aid in actions:
         if color[aid] == WHITE:
-            dfs(aid)
+            _dfs(aid)
 
 
 def analyze_graph(actions: Dict[str, Action]) -> Dict[str, dict]:
@@ -1377,7 +1377,7 @@ def analyze_graph(actions: Dict[str, Action]) -> Dict[str, dict]:
     WHITE, GRAY, BLACK = 0, 1, 2
     color = {aid: WHITE for aid in actions}
 
-    def dfs_cycle(node: str, stack: List[str]) -> None:
+    def _dfs_cycle(node: str, stack: List[str]) -> None:
         """DFS 三色标记收集环：环上的每个成员都打标记（不首遇即停）。"""
         color[node] = GRAY
         stack.append(node)
@@ -1391,13 +1391,13 @@ def analyze_graph(actions: Dict[str, Action]) -> Dict[str, dict]:
                 for member in cyc[:-1]:
                     mark(member, 'dependency_cycle', msg)
             elif color.get(dep, BLACK) == WHITE:
-                dfs_cycle(dep, stack)
+                _dfs_cycle(dep, stack)
         stack.pop()
         color[node] = BLACK
 
     for aid in actions:
         if color[aid] == WHITE:
-            dfs_cycle(aid, [])
+            _dfs_cycle(aid, [])
 
     # 3) 正向传播：依赖了坏节点的下游锥同样不可用（BFS）
     reverse: Dict[str, List[str]] = {}

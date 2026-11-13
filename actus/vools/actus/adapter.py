@@ -171,11 +171,11 @@ def _substitute_params(template: str, params: Dict, quote: bool = False) -> str:
     quote=True 只该用于「模板自己写了 shell 元字符、确实要走 shell」的分支：
     值被包成不可分裂的单元，值里的 `; | &` 就只是字符，不再能替命令开第二个动作（BUG-0013）。
     """
-    def replacer(match):
+    def _replacer(match):
         key = match.group(1)
         value = str(params.get(key, ""))
         return _quote_for_shell(value) if quote else value
-    return re.sub(r"\$\{([^}]+)\}", replacer, template)
+    return re.sub(r"\$\{([^}]+)\}", _replacer, template)
 
 
 def _substitute_in_args(args: List[str], params: Dict) -> List[str]:

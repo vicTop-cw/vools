@@ -20,7 +20,7 @@ API：
 - resolve_secrets(action) → 解析动作的 secrets 字段并注入实际值
 """
 
-__all__ = ['Vault', 'default_meta_dir', 'set_key', 'get_key', 'delete_key',
+__all__ = ['Vault', 'set_key', 'get_key', 'delete_key',
            'list_keys', 'resolve_secrets',
            # 统一 secret resolver（第 12 轮：v2 优先 / v1 兼容读）
            'resolve_secret', 'write_secret', 'resolve_vault_refs',
@@ -496,7 +496,7 @@ class Vault:
 _vault_singleton: Optional[Vault] = None
 
 
-def default_meta_dir() -> str:
+def _default_meta_dir() -> str:
     """便捷函数缺省 meta_dir 时的落点：**运行时数据目录真源** `paths.meta_dir()`。
 
     调用方（executor 注入 secrets 时传的是 `meta_dir or ''`）给空串是常态。
@@ -519,7 +519,7 @@ def _get_vault(meta_dir: str) -> Vault:
     global _vault_singleton
     if _vault_singleton is None:
         # 便捷函数是"常规运行时路径"，允许探测并迁移旧位置的保险库
-        _vault_singleton = Vault(meta_dir or default_meta_dir())
+        _vault_singleton = Vault(meta_dir or _default_meta_dir())
     return _vault_singleton
 
 
@@ -698,7 +698,7 @@ def _v2_read_secret(name: str):
 def _v1_read_secret(name: str, scope: str, meta_dir: Optional[str]):
     """读 v1 单个密钥。返回 (state, value, reason)；区分 absent / undecryptable。"""
     try:
-        vault = Vault(meta_dir or default_meta_dir())
+        vault = Vault(meta_dir or _default_meta_dir())
     except Exception as exc:  # noqa: BLE001
         return 'error', None, 'v1 打开失败（%s: %s）' % (type(exc).__name__, exc)
     status = vault.inspect(name, scope)
@@ -867,7 +867,7 @@ def write_secret(name: str, value: str, scope: str = 'global',
                     'message': ('v2 不可用（%s），拒绝写入 —— 避免写进一个 resolver '
                                 '将来读不到的地方；如确需只写 v1，请显式 allow_v1_write=True'
                                 % v2_reason)}
-        vault = Vault(meta_dir or default_meta_dir())
+        vault = Vault(meta_dir or _default_meta_dir())
         result = vault.set(raw, str(value), scope)
         if result.get('status') != 'ok':
             result.setdefault('warnings', []).append('v2 不可用，本次写入的是 v1')
@@ -1008,7 +1008,7 @@ def resolver_status() -> dict:
         'enabled': _resolver_enabled(),
         'v2_available': v2 is not None,
         'v2_reason': reason,
-        'v1_path': os.path.join(default_meta_dir(), 'vault'),
+        'v1_path': os.path.join(_default_meta_dir(), 'vault'),
         'lazy_migrate': _lazy_migrate_enabled(),
     }
 
@@ -1156,7 +1156,7 @@ def list_secret_names(scope: str = 'global', meta_dir: Optional[str] = None) -> 
     v1_error = None
     v1_vault = None
     try:
-        v1_vault = Vault(meta_dir or default_meta_dir())
+        v1_vault = Vault(meta_dir or _default_meta_dir())
         v1_names = [row.get('key') for row in v1_vault.list(scope)]
     except Exception as exc:  # noqa: BLE001
         v1_error = 'v1 列举异常（%s: %s）' % (type(exc).__name__, exc)
@@ -1216,7 +1216,7 @@ def delete_secret(name: str, scope: str = 'global', meta_dir: Optional[str] = No
             errors.append('v2 删除异常（%s: %s）' % (type(exc).__name__, exc))
     if include_v1:
         try:
-            v1_vault = Vault(meta_dir or default_meta_dir())
+            v1_vault = Vault(meta_dir or _default_meta_dir())
             if v1_vault.delete(raw, scope):
                 removed.append('v1')
             elif getattr(v1_vault, 'last_refusal', None):

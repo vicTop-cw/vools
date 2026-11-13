@@ -40,14 +40,13 @@
 **能力 / 元信息分栏**：section 里的 `platform_scope` 只陈述「本次跑了哪些组、跳过了
 哪些组」，是**元信息**（`ProbeItem.extra["kind"] == "meta"`），不是可用工具 —— 它的
 `available=True` 只表示范围探测本身成功。问「哪些平台工具可用」的消费方必须用
-`is_capability_item()` 过滤，否则会把元信息当成能力（假阳性）；
+`_is_capability_item()` 过滤，否则会把元信息当成能力（假阳性）；
 `get_platform_tools_info()["available"]` 已经过滤，`platform_scope` 移到 `scope` 字段。
 """
 
 __all__ = [
     "PlatformToolsProber",
     "get_platform_tools_info",
-    "is_capability_item",
     "probe",
 ]
 
@@ -77,7 +76,7 @@ CATEGORY = "platform_tools"
 #   "meta"       —— **元信息**：本次跑了哪些组、跳过了哪些组，**不是能力**
 # 为什么必须区分：`platform_scope` 的 available=True 只表示「范围探测本身成功了」，
 # 若消费方拿它当能力，就会得到「可用工具 = [platform_scope, ...]」这种假阳性。
-# 判定统一走 is_capability_item()；get_platform_tools_info()["available"] 已过滤。
+# 判定统一走 _is_capability_item()；get_platform_tools_info()["available"] 已过滤。
 _KIND_CAPABILITY = "capability"
 _KIND_META = "meta"
 
@@ -1006,7 +1005,7 @@ def _scope_item() -> ProbeItem:
 
     这是**元信息**条目（`extra["kind"] == "meta"`），不是能力：`available=True`
     只说「这次范围探测成功了」。问「哪些平台工具可用」的消费方请用
-    `is_capability_item()` 过滤（`get_platform_tools_info()` 已这么做）。
+    `_is_capability_item()` 过滤（`get_platform_tools_info()` 已这么做）。
     """
     current = _current_platform()
     groups = [name for name, _ in _PROBES_BY_PLATFORM.get(current, ())]
@@ -1028,7 +1027,7 @@ def _scope_item() -> ProbeItem:
     )
 
 
-def is_capability_item(item) -> bool:
+def _is_capability_item(item) -> bool:
     """条目是否为「真能力」（False = 元信息/范围说明条目，如 platform_scope）。
 
     `platform_scope` 陈述的是「本次跑了哪些组、跳过了哪些组」，它的 available=True
@@ -1049,7 +1048,7 @@ class PlatformToolsProber(Prober):
       Linux: systemd / package_manager；macOS: xcode_clt / homebrew）。
 
     `platform_scope.available=True` 只表示「范围探测成功」，**不是一项可用能力**；
-    问「哪些平台工具可用」请用 `is_capability_item()` 过滤（或直接用
+    问「哪些平台工具可用」请用 `_is_capability_item()` 过滤（或直接用
     `get_platform_tools_info()` 的 `available`，它已过滤）。
 
     用法::
@@ -1115,7 +1114,7 @@ def get_platform_tools_info() -> dict:
         {
           "platform":    "win32",
           "features":    {能力条目名: 条目 dict},   # 只有真能力，不含 platform_scope
-          "available":   [可用的能力条目名],        # 已按 is_capability_item 过滤
+          "available":   [可用的能力条目名],        # 已按 _is_capability_item 过滤
           "unavailable": [不可用的能力条目名],      # 同上，如实列出「没装/不可用」
           "scope":       {platform_scope 条目 dict} # 元信息：跑了哪些组、跳过哪些组
           "meta":        ["platform_scope"],        # 元信息条目名（便于通用排除）
@@ -1125,7 +1124,7 @@ def get_platform_tools_info() -> dict:
     meta = {}
     for item in PlatformToolsProber().run():
         entry = item.to_dict()
-        if is_capability_item(item):
+        if _is_capability_item(item):
             features[item.name] = entry
         else:
             meta[item.name] = entry

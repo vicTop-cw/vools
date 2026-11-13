@@ -318,7 +318,7 @@ def _cluster_by_suffix(entries, min_segments=2):
             x = parent[x]
         return x
 
-    def union(a, b):
+    def _union(a, b):
         ra, rb = find(a), find(b)
         if ra != rb:
             parent[rb] = ra
@@ -327,7 +327,7 @@ def _cluster_by_suffix(entries, min_segments=2):
     for idx, aid in enumerate(ids):
         for suf in _suffixes(aid, min_segments):
             if suf in owner:
-                union(owner[suf], idx)
+                _union(owner[suf], idx)
             else:
                 owner[suf] = idx
 
