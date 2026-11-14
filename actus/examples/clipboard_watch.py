@@ -23,13 +23,27 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, ".."))             # actus 根 -> vools.actus
 sys.path.insert(1, os.path.join(_HERE, "..", "..", "rx"))  # rx 根 -> vools.reactive
 
-from vools.actus import clip_watch, clip_write  # noqa: E402
+from vools.actus import clip_clear, clip_read, clip_watch, clip_write  # noqa: E402
 
 _MARK = "actus-example-watch-%d" % int(time.time())
+
+# 测试/示例标记前缀：这类内容不是用户数据，结束时直接清空而不是写回
+_MARK_PREFIXES = ("actus-clip-watch-", "actus-example-watch-")
+
+
+def _is_mark(text):
+    return bool(text) and text.startswith(_MARK_PREFIXES)
 
 
 def main():
     received = queue.Queue()
+
+    # 先保存原剪贴板内容，结束后还原（避免示例把标记留在用户剪贴板里）
+    saved = None
+    try:
+        saved = clip_read().content
+    except Exception:
+        saved = None
 
     # 动作：监控（构造即启动；filter_self=False 让 clip_write 写入也分发）
     w = clip_watch(
@@ -62,6 +76,14 @@ def main():
         print("CLIP_WATCH_OK")
     finally:
         w.stop()
+        # 还原剪贴板：有用户内容就写回，原本为空或本身是测试标记就清空
+        try:
+            if saved and not _is_mark(saved):
+                clip_write(saved)
+            else:
+                clip_clear()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
