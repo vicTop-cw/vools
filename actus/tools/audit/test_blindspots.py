@@ -40,7 +40,7 @@ for name in sorted(os.listdir(TESTS)):
     if not name.endswith('.py') or name == 'conftest.py':
         continue
     path = os.path.join(TESTS, name)
-    src = io.open(path, encoding='utf-8', errors='replace').read()
+    src = io.open(path, encoding='utf-8-sig', errors='replace').read()
     tree = ast.parse(src)
     lines = src.splitlines()
     tests = funcs(tree)
