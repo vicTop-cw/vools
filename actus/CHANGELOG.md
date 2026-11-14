@@ -136,8 +136,52 @@
   与 R114 清洁测量（769 vs 692，−77 ms / −10%）方向一致、量级吻合。
 - **用法**：`./scripts/actus_fast.sh <子命令>`（与 `actus` 完全一致）；
   解释器可经 `ACTUS_FAST_PY` 覆盖。建议用户在**本地 shell 设别名**（不改系统 PATH）替代日常 `actus`。
-- **更大杠杆（未做，需另行确认）**：CLI 入口 import 整棵模块树（~657 ms）才是主导成本；
-  若要做更大幅改善，可对子命令做**惰性 import**（产品代码改动，超出手段 A 范畴）。
+- **更大杠杆（已落地，见收尾④）**：CLI 入口 import 整棵模块树（~657 ms）才是主导成本；
+  对子命令/重导出的**惰性 import** 已作为收尾④ 实施（产品代码改动，用户授权）。
+
+### ✅ 统帅轮-次日（2026-11-14）：R116 收尾④ — 惰性 import 深化（包 `__init__` 收口 model/dependency）
+
+- **授权与根因（推翻旧钝估）**：用户 `确认授权你做` 批准；`cli.py` 80 子命令 handler
+  **早已在 `_dispatch` 分支内惰性 import**，旧记"import 整棵模块树 ~657ms 主导"不成立。
+  经 `python -X importtime` 实测，真正剩余 eager 成本**只来自包 `__init__.py`** 对
+  `model`(127ms)/`dependency`(40ms) 的重导出，二者拉动 `vools.core`(84ms)+
+  `dataclass_compat`(70ms)+`_proc`(37ms)。
+- **已有惰性基建**：`vools/actus/__init__.py` 已实现 PEP 562（`_LAZY` 字典 + 模块级
+  `__getattr__`，覆盖 80+ 符号）；但 `model`/`dependency` 的 6 个名字被留在**顶层 eager
+  import 且未进 `_LAZY`**。
+- **改动（外科手术式，仅 1 文件）**：删两条顶层 `from .model/.dependency import …`，
+  在 `_LAZY` 补 `Action/parse_cfg/parse_cfg_from_file→.model`、
+  `Dependency/DependencyResolver/get_resolver→.dependency`。对外 API（`from vools.actus
+  import Action` 等）不变，仅改为首次访问时导入。
+- **零回归证据（已查实）**：`model` 仅 `from .errors/.frontmatter`、`dependency` 仅
+  `from .constants`（均无环）；tests 中无 `vools.actus.Action` 属性访问 /
+  `mock.patch('vools.actus…')` / `setattr` 等脆弱用法。
+- **生效验证（改动后实测）**：
+  - `import vools.actus` 后 `vools.actus.model` / `.dependency` / `vools.core` **均不在
+    sys.modules**（此前均急切加载）；公开符号仍可解析。
+  - `import vools.actus.cli` 的**本仓库代码导入耗时 153 ms → 24.7 ms（−128 ms，−84%）**；
+    `model`/`dependency`/`vools.core` 已退出 eager 子树。
+  - `actus --help`（直接 exe，绕开 UWP 别名）墙钟 **~980 ms → 553 ms（≈ −43%）**；
+    与收尾③ `actus_fast.sh`（−12% 别名开销）叠加，CLI 冷启动显著改善。
+    （命令实际执行仍按需 import model/dependency，故**命令执行耗时不变**——收益集中在
+    `--help` / 无参 / `--version` 等首触路径。）
+- **门禁（真实运行时 = WindowsApps Python 3.13.14 / pytest 9.0.2）**：
+
+  | 子集 | 改前（基线） | **改后（R116-收尾④）** |
+  |---|---|---|
+  | 批量（206 个非 probe 文件） | 5728 passed / 33 skipped | **5728 passed / 33 skipped / 0 failed** |
+  | 探针（14 个 probe 文件，隔离） | 241 passed / 4 skipped | **241 passed / 4 skipped / 0 failed** |
+  | **合计** | **5969 passed / 37 skipped / 0 failed** | **5969 passed / 37 skipped / 0 failed** |
+
+  - **口径说明（环境性，与 ④ 无关）**：整段连续 `pytest tests/` 在本机**两次均在进入
+    probe 测试区时触发原生崩溃** `Windows fatal exception: code 0x80000003`（pytest exit 3，
+    非 Python 异常、非用例失败），与 harness 沙箱/WorkBuddy `safe-delete-bulk-guard` shim 相关；
+    探针 14 文件**隔离跑稳定 241/4 RC=0**（证伪缺陷）。故基线/改后均采用
+    「批量（排除 14 个 probe 文件）+ 探针隔离」等价口径，计数逐字一致 → **零回归**。
+  - 另：Tcl **激活**时 `test_tkdialog_gui_contracts_r77.py` 有 2 例失败（真实 Tk 对话框事件环/
+    超时：`RecursionError`、断言 `timeout_cancel`≠`cancel`），仅在 Tcl 激活的隔离跑显现；
+    本批量跑因整段负载下模块级 `tk.Tk()` 守卫失败 → 该 32 例 skip（与 R116-C 一致），故不计入。
+    此 2 例为**预存环境性**问题，与 ④ 无关，单独跟踪。
 
 ### ✅ 统帅轮-22时（2026-11-13）：R115 修复 wsl 连续会话 SIGTERM（整段门禁首次完整跑完）
 

@@ -20,8 +20,10 @@ import importlib as _importlib
 from .errors import ActionError, ERROR_CODES
 from .constants import TRUST_LEVELS, PLATFORMS, PERMISSIONS, ALLOWED_PLATFORM_DIRS, SCOPE_LEVELS
 from .frontmatter import strip_frontmatter
-from .model import Action, parse_cfg, parse_cfg_from_file
-from .dependency import Dependency, DependencyResolver, get_resolver
+# model / dependency 重导出改走下方 _LAZY 惰性（R116-收尾④）：
+# 此前此处 eager import 会拖动 vools.core / dataclass_compat / _proc 共约 150ms，
+# 而 CLI --help / 无参 / --version 路径根本不需要它们，白白拖慢冷启动。
+# 现由 __getattr__ 在首次访问对应符号时才 import 子模块，对外 API 不变。
 
 # 版本单一真源：与 pyproject.toml 保持一致。
 # 此前用 importlib.metadata 读分发元数据，但子进程会优先加载系统已安装的
@@ -31,6 +33,10 @@ __version__ = '0.9.1'
 
 # 惰性符号表：{导出名: 子模块名}，首次访问时才 import 对应子模块并取属性
 _LAZY = {
+    # model / dependency（R116-收尾④：此前顶层 eager import，现收口惰性）
+    'Action': '.model', 'parse_cfg': '.model', 'parse_cfg_from_file': '.model',
+    'Dependency': '.dependency', 'DependencyResolver': '.dependency',
+    'get_resolver': '.dependency',
     # executor
     'execute': '.executor', 'preview': '.executor', 'new_exec_id': '.executor',
     # validate
