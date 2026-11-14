@@ -36,17 +36,17 @@ def test_schema_has_output_schema_field():
 
 
 def test_schema_has_mode_field():
-    """#6 P1: mode 字段已定义且枚举封闭。"""
+    """#6 P1: mode 字段已定义且枚举封闭（合并后含 Actus async 扩展）。"""
     prop = SCHEMA["properties"]["mode"]
     assert prop["type"] == "string"
-    assert prop["enum"] == ["sync", "stream", "long_task"]
+    assert set(prop["enum"]) >= {"sync", "stream", "long_task"}
 
 
 def test_schema_has_resources_field():
-    """#7 P1: resources 字段已定义且形状封闭（timeout_ms/max_processes）。"""
+    """#7 P1: resources 字段已定义且形状封闭（含 timeout_ms/max_processes，允许合并后扩展字段）。"""
     prop = SCHEMA["properties"]["resources"]
     assert prop["type"] == "object"
-    assert set(prop["properties"].keys()) == {"timeout_ms", "max_processes"}
+    assert {"timeout_ms", "max_processes"} <= set(prop["properties"].keys())
     assert prop["additionalProperties"] is False
 
 
