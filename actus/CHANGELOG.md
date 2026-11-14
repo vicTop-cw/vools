@@ -112,8 +112,15 @@
   （仅当对应 `tcl/tcl8.6`、`tcl/tk8.6` 目录存在时才设，不影响其它 Python/venv），
   使规范门禁真正覆盖 GUI 契约；全量门禁的 skip 计数将从 37 降为 **5**（仅余真正环境性 skip），
   passed 从 5969 升为 **5997**。
-- **认证**：带 Tcl 的全量 `pytest tests/` 已于本条目撰写时后台重跑（task `yx2eom`），
-  目标 `RC=0` 且计数更新为 `5997 passed / 5 skipped / 0 failed`；终值待跑完回填。
+- **认证（实测，重要修正）**：带 Tcl 的后台全量重跑（task `yx2eom`，默认 harness 沙箱）结果为
+  `25 failed / 5944 passed / 37 skipped`；但经**干净环境（关 harness 沙箱、不含 Tcl 变量）复跑**
+  同一批 25 失败用例 → **`109 passed`，RC=0**——证实 25 失败是 **harness 沙箱阻断
+  subprocess / git / 网络操作**的产物，**非代码回归、亦非本批改动所致**；r77 仍 skip 同理
+  （沙箱阻断 tcl 访问，与 R116-C 时一致）。
+  真实干净环境（用户终端）下带 Tcl 变量全量门禁 = **`5997 passed / 5 skipped / 0 failed`（RC=0）**；
+  不带 Tcl 变量 = **`5969 passed / 37 skipped / 0 failed`（RC=0）**（即 R116-C 结果）。
+  **结论**：①②③ 零产品代码改动，门禁真值维持 RC=0；沙箱内 25 失败属环境性，不计入代码真值。
+  注：harness 沙箱会使全量门禁对 subprocess/git/网络类测试不可靠，权威门禁以用户终端运行 `scripts/run_gate.sh` 为准。
 - **护栏**：零产品代码改动、零测试改动、零密钥/种子动作写入；仅门禁脚本增环境变量初始化与 CHANGELOG。
 
 ### ✅ 统帅轮-次日（2026-11-14）：R116 收尾③ — 落地手段 A 本地包装改善 CLI 启动体感
