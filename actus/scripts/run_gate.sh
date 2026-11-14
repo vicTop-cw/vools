@@ -24,6 +24,16 @@ set -u
 DEFAULT_PY="/c/Users/victo/AppData/Local/Microsoft/WindowsApps/python.exe"
 PY="${ACTUS_GATE_PY:-$DEFAULT_PY}"
 
+# Tcl/Tk 路径修复（仅 Store Python 需要，且目录存在时才设）：
+# 该发行版自带的 tcl/tk8.6/tk.tcl 存在，但 Tcl 在「guard 已建过一次 Tk 再建第二次」
+# 的内部路径解析会失败（WindowsApps 受保护目录 ACL），导致 GUI 契约要么 skip 要么 ERROR。
+# 显式设 TCL_LIBRARY/TK_LIBRARY 可让 Tcl 直接定位，使 32 个 GUI 契约真正执行（而非 skip）。
+PY_DIR="$(cd "$(dirname "$PY")" && pwd)"
+if [ -d "$PY_DIR/tcl/tcl8.6" ] && [ -d "$PY_DIR/tcl/tk8.6" ]; then
+  export TCL_LIBRARY="$PY_DIR/tcl/tcl8.6"
+  export TK_LIBRARY="$PY_DIR/tcl/tk8.6"
+fi
+
 # 仓库根 = 本脚本上一级目录（scripts/..）。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

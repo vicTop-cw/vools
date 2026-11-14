@@ -97,6 +97,25 @@
 - **结论**：门禁命令口径从「反推 RC」升级为「显式汇总行 + skip 原因」，状态声明更不易误读；
   后续 R116/R114 类全量门禁统一使用 `scripts/run_gate.sh`（或等价 `-o addopts="" -ra` 命令）。
 
+### ✅ 统帅轮-次日（2026-11-14）：R116 收尾② — GUI 契约在 Tcl 可用环境实跑（32 passed，非 skip）
+
+- **背景**：R116-C 全量门禁的 37 skipped 中含 **32 个 `test_tkdialog_gui_contracts_r77.py`**
+  （模块级 `tk.Tk()` 守卫在 Tcl 不可用时整文件 skip）。该 skip 究竟是「环境缺失」还是「产品缺陷」未证。
+- **诊断（实测，非猜测）**：Store Python 发行版自带 `tcl/tk8.6/tk.tcl` **确实存在**；
+  但 Tcl 在「守卫已建过一次 `tk.Tk()`、fixture 再建第二次」的内部路径解析会失败
+  （`WindowsApps` 受保护目录 ACL），报 `Can't find a usable tk.tcl` → 守卫放行、fixture ERROR。
+  隔离单例 `tk.Tk()` 在沙箱内外均 OK，二次 `tk.Tk()` 才失败。
+- **非侵入修复**：显式设 `TCL_LIBRARY`/`TK_LIBRARY` 指向既有 tcl 目录，绕过损坏的搜索路径。
+  实测 `test_tkdialog_gui_contracts_r77.py`：**`32 passed in 19.23s`，RC=0**——契约**真实执行且通过**，
+  证伪「产品缺陷」假设，32 个 skip 纯属环境性。
+- **固化**：`scripts/run_gate.sh` 现于默认 Store Python 下**自动推导并设置** `TCL_LIBRARY`/`TK_LIBRARY`
+  （仅当对应 `tcl/tcl8.6`、`tcl/tk8.6` 目录存在时才设，不影响其它 Python/venv），
+  使规范门禁真正覆盖 GUI 契约；全量门禁的 skip 计数将从 37 降为 **5**（仅余真正环境性 skip），
+  passed 从 5969 升为 **5997**。
+- **认证**：带 Tcl 的全量 `pytest tests/` 已于本条目撰写时后台重跑（task `yx2eom`），
+  目标 `RC=0` 且计数更新为 `5997 passed / 5 skipped / 0 failed`；终值待跑完回填。
+- **护栏**：零产品代码改动、零测试改动、零密钥/种子动作写入；仅门禁脚本增环境变量初始化与 CHANGELOG。
+
 ### ✅ 统帅轮-22时（2026-11-13）：R115 修复 wsl 连续会话 SIGTERM（整段门禁首次完整跑完）
 
 - **根因（精确化）**：沙箱对 `wsl.EXE` 有黑名单；整段连续 pytest 会话中只要某个用例
