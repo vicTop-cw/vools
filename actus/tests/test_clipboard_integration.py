@@ -50,6 +50,37 @@ def _drain(q: "queue.Queue") -> None:
             return
 
 
+# 本文件/示例使用的标记前缀：这类内容不是用户数据，结束时直接清空而非写回
+_MARK_PREFIXES = ("actus-clip-watch-", "actus-example-watch-")
+
+
+def _is_mark(text: str) -> bool:
+    return bool(text) and text.startswith(_MARK_PREFIXES)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _restore_clipboard():
+    """模块结束时还原模块开始前的系统剪贴板内容。
+
+    本文件对真实系统剪贴板做读写（含 `actus-clip-watch-*` 标记），
+    不还原会把标记留在用户剪贴板里（p0 等常驻程序还会把它当用户复制上行）。
+    原内容为空、或本身就是测试标记时，结束时清空剪贴板。
+    """
+    saved = None
+    try:
+        saved = clip_read().content
+    except Exception:
+        saved = None
+    yield
+    try:
+        if saved and not _is_mark(saved):
+            clip_write(saved)
+        else:
+            clip_clear()
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # 读写 roundtrip
 # ---------------------------------------------------------------------------

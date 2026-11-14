@@ -1,13 +1,32 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Actus Action",
-  "description": "Actus 动作契约 — 校验 .actus.md / .actus.schema.md 的元数据（docs/03 §6 + 分类体系 v2.0 docs/03 §2）",
+  "$id": "actus://contracts/action.schema.json",
+  "title": "Actus Action Semantic Contract",
+  "description": "动作统一语义契约（唯一权威，见 docs/05 §5.1 与 vools docs/actus/03-动作规范.md §6）。合并版保留 vools-actus 分类体系 v2.0 字段（output_schema/md5/target/languages/cached_artifacts/adapter/dependencies）与 Actus docs/46 提案字段（output/context/owner/access/data_class/publisher/signature/tests/replaced_by/breaking_changes），两仓库共用同一文件。",
   "type": "object",
-  "required": ["id", "name", "version", "trust"],
+  "required": [
+    "id",
+    "name",
+    "version",
+    "trust"
+  ],
   "allOf": [
     {
-      "if": {"properties": {"kind": {"const": "exec"}}, "required": ["kind"]},
-      "then": {"required": ["entry"]}
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "exec"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "entry"
+        ]
+      }
     }
   ],
   "additionalProperties": true,
@@ -15,262 +34,647 @@
     "id": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
-      "description": "全局唯一动作标识（反域名风格，docs/03 §4.2）"
+      "description": "动作全局唯一标识，反向域名风格（段内允许下划线），如 actus.hello / actus.loop_prompt"
     },
     "name": {
       "type": "string",
       "minLength": 1,
-      "description": "人类可读名称"
+      "description": "动作可读名称（人类可读，MCP 工具名用）"
     },
     "version": {
       "type": "string",
-      "description": "semver 版本号"
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "semver：MAJOR.MINOR.PATCH"
     },
     "trust": {
-      "type": "string",
-      "enum": ["audit", "trusted", "sandbox"],
-      "description": "信任级别"
+      "enum": [
+        "audit",
+        "trusted",
+        "sandbox"
+      ],
+      "description": "信任级别，唯一合法取值（audit/trusted/sandbox）"
     },
     "entry": {
       "type": "string",
-      "description": "入口代码块 tag（kind=exec 时必填）"
+      "description": "入口代码块 tag，必须与某代码块 tag 一致（kind=exec 时必填）"
     },
     "description": {
-      "type": "string"
+      "type": "string",
+      "description": "动作用途说明（供 AI 发现与 MCP 工具描述）"
     },
     "usage": {
       "type": "string",
-      "description": "MCP 工具描述拼接用（docs/10 §A.3）"
+      "description": "自然语言调用示例与返回说明（MCP tool description 拼接，供 AI 理解用法）"
     },
     "author": {
-      "type": "string"
+      "type": "string",
+      "description": "作者标识"
     },
     "platform": {
-      "description": "目标平台（字符串或数组均可，docs/03 §2；check_platform 同口径；8 值单一真源 = actus/vools/actus/constants.py PLATFORMS）",
+      "description": "允许执行的平台（docs/03 §2 可使用平台；8 值单一真源 = actus/vools/actus/constants.py PLATFORMS；windows=本机 Win 桌面，wsl=WSL 桥，android=模拟器）",
       "oneOf": [
-        { "type": "string", "enum": ["desktop", "web", "macos", "harmonyos", "linux", "windows", "wsl", "android"] },
+        {
+          "type": "string",
+          "enum": [
+            "desktop",
+            "web",
+            "macos",
+            "harmonyos",
+            "linux",
+            "windows",
+            "wsl",
+            "android"
+          ]
+        },
         {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "enum": ["desktop", "web", "macos", "harmonyos", "linux", "windows", "wsl", "android"] }
+          "items": {
+            "type": "string",
+            "enum": [
+              "desktop",
+              "web",
+              "macos",
+              "harmonyos",
+              "linux",
+              "windows",
+              "wsl",
+              "android"
+            ]
+          }
         }
       ]
     },
     "tags": {
       "type": "array",
-      "items": { "type": "string" },
-      "description": "自由分类标签（人类搜索用，与结构化分类互补）"
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "动作分类标签，用于 AI 搜索和过滤（如 \"file\", \"network\", \"automation\", \"jump\", \"system\"）"
     },
     "max_instances": {
       "type": "integer",
       "minimum": 0,
       "default": 0,
-      "description": "最大并发实例数，0=无上限"
+      "description": "动作最大并发实例数（0=无上限，默认 0；1=互斥，仅 1 个实例同时运行）"
     },
     "deprecated": {
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "标记下架（见 docs/08 §6）"
     },
     "permissions": {
       "type": "array",
       "items": {
         "type": "string",
         "enum": [
-          "files:read", "files:write", "files:delete",
-          "net:connect", "net:listen",
+          "files:read",
+          "files:write",
+          "files:delete",
+          "net:connect",
+          "net:listen",
           "process:spawn",
-          "ui:notify", "ui:control", "ui:capture",
+          "ui:notify",
+          "ui:control",
+          "ui:capture",
           "sys:settings"
         ]
       },
-      "description": "所需权限白名单"
+      "description": "声明的系统权限白名单（见 docs/07 §3；ui:capture 为 vools-actus 扩展，屏幕捕获）"
     },
     "args": {
-      "type": "object",
-      "description": "入参 JSON Schema（draft-07）"
-    },
-    "output_schema": {
-      "type": "object",
-      "description": "出参契约 JSON Schema（draft-07）— 声明 output 信封 data/status 形状（docs/46 #4 P1）"
-    },
-    "mode": {
-      "type": "string",
-      "enum": ["sync", "stream", "long_task"],
-      "description": "执行模式（docs/46 #6 P1）：sync 同步 / stream 流式 / long_task 长任务（可取消）；缺省 sync"
-    },
-    "resources": {
-      "type": "object",
-      "description": "资源声明（docs/46 #7 P1）— executor 消费（timeout_ms / max_processes 等）",
-      "properties": {
-        "timeout_ms": { "type": "integer", "minimum": 0, "description": "单次执行超时毫秒数" },
-        "max_processes": { "type": "integer", "minimum": 1, "description": "最大并发进程数" }
-      },
-      "additionalProperties": false
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "入参 JSON Schema（draft-07）；缺省 null = 任意 object 透传（见 docs/03 §7）"
     },
     "secrets": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "所需密钥名清单（docs/10 §E.1）"
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "旧格式：所需密钥名清单（docs/10 §E.1）"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "provider",
+              "env"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string",
+                "description": "密钥提供者标识（如 openai）"
+              },
+              "env": {
+                "type": "string",
+                "description": "注入的环境变量名（如 OPENAI_API_KEY）"
+              },
+              "scopes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "密钥使用范围白名单"
+              }
+            }
+          },
+          "description": "新格式：API Key 声明（由 Vault 加密注入，不落盘明文，docs/46 #11）"
+        }
+      ],
+      "description": "密钥声明：string[] 旧格式或 object[] 新格式（provider/env/scopes）"
     },
     "deps": {
       "type": "array",
-      "description": "依赖声明（旧格式；schema.md 用 dependencies 对象）"
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "动作依赖列表（如 \"cs_forms\", \"cs_tools\", \"python:requests\", \"npm:shiki\", \"system:git\", \"action:actus.system.dialog_alert\"）"
     },
     "dependencies": {
       "type": "object",
-      "description": "依赖声明（新格式：pip/npm/action/mcp/system 分类）"
+      "description": "依赖声明（v2.0 新格式：pip/npm/action/mcp/system 分类，与 deps 旧格式互补）"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "sync",
+        "async",
+        "stream",
+        "long_task"
+      ],
+      "default": "sync",
+      "description": "执行模式：sync 默认；async 需支持 cancel；stream 输出 JSONL chunk；long_task 长任务可取消（docs/46 #6）"
     },
     "triggers": {
       "type": "array",
-      "description": "触发器配置（cron/watch/webhook/hotkey/on_startup，docs/10 §B.1）",
       "items": {
-        "type": "object",
-        "required": ["type"],
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": ["cron", "watch", "webhook", "hotkey", "on_startup", "interval"]
-          },
-          "expr": { "type": "string" },
-          "path": { "type": "string" },
-          "events": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "recursive": { "type": "boolean" },
-          "debounce_ms": { "type": "integer" },
-          "key": { "type": "string" },
-          "enabled": { "type": "boolean" }
-        }
-      }
+        "$ref": "#/definitions/trigger"
+      },
+      "description": "触发器声明（cron / watch / webhook / hotkey / on_startup / interval）"
     },
     "workflow": {
       "type": "object",
-      "description": "工作流定义（WorkflowExecutor 消费）",
-      "required": ["nodes"],
+      "description": "DAG 工作流定义（WorkflowExecutor 消费）",
+      "required": [
+        "nodes"
+      ],
       "properties": {
         "nodes": {
           "type": "array",
-          "items": { "$ref": "#/definitions/node" }
+          "items": {
+            "$ref": "#/definitions/node"
+          }
         },
-        "graph": { "$ref": "#/definitions/workflow_graph" }
+        "graph": {
+          "$ref": "#/definitions/workflow_graph"
+        }
       }
     },
     "ai": {
       "type": "object",
-      "description": "AI 生成元数据（docs/10 §D.4）",
+      "description": "AI 生成/演化元数据",
       "properties": {
-        "generated": { "type": "boolean" },
-        "author": { "type": "string" },
-        "evolve_policy": {
+        "generated": {
+          "type": "boolean",
+          "description": "是否为 AI 生成"
+        },
+        "author": {
           "type": "string",
-          "enum": ["confirm", "auto", "never"]
+          "description": "AI 模型标识"
+        },
+        "evolved_from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "演化来源动作 id"
+        },
+        "evolve_policy": {
+          "enum": [
+            "confirm",
+            "auto",
+            "off",
+            "never"
+          ],
+          "description": "自进化策略：confirm=需人类确认, auto=自动演化, off=关闭, never=禁止"
         }
       }
     },
-    "cached_artifacts": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "缓存的编译产物路径（dll/exe/so）"
+    "output_schema": {
+      "type": "object",
+      "description": "出参契约 JSON Schema（draft-07）— 声明 output 信封 data/status 形状（v2.0 字段；docs/46 #4 P1）"
     },
-    "adapter": {
-      "description": "适配器声明：string = 引用的适配器 id（adapter.*，exec_iface 的 adapter 通道用）；object = 内联适配器定义（adapter.py AdapterSpec.from_dict 原生支持：type/command/args/check/install/url/method/headers/body/timeout 等）",
-      "oneOf": [
-        { "type": "string" },
-        {
-          "type": "object",
-          "properties": {
-            "type": { "type": "string", "enum": ["cli", "http"] },
-            "command": { "type": "string" },
-            "args": { "type": "array", "items": { "type": "string" } },
-            "check": { "type": "string" },
-            "install": { "type": "string" },
-            "url": { "type": "string" },
-            "method": { "type": "string" },
-            "headers": { "type": "object" },
-            "body": { "type": "object" },
-            "timeout": { "type": "integer" }
+    "output": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "出参 JSON Schema（draft-07）；缺省 null = 标准信封 {status, data, error}（docs/46 #4）"
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "单次执行超时毫秒数（vools 口径 0=不限；Actus 口径 minimum=1）"
+        },
+        "max_memory_mb": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "最大内存兆"
+        },
+        "max_processes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "最大并发子进程数"
+        },
+        "net_connect": {
+          "type": "array",
+          "items": {
+            "type": "string"
           },
-          "required": ["type"]
+          "description": "允许的外连端点（如 \"github.com:443\"），net:connect 权限声明时须填"
+        },
+        "net_listen": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "允许的监听端点（如 \"127.0.0.1:3000\"），net:listen 权限声明时须填"
         }
-      ]
+      },
+      "additionalProperties": false,
+      "description": "资源上限声明（docs/46 #7）— executor 消费（timeout_ms / max_processes 等）"
     },
-
+    "context": {
+      "type": "object",
+      "properties": {
+        "env_prefix": {
+          "type": "string",
+          "default": "ACTUS_",
+          "description": "执行上下文环境变量前缀（docs/46 #5）"
+        },
+        "reserved_env": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "保留环境变量白名单（如 PARAMS / EXEC_ID / ACTION_ID / TRUST / RUN_DIR）"
+        }
+      },
+      "description": "执行上下文 env 契约（docs/46 #5）"
+    },
+    "license": {
+      "type": "string",
+      "enum": [
+        "mit",
+        "apache-2.0",
+        "gpl-3.0",
+        "cc0",
+        "proprietary",
+        "custom"
+      ],
+      "default": "mit",
+      "description": "作者声明的许可证（docs/03 §5.2 三层模型；SPDX 许可标识如 MIT 也可，trust=trusted 时建议必填，docs/46 #8）。未知值警告"
+    },
+    "license_url": {
+      "type": "string",
+      "description": "license=custom 时的许可证链接（便于使用者查阅）"
+    },
+    "pricing": {
+      "type": "string",
+      "enum": [
+        "free",
+        "paid",
+        "subscription"
+      ],
+      "default": "free",
+      "description": "定价模式（docs/03 §5.2 gated 付费预留）。当前版本未接支付通道：paid/subscription 按 gated 免费放行 + 警告"
+    },
+    "publisher": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        }
+      },
+      "description": "发布者声明（docs/46 #8）"
+    },
+    "signature": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string"
+        },
+        "public_key": {
+          "type": "string"
+        },
+        "sig": {
+          "type": "string"
+        }
+      },
+      "description": "动作签名（docs/46 #8）"
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "绑定测试文件相对路径（docs/47 §4 meta.tests）"
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "params"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "用例名"
+              },
+              "params": {
+                "type": "object",
+                "description": "传给动作的入参"
+              },
+              "expect": {
+                "type": "object",
+                "description": "期望输出（status/data 子集断言）"
+              },
+              "mock": {
+                "type": "object",
+                "description": "mock 声明（如 net_connect 端点返回）"
+              }
+            }
+          }
+        ]
+      },
+      "description": "测试声明：可混合使用动作内契约（docs/46 #9）与路径绑定（docs/47 §4）"
+    },
+    "replaced_by": {
+      "type": "string",
+      "description": "deprecated=true 时的替代动作 id（docs/46 #10）"
+    },
+    "breaking_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "version",
+          "change"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "触发破坏的版本（如 \"2.0.0\"）"
+          },
+          "change": {
+            "type": "string",
+            "description": "变更描述"
+          },
+          "migration": {
+            "type": "string",
+            "description": "迁移指引"
+          }
+        }
+      },
+      "description": "破坏性变更记录（docs/46 #10）"
+    },
+    "owner": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "enum": [
+        "agent",
+        "human",
+        "team"
+      ],
+          "description": "owner 角色"
+        },
+        "id": {
+          "type": "string",
+          "description": "owner 标识（如 fist-88 / human_steward）"
+        }
+      },
+      "description": "动作 owner（docs/46 #11）"
+    },
+    "access": {
+      "type": "object",
+      "properties": {
+        "read": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "可读角色（如 owner / trusted / all）"
+        },
+        "write": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "可写角色（如 owner / trusted）"
+        }
+      },
+      "description": "访问控制（docs/46 #11）"
+    },
+    "data_class": {
+      "enum": [
+        "public",
+        "internal",
+        "secret",
+        "restricted"
+      ],
+      "description": "数据敏感度（docs/46 #11）：secret 时入参 secrets 必须声明、日志不得回显 params"
+    },
+    "visibility": {
+      "enum": [
+        "public",
+        "unlisted",
+        "private",
+        "team",
+        "gated",
+        "internal"
+      ],
+      "description": "可见范围（docs/24 四级 + docs/41 §B 新增 gated/internal）；缺省按 private 处理。与 trust 正交：visibility 管可见范围，trust 管执行权限"
+    },
+    "gated_key_ref": {
+      "type": "string",
+      "description": "gated 动作的授权密钥**引用名**（不是密钥值）。密钥明文经 vault 注入执行上下文，禁止写入动作文件与日志（docs/41 §B2.4）"
+    },
+    "idempotency_key_from": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "从入参取某字段做幂等键（见 docs/08 §4）"
+    },
     "kind": {
       "type": "string",
-      "enum": ["exec", "link", "demo", "template", "alias", "bundle", "doc"],
-      "description": "分类体系 v2.0 维度 1：执行类型（未知值打回，docs/03 §2.4）"
+      "enum": [
+        "exec",
+        "link",
+        "demo",
+        "template",
+        "alias",
+        "bundle",
+        "doc"
+      ],
+      "default": "exec",
+      "description": "分类体系 v2.0 维度 1：执行类型（未知值打回，docs/03 §2.1）。旧动作缺省按 exec"
     },
     "purpose": {
-      "description": "分类体系 v2.0 维度 2：用途（多值 1..5，未知值警告）",
+      "description": "分类体系 v2.0 维度 2：用途，多值 1..5，支持跨维度（docs/03 §2.1）。未知值警告（不影响执行）；缺省 [utility]",
       "oneOf": [
-        { "type": "string" },
+        {
+          "type": "string"
+        },
         {
           "type": "array",
           "minItems": 1,
           "maxItems": 5,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       ]
     },
     "industry": {
-      "description": "分类体系 v2.0 维度 3：行业（多值 1..5，未知值警告）",
+      "description": "分类体系 v2.0 维度 3：行业，多值 1..5（docs/03 §2.1）。未知值警告；缺省 [general]",
       "oneOf": [
-        { "type": "string" },
+        {
+          "type": "string"
+        },
         {
           "type": "array",
           "minItems": 1,
           "maxItems": 5,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       ]
     },
     "trigger": {
-      "description": "分类体系 v2.0 维度 4：主触发声明（多值 1..8，不替代 triggers 段）",
+      "description": "分类体系 v2.0 维度 4：主触发方式声明，多值 1..8（docs/03 §2.1）。与 triggers 段（真源）互补不重复；未知值警告；缺省 [manual]。索引输出键名为 trigger_decl（避免与 triggers 混淆）",
       "oneOf": [
-        { "type": "string" },
+        {
+          "type": "string"
+        },
         {
           "type": "array",
           "minItems": 1,
           "maxItems": 8,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       ]
     },
     "context_applies": {
-      "description": "分类体系 v2.0 维度 5：适用上下文（Quicker 式，自由字符串多值）",
       "type": "array",
       "maxItems": 10,
-      "items": { "type": "string" }
-    },
-    "license": {
-      "type": "string",
-      "enum": ["mit", "apache-2.0", "gpl-3.0", "cc0", "proprietary", "custom"],
-      "default": "mit",
-      "description": "作者声明的许可证（未知值警告）"
-    },
-    "license_url": {
-      "type": "string",
-      "description": "license=custom 时的许可证链接"
-    },
-    "pricing": {
-      "type": "string",
-      "enum": ["free", "paid", "subscription"],
-      "default": "free",
-      "description": "定价模式（gated 付费预留；未接支付前 paid 按 gated 免费放行）"
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "分类体系 v2.0 维度 5：适用上下文（Quicker 式，docs/03 §2.1）。自由字符串不设闭集（exe 名/文件类型/OS，如 \"chrome.exe\"、\"*.md\"）；未知值警告"
     },
     "declared_features": {
       "type": "array",
       "maxItems": 10,
       "items": {
         "type": "string",
-        "enum": ["network-access", "file-write", "state-persist", "third-party-api", "ui-automation"]
+        "enum": [
+          "network-access",
+          "file-write",
+          "state-persist",
+          "third-party-api",
+          "ui-automation"
+        ]
       },
-      "description": "作者自声明特性（供 trust 决策预计算，与扫描不符警告）"
+      "default": [],
+      "description": "作者自声明特性（docs/03 §5.4），供 trust 决策预计算；与 SecurityScanner 结果不符时警告"
     },
     "demo": {
       "type": "string",
-      "description": "演示文件路径（gif/mp4/md），降低采用门槛"
+      "description": "演示文件路径（相对动作文件同目录解析，如 calculator.demo.actus.md）；降低采用门槛（docs/03 §5.4）"
+    },
+    "cached_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "缓存的编译产物路径（dll/exe/so）"
+    },
+    "adapter": {
+      "description": "适配器声明：string = 引用的适配器 id（adapter.*，exec_iface 的 adapter 通道用）；object = 内联适配器定义（adapter.py AdapterSpec.from_dict 原生支持：type/command/args/check/install/url/method/headers/body/timeout 等）",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "cli",
+                "http"
+              ]
+            },
+            "command": {
+              "type": "string"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "check": {
+              "type": "string"
+            },
+            "install": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "method": {
+              "type": "string"
+            },
+            "headers": {
+              "type": "object"
+            },
+            "body": {
+              "type": "object"
+            },
+            "timeout": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ]
     },
     "md5": {
       "type": "string",
@@ -283,47 +687,317 @@
     },
     "languages": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "动作文件内含的可执行语言标记（索引扩展维度，docs/03 §2.6 索引扩展）"
     }
   },
   "definitions": {
+    "trigger": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "cron",
+            "watch",
+            "webhook",
+            "hotkey",
+            "on_startup"
+          ],
+          "description": "触发器类型"
+        },
+        "expr": {
+          "type": "string",
+          "description": "cron 表达式（type=cron 时必填），如 '*/5 * * * *'"
+        },
+        "path": {
+          "type": "string",
+          "description": "监控路径（type=watch 时必填）或 webhook endpoint（type=webhook 可选）"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "create",
+              "modify",
+              "delete"
+            ]
+          },
+          "description": "watch 类型监听的文件事件"
+        },
+        "recursive": {
+          "type": "boolean",
+          "description": "watch 类型是否递归监控子目录（默认 false）"
+        },
+        "debounce_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "防抖毫秒数（watch 类型，默认 500）"
+        },
+        "method": {
+          "enum": [
+            "POST",
+            "GET"
+          ],
+          "description": "webhook 监听方法（默认 POST）"
+        },
+        "secret_header": {
+          "type": "string",
+          "description": "webhook 签名头（如 X-Hub-Signature-256）"
+        },
+        "key": {
+          "type": "string",
+          "description": "热键组合（type=hotkey 时必填），如 'ctrl+shift+r'"
+        },
+        "args": {
+          "type": "object",
+          "description": "触发时传给动作的固定参数"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "cron"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "expr"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "watch"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "hotkey"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "key"
+            ]
+          }
+        }
+      ]
+    },
+    "retry": {
+      "type": "object",
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "最大尝试次数（含首次，默认 1）"
+        },
+        "backoff_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "初始退避毫秒（默认 1000）"
+        },
+        "backoff_multiplier": {
+          "type": "number",
+          "minimum": 1,
+          "description": "指数退避乘数（默认 2.0）"
+        },
+        "max_backoff_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "最大退避毫秒（默认 30000）"
+        },
+        "jitter": {
+          "type": "boolean",
+          "description": "是否加随机抖动（默认 true）"
+        },
+        "retry_on": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "internal",
+              "timeout",
+              "language_unavailable",
+              "action_not_found"
+            ]
+          },
+          "description": "哪些错误码可重试（默认 [internal, timeout]）"
+        },
+        "on_failure": {
+          "enum": [
+            "abort",
+            "continue",
+            "fallback"
+          ],
+          "description": "重试耗尽后的处理策略（默认 abort）"
+        },
+        "fallback": {
+          "type": "string",
+          "description": "on_failure=fallback 时执行的回退动作 id"
+        }
+      }
+    },
+    "output_status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "failed",
+        "cancelled",
+        "awaiting_confirmation",
+        "skipped"
+      ],
+      "description": "输出信封 status 枚举（docs/03 §7.2；docs/46 #1 补 skipped，禁 error/fail/pending_confirmation 等漂移拼写）"
+    },
+    "error_code": {
+      "type": "string",
+      "enum": [
+        "action_not_found",
+        "action_invalid",
+        "param_invalid",
+        "param_missing",
+        "bad_json",
+        "dependency_missing",
+        "dependency_cycle",
+        "trust_rejected",
+        "permission_denied",
+        "confirmation_timeout",
+        "timeout",
+        "language_unavailable",
+        "internal",
+        "network_error",
+        "mcp_call_failed",
+        "auth_error",
+        "file_not_found",
+        "git_error",
+        "jq_error",
+        "curl_error",
+        "download_failed",
+        "execution_failed",
+        "read_error",
+        "write_error",
+        "convert_error",
+        "parse_error",
+        "budget_exceeded",
+        "no_actions",
+        "no_artifact",
+        "trigger_failed"
+      ],
+      "description": "封闭错误码表（docs/08 §5；docs/46 #2 扩充到 4 类 30 条：参数契约 / 外部依赖 / 运行时 / 业务）"
+    },
     "node": {
       "type": "object",
-      "required": ["id"],
+      "required": [
+        "action",
+        "id"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "action": { "type": "string" },
-        "action_id": { "type": "string" },
-        "args": { "type": "object" },
-        "params": { "type": "object" },
+        "id": {
+          "type": "string",
+          "description": "节点 id（工作流内唯一）"
+        },
+        "action": {
+          "type": "string",
+          "description": "引用的动作 id"
+        },
+        "args": {
+          "type": "object",
+          "description": "传给该动作的参数（支持 $node.output 表达式）"
+        },
         "depends": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          },
+          "description": "依赖的前置节点 id"
+        },
+        "retry": {
+          "$ref": "#/definitions/retry"
+        },
+        "condition": {
+          "type": "string",
+          "description": "条件表达式，false 时跳过（支持 == != >= <= > < contains，如 \"test.output.passed == true\"）"
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "节点超时秒数（可选）"
+        },
+        "fallback": {
+          "type": "string",
+          "description": "失败时替代执行的动作 id（可选）"
+        },
+        "action_id": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
         },
         "deps": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "condition": { "type": "string" },
         "on_failure": {
           "type": "string",
-          "enum": ["abort", "continue", "fallback"]
+          "enum": [
+            "abort",
+            "continue",
+            "fallback"
+          ]
         },
-        "timeout_ms": { "type": "integer", "minimum": 0 }
-      }
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "description": "工作流节点（v2.0 并集：Actus 的 retry/condition/timeout_s/fallback + vools 的 action_id/params/deps/on_failure/timeout_ms）"
     },
     "workflow_graph": {
       "type": "object",
       "properties": {
-        "parallel": { "type": "boolean", "default": true },
-        "max_concurrency": { "type": "integer", "minimum": 1 },
-        "fail_fast": { "type": "boolean" },
+        "parallel": {
+          "type": "boolean",
+          "description": "是否并行执行就绪节点（默认 true）"
+        },
+        "max_concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "并行度上限（默认 4）"
+        },
+        "fail_fast": {
+          "type": "boolean",
+          "description": "任一节点失败立即停止（默认 false）"
+        },
         "on_failure": {
           "type": "string",
-          "enum": ["abort", "continue", "fallback"]
+          "enum": [
+            "abort",
+            "continue",
+            "fallback"
+          ]
         }
-      }
+      },
+      "description": "工作流图级配置（并集：parallel/max_concurrency/fail_fast/on_failure）"
     }
   }
 }

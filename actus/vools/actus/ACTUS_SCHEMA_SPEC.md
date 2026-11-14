@@ -131,6 +131,11 @@ deprecated: false
 | `max_instances` | int | ❌ | 最大并发实例数，0=无上限 |
 | `deprecated` | bool | ❌ | 是否已弃用 |
 
+> 注：上表为**最小必要字段**。完整字段清单（51 项）以
+> `contracts/action.schema.json` 为机器校验真源，人读总表见
+> `docs/03-动作规范.md` §3「元数据字段总表」。三处（schema / spec /
+> 文档）字段一致性由 `scripts/spec_diff.py --check-consistency` 校验。
+
 **硬性约束**:
 - 此 front-matter 是**唯一权威元数据来源**，不再读取 `#!cfg` JSON 块
 - `entry` 值必须匹配区域 7 中某个代码块的 `tag`
