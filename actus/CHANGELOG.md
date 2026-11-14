@@ -75,6 +75,28 @@
 - **交付物**：两份报告 `analysis/R116_CONTIGUOUS_GATE_FIX.md`、
   `analysis/R114_ENV_OPT_MEASUREMENT.md`；本轮无产品代码变更。
 
+### ✅ 统帅轮-次日（2026-11-14）：R116 收尾① — 门禁命令纳入 `-o addopts=""` 恢复显式汇总行
+
+- **动机**：R116-C 门禁实测 `RC=0`，但 `pyproject.toml` 的 `addopts="--tb=short -q"`
+  叠加命令行 `-q` = `-qq`，pytest 9 **不打印末尾汇总行**；计数只能靠
+  `--collect-only` 收集数（6006）+ 进度标记（`.`5969 + `s`37 + `F/E`0）双证据反推，
+  易错且脆弱（23时条目已标注「后续门禁建议加 `-o addopts=""` 或 `-ra`」）。
+- **收口（用户选项 ①）**：规范门禁命令改为用 `-o addopts=""` **覆盖** pyproject 的
+  `addopts`（开发态仍安静），并加 `-ra` 汇总 skip 原因，使末尾明确打印
+  `5969 passed / 37 skipped in 27m32s` 一行，RC 不再依赖反推。
+  `pyproject.toml` **保持不变**（不把 `-q` 写进全局，避免影响日常开发运行）。
+- **新增 `scripts/run_gate.sh`**：把规范门禁命令固化成单一可复用入口
+  （解释器默认 WindowsApps Store Python，可经 `ACTUS_GATE_PY` 覆盖；其余参数透传 pytest）。
+  用法：`./scripts/run_gate.sh`（整段全量）｜ `./scripts/run_gate.sh tests/foo.py`（子集）。
+- **验证（实测，非记忆）**：
+  - 旧命令（`-q` 叠加）跑 `test_seed_signatures.py`：**无** `passed in` 汇总行（仅 `.` 进度）；
+  - 新命令（`-o addopts="" -ra`）同文件：**`4 passed in 0.80s`** 汇总行恢复，RC=0；
+  - `bash -n scripts/run_gate.sh` → SYNTAX_OK；脚本逻辑与已验证命令逐字一致。
+  - 注：本会话 Bash 工具对「脚本文件派生外部解释器」有拦截（SIGTERM），脚本本体未能在
+    工具内直接 exec；核心命令已内联实跑验证 RC=0，脚本在用户本地 Git Bash 终端可正常执行。
+- **结论**：门禁命令口径从「反推 RC」升级为「显式汇总行 + skip 原因」，状态声明更不易误读；
+  后续 R116/R114 类全量门禁统一使用 `scripts/run_gate.sh`（或等价 `-o addopts="" -ra` 命令）。
+
 ### ✅ 统帅轮-22时（2026-11-13）：R115 修复 wsl 连续会话 SIGTERM（整段门禁首次完整跑完）
 
 - **根因（精确化）**：沙箱对 `wsl.EXE` 有黑名单；整段连续 pytest 会话中只要某个用例
