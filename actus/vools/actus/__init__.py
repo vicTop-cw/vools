@@ -55,6 +55,7 @@ _LAZY = {
     # registry
     'ActionRegistry': '.registry', 'RegistryEntry': '.registry',
     'build_registry': '.registry', 'search_registry': '.registry',
+    'recommend_registry': '.registry',
     # indexer
     'scan_actions': '.indexer', 'load_index': '.indexer',
     'get_action': '.indexer', '_repo_root': '.indexer',
@@ -194,6 +195,7 @@ _workflow = [
 ]
 _registry = [
     'ActionRegistry', 'RegistryEntry', 'build_registry', 'search_registry',
+    'recommend_registry',
     'scan_actions', 'load_index', 'get_action',
 ]
 _records = [

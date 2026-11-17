@@ -556,7 +556,10 @@ class MCPServer:
                              'description': '按用途过滤（source/sink/transform/.../utility）'},
                  'industry': {'type': 'string',
                               'description': '按行业过滤（devops/finance/.../general）'},
-                 'limit': {'type': 'integer', 'description': '最大返回数', 'default': 20}}}},
+                 'limit': {'type': 'integer', 'description': '最大返回数', 'default': 20},
+                 'offset': {'type': 'integer', 'description': '分页偏移', 'default': 0},
+                 'sort': {'type': 'string',
+                          'description': '结果排序：trust=信任度优先 / name=名称字典序 / recent=最近注册优先（缺省=相关度）'}}}},
             {'name': 'actus_recommend',
              'description': '根据任务描述推荐最相关的动作（语义匹配）',
              'inputSchema': {'type': 'object', 'properties': {
@@ -1772,76 +1775,70 @@ class MCPServer:
             return text_result({'status': 'ok', 'data': {'actions': rows}})
 
         if name == 'actus_search':
+            # E1 统一检索入口：MCP 不再自行实现过滤/打分逻辑，
+            # 全部委托 registry.ActionRegistry.search_params（唯一内核）。
+            # E4：支持 offset 分页 + sort 排序，total 返回**实际匹配数**
+            # （过滤+打分后、截断前的完整命中数），而非本页条数。
+            from vools.actus.registry import ActionRegistry, SearchParams
             idx = actuscore.load_index()
-            query = (args.get('query') or '').lower()
+            query = args.get('query') or ''
             tag_filter = args.get('tag')
             tags = tag_filter.split(',') if tag_filter else None
-            author = args.get('author')
+            author = args.get('author') or None
             limit = args.get('limit', 20)
+            offset = args.get('offset', 0) or 0
+            sort = args.get('sort') or None
             # 分类体系 v2.0（docs/03 §2）：kind/purpose/industry 过滤
             kind_f = (args.get('kind') or '').strip().lower() or None
             purpose_f = (args.get('purpose') or '').strip().lower() or None
             industry_f = (args.get('industry') or '').strip().lower() or None
+            reg = ActionRegistry()
+            reg.load_from_index(idx)
+            # E2（提升计划 E2）：MCP 返回走解释版分页变体——结果集与排序
+            # 和 `search` 完全一致，额外携带 score / match_fields，供 AI 端
+            # 理解"为什么命中"并展示置信度。
+            scored, total = reg.search_explain_params_with_total(SearchParams(
+                query=query, author=author, tags=tags,
+                kind=kind_f, purpose=purpose_f,
+                industry=industry_f, limit=limit,
+                offset=offset, sort=sort))
             rows = []
-            for aid, b in idx['actions'].items():
-                if aid.startswith('_invalid:'):
-                    continue
-                action_tags = b.get('tags', [])
-                if tags and not any(t in action_tags for t in tags):
-                    continue
-                if author and b.get('author') != author:
-                    continue
-                if kind_f and (b.get('kind') or 'exec') != kind_f:
-                    continue
-                if purpose_f and purpose_f not in (b.get('purpose') or ['utility']):
-                    continue
-                if industry_f and industry_f not in (b.get('industry') or ['general']):
-                    continue
-                if query and query not in aid.lower() and query not in b.get('name', '').lower() and query not in ' '.join(action_tags).lower():
-                    continue
-                rows.append({'id': aid, 'name': b.get('name'), 'version': b.get('version'),
-                             'trust': b.get('trust'), 'status': b.get('status'),
-                             'kind': b.get('kind') or 'exec',
-                             'purpose': b.get('purpose') or ['utility'],
-                             'industry': b.get('industry') or ['general'],
+            for item in scored:
+                entry = item['entry']
+                aid = entry.id
+                b = idx.get('actions', {}).get(aid) or {}
+                action_tags = b.get('tags') or entry.tags
+                rows.append({'id': aid, 'name': b.get('name') or entry.name,
+                             'version': b.get('version') or entry.version,
+                             'trust': b.get('trust') or entry.trust_level,
+                             'status': b.get('status'),
+                             'kind': b.get('kind') or entry.kind or 'exec',
+                             'purpose': b.get('purpose') or entry.purpose or ['utility'],
+                             'industry': b.get('industry') or entry.industry or ['general'],
                              'tags': action_tags,
+                             'score': item['score'],
+                             'match_fields': item['match_fields'],
                              # 审计（第 27 轮）：动作的**动态 MCP 工具名**此前无法枚举
                              # （只能靠猜 `actus_` + id 归一），AI 拿到动作却不知道该
                              # 调哪个工具。这里把工具名随行返回，让工具可被发现。
                              'tool': _tool_name(aid)})
-            return text_result({'status': 'ok', 'data': {'actions': rows[:limit], 'total': len(rows)}})
+            return text_result({'status': 'ok', 'data': {
+                'actions': rows, 'total': total,
+                'offset': offset, 'limit': limit}})
 
         if name == 'actus_recommend':
             idx = actuscore.load_index()
             description = args.get('description', '')
             limit = args.get('limit', 5)
             
-            # 使用 Intent Router 进行路由
-            from vools.actus.intent import get_default_router
-            from vools.actus.indexer import scan_actions
-            
-            router = get_default_router()
-            actions = scan_actions(validate=False)
-            
-            # 注册所有可用动作到路由器
-            for aid, a in actions.items():
-                tags = a.meta.get('tags', [])
-                desc = a.meta.get('description', '')
-                usage = a.meta.get('usage', '')
-                router.register_action(aid, desc, usage, tags)
-                # 第 11 轮接线：register_workflow 此前注册了没人读（route 无分支），
-                # 现在把 bundle/workflow 类动作同时登记为工作流，route 可返回
-                # match='workflow'。此处按动作 kind 登记，属最小真实来源。
-                if str(a.meta.get('kind') or 'exec').lower() in ('bundle', 'workflow'):
-                    router.register_workflow(aid, desc, tags)
-
-            # probe 集成（PROBE_PLAN.md §9 Phase 3）：只推荐 ready 的动作
-            try:
-                from vools.actus.probe import probe
-                report = probe(force_refresh=False)
-                router.set_probe_report(report)
-            except Exception:
-                pass  # 探测失败时不启用 ready 过滤，保持向后兼容
+            # P2（提升计划 P2）：进程级 LRU 缓存 + 增量注册。
+            # 旧实现每次调用都 scan_actions(validate=False) 全量重扫并逐个
+            # register_action，无任何缓存 —— 每次推荐都触发全量文件 IO + 解析。
+            # 现在缓存键 = parser fingerprint + 动作文件 mtime 摘要：键未变
+            # 直接复用缓存 router（0 次 scan）；仅变更文件增量注册；probe
+            # 结果失效才重建（详见 intent.get_router_with_cache）。
+            from vools.actus.intent import get_router_with_cache
+            router, _changes, _rebuilt = get_router_with_cache()
             
             result = router.route(description)
 
@@ -1850,19 +1847,48 @@ class MCPServer:
                 workflow = {'id': result['workflow_id'],
                             'reason': result.get('reason', '')}
 
+            # E3（提升计划 E3）：推荐列表附 reason 链 + confidence 置信度。
+            # 委托 registry.recommend 生成候选（空 description 自动走热门兜底，
+            # 不崩溃）；无任何匹配时保持空列表语义。
+            from vools.actus.registry import ActionRegistry
+            reg = ActionRegistry()
+            reg.load_from_index(idx)
+
             recommendations = []
+            seen = set()
+            for rec in reg.recommend(description, limit=limit):
+                e = rec['entry']
+                aid = e['id']
+                if aid in seen:
+                    continue
+                seen.add(aid)
+                b = idx['actions'].get(aid, {})
+                recommendations.append({
+                    'id': aid,
+                    'name': b.get('name'),
+                    'score': rec.get('score', 0),
+                    'confidence': rec.get('confidence', 0),
+                    'reason': rec.get('reason', ''),
+                    'description': b.get('description', ''),
+                    'match_fields': rec.get('match_fields', []),
+                })
+
+            # 主命中（IntentRouter 关键词/工作流口径）置顶：不在候选内则前插
             if result.get('action_id'):
                 aid = result['action_id']
-                if aid in idx['actions']:
-                    b = idx['actions'][aid]
-                    recommendations.append({
+                if aid not in seen:
+                    b = idx['actions'].get(aid, {})
+                    recommendations.insert(0, {
                         'id': aid,
                         'name': b.get('name'),
                         'score': result.get('confidence', 0),
+                        'confidence': result.get('confidence', 0),
                         'reason': result.get('reason', ''),
                         'description': b.get('description', ''),
+                        'match_fields': [],
                     })
-            
+                    recommendations = recommendations[:limit]
+
             data = {'recommendations': recommendations,
                     'total': len(recommendations)}
             if workflow is not None:
