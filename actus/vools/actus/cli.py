@@ -12,6 +12,8 @@
     python -m actus mcp [--transport stdio|sse] [--port 8765]  # 启动聚合 MCP server
     python -m actus config <client>            # 生成 MCP 接入配置（claude/cursor/cline/vscode）
     python -m actus scaffold <description>     # AI：根据描述生成动作骨架
+    python -m actus search <query> [--source local|installed|url] [--repo <本地路径> | --url <git-url>]  # 搜索动作
+    python -m actus suggest <desc> [--limit N] [--semantic] [--json]  # 按自然语言描述推荐动作（含 reason/confidence）
     python -m actus author <id> <instruction>  # AI：修改已有动作
     python -m actus vault set <key> <value> [--scope] [--desc]  # 存储密钥
     python -m actus vault get <key> [--scope]       # 获取密钥
@@ -33,6 +35,7 @@ import os
 import re
 import sys
 import io
+import csv
 from pathlib import Path
 
 from .errors import is_failure_status   # 成败判据单一真源（MCP 侧共用同一份）
@@ -487,7 +490,36 @@ def _build_parser():
     p_search.add_argument('--tag', help='标签过滤（多个用逗号分隔，如 "file,network"）')
     p_search.add_argument('--source', help='搜索来源（local/installed/url）', default='local')
     p_search.add_argument('--url', help='远程仓库 URL（source=url 时使用）')
+    # F5（T0r15）：--source url 支持直接指定本地 repo 路径（--path/--repo 等价），
+    # 实时加载该仓库搜索，不再依赖缓存索引；git URL 走 --url 浅克隆拉取。
+    p_search.add_argument('--repo', '--path', dest='repo_path', default=None,
+                          help='本地仓库路径（source=url 时直接加载该仓库搜索，'
+                               '优先于缓存索引；与 --url 互斥）')
     p_search.add_argument('--limit', type=int, default=20, help='最大返回数')
+    # E1 统一检索入口：与 MCP actus_search 对齐的分类体系 v2.0 过滤维度
+    p_search.add_argument('--kind', help='动作类别过滤（exec/demo/template…）')
+    p_search.add_argument('--purpose', help='用途维度过滤（多值命中任一）')
+    p_search.add_argument('--industry', help='行业维度过滤（多值命中任一）')
+    p_search.add_argument('--offset', type=int, default=0, help='分页偏移')
+    # E4 交互增强：排序 + CSV 导出
+    p_search.add_argument('--sort', '-s', choices=['trust', 'name', 'recent'],
+                          default=None,
+                          help='结果排序：trust=信任度优先 / name=名称字典序 / '
+                               'recent=最近注册优先（缺省=相关度排序）')
+    p_search.add_argument('--csv', action='store_true',
+                          help='以 CSV 输出（字段与 --json 对齐，可用于 --json --csv 组合）')
+    p_search.add_argument('--output', help='CSV 输出文件路径（缺省输出到 stdout）')
+
+    # F5（T0r15）：suggest 子命令 = recommend 的 CLI 形态（E3 推荐链），
+    # 输出含 reason 与 confidence；--json 与 MCP actus_recommend 输出同形。
+    p_suggest = sub.add_parser('suggest', help='根据自然语言描述推荐动作（等同 recommend，输出含 reason 与 confidence）')
+    p_suggest.add_argument('desc', help='任务描述（如 "监控文件夹变化"）')
+    p_suggest.add_argument('--limit', type=int, default=5, help='最大推荐数')
+    p_suggest.add_argument('--semantic', action='store_true',
+                           help='启用语义分融合排序（关键词分 + 语义分加权）')
+    p_suggest.add_argument('--json', dest='json_output', action='store_true',
+                           default=argparse.SUPPRESS,
+                           help='机器可读输出：扁平 JSON（形状与 MCP actus_recommend 一致）')
 
     # deps 子命令
     p_deps = sub.add_parser('deps', help='检查动作依赖（编译产物、Python/npm 包、系统命令）')
@@ -1117,6 +1149,9 @@ def _dispatch(args) -> int:
 
     if args.command == 'search':
         return _cmd_search(args)
+
+    if args.command == 'suggest':
+        return _cmd_suggest(args)
 
     if args.command == 'sync':
         return _cmd_sync(args)
@@ -2465,6 +2500,76 @@ def _cmd_publish(args) -> int:
     return 0
 
 
+def _emit_search_csv(actions: list, output: str = None) -> int:
+    """E4：搜索 --csv 导出。列与 --json 输出的 actions 字段对齐。
+
+    - 多值字段（tags/purpose/industry）以 `|` 分隔平铺；
+    - 输出文件用 utf-8-sig（Excel 兼容）；缺省输出到 stdout。
+    """
+    cols = ['id', 'name', 'version', 'trust', 'description', 'author',
+            'category', 'tags', 'kind', 'purpose', 'industry']
+
+    def _cell(v):
+        if v is None:
+            return ''
+        if isinstance(v, (list, tuple)):
+            return '|'.join(str(x) for x in v)
+        return str(v)
+
+    if output:
+        with open(output, 'w', encoding='utf-8-sig', newline='') as fh:
+            writer = csv.DictWriter(fh, fieldnames=cols)
+            writer.writeheader()
+            for a in actions:
+                writer.writerow({c: _cell(a.get(c)) for c in cols})
+        print(f'已导出 {len(actions)} 条到 {output}')
+        return 0
+    _ensure_utf8_stdout()
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=cols)
+    writer.writeheader()
+    for a in actions:
+        writer.writerow({c: _cell(a.get(c)) for c in cols})
+    sys.stdout.write(buf.getvalue())
+    return 0
+
+
+def _clone_url_repo(repo_url: str):
+    """浅克隆 git 仓库到本地缓存目录，返回仓库根路径；失败返回 None。
+
+    F5（T0r15）：`actus search --source url --url <git-url>` 直接浅克隆后
+    实时搜索，不再依赖缓存索引。克隆目录落在 `~/.actus/cache/url_repos/<hash>`
+    （同名仓库复用，避免重复网络拉取）。任何失败（git 不可用 / 网络不通 /
+    非 git 仓库 / 超时）都返回 None，由调用方回退缓存索引或报错。
+    """
+    import hashlib
+    import subprocess
+    import tempfile
+
+    base = os.path.join(os.path.expanduser("~"), ".actus", "cache", "url_repos")
+    os.makedirs(base, exist_ok=True)
+    digest = hashlib.sha256(repo_url.encode("utf-8")).hexdigest()[:16]
+    dest = os.path.join(base, digest)
+    if os.path.isdir(dest) and os.path.isdir(os.path.join(dest, "actions")):
+        return dest
+    tmp_dest = tempfile.mkdtemp(prefix=".actus_clone_", dir=base)
+    try:
+        proc = subprocess.run(
+            ["git", "clone", "--depth", "1", repo_url, tmp_dest],
+            capture_output=True, text=True, timeout=120)
+    except Exception:
+        return None
+    if proc.returncode != 0 or not os.path.isdir(os.path.join(tmp_dest, "actions")):
+        return None
+    if not os.path.exists(dest):
+        try:
+            os.replace(tmp_dest, dest)
+            return dest
+        except OSError:
+            pass
+    return tmp_dest
+
+
 def _cmd_search(args) -> int:
     """search 子命令：搜索动作。"""
     from vools.actus.registry import ActionRegistry
@@ -2472,9 +2577,15 @@ def _cmd_search(args) -> int:
     reg = ActionRegistry()
 
     if args.source == 'local':
-        # 审计修：`--source local` 指的是**本仓库**，默认根跟随 repo_root()。
-        from vools.actus.paths import repo_root as _repo_root_path
-        reg.load_from_repo(_repo_root_path())
+        # E1 统一检索入口：与 MCP actus_search 同用 `_meta/actions.index.json`
+        # 作为数据源（indexer.load_index），保证 CLI 与 MCP 检索口径一致。
+        # 只读命令优先 build=False（不落盘）；索引缺失时退化为 build=True，
+        # 与 MCP actus_search 的默认行为对齐。
+        from vools.actus.indexer import load_index as _load_index
+        idx = _load_index(build=False)
+        if not idx.get('actions'):
+            idx = _load_index(build=True)
+        reg.load_from_index(idx)
     elif args.source == 'installed':
         # 加载所有已安装仓库
         from vools.actus.installer import ActionInstaller
@@ -2483,46 +2594,184 @@ def _cmd_search(args) -> int:
             local_path = manifest.get('local_path')
             if local_path and os.path.isdir(local_path):
                 reg.load_from_repo(local_path)
-    elif args.source == 'url' and args.url:
-        # 尝试从缓存加载
-        cached = reg.load_cached_index(args.url)
-        if cached:
-            for raw in cached.get('actions', []):
-                pass  # 已缓存
+    elif args.source == 'url':
+        # F5（T0r15）：改善"远程搜索依赖缓存索引"的体验 ——
+        #   * --repo/--path 指定本地仓库路径 → 实时加载搜索（首选）；
+        #   * --url 提供 git URL → 浅克隆后实时搜索（拉取失败回退缓存索引）；
+        #   * 两者都未提供 → 报错并给指引（不再静默依赖缓存）。
+        repo_path = getattr(args, 'repo_path', None) or None
+        if repo_path:
+            if not os.path.isdir(repo_path):
+                print(f'❌ 仓库路径不存在: {repo_path}')
+                return 1
+            reg.load_from_repo(repo_path)
+        elif args.url:
+            cloned = _clone_url_repo(args.url)
+            if cloned:
+                reg.load_from_repo(cloned)
+            else:
+                # git 拉取不可用/失败：回退缓存索引（历史行为）。
+                cached = reg.load_cached_index(args.url)
+                if cached:
+                    for raw in cached.get('actions', []):
+                        pass  # 已缓存
+                else:
+                    print(f'⚠️  无法拉取仓库（git 不可用或 URL 无效），且无缓存索引。'
+                          f'请先安装: actus install {args.url} '
+                          f'或指定 --repo <本地仓库路径>')
+                    return 1
         else:
-            print(f'⚠️  远程搜索需要缓存索引，请先安装: actus install {args.url}')
+            print('--source url 需要 --url <git url> 或 --repo <本地仓库路径>')
             return 1
 
     tags = args.tag.split(',') if args.tag else None
-    results = reg.search(
+    # E1 统一检索入口：CLI 与 MCP 一样委托 registry 唯一内核
+    # （过滤 + 打分 + 空查询语义全部在 registry.search 内实现）。
+    kind_f = (getattr(args, 'kind', None) or '').strip().lower() or None
+    purpose_f = (getattr(args, 'purpose', None) or '').strip().lower() or None
+    industry_f = (getattr(args, 'industry', None) or '').strip().lower() or None
+    # 审计（第 27 轮）：机器模式（--json）输出**扁平**结构，与 MCP 的
+    # `{status, data:{actions:[...]}}` 同形；人类模式走 search_explain。
+    sort_f = getattr(args, 'sort', None) or None
+    if getattr(args, 'json_output', False):
+        # E4：委托 `search_params_with_total` 分页变体，返回真实 total
+        # （过滤+打分后、截断前的实际匹配数），与 `--offset/--limit`
+        # 分页语义一致；`--sort` 透传内核排序。
+        from vools.actus.registry import SearchParams
+        params = SearchParams(
+            query=args.query,
+            category=args.category,
+            author=args.author,
+            tags=tags,
+            kind=kind_f,
+            purpose=purpose_f,
+            industry=industry_f,
+            limit=args.limit,
+            offset=getattr(args, 'offset', 0),
+            sort=sort_f,
+        )
+        results, total = reg.search_params_with_total(params)
+        actions = [{
+            'id': e.id, 'name': getattr(e, 'name', '') or e.id,
+            'version': e.version, 'trust': e.trust_level,
+            'description': e.description, 'author': e.author,
+            'category': e.category, 'tags': e.tags,
+            'kind': getattr(e, 'kind', None) or e.category,
+            'purpose': getattr(e, 'purpose', None) or ['utility'],
+            'industry': getattr(e, 'industry', None) or ['general'],
+        } for e in results]
+        payload = {'status': 'ok', 'query': args.query, 'count': len(actions),
+                   'total': total, 'offset': params.offset, 'limit': params.limit,
+                   'actions': actions}
+        if getattr(args, 'csv', False):
+            return _emit_search_csv(actions, getattr(args, 'output', None))
+        _out(payload)
+        return 0
+
+    # E2（提升计划 E2）：人类输出走 `search_explain`——结果集与排序和
+    # `search` 完全一致，额外携带 score / match_fields / reason。
+    # 每条固定 4 行：摘要行（trust+kind+purpose+score）/ 描述 / 用法 /
+    # 匹配理由+标签。高信任（trusted / verification=verified）加 ★ 标记。
+    scored = reg.search_explain(
         query=args.query,
         category=args.category,
         author=args.author,
         tags=tags,
-        limit=args.limit
+        kind=kind_f,
+        purpose=purpose_f,
+        industry=industry_f,
+        limit=args.limit,
+        offset=getattr(args, 'offset', 0),
+        sort=sort_f,
     )
 
-    # 审计（第 27 轮）：机器模式（--json）输出**扁平**结构，与 MCP 的
-    # `{status, data:{actions:[...]}}` 同形；人类模式保持原有可读输出。
-    if getattr(args, 'json_output', False):
-        _out({'status': 'ok', 'query': args.query, 'count': len(results),
-              'actions': [{
-                  'id': e.id, 'name': getattr(e, 'name', '') or e.id,
-                  'version': e.version, 'trust': e.trust_level,
-                  'description': e.description, 'author': e.author,
-                  'category': e.category, 'tags': e.tags,
-              } for e in results]})
-        return 0
-
-    if not results:
+    if not scored:
         print('🔍 未找到匹配的动作')
         return 0
 
-    print(f'🔍 找到 {len(results)} 个动作:')
-    for entry in results:
-        print(f'   [{entry.trust_level:10s}] {entry.id} ({entry.version})')
-        print(f'   {"":12s} {entry.description[:60]}')
-        print(f'   {"":12s} 作者: {entry.author} | 分类: {entry.category} | 标签: {", ".join(entry.tags)}')
+    idx_actions = idx.get('actions') if args.source == 'local' else None
+    print(f'🔍 找到 {len(scored)} 个动作:')
+    for item in scored:
+        entry = item['entry']
+        # E2 视觉标记：trust=trusted 或索引 verification=verified 视为高信任。
+        high_trust = entry.trust_level in ('trusted', 'verified')
+        if not high_trust and idx_actions:
+            b = idx_actions.get(entry.id) or {}
+            high_trust = (b.get('verification') == 'verified'
+                          or (b.get('trust') or '') in ('trusted', 'verified'))
+        mark = '★' if high_trust else ' '
+        kind_col = getattr(entry, 'kind', None) or entry.category
+        purpose_col = ', '.join(getattr(entry, 'purpose', None) or ['utility'])
+        desc = (entry.description or '').strip() or '-'
+        usage = '-'
+        if idx_actions:
+            b = idx_actions.get(entry.id) or {}
+            raw_usage = (b.get('usage') or '').strip()
+            if raw_usage:
+                usage = raw_usage.splitlines()[0][:60]
+        reason = item['reason'] or '（无关键词）'
+        tag_txt = ', '.join(entry.tags) if entry.tags else '-'
+        print(f'  {mark} [{entry.trust_level}] {entry.id} ({entry.version}) '
+              f'类别={kind_col} 用途={purpose_col} 得分={item["score"]:.2f}')
+        print(f'     {desc[:60]}')
+        print(f'     用法: {usage}')
+        print(f'     命中: {reason}  标签: {tag_txt}')
+        print()
+    return 0
+
+
+def _cmd_suggest(args) -> int:
+    """suggest 子命令：根据自然语言描述推荐动作（等同 E3 recommend 链）。
+
+    数据源与 `search` 一致（`_meta/actions.index.json`），委托
+    `ActionRegistry.recommend`（reason 命中链 + confidence 置信度）。
+    --json 输出与 MCP actus_recommend 的扁平形状对齐：
+    `{status, query, count, total, recommendations:[{id, name, score,
+    confidence, reason, match_fields}]}`。
+    """
+    from vools.actus.indexer import load_index as _load_index
+    from vools.actus.registry import ActionRegistry
+
+    idx = _load_index(build=False)
+    if not idx.get('actions'):
+        idx = _load_index(build=True)
+    reg = ActionRegistry()
+    reg.load_from_index(idx)
+
+    recs = reg.recommend(
+        args.desc,
+        limit=getattr(args, 'limit', 5),
+        semantic=getattr(args, 'semantic', False),
+    )
+
+    if getattr(args, 'json_output', False):
+        recommendations = []
+        for rec in recs:
+            e = rec['entry']
+            recommendations.append({
+                'id': e['id'],
+                'name': e.get('name', '') or e['id'],
+                'score': rec.get('score', 0),
+                'confidence': rec.get('confidence', 0),
+                'reason': rec.get('reason', ''),
+                'description': e.get('description', ''),
+                'match_fields': rec.get('match_fields', []),
+            })
+        _out({'status': 'ok', 'query': args.desc, 'count': len(recommendations),
+              'total': len(recommendations),
+              'recommendations': recommendations})
+        return 0
+
+    if not recs:
+        print('🔍 没有找到与描述匹配的动作')
+        return 0
+    print(f'💡 推荐 {len(recs)} 个动作（描述: {args.desc}）:')
+    for rec in recs:
+        e = rec['entry']
+        print(f'  [{e.get("trust_level", "?")}] {e["id"]} '
+              f'({e.get("version", "?")}) 置信度={rec["confidence"]:.2f}')
+        print(f'     描述: {(e.get("description") or "").strip()[:60] or "-"}')
+        print(f'     理由: {rec["reason"] or "（无关键词）"}')
         print()
     return 0
 

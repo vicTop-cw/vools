@@ -9,6 +9,7 @@ RegistryManager/TeamManager/VisibilityEngine 的配置目录。
 """
 import importlib
 import json
+from dataclasses import asdict
 import os
 import sys
 import types
@@ -355,9 +356,24 @@ class _FakeReg:
         self.calls.append(('load_repo', root))
         return self._index
 
+    def load_from_index(self, index):
+        self.calls.append(('load_index', index))
+        return None
+
     def search(self, **kw):
         self.calls.append(('search', kw))
         return self._results
+
+    def search_explain(self, **kw):
+        # E2：CLI 人类输出走 search_explain，返回带解释的条目列表。
+        self.calls.append(('search_explain', kw))
+        return [{'entry': e, 'score': 0.5, 'match_fields': ['name'],
+                 'reason': '命中 name'} for e in self._results]
+
+    def search_params_with_total(self, params):
+        # E4：CLI --json 委托分页变体；记录 asdict 以兼容旧断言键访问。
+        self.calls.append(('search_params_with_total', asdict(params)))
+        return self._results, len(self._results)
 
     def load_cached_index(self, url):
         self.calls.append(('cached', url))

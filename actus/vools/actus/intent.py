@@ -5,8 +5,18 @@
 """
 
 import re
+import os
+import json
+import hashlib
 import logging
+from collections import OrderedDict
 from typing import Dict, List, Optional, Any
+
+# P2（推荐缓存与增量注册）：进程级 LRU 缓存需要 scan_actions 的变更属性
+# （scan_actions._changed_ids / _has_removal）与轻量 mtime 快照工具。
+# indexer 不反向 import intent，无循环导入。
+from .indexer import scan_actions, _action_roots, _parser_fingerprint
+from .tokenizer import tokenize
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +251,7 @@ class IntentRouter:
             wf_desc = str(wf.get('description') or '').lower()
             if wf_desc and wf_desc in query_lower:
                 score += 0.3
-            elif wf_desc and any(w in wf_desc for w in query_lower.split() if len(w) > 2):
+            elif wf_desc and any(w in wf_desc for w in tokenize(query_lower, expand_ngram=False) if len(w) > 2):
                 score += 0.15
             wf_id = str(wf.get('id') or '').lower()
             if wf_id and wf_id in query_lower:
@@ -277,7 +287,7 @@ class IntentRouter:
             desc = action.get("description", "").lower()
             if desc and desc in query_lower:
                 score += 0.3
-            elif desc and any(word in desc for word in query_lower.split() if len(word) > 2):
+            elif desc and any(word in desc for word in tokenize(query_lower, expand_ngram=False) if len(word) > 2):
                 score += 0.1
 
             if score > best_score:
@@ -366,9 +376,207 @@ def get_default_router() -> IntentRouter:
     return router
 
 
+# ─────────────────────────────────────────────────────────────────────
+# P2：推荐缓存与增量注册（提升计划 P2，actus_recommend 缓存）
+#
+# 问题（V-17 相邻）：MCP actus_recommend 每次调用都 `scan_actions(validate=False)`
+# 全量重扫 + 逐个 register_action，无任何进程级缓存 —— 每次推荐都触发全量
+# 文件 IO + 解析。
+#
+# 方案：常驻进程级 LRU 缓存（键 = parser fingerprint + 动作文件 mtime 摘要）：
+#   - 键未变（无文件变化、parser 未升级）→ 直接复用缓存 router，0 次 scan；
+#   - 键变化且无文件删除 → 仅对变更文件增量注册（新增 1 个动作只注册该动作）；
+#   - 有文件删除 / parser fingerprint 变化 → 全量重建（删除场景旧文件 id 不可知，
+#     增量无法安全还原 router）；
+#   - probe 结果仅在重建时执行一次，且作为缓存项签名：外部显式传入的 probe
+#     报告与缓存不一致时强制重建（"probe 结果失效才重建"）。
+# ─────────────────────────────────────────────────────────────────────
+_ROUTER_CACHE_MAXSIZE = 4
+# key -> (router, changes, probe_sig)；OrderedDict 用于 FIFO 淘汰（近似 LRU）。
+_router_cache: "OrderedDict[str, tuple]" = OrderedDict()
+# 打点计数器：验收标准用（连续两次 recommend 第二次不触发 scan 等）。
+_cache_stats = {
+    'hits': 0,
+    'misses': 0,
+    'scan_count': 0,
+    'register_count': 0,
+    'probe_count': 0,
+}
+
+
+def reset_router_cache() -> None:
+    """清空进程级缓存与打点（测试隔离用）。"""
+    _router_cache.clear()
+    for _k in _cache_stats:
+        _cache_stats[_k] = 0
+
+
+def get_router_cache_stats() -> Dict[str, int]:
+    """返回缓存打点快照（hits/misses/scan_count/register_count/probe_count）。"""
+    return dict(_cache_stats)
+
+
+def _snapshot_actions_fingerprint(actions_dir: str = None) -> str:
+    """轻量扫描动作根的 (rel -> (mtime, size)) 摘要，不解析文件内容。
+
+    只做目录遍历 + os.stat，成本远低于 scan_actions 的全量解析；作为缓存键
+    的 mtime 摘要组成部分，判断"动作文件是否变化"。
+    """
+    roots = _action_roots(actions_dir)
+    sig = {}
+    for root_idx, root in enumerate(roots):
+        if not os.path.isdir(root):
+            continue
+        for dirpath, _dirs, files in os.walk(root):
+            for fn in files:
+                if fn.endswith('.actus.md') or fn.endswith('.actus.schema.md'):
+                    full = os.path.join(dirpath, fn)
+                    try:
+                        st = os.stat(full)
+                    except OSError:
+                        continue
+                    rel = f'r{root_idx}/' + os.path.relpath(full, root).replace(os.sep, '/')
+                    sig[rel] = (st.st_mtime, st.st_size)
+    return hashlib.sha256(
+        json.dumps(sig, sort_keys=True).encode('utf-8')).hexdigest()
+
+
+def _probe_sig(report) -> Optional[str]:
+    """从 probe 报告提取 ready/blocked 集合摘要；None 表示无可用信息。"""
+    if report is None:
+        return None
+    ready = set()
+    blocked = set()
+    for item in getattr(report, 'items', []) or []:
+        if getattr(item, 'category', None) != 'actions':
+            continue
+        if not getattr(item, 'available', False):
+            continue
+        for act in ((getattr(item, 'extra', None) or {}).get('actions', []) or []):
+            if isinstance(act, dict):
+                if act.get('id'):
+                    ready.add(act['id'])
+            elif act:
+                ready.add(act)
+        if getattr(item, 'name', None) == 'action_readiness':
+            verdicts = (getattr(item, 'extra', None) or {}).get('verdicts') or {}
+            if isinstance(verdicts, dict):
+                for action_id, record in verdicts.items():
+                    if isinstance(record, dict) and record.get('verdict') == 'blocked':
+                        blocked.add(action_id)
+    if not ready and not blocked:
+        return None
+    return hashlib.sha256(json.dumps(
+        {'ready': sorted(x for x in ready if x), 'blocked': sorted(blocked)},
+        ensure_ascii=False).encode('utf-8')).hexdigest()
+
+
+def _remove_registered(router: IntentRouter, action_id: str) -> None:
+    """从路由器的动作/工作流注册表移除指定 id（增量更新的前置步骤）。"""
+    router._actions[:] = [a for a in router._actions if a.get('id') != action_id]
+    router._workflows[:] = [w for w in router._workflows if w.get('id') != action_id]
+
+
+def _register_changes(router: IntentRouter, actions: Dict[str, Any],
+                      changed_ids: Optional[List[str]], stats: Dict[str, int]) -> None:
+    """注册动作到路由器。
+
+    - changed_ids 为 None → 全量注册（首次构建 / 有删除的全量重建）；
+    - changed_ids 为列表 → 仅对该变更集增量注册（remove + append）。
+    与 mcp_server.actus_recommend 旧实现保持同一注册语义：
+    bundle/workflow 类动作额外 register_workflow。
+    """
+    ids = changed_ids if changed_ids is not None else list(actions)
+    for aid in ids:
+        _remove_registered(router, aid)
+        action = actions.get(aid)
+        if action is None:
+            continue  # 已删除/失效：仅移除旧条目
+        tags = list(action.meta.get('tags') or []) if hasattr(action, 'meta') else []
+        desc = action.meta.get('description', '') or ''
+        usage = action.meta.get('usage', '') or ''
+        router.register_action(aid, desc, usage, tags)
+        if str(action.meta.get('kind') or 'exec').lower() in ('bundle', 'workflow'):
+            router.register_workflow(aid, desc, tags)
+        stats['register_count'] += 1
+
+
+def get_router_with_cache(probe_report=None, actions_dir: str = None):
+    """获取带进程级 LRU 缓存的 IntentRouter（P2 推荐缓存入口）。
+
+    Returns:
+        (router, changes, rebuilt)
+          - router:   IntentRouter 实例（缓存命中时为缓存实例）
+          - changes:  缓存命中为 None；重建时为
+                      {'changed_aids': [...], 'rebuilt': bool}
+          - rebuilt:  本次是否发生了构建/重建（缓存未命中）
+    """
+    fp = _parser_fingerprint()
+    snap = _snapshot_actions_fingerprint(actions_dir)
+    key = f'{fp}::{snap}'
+
+    cached = _router_cache.get(key)
+    if cached is not None:
+        router, _changes, probe_sig, _fp = cached
+        if probe_report is None or _probe_sig(probe_report) == probe_sig:
+            _cache_stats['hits'] += 1
+            return router, None, False
+        # probe 结果失效 → 移除缓存项并强制重建
+        del _router_cache[key]
+
+    # miss：决定增量基础。仅当"最近一个缓存 router 的 parser fingerprint 与
+    # 当前一致"时允许在其上增量（快照变化 = 动作文件增删改，变更集可安全
+    # remove+append）；fingerprint 变化（parser 语义升级）时旧动作解析可能
+    # 过时，必须全量重建；有文件删除时旧 id 不可知，也必须全量重建。
+    base_router = None
+    if _router_cache:
+        _old_key = next(reversed(_router_cache))
+        _old_router, _oc, _os, _old_fp = _router_cache[_old_key]
+        if _old_fp == fp:
+            base_router = _old_router
+
+    _cache_stats['misses'] += 1
+    _cache_stats['scan_count'] += 1
+    actions = scan_actions(actions_dir=actions_dir, validate=False)
+    changed_ids = list(getattr(scan_actions, '_changed_ids', None) or [])
+    has_removal = bool(getattr(scan_actions, '_has_removal', False))
+
+    if changed_ids and not has_removal and base_router is not None:
+        # 增量注册：复用最近缓存 router，仅变更集 remove+append
+        router = base_router
+        _register_changes(router, actions, changed_ids, _cache_stats)
+        changes = {'changed_aids': list(changed_ids), 'rebuilt': False}
+    else:
+        # 首次构建 / 有删除 / 指纹变化 / probe 失效：全新 router 全量注册
+        router = get_default_router()
+        _register_changes(router, actions, None, _cache_stats)
+        changes = {'changed_aids': list(actions), 'rebuilt': True}
+
+    # probe 集成（PROBE_PLAN.md §9 Phase 3）：重建时执行一次并绑定为缓存签名
+    if probe_report is not None:
+        router.set_probe_report(probe_report)
+    else:
+        try:
+            from vools.actus.probe import probe
+            _cache_stats['probe_count'] += 1
+            probe_report = probe(force_refresh=False)
+            router.set_probe_report(probe_report)
+        except Exception:
+            probe_report = None
+
+    probe_sig = _probe_sig(probe_report)
+    _router_cache[key] = (router, changes, probe_sig, fp)
+    while len(_router_cache) > _ROUTER_CACHE_MAXSIZE:
+        _router_cache.popitem(last=False)
+    return router, changes, True
+
+
 __all__ = [
     'DEFAULT_KEYWORD_MAP',
     'IntentRouter',
     'get_default_router',
-    'logger'
+    'logger',
+    'get_router_with_cache',
+    'reset_router_cache',
+    'get_router_cache_stats',
 ]
