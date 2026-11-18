@@ -29,7 +29,7 @@ from .frontmatter import strip_frontmatter
 # 此前用 importlib.metadata 读分发元数据，但子进程会优先加载系统已安装的
 # 旧 wheel (0.8.0)，与源码 (0.7.9) 冲突导致 test_cli_version_flag 失败。
 # 源码内直接用硬编码，安装态由 pyproject.toml 同步。
-__version__ = '0.9.1'
+__version__ = '0.10.0'
 
 # 惰性符号表：{导出名: 子模块名}，首次访问时才 import 对应子模块并取属性
 _LAZY = {

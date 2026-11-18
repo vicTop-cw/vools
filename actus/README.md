@@ -2,7 +2,7 @@
 
 工作流自动化与动作编排引擎，提供动作数据模型、执行器、工作流调度、注册表、密钥管理、信任决策、安全扫描、沙箱环境等核心功能。
 
-> **当前版本 0.9.1** —— 变更详情见 [CHANGELOG.md](CHANGELOG.md)。
+> **当前版本 0.10.0** —— 变更详情见 [CHANGELOG.md](CHANGELOG.md)。
 > 本版主题是「门禁收口 + 发布面收敛」：R105 审计补测 141 用例、公开覆盖真实 100%
 > （R110 收敛降级 10 个 API 候选）、整段连续门禁跑通（R115 wsl SIGTERM 修复 +
 > R116 惰性 import 深化）、CLI 冷启动优化（R114 诊断 + actus_fast.sh），
@@ -227,7 +227,7 @@ print("Hello from Actus!")
 
 ```bash
 # 版本与帮助
-actus --version                # actus 0.9.0
+actus --version                # actus 0.10.0
 actus                          # 无子命令时打印用法（退出码 2）
 
 # 执行动作（<target> 支持六种形态，见下）
