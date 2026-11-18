@@ -166,3 +166,6 @@ actus/_meta/
 actus/artifacts/
 rhop/.pytest_cache/
 rhop/err.txt
+
+# ===== workbuddy runtime workspace (agent workbench logs) =====
+.workbuddy/
