@@ -655,8 +655,11 @@ def execute(action_id: str, params: dict = None,
 
         _validate_params(action, params)
 
-        # 依赖图校验（含本动作的 deps）
-        all_actions = scan_actions(actions_dir, validate=False)
+        # 依赖图校验（含本动作的 deps）。
+        # 2026-11-19（G1 泄漏修）：这里是**只读用途**（校验依赖存在性），
+        # 不写缓存——write_cache 默认 True 会把双缓存写进 paths.meta_dir()
+        # （进程默认目录），泄漏出调用方的隔离 meta_dir。
+        all_actions = scan_actions(actions_dir, validate=False, write_cache=False)
         sub = {aid: a for aid, a in all_actions.items()
                if aid == action_id or aid in (action.meta.get('deps') or [])}
         validate_graph(sub)

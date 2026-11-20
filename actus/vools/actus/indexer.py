@@ -473,7 +473,8 @@ def _write_index_file(meta_dir: str, index: dict, atomic_write: bool = False) ->
             json.dump(index, f, ensure_ascii=False, indent=2)
 
 def scan_actions(actions_dir: str = None, validate: bool = True,
-                 use_cache: bool = True, write_cache: bool = True) -> Dict[str, Action]:
+                 use_cache: bool = True, write_cache: bool = True,
+                 meta_dir: str = None) -> Dict[str, Action]:
     """递归扫描动作根下所有 .actus.md / .actus.schema.md，生成动作清单。
 
     - 文件后缀双轨：.actus.md（形式 A #!cfg JSON）+ .actus.schema.md（形式 B YAML）；
@@ -503,8 +504,11 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
         # 之前硬编码 `_repo_root()/_meta`，于是设了 ACTUS_META_DIR 也不隔离
         # （test_demo_indexing 里记着这个老毛病：不显式传 meta_dir 就会把缓存
         # 写进真实仓库）。现在跟随 paths.meta_dir()（ACTUS_META_DIR > repo_root()/_meta）。
+        # 2026-11-19（G1 泄漏修）：显式 meta_dir 参数优先——调用方（executor
+        # 依赖图校验等）带了隔离 meta_dir 时，缓存读写必须落在同一处，
+        # 否则留痕泄漏进进程默认目录（test_workflow_contract_gap G1 抓到的形状）。
         from .paths import meta_dir as _paths_meta_dir
-        meta_dir = _paths_meta_dir()
+        meta_dir = meta_dir or _paths_meta_dir()
         cache_path = os.path.join(meta_dir, _MTIMES_CACHE)
         loaded = _try_load_json(cache_path)
         if isinstance(loaded, dict):
@@ -632,9 +636,10 @@ def scan_actions(actions_dir: str = None, validate: bool = True,
     # write_cache=False 让只读路径不写 _meta/actions.mtimes.json（只读 FS 可用）。
     # P3（T0r7）：双缓存统一原子写（tmp + os.replace），避免并发读读到半截 JSON。
     if use_cache and write_cache and new_mtimes:
-        # 同上：跟随 paths.meta_dir()，让 ACTUS_META_DIR 能真正隔离缓存
+        # 同上：跟随 paths.meta_dir()，让 ACTUS_META_DIR 能真正隔离缓存。
+        # 2026-11-19（G1 泄漏修）：显式 meta_dir 参数优先（同读缓存段）。
         from .paths import meta_dir as _paths_meta_dir
-        meta_dir = _paths_meta_dir()
+        meta_dir = meta_dir or _paths_meta_dir()
         cache_path = os.path.join(meta_dir, _MTIMES_CACHE)
         parse_cache_path = os.path.join(meta_dir, _PARSE_CACHE)
         try:
